@@ -81,12 +81,27 @@
 //! screen.build()?;
 //! # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
 //! ```
+//! Select multiple edges/corners and opt into paint-only effects:
+//! ```
+//! use volt_ui_kit::ui::prelude::*;
+//! let ui: Element<usize> = vstack![
+//!     button("Save").key("save").rounded_on(12., [Corner::TopLeft, Corner::BottomRight])
+//!         .shadow(Shadow::new().blur(8.).offset(0., 2.))
+//!         .hover_style(|s| s.glow(Glow::new().color("#60a5fa80")).opacity(0.8))
+//!         .animate_on(Interaction::Hover, Animation::ease_out().duration_ms(120))
+//!         .on_click(|count: &mut usize| *count += 1),
+//!     text("Notice").key("notice").transition(Transition::fade().duration_ms(180)),
+//! ].padding(20.5, [Edge::Top, Edge::Left]).gap(12., [Axis::Horizontal, Axis::Vertical]).into();
+//! ui.build()?;
+//! # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+//! ```
 use crate::declarative::{
     document::{FontSlant, MAX_DEPTH, MAX_NODES},
     Bindings, Document, DocumentError, Handlers, Kind, Node,
 };
 pub use crate::declarative::{
-    responsive, Align, Breakpoint, Direction, Flow, Responsive, Rounding, Tone,
+    responsive, Align, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
+    Responsive, Rounding, Shadow, Tone, Transition, VisualStyle,
 };
 
 /// Inner edges selected by `.padding(value, edge)`; left/right are absolute.
@@ -107,6 +122,99 @@ pub enum Axis {
     Horizontal,
     Vertical,
 }
+
+/// Individual corners, clockwise from top-left.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Corner {
+    TopLeft,
+    TopRight,
+    BottomRight,
+    BottomLeft,
+}
+/// Convenient corner groups selected by side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Corners {
+    All,
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+/// Union of edge selections. Empty arrays are a no-op.
+#[derive(Clone, Copy, Debug)]
+pub struct Edges(u8);
+/// Union of gap axes. Empty arrays are a no-op.
+#[derive(Clone, Copy, Debug)]
+pub struct Axes(u8);
+/// Union of corners. Unselected corners are square on the first rounded_on call.
+#[derive(Clone, Copy, Debug)]
+pub struct CornerSet(u8);
+impl From<Edge> for Edges {
+    fn from(v: Edge) -> Self {
+        Self(match v {
+            Edge::All => 15,
+            Edge::Horizontal => 10,
+            Edge::Vertical => 5,
+            Edge::Top => 1,
+            Edge::Right => 2,
+            Edge::Bottom => 4,
+            Edge::Left => 8,
+        })
+    }
+}
+impl From<Axis> for Axes {
+    fn from(v: Axis) -> Self {
+        Self(match v {
+            Axis::Both => 3,
+            Axis::Horizontal => 1,
+            Axis::Vertical => 2,
+        })
+    }
+}
+impl From<Corner> for CornerSet {
+    fn from(v: Corner) -> Self {
+        Self(1 << v as u8)
+    }
+}
+impl From<Corners> for CornerSet {
+    fn from(v: Corners) -> Self {
+        Self(match v {
+            Corners::All => 15,
+            Corners::Top => 3,
+            Corners::Right => 6,
+            Corners::Bottom => 12,
+            Corners::Left => 9,
+        })
+    }
+}
+macro_rules! selection_arrays {
+    ($selector:ty, $item:ty) => {
+        impl<const N: usize> From<[$item; N]> for $selector {
+            fn from(v: [$item; N]) -> Self {
+                Self(v.into_iter().fold(0, |m, x| m | Self::from(x).0))
+            }
+        }
+        impl From<&[$item]> for $selector {
+            fn from(v: &[$item]) -> Self {
+                Self(v.iter().fold(0, |m, x| m | Self::from(*x).0))
+            }
+        }
+        impl<const N: usize> From<&[$item; N]> for $selector {
+            fn from(v: &[$item; N]) -> Self {
+                Self::from(v.as_slice())
+            }
+        }
+        impl From<Vec<$item>> for $selector {
+            fn from(v: Vec<$item>) -> Self {
+                Self::from(v.as_slice())
+            }
+        }
+    };
+}
+selection_arrays!(Edges, Edge);
+selection_arrays!(Axes, Axis);
+selection_arrays!(CornerSet, Corner);
+selection_arrays!(CornerSet, Corners);
 
 /// Explicit normal/italic font selection. The host resolves available families.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,7 +239,13 @@ pub struct Element<C> {
 impl<C> Element<C> {
     fn new(kind: Kind) -> Self {
         Self {
-            node: Node::new(kind),
+            node: {
+                let mut node = Node::new(kind);
+                if kind == Kind::Button {
+                    node.style.radius = Some(Rounding::Radius(2.));
+                }
+                node
+            },
             auto_id: true,
             children: vec![],
             callback: None,
@@ -245,8 +359,29 @@ macro_rules! modifiers {
             pub fn radius(self, value: f32) -> Self { self.rounded(value) }
             /// Numeric logical radius or Rounding::Full (resolved after layout).
             pub fn rounded(mut self, value: impl Into<Rounding>) -> Self {
-                self.$($field)*.style.radius = Some(value.into()); self
+                self.$($field)*.style.radius = Some(value.into()); self.$($field)*.style.corners = None; self
             }
+            /// Set selected corner radii. First call makes unselected corners square;
+            /// later calls update selected corners only. rounded resets all corners.
+            pub fn rounded_on(mut self, value: impl Into<Rounding>, corners: impl Into<CornerSet>) -> Self {
+                let mask = corners.into().0;
+                if mask == 0 { return self; }
+                let radii = self.$($field)*.style.corners.get_or_insert([Rounding::Radius(0.);4]);
+                let value = value.into();
+                for (i,radius) in radii.iter_mut().enumerate() { if mask & (1 << i) != 0 { *radius = value; } }
+                self
+            }
+            /// Subtree group opacity. Does not disable pointer/keyboard interaction.
+            pub fn opacity(mut self, value:f32) -> Self { self.$($field)*.effects.base.opacity=Some(value); self }
+            pub fn shadow(mut self, value:Shadow) -> Self { self.$($field)*.effects.base.shadow=Some(value); self }
+            pub fn glow(mut self, value:Glow) -> Self { self.$($field)*.effects.base.glow=Some(value); self }
+            pub fn hover_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[0]=patch(VisualStyle::default()); self }
+            pub fn pressed_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[1]=patch(VisualStyle::default()); self }
+            pub fn focus_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[2]=patch(VisualStyle::default()); self }
+            pub fn animate_on(mut self, interaction:Interaction, animation:Animation) -> Self { self.$($field)*.effects.animations[interaction.index()]=Some(animation); self }
+            /// Animate explicit appearance changes for the same key after recomposition.
+            pub fn animation(mut self, animation:Animation) -> Self { self.$($field)*.effects.animation=Some(animation); self }
+            pub fn transition(mut self, transition:Transition) -> Self { self.$($field)*.effects.transition=Some(transition); self }
             pub fn font_family(mut self, value: impl Into<String>) -> Self { self.$($field)*.style.font_family = Some(value.into()); self }
             pub fn font_size(mut self, value: f32) -> Self { self.$($field)*.style.font_size = Some(value); self }
             pub fn font_weight(mut self, value: u16) -> Self { self.$($field)*.style.font_weight = Some(value); self }
@@ -385,33 +520,30 @@ macro_rules! container_modifiers {
         impl<C> $target<C> {
             /// Logical inner spacing. The last setter affecting an edge wins,
             /// replacing that edge's entire responsive rule set, not merging it.
-            pub fn padding(mut self, value: impl Into<Responsive<f32>>, edge: Edge) -> Self {
+            pub fn padding(
+                mut self,
+                value: impl Into<Responsive<f32>>,
+                edge: impl Into<Edges>,
+            ) -> Self {
                 let value = value.into();
-                let edges: &[usize] = match edge {
-                    Edge::All => &[0, 1, 2, 3],
-                    Edge::Horizontal => &[1, 3],
-                    Edge::Vertical => &[0, 2],
-                    Edge::Top => &[0],
-                    Edge::Right => &[1],
-                    Edge::Bottom => &[2],
-                    Edge::Left => &[3],
-                };
-                for &edge in edges {
+                let mask = edge.into().0;
+                for edge in (0..4).filter(|i| mask & (1 << i) != 0) {
                     self.0.node.responsive.padding[edge] = Some(value.clone());
                 }
                 self
             }
             /// Inter-child spacing on the resolved main axis. ZStack ignores gaps.
-            pub fn gap(mut self, value: impl Into<Responsive<f32>>, axis: Axis) -> Self {
+            pub fn gap(mut self, value: impl Into<Responsive<f32>>, axis: impl Into<Axes>) -> Self {
                 let value = value.into();
-                let axes: &[usize] = match axis {
-                    Axis::Both => &[0, 1],
-                    Axis::Horizontal => &[0],
-                    Axis::Vertical => &[1],
-                };
-                for &axis in axes {
+                let mask = axis.into().0;
+                for axis in (0..2).filter(|i| mask & (1 << i) != 0) {
                     self.0.node.responsive.gap[axis] = Some(value.clone());
                 }
+                self
+            }
+            /// A draggable window region; interactive controls, including disabled controls, take precedence.
+            pub fn drag_region(mut self, value: bool) -> Self {
+                self.0.node.effects.drag_region = value;
                 self
             }
             /// Place content in both axes; for ZStack, place each layer independently.
@@ -455,7 +587,8 @@ pub use crate::{hstack, stack, vstack, zstack};
 pub mod prelude {
     pub use super::{
         badge, button, checkbox, column, divider, hstack, panel, responsive, row, separator,
-        spacer, stack, text, toggle, vstack, zstack, Align, Axis, Breakpoint, Direction, Edge,
-        Element, Flow, FontStyle, Responsive, Rounding, Tone,
+        spacer, stack, text, toggle, vstack, zstack, Align, Animation, Axes, Axis, Breakpoint,
+        Corner, CornerSet, Corners, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow,
+        Interaction, Responsive, Rounding, Shadow, Tone, Transition, VisualStyle,
     };
 }

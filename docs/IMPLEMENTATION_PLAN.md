@@ -8,6 +8,7 @@
 | 1c | Shared tree and native vertical examples | Same Button/Panel recipes; one host/runtime | Implemented |
 | 1d | Primary Rust-first authoring | Typed builders/direct closures, action-only body calls, atomic tree/handler replacement, keyed examples | Implemented; current validation in RUST_UI.md/PERFORMANCE.md |
 | 1e | Responsive and layered stacks | Logical viewport thresholds, scalar parity, retained callbacks, ordered overlap hits | Implemented; headless gates in RESPONSIVE_UI.md/VALIDATION.md; native acceptance pending |
+| 1f | Selective styles, effects, keyed motion and chrome | Geometry/pixel/state/cache/input regression gates; native acceptance | Implemented bounded first slice; EFFECTS_AND_WINDOWING.md; native OS validation pending |
 | 2 | Layout, measured text, focus, capture, semantics | Nested constraints, keyboard/pointer agreement, cache tests | Basic layout/text/button input done; broader semantics pending |
 | 3 | Toggle/Tabs/List/Menu/Input | State matrices, clipping, Unicode and editing coverage | Checkbox/Toggle/Badge/Separator done; Tabs/List/Menu/Input pending |
 | 4 | Native gallery and platform adapters | IME/clipboard/accessibility, event-driven idle behavior | Solid host done; editing/platform gates pending |

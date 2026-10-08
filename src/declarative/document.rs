@@ -115,6 +115,8 @@ pub(crate) struct NodeStyle {
     pub accent_color: Option<String>,
     pub border_width: Option<f32>,
     pub radius: Option<Rounding>,
+    #[serde(skip)]
+    pub corners: Option<[Rounding; 4]>,
     pub font_family: Option<String>,
     pub font_size: Option<f32>,
     pub font_weight: Option<u16>,
@@ -205,6 +207,8 @@ pub struct Node {
     pub(crate) on_toggle_changed: Option<String>,
     #[serde(default)]
     pub(crate) style: NodeStyle,
+    #[serde(skip)]
+    pub(crate) effects: super::effects::Effects,
 }
 fn yes() -> bool {
     true
@@ -246,6 +250,7 @@ impl Node {
             bind_checked: None,
             on_toggle_changed: None,
             style: NodeStyle::default(),
+            effects: super::effects::Effects::default(),
         }
     }
     /// Logical insets in top/right/bottom/left order. JSON precedence is explicit
@@ -613,9 +618,11 @@ fn check_style(style: &NodeStyle, path: &str) -> Result<(), DocumentError> {
             return Err(error(&format!("{path}.{name}"), "invalid style value"));
         }
     }
-    if let Some(Rounding::Radius(value)) = style.radius {
-        if !value.is_finite() || !(0. ..=256.).contains(&value) {
-            return Err(error(&format!("{path}.radius"), "invalid style value"));
+    for radius in style.radius.iter().chain(style.corners.iter().flatten()) {
+        if let Rounding::Radius(value) = *radius {
+            if !value.is_finite() || !(0. ..=256.).contains(&value) {
+                return Err(error(&format!("{path}.radius"), "invalid style value"));
+            }
         }
     }
     if style
@@ -633,6 +640,7 @@ fn check_node(
     count: &mut usize,
     ids: &mut BTreeSet<String>,
 ) -> Result<(), DocumentError> {
+    n.effects.validate(path)?;
     *count += 1;
     if *count > MAX_NODES || depth > MAX_DEPTH {
         return Err(error(path, "node count or depth limit exceeded"));

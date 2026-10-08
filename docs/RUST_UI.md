@@ -81,7 +81,8 @@ subtree diffing or retained widget-local state. Merely changing state from a
 background task does not automatically notify this first native runner; a public
 external-update/event-proxy API is still future work. Native rendering remains
 CPU/software-based, Solid-only, one window and event-driven (`ControlFlow::Wait`).
-No polling/idle redraw timer is added.
+Opt-in animations schedule active-only ticks; no idle polling/redraw timer runs.
+See [effects and windowing](EFFECTS_AND_WINDOWING.md).
 
 ## Seamless Rust callback integration
 
@@ -381,3 +382,10 @@ with mature [Compose](https://developer.android.com/develop/ui/compose/mental-mo
 or [SwiftUI](https://developer.apple.com/documentation/swiftui/view). Future
 signals/subtree reconciliation and hot-source tooling must preserve this API's
 ownership, focus and compatibility contracts rather than require a JSON rewrite.
+
+## Selective effects and windows
+
+See [effects/windowing](EFFECTS_AND_WINDOWING.md) for multi-edge/axis selections,
+independent corner rounding, new 2px Rust button default, opt-in effects and
+keyed animation/fade/window chrome. These are implemented Rust APIs; existing
+JSON and legacy Volt visuals retain their original defaults.

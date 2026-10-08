@@ -213,7 +213,10 @@ mod tests {
 }
 
 pub(crate) mod document;
+pub(crate) mod effects;
 mod responsive;
+pub use effects::{Animation, Easing, Glow, Interaction, Shadow, Transition, VisualStyle};
+mod motion;
 mod runtime;
 pub use document::{
     Align, Bindings, Document, DocumentError, Flow, Kind, Node, Rounding, Tone, Value,

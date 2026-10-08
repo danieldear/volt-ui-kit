@@ -11,6 +11,7 @@ cargo run --locked --features native --example rust_settings
 cargo run --locked --features native --example rust_keyed_list
 cargo run --locked --features native --example rust_layout
 cargo run --locked --features native --example rust_responsive
+cargo run --locked --features native --example rust_effects
 cargo run --locked --features native --example native_window
 cargo run --locked --features native --example panels_and_layout
 cargo run --locked --features native --example buttons_and_events
@@ -106,3 +107,13 @@ hidden controls are excluded from focus/input. Real-font matrix tests verify
 visible callbacks at640x480 and960x760 across1/1.25/1.5/2/3x, but native resize /
 readability acceptance is still separate. Keep a comfortable window size until
 scrolling/adaptive layout is implemented.
+
+### Effects / integrated chrome
+
+`rust_effects`: optional blurred panel shadow, animated hover glow/border, pressed
+opacity, square/default/selected-side buttons, keyed fade notice and custom
+draggable macOS header retaining native controls. `--chrome native` compares
+standard decorations; `--reduced-motion` settles appearance without motion.
+Header controls must click rather than drag. Overlay uses native decorations on
+non-macOS. Shared Rust CLI accepts both options; screenshots show settled motion.
+See [effects/windowing](../docs/EFFECTS_AND_WINDOWING.md) for limits and OS gates.

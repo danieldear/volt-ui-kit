@@ -1,9 +1,17 @@
 use super::document::{parse_color, FontSlant};
 use super::{
+    effects::{Effects, Shadow, VisualStyle},
+    motion::{Motion, ResolvedShadow, Visual},
+};
+use super::{
     Align, Bindings, Document, DocumentError, Event, Handlers, Kind, Node, Rounding, Tone, Value,
 };
 use crate::{Button, ButtonColors, Colors, Painter, Panel, Rect, SurfaceStyle, Theme, Viewport};
-use std::collections::BTreeMap;
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 /// Physical-pixel typography resolved from inherited document styles.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,6 +50,10 @@ pub trait DocumentPainter: Painter + TextMetrics {
         size: f32,
         color: [f32; 4],
     );
+    /// Optional subtree group-compositing hooks. Legacy adapters ignore opacity;
+    /// adapters supporting effects override both hooks.
+    fn ui_layer_begin(&mut self, _out: &mut Vec<Self::Shape>, _opacity: f32) {}
+    fn ui_layer_end(&mut self, _out: &mut Vec<Self::Shape>) {}
     /// Must use the same style/font fallback rules as measure_styled.
     fn ui_text_styled(
         &mut self,
@@ -90,6 +102,13 @@ pub struct LayoutBox {
     pub(crate) action: Option<String>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
+    pub(crate) effects: Effects,
+    pub(crate) depth: usize,
+    ancestor_clip: Rect,
+    pub(crate) detached_visual: Option<Visual>,
+    pub(crate) detached_mount: f32,
+    pub(crate) departing: bool,
+    pub(crate) detached_state: Option<ButtonState>,
 }
 /// Shared document layout and event state; owns no window or background tasks.
 pub struct Runtime {
@@ -97,10 +116,12 @@ pub struct Runtime {
     boxes: Vec<LayoutBox>,
     focused: Option<String>,
     hovered: Option<String>,
+    visual_hover: BTreeSet<String>,
     capture: Option<String>,
     keyboard: Option<String>,
     scale: f32,
     cache: Option<([f32; 3], Bindings)>,
+    motion: RefCell<Motion>,
 }
 impl Runtime {
     pub fn new<C>(
@@ -114,11 +135,64 @@ impl Runtime {
             boxes: vec![],
             focused: None,
             hovered: None,
+            visual_hover: BTreeSet::new(),
             capture: None,
             keyboard: None,
             scale: 1.,
             cache: None,
+            motion: RefCell::new(Motion::default()),
         })
+    }
+    /// Host-provided monotonic clock; never calls application handlers or layout.
+    pub fn advance_animations(&mut self, now: Duration) -> bool {
+        self.motion.get_mut().advance(now)
+    }
+    pub fn is_animating(&self) -> bool {
+        self.motion.borrow().active()
+    }
+    pub fn set_reduced_motion(&mut self, reduced: bool) {
+        let m = self.motion.get_mut();
+        m.reduced = reduced;
+        if reduced {
+            m.settle();
+        }
+    }
+    pub fn settle_animations(&mut self) {
+        self.motion.get_mut().settle();
+    }
+    /// Draggable header regions never steal input from interactive controls,
+    /// including disabled controls, or from a later painted non-header subtree.
+    pub fn drag_region_hit(&self, x: f32, y: f32) -> bool {
+        if self.boxes.iter().any(|b| {
+            interactive(b.kind)
+                && b.clip.contains(x, y)
+                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+        }) {
+            return false;
+        }
+        let Some(mut index) = self.boxes.iter().rposition(|b| {
+            b.clip.contains(x, y) && b.bounds.contains_corners(b.radii(self.scale), x, y)
+        }) else {
+            return false;
+        };
+        if interactive(self.boxes[index].kind) {
+            return false;
+        }
+        loop {
+            let b = &self.boxes[index];
+            if b.effects.drag_region {
+                return true;
+            }
+            if b.depth == 0 {
+                break;
+            }
+            let depth = b.depth - 1;
+            let Some(parent) = self.boxes[..index].iter().rposition(|b| b.depth == depth) else {
+                break;
+            };
+            index = parent;
+        }
+        false
     }
     pub fn document(&self) -> &Document {
         &self.document
@@ -166,6 +240,15 @@ impl Runtime {
         if !keep_focus {
             self.focused = None;
         }
+        fn keys(n: &Node, ids: &mut BTreeSet<String>) {
+            ids.insert(n.id.clone());
+            for c in &n.children {
+                keys(c, ids);
+            }
+        }
+        let mut ids = BTreeSet::new();
+        keys(next.root(), &mut ids);
+        self.motion.get_mut().remove(&self.boxes, &ids);
         self.document = next;
         self.cache = None;
         self.boxes.clear();
@@ -209,6 +292,7 @@ impl Runtime {
             self.scale,
             viewport.width / self.scale,
             &mut styles,
+            0,
         );
         let area = Rect::new(0., 0., viewport.width, viewport.height).unwrap();
         place(
@@ -223,6 +307,7 @@ impl Runtime {
             &styles,
         );
         self.boxes = boxes;
+        self.motion.get_mut().reconcile(&self.boxes);
         let valid = |id: &Option<String>| {
             id.as_ref().is_none_or(|id| {
                 self.boxes
@@ -240,6 +325,7 @@ impl Runtime {
             self.keyboard = None;
         }
         self.hovered = None;
+        self.visual_hover.clear();
         self.cache = Some((key, values.clone()));
         Ok(true)
     }
@@ -251,23 +337,66 @@ impl Runtime {
                 interactive(b.kind)
                     && b.enabled
                     && b.clip.contains(x, y)
-                    && b.bounds
-                        .contains_rounded(b.style.radius.unwrap_or(7. * self.scale), x, y)
+                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
             })
             .map(|b| b.id.clone())
     }
+    fn visual_hover_at(&self, x: f32, y: f32, hit: Option<&str>) -> BTreeSet<String> {
+        let mut result = BTreeSet::new();
+        let index = hit
+            .and_then(|id| self.boxes.iter().position(|b| b.id == id))
+            .or_else(|| {
+                self.boxes.iter().rposition(|b| {
+                    b.clip.contains(x, y) && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                })
+            });
+        let Some(mut index) = index else {
+            return result;
+        };
+        loop {
+            let b = &self.boxes[index];
+            let s = &b.effects.states[0];
+            if b.enabled
+                && !interactive(b.kind)
+                && (s.color.is_some()
+                    || s.background.is_some()
+                    || s.border_color.is_some()
+                    || s.border_width.is_some()
+                    || s.opacity.is_some()
+                    || s.shadow.is_some()
+                    || s.glow.is_some())
+            {
+                result.insert(b.id.clone());
+            }
+            if b.depth == 0 {
+                break;
+            }
+            let depth = b.depth - 1;
+            let Some(parent) = self.boxes[..index].iter().rposition(|b| b.depth == depth) else {
+                break;
+            };
+            index = parent;
+        }
+        result
+    }
     pub fn pointer_move(&mut self, x: f32, y: f32) -> bool {
         let next = self.hit(x, y);
-        let changed = next != self.hovered;
+        let visual = self.visual_hover_at(x, y, next.as_deref());
+        let changed = next != self.hovered || visual != self.visual_hover;
         self.hovered = next;
+        self.visual_hover = visual;
         changed
     }
     pub fn pointer_leave(&mut self) -> bool {
-        self.hovered.take().is_some()
+        let changed = self.hovered.take().is_some() || !self.visual_hover.is_empty();
+        self.visual_hover.clear();
+        changed
     }
     pub fn pointer_down(&mut self, x: f32, y: f32) -> bool {
+        let hover_changed = self.pointer_move(x, y);
         let hit = self.hit(x, y);
-        let changed = self.capture != hit
+        let changed = hover_changed
+            || self.capture != hit
             || self.focused != hit
             || self.hovered != hit
             || self.keyboard.is_some();
@@ -370,10 +499,14 @@ impl Runtime {
         })
     }
     pub fn cancel_input(&mut self) -> bool {
-        let changed = self.capture.is_some() || self.keyboard.is_some() || self.hovered.is_some();
+        let changed = self.capture.is_some()
+            || self.keyboard.is_some()
+            || self.hovered.is_some()
+            || !self.visual_hover.is_empty();
         self.capture = None;
         self.keyboard = None;
         self.hovered = None;
+        self.visual_hover.clear();
         changed
     }
     fn activate<C>(
@@ -418,328 +551,437 @@ impl Runtime {
         p: &mut P,
         theme: &Theme,
     ) -> Vec<PaintBatch<P::Shape, P::Glyph>> {
-        let c = Colors::from_theme(theme);
-        self.boxes
-            .iter()
-            .map(|b| {
+        let mut out = Vec::new();
+        let mut motion = self.motion.borrow_mut();
+        let boxes = motion.paint_boxes(&self.boxes);
+        self.paint_nodes(
+            p,
+            theme,
+            boxes.as_deref().unwrap_or(&self.boxes),
+            &mut motion,
+            &mut out,
+        );
+        out
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn paint_nodes<P: DocumentPainter>(
+        &self,
+        p: &mut P,
+        theme: &Theme,
+        boxes: &[LayoutBox],
+        motion: &mut Motion,
+        out: &mut Vec<PaintBatch<P::Shape, P::Glyph>>,
+    ) {
+        let mut groups = Vec::new();
+        for original in boxes {
+            while groups.last().is_some_and(|d| *d >= original.depth) {
+                groups.pop();
                 let mut shapes = vec![];
-                let mut glyphs = vec![];
-                let r = b.bounds.bounds();
-                let tone_color = match b.tone {
-                    Tone::Muted => c.muted,
-                    Tone::Accent => c.accent,
-                    _ => c.text,
-                };
-                let text_color = b.style.color.unwrap_or(tone_color);
-                match b.kind {
-                    Kind::Panel => {
-                        if b.style.surface_override() {
-                            paint_surface(
-                                p,
-                                &mut shapes,
-                                r,
-                                b.style.radius.unwrap_or(12. * self.scale),
-                                b.style.background.unwrap_or(c.panel),
-                            );
-                            paint_border(
-                                p,
-                                &mut shapes,
-                                r,
-                                b.style.radius.unwrap_or(12. * self.scale),
-                                b.style.border_width.unwrap_or(self.scale),
-                                b.style.border_color.unwrap_or(c.border),
-                            );
-                        } else if let Some(panel) =
-                            Panel::new(b.bounds, 12., self.scale, SurfaceStyle::from_theme(theme))
-                        {
-                            panel.paint(p, &mut shapes);
-                        }
-                    }
-                    Kind::Row | Kind::Column | Kind::Stack | Kind::ZStack | Kind::Text => {
-                        paint_overrides(p, &mut shapes, r, &b.style, self.scale);
-                        if b.kind == Kind::Text {
-                            p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
-                        }
-                    }
-                    Kind::Button => {
-                        let state = self.state_for_box(b);
-                        let base = b.style.background.unwrap_or(if b.primary {
-                            b.style.accent_color.unwrap_or(c.accent)
-                        } else {
-                            c.selected
-                        });
-                        let surface = state_surface(base, state, theme);
-                        let radius = b.style.radius.unwrap_or(7. * self.scale);
-                        let mut color = b.style.color.unwrap_or(if b.primary {
-                            theme.background
-                        } else {
-                            c.text
-                        });
-                        if state.disabled {
-                            color[3] *= 0.45;
-                        }
-                        if b.style.surface_override() {
-                            paint_surface(p, &mut shapes, r, radius, surface);
-                            paint_border(
-                                p,
-                                &mut shapes,
-                                r,
-                                radius,
-                                b.style
-                                    .border_width
-                                    .unwrap_or(if b.style.border_color.is_some() {
-                                        self.scale
-                                    } else {
-                                        0.
-                                    }),
-                                b.style.border_color.unwrap_or(c.border),
-                            );
-                        } else {
-                            // Keep the legacy surface recipe on the unstyled default path.
-                            Button {
-                                label: "",
-                                icon: None,
-                                enabled: b.enabled,
-                            }
-                            .paint(
-                                p,
-                                &mut shapes,
-                                &mut glyphs,
-                                r,
-                                self.scale,
-                                ButtonColors {
-                                    surface,
-                                    text: color,
-                                },
-                            );
-                        }
-                        if state.focused {
-                            paint_border(
-                                p,
-                                &mut shapes,
-                                r,
-                                radius,
-                                2. * self.scale,
-                                b.style.accent_color.unwrap_or(c.accent_bright),
-                            );
-                        }
-                        let inset = 10. * self.scale;
-                        let max_width = (r[2] - 2. * inset).max(0.1);
-                        let [w, h] = p.measure_styled(&b.text, &b.text_style, max_width);
-                        p.ui_text_styled(
-                            &mut glyphs,
-                            &b.text,
-                            [
-                                r[0] + ((r[2] - w) * 0.5).max(inset),
-                                r[1] + (r[3] - h) * 0.5,
-                                max_width,
-                                h,
-                            ],
-                            &b.text_style,
-                            color,
-                        );
-                    }
-                    Kind::Checkbox | Kind::Toggle => {
-                        let state = self.state_for_box(b);
-                        let radius = b.style.radius.unwrap_or(6. * self.scale);
-                        if let Some(background) = b.style.background {
-                            paint_surface(
-                                p,
-                                &mut shapes,
-                                r,
-                                radius,
-                                state_surface(background, state, theme),
-                            );
-                        } else if state.hovered || state.pressed {
-                            let mut background = c.selected;
-                            background[3] = if state.pressed { 0.7 } else { 0.35 };
-                            paint_surface(p, &mut shapes, r, radius, background);
-                        }
-                        let border = b.style.border_color.unwrap_or(c.border);
-                        paint_border(
-                            p,
-                            &mut shapes,
-                            r,
-                            radius,
-                            b.style.border_width.unwrap_or(0.),
-                            border,
-                        );
-                        if state.focused {
-                            paint_border(
-                                p,
-                                &mut shapes,
-                                r,
-                                radius,
-                                2. * self.scale,
-                                b.style.accent_color.unwrap_or(c.accent_bright),
-                            );
-                        }
-                        let mut accent = b.style.accent_color.unwrap_or(c.accent);
-                        let mut color = text_color;
-                        let mut quiet = c.selected;
-                        if state.disabled {
-                            accent[3] *= 0.45;
-                            color[3] *= 0.45;
-                            quiet[3] *= 0.45;
-                        }
-                        let control_h = (22. * self.scale).min(r[3]);
-                        let left = r[0] + 2. * self.scale;
-                        let top = r[1] + (r[3] - control_h) * 0.5;
-                        let leading = if b.kind == Kind::Toggle {
-                            56. * self.scale
-                        } else {
-                            34. * self.scale
-                        };
-                        if b.kind == Kind::Checkbox {
-                            let box_bounds = [left, top, control_h, control_h];
-                            paint_surface(
-                                p,
-                                &mut shapes,
-                                box_bounds,
-                                4. * self.scale,
-                                if b.checked { accent } else { quiet },
-                            );
-                            paint_border(
-                                p,
-                                &mut shapes,
-                                box_bounds,
-                                4. * self.scale,
-                                self.scale,
-                                if state.hovered { accent } else { border },
-                            );
-                            if b.checked {
-                                let check = if state.disabled {
-                                    [
-                                        theme.background[0],
-                                        theme.background[1],
-                                        theme.background[2],
-                                        0.45,
-                                    ]
-                                } else {
-                                    theme.background
-                                };
-                                p.card_line(
-                                    &mut shapes,
-                                    [left + 5. * self.scale, top + 11. * self.scale],
-                                    [left + 9. * self.scale, top + 15. * self.scale],
-                                    2. * self.scale,
-                                    check,
-                                );
-                                p.card_line(
-                                    &mut shapes,
-                                    [left + 9. * self.scale, top + 15. * self.scale],
-                                    [left + 17. * self.scale, top + 7. * self.scale],
-                                    2. * self.scale,
-                                    check,
-                                );
-                            }
-                        } else {
-                            let track_w = (42. * self.scale).min((r[2] - 2. * self.scale).max(0.));
-                            let track = [left, top, track_w, control_h];
-                            paint_surface(
-                                p,
-                                &mut shapes,
-                                track,
-                                control_h * 0.5,
-                                if b.checked { accent } else { quiet },
-                            );
-                            paint_border(
-                                p,
-                                &mut shapes,
-                                track,
-                                control_h * 0.5,
-                                self.scale,
-                                border,
-                            );
-                            let diameter = (control_h - 6. * self.scale).max(0.);
-                            let knob_x = left
-                                + if b.checked {
-                                    (track_w - diameter - 3. * self.scale).max(0.)
-                                } else {
-                                    3. * self.scale
-                                };
-                            let mut knob = text_color;
-                            if state.disabled {
-                                knob[3] *= 0.45;
-                            }
-                            paint_surface(
-                                p,
-                                &mut shapes,
-                                [knob_x, top + 3. * self.scale, diameter, diameter],
-                                diameter * 0.5,
-                                knob,
-                            );
-                        }
-                        let width = (r[2] - leading).max(0.1);
-                        let [_, height] = p.measure_styled(&b.text, &b.text_style, width);
-                        p.ui_text_styled(
-                            &mut glyphs,
-                            &b.text,
-                            [r[0] + leading, r[1] + (r[3] - height) * 0.5, width, height],
-                            &b.text_style,
-                            color,
-                        );
-                    }
-                    Kind::Badge => {
-                        let radius = b.style.radius.unwrap_or(8. * self.scale);
-                        paint_surface(
-                            p,
-                            &mut shapes,
-                            r,
-                            radius,
-                            b.style.background.unwrap_or(c.selected),
-                        );
-                        paint_border(
-                            p,
-                            &mut shapes,
-                            r,
-                            radius,
-                            b.style
-                                .border_width
-                                .unwrap_or(if b.style.border_color.is_some() {
-                                    self.scale
-                                } else {
-                                    0.
-                                }),
-                            b.style.border_color.unwrap_or(c.border),
-                        );
-                        p.ui_text_styled(
-                            &mut glyphs,
-                            &b.text,
-                            [
-                                r[0] + 10. * self.scale,
-                                r[1] + 5. * self.scale,
-                                (r[2] - 20. * self.scale).max(0.),
-                                (r[3] - 10. * self.scale).max(0.),
-                            ],
-                            &b.text_style,
-                            text_color,
-                        );
-                    }
-                    Kind::Spacer => {}
-                    Kind::Separator => paint_surface(
+                p.ui_layer_end(&mut shapes);
+                out.push(PaintBatch {
+                    clip: original.ancestor_clip,
+                    shapes,
+                    glyphs: vec![],
+                });
+            }
+            let state = self.state_for_box(original);
+            let target = visual_target(original, state, theme, self.scale);
+            let flags = [
+                state.hovered && !state.disabled,
+                state.pressed && !state.disabled,
+                state.focused && !state.disabled,
+            ];
+            let visual = if original.departing {
+                motion.exit_value(original, target)
+            } else {
+                motion.value(
+                    &original.id,
+                    original.kind,
+                    target,
+                    flags,
+                    &original.effects,
+                )
+            };
+            if visual.opacity < 1. {
+                let mut shapes = vec![];
+                p.ui_layer_begin(&mut shapes, visual.opacity);
+                out.push(PaintBatch {
+                    clip: original.ancestor_clip,
+                    shapes,
+                    glyphs: vec![],
+                });
+                groups.push(original.depth);
+            }
+            let mut shapes = vec![];
+            for shadow in [visual.shadow, visual.glow].into_iter().flatten() {
+                if shadow.color[3] > 0. {
+                    p.card_shadow(
+                        &mut shapes,
+                        original.bounds.bounds(),
+                        original.radii(self.scale),
+                        shadow.blur,
+                        shadow.spread,
+                        shadow.offset,
+                        shadow.color,
+                    );
+                }
+            }
+            if !shapes.is_empty() {
+                out.push(PaintBatch {
+                    clip: original.ancestor_clip,
+                    shapes,
+                    glyphs: vec![],
+                });
+            }
+            let treatment = has_visual_patch(&original.effects);
+            let mut styled;
+            let b = if treatment {
+                styled = original.clone();
+                styled.style.color = Some(visual.color);
+                styled.style.background = Some(visual.background);
+                styled.style.border_color = Some(visual.border);
+                styled.style.border_width = Some(visual.width);
+                &styled
+            } else {
+                original
+            };
+            out.push(self.paint_one(p, theme, b, treatment.then_some(visual)));
+        }
+        if let Some(b) = boxes.last() {
+            for _ in groups {
+                let mut shapes = vec![];
+                p.ui_layer_end(&mut shapes);
+                out.push(PaintBatch {
+                    clip: b.ancestor_clip,
+                    shapes,
+                    glyphs: vec![],
+                });
+            }
+        }
+    }
+    fn paint_one<P: DocumentPainter>(
+        &self,
+        p: &mut P,
+        theme: &Theme,
+        b: &LayoutBox,
+        visual: Option<Visual>,
+    ) -> PaintBatch<P::Shape, P::Glyph> {
+        let c = Colors::from_theme(theme);
+        let mut shapes = vec![];
+        let mut glyphs = vec![];
+        let r = b.bounds.bounds();
+        let tone_color = match b.tone {
+            Tone::Muted => c.muted,
+            Tone::Accent => c.accent,
+            _ => c.text,
+        };
+        let text_color = b.style.color.unwrap_or(tone_color);
+        match b.kind {
+            Kind::Panel => {
+                if b.style.surface_override() {
+                    paint_surface(
                         p,
                         &mut shapes,
                         r,
-                        b.style.radius.unwrap_or(0.),
+                        b.radius_spec(self.scale),
+                        b.style.background.unwrap_or(c.panel),
+                    );
+                    paint_border(
+                        p,
+                        &mut shapes,
+                        r,
+                        b.radius_spec(self.scale),
+                        b.style.border_width.unwrap_or(self.scale),
+                        b.style.border_color.unwrap_or(c.border),
+                    );
+                } else if let Some(panel) =
+                    Panel::new(b.bounds, 12., self.scale, SurfaceStyle::from_theme(theme))
+                {
+                    panel.paint(p, &mut shapes);
+                }
+            }
+            Kind::Row | Kind::Column | Kind::Stack | Kind::ZStack | Kind::Text => {
+                paint_overrides(p, &mut shapes, r, &b.style, self.scale);
+                if b.kind == Kind::Text {
+                    p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
+                }
+            }
+            Kind::Button => {
+                let state = self.state_for_box(b);
+                let base = b.style.background.unwrap_or(if b.primary {
+                    b.style.accent_color.unwrap_or(c.accent)
+                } else {
+                    c.selected
+                });
+                let surface =
+                    visual.map_or_else(|| state_surface(base, state, theme), |v| v.background);
+                let radius = b.radius_spec(self.scale);
+                let mut color =
+                    b.style
+                        .color
+                        .unwrap_or(if b.primary { theme.background } else { c.text });
+                if state.disabled && visual.is_none() {
+                    color[3] *= 0.45;
+                }
+                if b.style.surface_override() {
+                    paint_surface(p, &mut shapes, r, radius, surface);
+                    paint_border(
+                        p,
+                        &mut shapes,
+                        r,
+                        radius,
                         b.style
-                            .background
-                            .or(b.style.color)
-                            .or(b.style.border_color)
-                            .unwrap_or(c.line),
-                    ),
+                            .border_width
+                            .unwrap_or(if b.style.border_color.is_some() {
+                                self.scale
+                            } else {
+                                0.
+                            }),
+                        b.style.border_color.unwrap_or(c.border),
+                    );
+                } else {
+                    // Keep the legacy surface recipe on the unstyled default path.
+                    Button {
+                        label: "",
+                        icon: None,
+                        enabled: b.enabled,
+                    }
+                    .paint(
+                        p,
+                        &mut shapes,
+                        &mut glyphs,
+                        r,
+                        self.scale,
+                        ButtonColors {
+                            surface,
+                            text: color,
+                        },
+                    );
                 }
-                PaintBatch {
-                    clip: b.clip,
-                    shapes,
-                    glyphs,
+                if state.focused {
+                    paint_border(
+                        p,
+                        &mut shapes,
+                        r,
+                        radius,
+                        2. * self.scale,
+                        b.style.accent_color.unwrap_or(c.accent_bright),
+                    );
                 }
-            })
-            .collect()
+                let inset = 10. * self.scale;
+                let max_width = (r[2] - 2. * inset).max(0.1);
+                let [w, h] = p.measure_styled(&b.text, &b.text_style, max_width);
+                p.ui_text_styled(
+                    &mut glyphs,
+                    &b.text,
+                    [
+                        r[0] + ((r[2] - w) * 0.5).max(inset),
+                        r[1] + (r[3] - h) * 0.5,
+                        max_width,
+                        h,
+                    ],
+                    &b.text_style,
+                    color,
+                );
+            }
+            Kind::Checkbox | Kind::Toggle => {
+                let state = self.state_for_box(b);
+                let radius = b.radius_spec(self.scale);
+                if let Some(background) = b.style.background {
+                    paint_surface(
+                        p,
+                        &mut shapes,
+                        r,
+                        radius,
+                        visual.map_or_else(
+                            || state_surface(background, state, theme),
+                            |v| v.background,
+                        ),
+                    );
+                } else if state.hovered || state.pressed {
+                    let mut background = c.selected;
+                    background[3] = if state.pressed { 0.7 } else { 0.35 };
+                    paint_surface(p, &mut shapes, r, radius, background);
+                }
+                let border = b.style.border_color.unwrap_or(c.border);
+                paint_border(
+                    p,
+                    &mut shapes,
+                    r,
+                    radius,
+                    b.style.border_width.unwrap_or(0.),
+                    border,
+                );
+                if state.focused {
+                    paint_border(
+                        p,
+                        &mut shapes,
+                        r,
+                        radius,
+                        2. * self.scale,
+                        b.style.accent_color.unwrap_or(c.accent_bright),
+                    );
+                }
+                let mut accent = b.style.accent_color.unwrap_or(c.accent);
+                let mut color = text_color;
+                let mut quiet = c.selected;
+                if state.disabled {
+                    accent[3] *= 0.45;
+                    color[3] *= 0.45;
+                    quiet[3] *= 0.45;
+                }
+                let control_h = (22. * self.scale).min(r[3]);
+                let left = r[0] + 2. * self.scale;
+                let top = r[1] + (r[3] - control_h) * 0.5;
+                let leading = if b.kind == Kind::Toggle {
+                    56. * self.scale
+                } else {
+                    34. * self.scale
+                };
+                if b.kind == Kind::Checkbox {
+                    let box_bounds = [left, top, control_h, control_h];
+                    paint_surface(
+                        p,
+                        &mut shapes,
+                        box_bounds,
+                        4. * self.scale,
+                        if b.checked { accent } else { quiet },
+                    );
+                    paint_border(
+                        p,
+                        &mut shapes,
+                        box_bounds,
+                        4. * self.scale,
+                        self.scale,
+                        if state.hovered { accent } else { border },
+                    );
+                    if b.checked {
+                        let check = if state.disabled {
+                            [
+                                theme.background[0],
+                                theme.background[1],
+                                theme.background[2],
+                                0.45,
+                            ]
+                        } else {
+                            theme.background
+                        };
+                        p.card_line(
+                            &mut shapes,
+                            [left + 5. * self.scale, top + 11. * self.scale],
+                            [left + 9. * self.scale, top + 15. * self.scale],
+                            2. * self.scale,
+                            check,
+                        );
+                        p.card_line(
+                            &mut shapes,
+                            [left + 9. * self.scale, top + 15. * self.scale],
+                            [left + 17. * self.scale, top + 7. * self.scale],
+                            2. * self.scale,
+                            check,
+                        );
+                    }
+                } else {
+                    let track_w = (42. * self.scale).min((r[2] - 2. * self.scale).max(0.));
+                    let track = [left, top, track_w, control_h];
+                    paint_surface(
+                        p,
+                        &mut shapes,
+                        track,
+                        control_h * 0.5,
+                        if b.checked { accent } else { quiet },
+                    );
+                    paint_border(p, &mut shapes, track, control_h * 0.5, self.scale, border);
+                    let diameter = (control_h - 6. * self.scale).max(0.);
+                    let knob_x = left
+                        + if b.checked {
+                            (track_w - diameter - 3. * self.scale).max(0.)
+                        } else {
+                            3. * self.scale
+                        };
+                    let mut knob = text_color;
+                    if state.disabled {
+                        knob[3] *= 0.45;
+                    }
+                    paint_surface(
+                        p,
+                        &mut shapes,
+                        [knob_x, top + 3. * self.scale, diameter, diameter],
+                        diameter * 0.5,
+                        knob,
+                    );
+                }
+                let width = (r[2] - leading).max(0.1);
+                let [_, height] = p.measure_styled(&b.text, &b.text_style, width);
+                p.ui_text_styled(
+                    &mut glyphs,
+                    &b.text,
+                    [r[0] + leading, r[1] + (r[3] - height) * 0.5, width, height],
+                    &b.text_style,
+                    color,
+                );
+            }
+            Kind::Badge => {
+                let radius = b.radius_spec(self.scale);
+                paint_surface(
+                    p,
+                    &mut shapes,
+                    r,
+                    radius,
+                    b.style.background.unwrap_or(c.selected),
+                );
+                paint_border(
+                    p,
+                    &mut shapes,
+                    r,
+                    radius,
+                    b.style
+                        .border_width
+                        .unwrap_or(if b.style.border_color.is_some() {
+                            self.scale
+                        } else {
+                            0.
+                        }),
+                    b.style.border_color.unwrap_or(c.border),
+                );
+                p.ui_text_styled(
+                    &mut glyphs,
+                    &b.text,
+                    [
+                        r[0] + 10. * self.scale,
+                        r[1] + 5. * self.scale,
+                        (r[2] - 20. * self.scale).max(0.),
+                        (r[3] - 10. * self.scale).max(0.),
+                    ],
+                    &b.text_style,
+                    text_color,
+                );
+            }
+            Kind::Spacer => {}
+            Kind::Separator => paint_surface(
+                p,
+                &mut shapes,
+                r,
+                b.radius_spec(self.scale),
+                b.style
+                    .background
+                    .or(b.style.color)
+                    .or(b.style.border_color)
+                    .unwrap_or(c.line),
+            ),
+        }
+        PaintBatch {
+            clip: b.clip,
+            shapes,
+            glyphs,
+        }
     }
     fn state_for_box(&self, b: &LayoutBox) -> ButtonState {
+        if let Some(state) = b.detached_state {
+            return state;
+        }
         ButtonState {
-            hovered: self.hovered.as_deref() == Some(&b.id),
+            hovered: self.hovered.as_deref() == Some(&b.id) || self.visual_hover.contains(&b.id),
             pressed: (self.capture.as_deref() == Some(&b.id)
                 && self.hovered.as_deref() == Some(&b.id))
                 || self.keyboard.as_deref() == Some(&b.id),
@@ -747,6 +989,144 @@ impl Runtime {
             disabled: !b.enabled,
         }
     }
+}
+#[derive(Clone, Copy)]
+enum RadiusSpec {
+    Uniform(f32),
+    Corners([f32; 4]),
+}
+impl From<f32> for RadiusSpec {
+    fn from(v: f32) -> Self {
+        Self::Uniform(v)
+    }
+}
+impl LayoutBox {
+    fn radius_spec(&self, scale: f32) -> RadiusSpec {
+        self.style.corners.map_or(
+            RadiusSpec::Uniform(self.style.radius.unwrap_or(
+                match self.kind {
+                    Kind::Panel => 12.,
+                    Kind::Button => 7.,
+                    Kind::Checkbox | Kind::Toggle => 6.,
+                    Kind::Badge => 8.,
+                    _ => 0.,
+                } * scale,
+            )),
+            RadiusSpec::Corners,
+        )
+    }
+    fn radii(&self, scale: f32) -> [f32; 4] {
+        let radii = match self.radius_spec(scale) {
+            RadiusSpec::Uniform(v) => [v; 4],
+            RadiusSpec::Corners(v) => v,
+        };
+        let [_, _, w, h] = self.bounds.bounds();
+        radii.map(|r| r.min(w * 0.5).min(h * 0.5))
+    }
+}
+fn has_visual_patch(e: &Effects) -> bool {
+    e.animation.is_some()
+        || e.animations.iter().any(Option::is_some)
+        || std::iter::once(&e.base).chain(&e.states).any(|s| {
+            s.color.is_some()
+                || s.background.is_some()
+                || s.border_color.is_some()
+                || s.border_width.is_some()
+        })
+}
+fn resolved_shadow(shadow: &Shadow, scale: f32) -> ResolvedShadow {
+    ResolvedShadow {
+        color: parse_color(&shadow.color).unwrap(),
+        blur: shadow.blur * scale,
+        spread: shadow.spread * scale,
+        offset: shadow.offset.map(|v| v * scale),
+    }
+}
+fn apply_patch(v: &mut Visual, patch: &VisualStyle, scale: f32) {
+    if let Some(c) = patch.color.as_deref().and_then(parse_color) {
+        v.color = c;
+    }
+    if let Some(c) = patch.background.as_deref().and_then(parse_color) {
+        v.background = c;
+    }
+    if let Some(c) = patch.border_color.as_deref().and_then(parse_color) {
+        v.border = c;
+        if patch.border_width.is_none() && v.width == 0. {
+            v.width = scale;
+        }
+    }
+    if let Some(w) = patch.border_width {
+        v.width = w * scale;
+    }
+    if let Some(o) = patch.opacity {
+        v.opacity = o;
+    }
+    if let Some(s) = &patch.shadow {
+        v.shadow = Some(resolved_shadow(s, scale));
+    }
+    if let Some(g) = &patch.glow {
+        v.glow = Some(resolved_shadow(&g.0, scale));
+    }
+}
+fn visual_target(b: &LayoutBox, state: ButtonState, theme: &Theme, scale: f32) -> Visual {
+    let c = Colors::from_theme(theme);
+    let base = b.style.background.unwrap_or(match b.kind {
+        Kind::Button if b.primary => b.style.accent_color.unwrap_or(c.accent),
+        Kind::Button | Kind::Badge => c.selected,
+        Kind::Panel => c.panel,
+        _ => [0.; 4],
+    });
+    let color = b
+        .style
+        .color
+        .unwrap_or(if b.kind == Kind::Button && b.primary {
+            theme.background
+        } else {
+            match b.tone {
+                Tone::Muted => c.muted,
+                Tone::Accent => c.accent,
+                _ => c.text,
+            }
+        });
+    let background = if matches!(b.kind, Kind::Checkbox | Kind::Toggle)
+        && b.style.background.is_none()
+        && (state.hovered || state.pressed)
+    {
+        let mut bg = c.selected;
+        bg[3] = if state.pressed { 0.7 } else { 0.35 };
+        bg
+    } else if interactive(b.kind) {
+        state_surface(base, state, theme)
+    } else {
+        base
+    };
+    let mut v = Visual {
+        color,
+        background,
+        border: b.style.border_color.unwrap_or(c.border),
+        width: b.style.border_width.unwrap_or(
+            if b.kind == Kind::Panel || b.style.border_color.is_some() {
+                scale
+            } else {
+                0.
+            },
+        ),
+        opacity: 1.,
+        shadow: None,
+        glow: None,
+    };
+    apply_patch(&mut v, &b.effects.base, scale);
+    if !state.disabled {
+        for (i, active) in [(2, state.focused), (0, state.hovered), (1, state.pressed)] {
+            if active {
+                apply_patch(&mut v, &b.effects.states[i], scale);
+            }
+        }
+    }
+    if b.kind == Kind::Button && state.disabled {
+        v.color[3] *= 0.45;
+    }
+    v
 }
 fn state_surface(mut surface: [f32; 4], state: ButtonState, theme: &Theme) -> [f32; 4] {
     if state.hovered && !state.disabled {
@@ -770,11 +1150,14 @@ fn paint_surface<P: Painter>(
     p: &P,
     out: &mut Vec<P::Shape>,
     bounds: [f32; 4],
-    radius: f32,
+    radius: impl Into<RadiusSpec>,
     color: [f32; 4],
 ) {
     if bounds[2] > 0. && bounds[3] > 0. && color[3] > 0. {
-        p.card_round(out, bounds, radius, color);
+        match radius.into() {
+            RadiusSpec::Uniform(r) => p.card_round(out, bounds, r, color),
+            RadiusSpec::Corners(r) => p.card_corners(out, bounds, r, color),
+        }
     }
 }
 fn paint_overrides<P: Painter>(
@@ -784,7 +1167,10 @@ fn paint_overrides<P: Painter>(
     style: &ResolvedStyle,
     scale: f32,
 ) {
-    let radius = style.radius.unwrap_or(0.);
+    let radius = style.corners.map_or(
+        RadiusSpec::Uniform(style.radius.unwrap_or(0.)),
+        RadiusSpec::Corners,
+    );
     if let Some(background) = style.background {
         paint_surface(p, out, r, radius, background);
     }
@@ -804,10 +1190,17 @@ fn paint_border<P: Painter>(
     p: &P,
     out: &mut Vec<P::Shape>,
     [x, y, w, h]: [f32; 4],
-    radius: f32,
+    radius: impl Into<RadiusSpec>,
     width: f32,
     color: [f32; 4],
 ) {
+    let radius = match radius.into() {
+        RadiusSpec::Uniform(r) => r,
+        RadiusSpec::Corners(r) => {
+            p.card_outline(out, [x, y, w, h], r, width, color);
+            return;
+        }
+    };
     let width = width.min(w * 0.5).min(h * 0.5);
     if width <= 0. || color[3] <= 0. {
         return;
@@ -860,6 +1253,9 @@ struct ResolvedStyle {
     border_width: Option<f32>,
     radius: Option<f32>,
     round_full: bool,
+    corner_rules: Option<[Rounding; 4]>,
+    corners: Option<[f32; 4]>,
+    depth: usize,
 }
 /// Resolve once per layout, so measurement, allocation, placement, and hits agree.
 #[derive(Clone, Debug)]
@@ -901,6 +1297,7 @@ impl ResolvedStyle {
             || self.border_color.is_some()
             || self.border_width.is_some()
             || self.radius.is_some()
+            || self.corners.is_some()
     }
 }
 #[derive(Clone, Default)]
@@ -917,6 +1314,7 @@ fn resolve_styles(
     scale: f32,
     logical_width: f32,
     out: &mut BTreeMap<String, ResolvedStyle>,
+    depth: usize,
 ) {
     let mut text = inherited.clone();
     if let Some(family) = &n.style.font_family {
@@ -960,10 +1358,13 @@ fn resolve_styles(
                 Rounding::Full => None,
             }),
             round_full: n.style.radius == Some(Rounding::Full),
+            corner_rules: n.style.corners,
+            corners: None,
+            depth,
         },
     );
     for child in &n.children {
-        resolve_styles(child, &text, scale, logical_width, out);
+        resolve_styles(child, &text, scale, logical_width, out, depth + 1);
     }
 }
 fn text(n: &Node, values: &Bindings) -> String {
@@ -1124,6 +1525,12 @@ fn place(
     if resolved.round_full {
         resolved.radius = Some(w.min(h) * 0.5);
     }
+    if let Some(rules) = resolved.corner_rules {
+        resolved.corners = Some(rules.map(|r| match r {
+            Rounding::Radius(v) => v * s,
+            Rounding::Full => w.min(h) * 0.5,
+        }));
+    }
     out.push(LayoutBox {
         id: n.id.clone(),
         kind: n.kind,
@@ -1140,6 +1547,13 @@ fn place(
             .or_else(|| n.on_toggle_changed.clone()),
         tone: n.tone,
         primary: n.primary,
+        effects: n.effects.clone(),
+        depth: styles[&n.id].depth,
+        ancestor_clip: ancestor,
+        detached_visual: None,
+        detached_mount: 1.,
+        departing: false,
+        detached_state: None,
     });
     let [top, right, bottom, left] = styles[&n.id].layout.padding;
     let start = [x + left, y + top];

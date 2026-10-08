@@ -30,7 +30,7 @@
 
 ## Later possibilities
 
-- Animation with reduced-motion support and explicit scheduling.
+- Broader motion: layout/transforms, springs/keyframes and system reduced-motion discovery (bounded appearance animation delivered below).
 - Optional GPU glass compositor: cached downsampled/separable blur, host-supplied backdrop, consistent color space, reduced-transparency fallback; no blur work for opaque widgets.
 - Additional renderer backends without changing widget APIs.
 - Rich tables, tree views and inspector-oriented controls.
@@ -51,3 +51,11 @@ or terminal benchmark parity is made by the initial extraction.
 - See [implementation gates](docs/IMPLEMENTATION_PLAN.md); legacy Volt APIs stay intact.
 
 Next Rust UI milestones: external state-update wakeup API, measured subtree reconciliation/signals, and richer editing/accessibility. These are future work, not delivered SwiftUI/Compose parity.
+
+### Delivered bounded motion/chrome slice
+
+Single/multiple spacing/corner selection, shadows/glow/group opacity, keyed
+appearance animation/fade and integrated macOS window chrome are implemented.
+Native OS acceptance remains pending. Future: automatic OS reduced-motion
+discovery, display-synchronized scheduling, layout transforms/springs/keyframes,
+window-control components and cross-platform custom-decoration adapters.
