@@ -47,7 +47,7 @@ Inputs from Glass Browser informed three new portable building blocks:
 
 Existing Volt widgets keep their current theme and render path. Glass is **opt-in**, not a replacement theme. `Panel::paint` is an opaque fallback, not fake blur. A compositor-capable host can consume `backdrop_request()` then use `paint_composited_frame()`; it must implement backdrop capture, tint, blur, correct compositing order and caching itself. Requests use physical pixels; logical corner/blur radii are scaled once. `reduced_transparency()` disables blur and uses an opaque fill.
 
-The source of these ideas is Glass Browser's `crates/ui/src/{theme,tint,view}.rs` and `crates/glass/src/lib.rs`. They are independently implemented here; browser-specific state, CEF, Vello, WGSL pipelines and source files were not copied into this crate. A real GPU glass backend, system accessibility preference detection and animation remain future work. The gallery demonstrates **opaque surface previews**, not backdrop compositing.
+The source of these ideas is Glass Browser's `crates/ui/src/{theme,tint,view}.rs` and `crates/glass/src/lib.rs`. They are independently implemented here; browser-specific state, CEF, Vello, WGSL pipelines and source files were not copied into this crate. A real GPU glass backend and system accessibility preference detection remain future work. Bounded appearance animation is available in the optional Rust UI runtime; the gallery still demonstrates **opaque surface previews**, not backdrop compositing.
 
 ## Use it locally
 
@@ -137,6 +137,7 @@ cargo run --locked --features native --example rust_settings
 cargo run --locked --features native --example rust_keyed_list
 cargo run --locked --features native --example rust_layout
 cargo run --locked --features native --example rust_responsive
+cargo run --locked --features native --example rust_effects
 # Optional JSON frontend with explicit F5 reload:
 cargo run --locked --features native --example components
 ```
@@ -175,3 +176,14 @@ accept typed responsive padding/gap as well as their existing scalar values.
 layout properties without rebuilding Rust callbacks. Try `rust_responsive` and see
 [responsive contracts](docs/RESPONSIVE_UI.md); container queries/grids/scrolling
 and free-coordinate placement remain future work.
+
+## Effects and custom window chrome
+
+Rust spacing/corner modifiers accept single or multiple selections. New Rust
+buttons default to 2 logical-pixel corners; legacy widgets/JSON retain their visuals.
+Opt-in shadows, glows, subtree opacity, hover/press/focus styles, keyed paint-only
+animation and fade transitions work in the native software renderer.
+`NativeOptions::with_chrome(WindowChrome::Overlay)` and `run_ui_with_options`
+provide Volt-style integrated macOS chrome without changing old option literals.
+See [effects/windowing contracts and limits](docs/EFFECTS_AND_WINDOWING.md).
+Native OS chrome/input/timer acceptance remains separate from headless tests.

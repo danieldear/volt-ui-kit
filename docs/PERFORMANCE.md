@@ -116,6 +116,10 @@ application callbacks will still block input: enqueue expensive work outside the
 UI callback, then publish resulting state. No Volt performance/GPU integration,
 Linux/Windows native runtime, or frame-rate parity with Iced is asserted here.
 
+The later opt-in motion slice schedules active-only ticks and remains idle when
+settled. Earlier no-timer observations above describe the original scenes, not
+an assertion that an explicit animation runs without scheduled frames.
+
 ## Rust-first composition measurements (2026-10-08)
 
 Current development profile, same Apple M4 Pro/macOS host, scale2,
@@ -194,3 +198,59 @@ The Mac locked before Reset/keyboard/resize/cancellation checks. Both attached
 displays currently have2x rendered/logical ratios; a real1x↔2x scale transition
 is unverified. This sample supersedes only the earlier missing Rust-host activating
 mouse samples; it does not close the remaining native acceptance gates.
+
+## Effects scene (2026-10-08)
+
+`rust_effects`, same Apple M4 Pro/macOS development profile, 960x760 logical,
+4 warm-ups then 40 Save actions at each scale. Runs were serial, with no
+concurrent compilation/tests. These are CPU dispatch-to-packed-pixel timings,
+not OS input/presentation, click-to-photon or display-synchronized frame timings.
+
+| Workload | Raster p50 / p95 (ms) | Release-to-packed-pixels p50 / p95 (ms) |
+|---|---:|---:|
+| Initial effect compositor, 1x | 9.441 / 9.599 | 9.905 / 10.087 |
+| Initial effect compositor, 2x | 36.775 / 36.993 | 38.514 / 38.733 |
+| Final compositor, 1x | **2.718 / 2.844** | **3.184 / 3.298** |
+| Final compositor, 2x | **10.534 / 10.676** | **12.202 / 12.458** |
+| Final, explicit reduced motion, 2x | 9.056 / 9.129 | 10.694 / 10.891 |
+
+Final 2x dispatch/compose/layout p50/p95: 0.067/0.097ms. The callbacks did not
+wait for animation completion. The initial compositor already cached blur masks;
+its hot path still blended shadow pixels with scalar float arithmetic and ran
+the group pattern shader over a full mostly-transparent framebuffer. Merely
+switching shadows to tiny-skia's masked pattern path regressed the small local
+sample and was not retained as a performance improvement.
+
+```text
+Shadow geometry -> bounded coverage mask -> bounded RGB tint
+                                               |
+Animated alpha -----------------------> integer source-over spans
+
+Subtree RGBA buffer -> skip transparent pixels -> integer group source-over
+                       zero-opacity group: no compositing work
+```
+
+The final path caches coverage separately from RGB, reuses premultiplied tints
+for alpha-only changes, and avoids pattern-shader work on empty group pixels.
+Clip/source-over and transparent-group oracle tests agree within one color byte;
+the existing no-effect rounded-fill oracle stays exact. Across warm-ups and both
+pressed/released frames, this workload recorded 2 mask builds, 2 RGB tint builds
+and 1 reusable layer allocation at each scale. The 60 text misses include the
+changing counter and measured/drawn text; no allocation-free claim is made.
+Cache/resource budgets are documented in [effects](EFFECTS_AND_WINDOWING.md).
+
+**Benchmark limitation:** the existing action harness does not advance an
+animation clock, so the default notice remains at its initial fade value. The
+reduced-motion run snaps to final visuals and is a different workload. Neither
+row measures a complete sequence of in-flight animation frames or establishes
+60FPS. Timed headless pixel tests validate those states for correctness; actual
+native timer/event/presentation performance remains a live acceptance gate.
+
+```sh
+cargo run --locked --features native --example rust_effects -- --bench 40 --scale 2 --bench-target save
+cargo run --locked --features native --example rust_effects -- --bench 40 --scale 2 --bench-target save --reduced-motion
+```
+
+These effects are opt-in. Full-scene CPU repaint and full-size bounded offscreen
+buffers remain; no GPU, damage-aware rendering, Iced parity or universal latency
+claim follows from this single scene.

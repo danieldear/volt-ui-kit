@@ -190,3 +190,46 @@ runtime. Prior Add clicks on rust_layout are not proof for this new example.
 No scroll/grid/container-query/absolute-positioning/modal barrier/accessibility
 completion claim. Small-height overflow can still shrink/clip controls. Follow
 the [interactive checklist](RESPONSIVE_UI.md#try-and-test).
+
+## Selective effects, keyed motion and window chrome (2026-10-08)
+
+Implemented the bounded [effects/windowing slice](EFFECTS_AND_WINDOWING.md):
+single/list spacing and corner selections, 2px Rust button defaults, shadows,
+glow, subtree opacity, appearance patches/tweens, keyed enter/exit fade,
+integrated macOS chrome and explicit safe header drag regions.
+
+Final local gates: **173 passing tests**: all-features 89 library + 60 integration
++ 13 example tests, plus 11 rustdoc tests (5 compile-fail; 1 ignored README
+fragment). Default 35 library + 1 doc; JSON 57 library + 3 integration + 1 doc;
+Rust-only 57 library + 49 integration + 11 docs. Formatting/diff checks, strict
+all-feature/all-target Clippy, Rust 1.87 all-feature/all-target check, all example
+builds, warning-free rustdoc, SVG gallery generation and local package
+verification (79 files) pass. Default normal dependency remains unicode-width
+0.2.2; all 15 saved legacy widget source hashes match. Painter additions are
+defaulted, existing NativeOptions literals/run entry points remain supported,
+and strict JSON schema 1 has no new effect/corner-list fields.
+
+Headless regressions cover selectors/responsive precedence, shared corner
+fill/border/hit geometry, atomic invalid-view rejection including inactive
+patches, immediate callbacks during motion, no tick recomposition/layout,
+monotonic clocks, interruption and reduced-motion settling. Real native pixels
+at 1x/2x verify overlapping group opacity, exit ancestor opacity, partially
+entering descendants, reinsertion continuity, single/sequential sibling order,
+frozen hover/press/focus and noninteractive detached controls. Decorative
+overlays cannot convert enabled or disabled control bounds into window drags.
+Renderer tests verify mask/tint reuse and LRU byte accounting, cleared reusable
+layers, explicit budget failures, clipped source-over spans (including
+transparent groups) and unchanged exact legacy rounded-fill pixels.
+
+The effects example exercises real fonts/actions/raster at 1x/1.5x/2x and timed
+fade samples. Regenerated 480x760 and 960x760 snapshots, plus wide 2x, show
+settled appearances; narrow/wide 1x were visually inspected. The button stack
+changes orientation below 768 logical width. CPU benchmark evidence and its
+important non-presentation/non-frame-rate limits are in
+[performance](PERFORMANCE.md#effects-scene-2026-10-08).
+
+**Not verified live:** new macOS title-bar/traffic-light/fullscreen clearance,
+OS header drag versus controls, timer pacing, keyboard/mouse/resize/occlusion
+and other-platform window behavior. No OS accessibility reduced-motion discovery,
+VSync guarantee, mobile support, GPU/Vello effects, Volt integration or release
+acceptance is claimed. Volt/Glass source and vendored snapshots were not edited.

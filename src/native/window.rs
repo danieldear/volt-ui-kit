@@ -5,14 +5,20 @@ use crate::{
     Theme, Viewport,
 };
 use softbuffer::{Context, Surface};
-use std::{io::Read, num::NonZeroU32, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    io::Read,
+    num::NonZeroU32,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{Key, ModifiersState, NamedKey},
-    window::{Window, WindowId},
+    window::{Window, WindowAttributes, WindowId},
 };
 
 pub struct NativeOptions {
@@ -30,10 +36,75 @@ impl Default for NativeOptions {
         }
     }
 }
+impl NativeOptions {
+    /// Select custom chrome without adding fields to the legacy options struct.
+    pub fn with_chrome(self, chrome: WindowChrome) -> WindowOptions {
+        WindowOptions {
+            native: self,
+            chrome,
+            reduced_motion: false,
+        }
+    }
+}
+
+/// Window decoration policy. Native remains the backwards-compatible default.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WindowChrome {
+    #[default]
+    Native,
+    /// macOS full-size content with a transparent title bar and hidden title.
+    /// Native traffic lights remain available; callers reserve header space.
+    /// Other platforms retain their native decorated title bar as a fallback.
+    Overlay,
+    /// No system decorations. Applications must supply their own window controls.
+    Borderless,
+}
+
+/// Additive host configuration for effects and custom chrome.
+///
+/// Explicit declarative drag regions are honored without making controls drag
+/// the window. `VOLT_UI_REDUCED_MOTION=1` also disables animation at startup.
+pub struct WindowOptions {
+    pub native: NativeOptions,
+    pub chrome: WindowChrome,
+    pub reduced_motion: bool,
+}
+impl WindowOptions {
+    pub fn with_chrome(mut self, chrome: WindowChrome) -> Self {
+        self.chrome = chrome;
+        self
+    }
+    /// Opt out of animations while retaining the final appearance.
+    pub fn with_reduced_motion(mut self, reduced_motion: bool) -> Self {
+        self.reduced_motion = reduced_motion;
+        self
+    }
+}
+impl From<NativeOptions> for WindowOptions {
+    fn from(native: NativeOptions) -> Self {
+        native.with_chrome(WindowChrome::Native)
+    }
+}
+impl Default for WindowOptions {
+    fn default() -> Self {
+        NativeOptions::default().into()
+    }
+}
+
 /// Application state and callbacks remain owned by the caller; update projects
 /// state into named document bindings after each successful activation.
 pub fn run<C: 'static>(
     options: NativeOptions,
+    source: &str,
+    context: C,
+    handlers: Handlers<'static, C>,
+    update: impl Fn(&C, &mut Bindings) + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_with_options(options.into(), source, context, handlers, update)
+}
+/// Run a JSON declaration with additive chrome and animation configuration.
+pub fn run_with_options<C: 'static>(
+    options: WindowOptions,
     source: &str,
     context: C,
     handlers: Handlers<'static, C>,
@@ -59,7 +130,19 @@ pub fn run_ui<C: 'static>(
     context: C,
     view: impl Fn(&C) -> Element<C> + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if options.document_path.is_some() {
+    run_ui_with_options(options.into(), context, view)
+}
+/// Run a Rust view with custom chrome or reduced-motion configuration.
+///
+/// Animation frames update presentation only and do not recompose the view or
+/// invoke application callbacks. See [`WindowChrome::Overlay`] for platform
+/// behavior and native traffic-light clearance requirements.
+pub fn run_ui_with_options<C: 'static>(
+    options: WindowOptions,
+    context: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if options.native.document_path.is_some() {
         return Err(
             "run_ui does not accept a JSON reload path; rebuild after Rust source changes".into(),
         );
@@ -77,13 +160,18 @@ pub fn run_ui<C: 'static>(
     )
 }
 fn run_host<C: 'static>(
-    options: NativeOptions,
-    runtime: Runtime,
+    options: WindowOptions,
+    mut runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
     bindings: Bindings,
     content: Content<C>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let reduced_motion = reduced_motion_enabled(
+        options.reduced_motion,
+        std::env::var("VOLT_UI_REDUCED_MOTION").ok().as_deref(),
+    );
+    runtime.set_reduced_motion(reduced_motion);
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App {
@@ -104,6 +192,10 @@ fn run_host<C: 'static>(
         activation_key: None,
         error: None,
         frames: 0,
+        animation_clock: AnimationClock::new(Instant::now()),
+        focused: true,
+        occluded: false,
+        reduced_motion,
     };
     event_loop.run_app(&mut app)?;
     if let Some(error) = app.error {
@@ -149,7 +241,7 @@ impl<C: 'static> Content<C> {
     }
 }
 struct App<C> {
-    options: NativeOptions,
+    options: WindowOptions,
     runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
@@ -166,6 +258,10 @@ struct App<C> {
     activation_key: Option<NamedKey>,
     error: Option<String>,
     frames: u64,
+    animation_clock: AnimationClock,
+    focused: bool,
+    occluded: bool,
+    reduced_motion: bool,
 }
 impl<C: 'static> App<C> {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl ToString) {
@@ -176,6 +272,34 @@ impl<C: 'static> App<C> {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+    fn animations_can_run(&self) -> bool {
+        self.focused
+            && !self.occluded
+            && self.window.as_ref().is_some_and(|window| {
+                let size = window.inner_size();
+                size.width != 0 && size.height != 0
+            })
+    }
+    fn advance_animations(&mut self, now: Instant) -> bool {
+        let can_run = self.animations_can_run();
+        // Targets are resolved during paint. While paused, even newly resolved
+        // targets must snap instead of creating another invisible animation.
+        self.runtime
+            .set_reduced_motion(self.reduced_motion || !can_run);
+        if !can_run {
+            self.runtime.settle_animations();
+            self.animation_clock.reset();
+            return false;
+        }
+        self.runtime
+            .advance_animations(self.animation_clock.elapsed(now))
+    }
+    fn settle_animations(&mut self) {
+        self.runtime
+            .set_reduced_motion(self.reduced_motion || !self.animations_can_run());
+        self.runtime.settle_animations();
+        self.animation_clock.reset();
     }
     fn layout(&mut self) -> Result<(), String> {
         let Some(w) = &self.window else { return Ok(()) };
@@ -214,7 +338,7 @@ impl<C: 'static> App<C> {
                 if let Some(w) = &self.window {
                     w.set_title(&format!(
                         "{} — UI rejected (see stderr)",
-                        self.options.title
+                        self.options.native.title
                     ));
                 }
                 self.redraw();
@@ -224,7 +348,7 @@ impl<C: 'static> App<C> {
             Ok(()) if outcome.activated && matches!(self.content, Content::Rust(_)) => {
                 self.activation_key = None;
                 if let Some(w) = &self.window {
-                    w.set_title(&self.options.title);
+                    w.set_title(&self.options.native.title);
                 }
             }
             Ok(()) => {}
@@ -240,6 +364,9 @@ impl<C: 'static> App<C> {
         Ok(())
     }
     fn render(&mut self) -> Result<(), String> {
+        // The host clock also advances here so a delayed OS redraw never paints
+        // an obsolete animation frame. This never rebuilds Rust application UI.
+        self.advance_animations(Instant::now());
         let started = self.trace.then(Instant::now);
         self.layout()?;
         let layout_done = self.trace.then(Instant::now);
@@ -272,6 +399,7 @@ impl<C: 'static> App<C> {
         let pack_done = self.trace.then(Instant::now);
         buffer.present().map_err(|e| e.to_string())?;
         self.frames += 1;
+        self.animation_clock.presented(Instant::now());
         if let Some(start) = started {
             let presented = Instant::now();
             let layout = layout_done.unwrap();
@@ -293,7 +421,7 @@ impl<C: 'static> App<C> {
         Ok(())
     }
     fn reload(&mut self) {
-        let Some(path) = &self.options.document_path else {
+        let Some(path) = &self.options.native.document_path else {
             return;
         };
         let result = load_document(path)
@@ -306,7 +434,7 @@ impl<C: 'static> App<C> {
         if let Some(w) = &self.window {
             match result {
                 Ok(()) => {
-                    w.set_title(&self.options.title);
+                    w.set_title(&self.options.native.title);
                     self.activation_key = None;
                     self.redraw();
                 }
@@ -314,7 +442,7 @@ impl<C: 'static> App<C> {
                     eprintln!("{}: {error}", path.display());
                     w.set_title(&format!(
                         "{} — Reload rejected (see stderr)",
-                        self.options.title
+                        self.options.native.title
                     ));
                 }
             }
@@ -329,15 +457,7 @@ impl<C: 'static> ApplicationHandler for App<C> {
         let result = (|| -> Result<_, String> {
             let w = Arc::new(
                 event_loop
-                    .create_window(
-                        Window::default_attributes()
-                            .with_title(&self.options.title)
-                            .with_inner_size(LogicalSize::new(
-                                self.options.size[0],
-                                self.options.size[1],
-                            ))
-                            .with_min_inner_size(LogicalSize::new(320, 240)),
-                    )
+                    .create_window(window_attributes(&self.options))
                     .map_err(|e| e.to_string())?,
             );
             let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
@@ -350,6 +470,9 @@ impl<C: 'static> ApplicationHandler for App<C> {
                 self.surface = Some(surface);
                 self.surface_size = None;
                 self.runtime.invalidate_layout();
+                self.focused = true;
+                self.occluded = false;
+                self.animation_clock.reset();
                 self.redraw();
             }
             Err(e) => self.fail(event_loop, e),
@@ -361,12 +484,19 @@ impl<C: 'static> ApplicationHandler for App<C> {
         self.pending_release = None;
         self.window = None;
         self.runtime.cancel_input();
+        self.settle_animations();
         self.pointer = None;
         self.activation_key = None;
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
+        }
+        // Advance visuals before hit testing and dispatch, but never delay input
+        // until an animation completes. Idle hosts have no periodic timer.
+        let visual_changed = self.advance_animations(Instant::now());
+        if visual_changed && !self.runtime.is_animating() {
+            self.redraw();
         }
         let result = (|| -> Result<(), String> {
             match event {
@@ -414,8 +544,19 @@ impl<C: 'static> ApplicationHandler for App<C> {
                         match state {
                             ElementState::Pressed => {
                                 self.runtime.pointer_move(x, y);
-                                self.runtime.pointer_down(x, y);
                                 self.activation_key = None;
+                                if self.runtime.drag_region_hit(x, y) {
+                                    // A drag must not leave a click or keyboard
+                                    // activation captured underneath the header.
+                                    self.runtime.cancel_input();
+                                    if let Some(window) = &self.window {
+                                        if let Err(error) = window.drag_window() {
+                                            eprintln!("Window drag unavailable: {error}");
+                                        }
+                                    }
+                                } else {
+                                    self.runtime.pointer_down(x, y);
+                                }
                                 self.redraw();
                             }
                             ElementState::Released => {
@@ -432,9 +573,25 @@ impl<C: 'static> ApplicationHandler for App<C> {
                     }
                 }
                 WindowEvent::Focused(false) => {
+                    self.focused = false;
                     self.pointer = None;
                     self.activation_key = None;
-                    if self.runtime.cancel_input() {
+                    self.runtime.cancel_input();
+                    self.settle_animations();
+                    self.redraw();
+                }
+                WindowEvent::Focused(true) => {
+                    self.focused = true;
+                    self.animation_clock.reset();
+                }
+                WindowEvent::Occluded(occluded) => {
+                    self.occluded = occluded;
+                    if occluded {
+                        self.runtime.cancel_input();
+                        self.activation_key = None;
+                        self.settle_animations();
+                    } else {
+                        self.animation_clock.reset();
                         self.redraw();
                     }
                 }
@@ -489,6 +646,102 @@ impl<C: 'static> ApplicationHandler for App<C> {
             self.fail(event_loop, e);
         }
     }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        let changed = self.advance_animations(now);
+        let active = self.animations_can_run() && self.runtime.is_animating();
+        if active && self.animation_clock.frame_due(now) {
+            self.redraw();
+            // Consume this deadline even if the platform coalesces the redraw;
+            // never repeatedly wake at a deadline that is already in the past.
+            self.animation_clock.presented(now);
+        } else if changed && !active {
+            self.redraw();
+        }
+        event_loop.set_control_flow(match self.animation_clock.deadline(now, active) {
+            Some(deadline) => ControlFlow::WaitUntil(deadline),
+            None => ControlFlow::Wait,
+        });
+    }
+}
+
+// Return (native decorations, integrated macOS title bar). Keeping this decision
+// separate permits platform-independent fallback tests without an OS window.
+fn chrome_policy(chrome: WindowChrome, macos: bool) -> (bool, bool) {
+    match chrome {
+        WindowChrome::Native => (true, false),
+        WindowChrome::Overlay => (true, macos),
+        WindowChrome::Borderless => (false, false),
+    }
+}
+fn window_attributes(options: &WindowOptions) -> WindowAttributes {
+    let (decorations, integrated_titlebar) =
+        chrome_policy(options.chrome, cfg!(target_os = "macos"));
+    let attributes = Window::default_attributes()
+        .with_title(&options.native.title)
+        .with_inner_size(LogicalSize::new(
+            options.native.size[0],
+            options.native.size[1],
+        ))
+        .with_min_inner_size(LogicalSize::new(320, 240))
+        .with_decorations(decorations);
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::WindowAttributesExtMacOS;
+        if integrated_titlebar {
+            attributes
+                .with_titlebar_transparent(true)
+                .with_fullsize_content_view(true)
+                .with_title_hidden(true)
+        } else {
+            attributes
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        debug_assert!(!integrated_titlebar);
+        attributes
+    }
+}
+
+fn reduced_motion_enabled(option: bool, environment: Option<&str>) -> bool {
+    option || environment == Some("1")
+}
+
+const ANIMATION_FRAME: Duration = Duration::from_nanos(16_666_667);
+struct AnimationClock {
+    epoch: Instant,
+    next_frame: Option<Instant>,
+}
+impl AnimationClock {
+    fn new(now: Instant) -> Self {
+        Self {
+            epoch: now,
+            next_frame: None,
+        }
+    }
+    // Runtime takes an absolute monotonic timestamp, not a per-frame delta.
+    fn elapsed(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.epoch)
+    }
+    fn deadline(&mut self, now: Instant, active: bool) -> Option<Instant> {
+        if !active {
+            self.next_frame = None;
+        } else if self.next_frame.is_none() {
+            self.next_frame = Some(now + ANIMATION_FRAME);
+        }
+        self.next_frame
+    }
+    fn frame_due(&self, now: Instant) -> bool {
+        self.next_frame.is_some_and(|deadline| now >= deadline)
+    }
+    fn presented(&mut self, now: Instant) {
+        self.next_frame = Some(now + ANIMATION_FRAME);
+    }
+    fn reset(&mut self) {
+        // Do not rewind Runtime's absolute clock across focus/suspend cycles.
+        self.next_frame = None;
+    }
 }
 
 fn needs_surface_resize(previous: Option<[u32; 2]>, next: [u32; 2]) -> bool {
@@ -517,6 +770,104 @@ pub fn load_document(path: &std::path::Path) -> Result<String, std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn window_options_are_additive_and_native_stays_default() {
+        // This exhaustive literal protects the original public options contract.
+        let native = NativeOptions {
+            title: "Original client".into(),
+            size: [640, 480],
+            document_path: None,
+        };
+        let default = WindowOptions::from(native);
+        assert_eq!(default.chrome, WindowChrome::Native);
+        assert!(!default.reduced_motion);
+        assert_eq!(default.native.title, "Original client");
+        let overlay = NativeOptions::default()
+            .with_chrome(WindowChrome::Overlay)
+            .with_reduced_motion(true);
+        assert_eq!(overlay.chrome, WindowChrome::Overlay);
+        assert!(overlay.reduced_motion);
+        assert_eq!(overlay.native.size, [860, 640]);
+    }
+    #[test]
+    fn chrome_decisions_preserve_native_controls_and_nonmac_fallback() {
+        assert_eq!(chrome_policy(WindowChrome::Native, true), (true, false));
+        assert_eq!(chrome_policy(WindowChrome::Overlay, true), (true, true));
+        assert_eq!(chrome_policy(WindowChrome::Overlay, false), (true, false));
+        assert_eq!(
+            chrome_policy(WindowChrome::Borderless, true),
+            (false, false)
+        );
+        assert_eq!(
+            chrome_policy(WindowChrome::Borderless, false),
+            (false, false)
+        );
+        let borderless =
+            window_attributes(&NativeOptions::default().with_chrome(WindowChrome::Borderless));
+        assert!(!borderless.decorations);
+        let overlay =
+            window_attributes(&NativeOptions::default().with_chrome(WindowChrome::Overlay));
+        assert!(overlay.decorations);
+    }
+    #[test]
+    fn reduced_motion_environment_only_opts_in() {
+        assert!(reduced_motion_enabled(false, Some("1")));
+        assert!(reduced_motion_enabled(true, Some("0")));
+        assert!(!reduced_motion_enabled(false, Some("0")));
+        assert!(!reduced_motion_enabled(false, Some("true")));
+        assert!(!reduced_motion_enabled(false, None));
+    }
+    #[test]
+    fn animation_clock_waits_when_idle_and_bounds_active_frame_pacing() {
+        let start = Instant::now();
+        let mut clock = AnimationClock::new(start);
+        assert_eq!(clock.elapsed(start), Duration::ZERO);
+        assert_eq!(clock.deadline(start, false), None);
+        assert_eq!(clock.deadline(start, true), Some(start + ANIMATION_FRAME));
+        // Repeated input must not move the outstanding frame deadline farther out.
+        assert_eq!(
+            clock.deadline(start + Duration::from_millis(3), true),
+            Some(start + ANIMATION_FRAME)
+        );
+        assert!(!clock.frame_due(start + Duration::from_millis(15)));
+        assert!(clock.frame_due(start + ANIMATION_FRAME));
+        clock.presented(start + ANIMATION_FRAME);
+        assert_eq!(
+            clock.deadline(start + ANIMATION_FRAME, true),
+            Some(start + ANIMATION_FRAME * 2)
+        );
+        assert_eq!(
+            clock.elapsed(start + Duration::from_millis(25)),
+            Duration::from_millis(25)
+        );
+        assert_eq!(
+            clock.deadline(start + Duration::from_millis(25), false),
+            None
+        );
+        clock.reset();
+        assert_eq!(
+            clock.elapsed(start + Duration::from_secs(60)),
+            Duration::from_secs(60)
+        );
+    }
+    #[test]
+    fn late_frame_deadlines_rebase_instead_of_catching_up_in_a_busy_loop() {
+        let start = Instant::now();
+        let mut clock = AnimationClock::new(start);
+        clock.deadline(start, true);
+        let delayed = start + Duration::from_secs(3);
+        assert!(clock.frame_due(delayed));
+        assert_eq!(clock.elapsed(delayed), Duration::from_secs(3));
+        clock.presented(delayed);
+        assert_eq!(
+            clock.deadline(delayed, true),
+            Some(delayed + ANIMATION_FRAME)
+        );
+        assert!(!clock.frame_due(delayed));
+        // Idle clears the outstanding deadline rather than continuously waking.
+        assert_eq!(clock.deadline(delayed, false), None);
+        assert!(!clock.frame_due(delayed + Duration::from_secs(5)));
+    }
     #[test]
     fn surface_resize_is_only_needed_for_new_dimensions() {
         assert!(needs_surface_resize(None, [800, 600]));
@@ -711,6 +1062,115 @@ mod rust_view_tests {
         assert_eq!(calls.get(), 2); // Recompose only after the dispatched action.
     }
     #[test]
+    fn animation_ticks_never_recompose_and_clicks_dispatch_before_motion_finishes() {
+        use crate::ui::{Animation, Interaction};
+        let calls = Rc::new(Cell::new(0));
+        let body_calls = calls.clone();
+        let content = Content::Rust(Box::new(move |_: &usize| {
+            body_calls.set(body_calls.get() + 1);
+            button("Save")
+                .key("save")
+                .hover_style(|style| style.opacity(0.4))
+                .animate_on(Interaction::Hover, Animation::linear().duration_ms(200))
+                .on_click(|state: &mut usize| *state += 1)
+                .into()
+        }));
+        let Content::Rust(body) = &content else {
+            unreachable!()
+        };
+        let mut state = 0;
+        let (document, mut handlers) = body(&state).build().unwrap().into_parts();
+        let mut bindings = Bindings::default();
+        let mut runtime = Runtime::new(document, &handlers, &bindings).unwrap();
+        let mut painter = RasterPainter::new(Viewport::new(600., 400., 1.).unwrap());
+        layout(&mut runtime, &mut painter);
+        runtime.paint(&mut painter, &Theme::dark());
+        let [x, y, width, height] = runtime.boxes()[0].bounds.bounds();
+        let x = x + width / 2.;
+        let y = y + height / 2.;
+        runtime.pointer_move(x, y);
+        runtime.paint(&mut painter, &Theme::dark());
+        assert!(runtime.is_animating());
+        runtime.pointer_down(x, y);
+        let outcome = runtime
+            .pointer_up_outcome(x, y, &mut handlers, &mut state)
+            .unwrap();
+        assert!(outcome.activated);
+        assert_eq!(state, 1); // No waiting for the 200 ms animation.
+        content
+            .after_input(outcome, &state, &mut runtime, &mut handlers, &mut bindings)
+            .unwrap();
+        layout(&mut runtime, &mut painter);
+        runtime.paint(&mut painter, &Theme::dark());
+        for timestamp in [16, 32, 64, 128, 256, 512] {
+            runtime.advance_animations(Duration::from_millis(timestamp));
+            runtime.paint(&mut painter, &Theme::dark());
+        }
+        assert!(!runtime.is_animating());
+        assert_eq!(calls.get(), 2); // Initial body and the one actual action only.
+        assert_eq!(state, 1);
+    }
+    #[test]
+    fn drag_headers_include_text_but_never_enabled_or_disabled_controls() {
+        use crate::ui::prelude::*;
+        let element: Element<()> = panel![
+            text("Header title").key("title").width(100.).height(30.),
+            button("Save")
+                .key("save")
+                .width(100.)
+                .height(30.)
+                .on_click(|_| {}),
+            button("Disabled")
+                .key("disabled")
+                .width(100.)
+                .height(30.)
+                .enabled(false)
+                .on_click(|_| {}),
+        ]
+        .key("header")
+        .drag_region(true)
+        .into();
+        let (document, handlers) = element.build().unwrap().into_parts();
+        let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+        let mut painter = RasterPainter::new(Viewport::new(600., 400., 1.).unwrap());
+        layout(&mut runtime, &mut painter);
+        for (id, draggable) in [("title", true), ("save", false), ("disabled", false)] {
+            let [x, y, width, height] = runtime
+                .boxes()
+                .iter()
+                .find(|item| item.id == id)
+                .unwrap()
+                .bounds
+                .bounds();
+            assert_eq!(
+                runtime.drag_region_hit(x + width / 2., y + height / 2.),
+                draggable,
+                "{id}"
+            );
+        }
+        assert!(runtime.drag_region_hit(590., 10.)); // Blank header space.
+        assert!(!runtime.drag_region_hit(-1., 10.));
+    }
+    #[test]
+    fn unrelated_topmost_layer_blocks_window_drag_from_header_behind_it() {
+        use crate::ui::prelude::*;
+        let element: Element<()> = zstack![
+            panel![]
+                .key("header")
+                .width(300.)
+                .height(120.)
+                .drag_region(true),
+            panel![text("Overlay")].key("cover").width(80.).height(40.),
+        ]
+        .into();
+        let (document, handlers) = element.build().unwrap().into_parts();
+        let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+        let mut painter = RasterPainter::new(Viewport::new(600., 400., 1.).unwrap());
+        layout(&mut runtime, &mut painter);
+        assert!(!runtime.drag_region_hit(300., 200.)); // Visible overlay, not header.
+        assert!(runtime.drag_region_hit(160., 150.)); // Exposed header beside overlay.
+    }
+    #[test]
     fn rejected_body_preserves_tree_handlers_focus_and_mutated_state_then_recovers() {
         let (mut state, mut runtime, mut handlers, content, calls) = fixture();
         let mut values = Bindings::default();
@@ -748,6 +1208,26 @@ mod rust_view_tests {
                 document_path: Some("ignored.json".into()),
                 ..Default::default()
             },
+            State::default(),
+            move |state| {
+                body_calls.set(body_calls.get() + 1);
+                view(state)
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 0);
+    }
+    #[test]
+    fn additive_options_preserve_json_path_rejection_before_rust_body() {
+        let calls = Rc::new(Cell::new(0));
+        let body_calls = calls.clone();
+        let result = run_ui_with_options(
+            NativeOptions {
+                document_path: Some("ignored.json".into()),
+                ..Default::default()
+            }
+            .with_chrome(WindowChrome::Overlay)
+            .with_reduced_motion(true),
             State::default(),
             move |state| {
                 body_calls.set(body_calls.get() + 1);

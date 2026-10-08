@@ -240,3 +240,11 @@ mode verifies rendering only. System fonts also make screenshots unsuitable as
 portable pixel-golden references without a controlled font fixture.
 
 Generic native fonts select installed families instead of assuming cosmic-text defaults exist. On macOS the current preferred sans/serif/mono families are Avenir Next/Georgia/Menlo when installed; named families remain explicit and fallback stays host-dependent. Legacy Volt text adapters are unchanged.
+
+## Rust effects and selected corners
+
+The Rust API now supports arrays/slices of spacing selectors, `.rounded_on`
+corner/side groups, shadows/glows, subtree opacity, interaction patches and
+time-based appearance animation. Rust buttons default to2logical-pixel corners;
+JSON/legacy buttons remain7px. See [full contracts](EFFECTS_AND_WINDOWING.md).
+Child clips are rectangular; this is not backdrop blur or a native glass style.

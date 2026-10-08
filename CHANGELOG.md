@@ -43,3 +43,15 @@ Extracted Volt presentation models, layouts, icon paths and paint recipes.
   layers; resize keeps nodes/handlers rather than recomposing view bodies.
 - `rust_responsive` example, size-selectable Rust snapshot/benchmark/window CLI,
   threshold/DPI/focus/overlap regressions and responsive design documentation.
+
+- Rust padding/gap accept enum/array/slice/vector selections; independent corner
+  radius side/corner groups preserve uniform rounded APIs and shared hit geometry.
+- New Rust buttons use 2 logical-pixel corners; legacy Button/JSON stay unchanged.
+- Opt-in shadow/glow, subtree group opacity and hover/press/focus appearance;
+  keyed interruptible color/border/opacity animation and paint-only enter/exit fade.
+- Bounded cached native approximate-Gaussian masks and reusable opacity layers;
+  exit ancestor/descendant opacity, sibling order and reinsertion continuity.
+- Additive Native/Overlay/Borderless window options and safe header drag regions;
+  active-only timers, focus/occlusion settling and explicit reduced-motion policy.
+- rust_effects example and native pixel/latency/drag/compatibility regressions;
+  no required Painter methods, new default dependencies or Volt vendor edits.

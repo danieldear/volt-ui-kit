@@ -32,6 +32,37 @@ same padded content area, preserving tree paint/reverse interactive-hit order.
 See [responsive semantics](RESPONSIVE_UI.md); there are no container-query cycles
 or structural tree rebuilds on resize in this first slice.
 
+## Appearance and window integration
+
+```text
+Rust tree + stable keys --> validated appearance / layout
+         |                              |
+         |                              v
+         +--> direct callbacks     keyed motion tracks
+                 |                      |
+                 v                      v
+          compose after action   sample on absolute clock
+                                        |
+                           paint commands + subtree layers
+                                        |
+                           native raster / host presentation
+```
+
+Motion is presentation state, not application state: ticks never invoke callbacks,
+the view body or layout. Appearance tweens can be interrupted; removed fade nodes
+are paint-only snapshots and cannot receive input. Exits retain tree paint order
+and ancestor opacity. Corner geometry is shared by fill, border and hit testing.
+The native adapter caches bounded shadow coverage and RGB tints separately from
+animated alpha, and reuses transparent group buffers. See
+[effects contracts and budgets](EFFECTS_AND_WINDOWING.md).
+
+Legacy `NativeOptions` and run entry points keep their defaults. Additive window
+options opt into integrated macOS chrome or borderless mode; declared header
+dragging always yields to interactive controls. Native motion uses active-only
+timer pacing, then returns to idle `Wait`; this is not display synchronization.
+Reduced motion is explicit, not automatic OS accessibility detection. Live
+platform window/input acceptance remains separate from headless raster tests.
+
 ## Ownership
 
 - Application: domain state, persistence, command execution, async tasks.

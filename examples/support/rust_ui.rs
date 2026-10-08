@@ -1,17 +1,29 @@
 use std::{path::PathBuf, time::Instant};
 use volt_ui_kit::{
     declarative::{Bindings, Kind, Runtime},
-    native::{run_ui, NativeOptions, RasterPainter},
+    native::{run_ui_with_options, NativeOptions, RasterPainter, WindowChrome},
     ui::Element,
     Theme, Viewport,
 };
 
 /// Rust examples share the native host. Source edits require a Rust rebuild.
+#[allow(dead_code)]
 pub fn launch<C: 'static>(
+    title: &str,
+    state: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    launch_with_chrome(title, state, view, WindowChrome::Native)
+}
+/// Opt into integrated window chrome without changing other examples.
+#[allow(dead_code)]
+pub fn launch_with_chrome<C: 'static>(
     title: &str,
     mut state: C,
     view: impl Fn(&C) -> Element<C> + 'static,
+    mut chrome: WindowChrome,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut reduced_motion = false;
     let mut snapshot = None;
     let mut scale = 1_f32;
     let mut bench = None;
@@ -20,6 +32,15 @@ pub fn launch<C: 'static>(
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--reduced-motion" => reduced_motion = true,
+            "--chrome" => {
+                chrome = match args.next().as_deref() {
+                    Some("native") => WindowChrome::Native,
+                    Some("overlay") => WindowChrome::Overlay,
+                    Some("borderless") => WindowChrome::Borderless,
+                    _ => return Err("--chrome must be native, overlay or borderless".into()),
+                };
+            }
             "--snapshot" => {
                 snapshot = Some(PathBuf::from(args.next().ok_or("missing --snapshot path")?))
             }
@@ -38,7 +59,7 @@ pub fn launch<C: 'static>(
             }
             "--bench-target" => target = Some(args.next().ok_or("missing --bench-target key")?),
             "--help" => {
-                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; warm CPU timings\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\nRust source edits require rebuild; no JSON or F5 source reload.");
+                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; warm CPU timings\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / borderless\n--reduced-motion settle effects without animation\nRust source edits require rebuild; no JSON or F5 source reload.");
                 return Ok(());
             }
             _ => {
@@ -66,12 +87,14 @@ pub fn launch<C: 'static>(
         }
     }
     if snapshot.is_none() && bench.is_none() {
-        return run_ui(
+        return run_ui_with_options(
             NativeOptions {
                 title: title.into(),
                 size,
                 document_path: None,
-            },
+            }
+            .with_chrome(chrome)
+            .with_reduced_motion(reduced_motion),
             state,
             view,
         );
@@ -82,8 +105,10 @@ pub fn launch<C: 'static>(
     let viewport = Viewport::new(size[0] as f32 * scale, size[1] as f32 * scale, scale).unwrap();
     let mut painter = RasterPainter::new(viewport);
     let theme = Theme::dark();
+    runtime.set_reduced_motion(reduced_motion);
     runtime.layout(viewport, &values, &mut painter)?;
     if let Some(path) = snapshot {
+        runtime.settle_animations(); // snapshots show the settled design, not fade frame zero
         let batches = runtime.paint(&mut painter, &theme);
         painter
             .rasterize(&batches, theme.background)?
@@ -185,5 +210,10 @@ pub fn launch<C: 'static>(
             values[values.len() - 1]
         );
     }
+    println!(
+        "cache totals (including warmup/pressed frames): text={} effect-masks={} effect-tints={} layer-allocations={}",
+        painter.text_cache_misses, painter.effect_cache_misses,
+        painter.effect_tint_misses, painter.layer_allocations,
+    );
     Ok(())
 }
