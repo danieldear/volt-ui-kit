@@ -23,6 +23,15 @@ invalid views keep prior UI but cannot roll back application state. See
 [Rust UI contracts](RUST_UI.md). Broader editing controls, fine-grained signals
 and platform accessibility remain future work. Legacy callers need not create a tree.
 
+Responsive layout rules resolve once per invalidated layout from physical width /
+scale. The resolved main axis, padding and gap share the node's property snapshot
+used by intrinsic measurement and placement, so hit and paint boxes agree.
+Stack direction does not change component identity; fixed Row/Column aliases
+retain defaults. ZStack measures per-axis maxima and places each subtree in the
+same padded content area, preserving tree paint/reverse interactive-hit order.
+See [responsive semantics](RESPONSIVE_UI.md); there are no container-query cycles
+or structural tree rebuilds on resize in this first slice.
+
 ## Ownership
 
 - Application: domain state, persistence, command execution, async tasks.

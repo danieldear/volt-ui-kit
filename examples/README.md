@@ -10,6 +10,7 @@ cargo run --locked --features native --example rust_counter
 cargo run --locked --features native --example rust_settings
 cargo run --locked --features native --example rust_keyed_list
 cargo run --locked --features native --example rust_layout
+cargo run --locked --features native --example rust_responsive
 cargo run --locked --features native --example native_window
 cargo run --locked --features native --example panels_and_layout
 cargo run --locked --features native --example buttons_and_events
@@ -24,6 +25,7 @@ cargo run --locked --features native --example components
 | rust_settings | Reusable Rust functions, conditional panel, typed booleans/typography | Settings and details reflect inline callbacks |
 | rust_keyed_list | Rust loops, stable keys, captured IDs | Reverse/remove target correct items; removed focus clears |
 | rust_layout | HStack/VStack aliases, nine placements, selector padding/gap, pill/fractional rounding, dividers/spacers | Placement switches move the content; Add/Reset use typed Rust callbacks |
+| rust_responsive | Responsive Stack direction/padding/gap, fixed stacks, layered ZStack, typed callbacks | Resize across768 logical pixels; front button wins overlap, exposed back area reaches back button |
 | gallery | Existing renderer-independent recipes | Static SVG files in target/gallery |
 | native_window | Native lifecycle, resize, DPI | One window; close exits cleanly |
 | panels_and_layout | Nested Panels, Row/Column, padding/gap/flex | Resize adjusts geometry; button prints a Rust callback |
@@ -38,7 +40,7 @@ cargo run --locked --features native --example components
 Start with `rust_counter`, then `rust_settings`, `rust_keyed_list` and `rust_layout`. UI lives in
 Rust; no JSON file or callback-name registry is needed. See [API/design](../docs/RUST_UI.md).
 Source edits require rebuild. F5/--document apply only to JSON examples below.
-The Rust examples support --snapshot, --scale, --bench and --bench-target; their
+The Rust examples support --snapshot, --size WIDTHxHEIGHT, --scale, --bench and --bench-target; their
 benchmark includes Rust composition/validation/installation, not just bindings.
 
 ## Optional JSON edit/reload
@@ -86,6 +88,10 @@ presentation. Native tracing measures handled event-to-present-return, not displ
 scan-out. Both run on demand; no idle timer is added. See [measurements](../docs/PERFORMANCE.md).
 
 ## Boundaries
+
+See [responsive Rust layouts](../docs/RESPONSIVE_UI.md) for narrow/wide commands,
+viewport breakpoints and layered hit semantics. Width adaptation does not imply
+scrolling or minimum-height usability.
 
 One window; basic constrained flex layout (not CSS), rectangular clipping and
 wrapped Text. Buttons use single-line measured labels and clip when too narrow.

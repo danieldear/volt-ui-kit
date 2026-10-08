@@ -68,3 +68,7 @@ required-features = ["native"]
 [[example]]
 name = "rust_layout"
 required-features = ["native"]
+
+[[example]]
+name = "rust_responsive"
+required-features = ["native"]

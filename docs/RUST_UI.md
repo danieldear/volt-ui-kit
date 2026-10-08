@@ -149,7 +149,7 @@ cannot activate a replacement. Keyboard navigation follows current tree order.
 
 ## Layout and typography
 
-Implemented components: Panel, Row, Column, Text, Button, Checkbox, Toggle, Badge,
+Implemented components: Panel, Row, Column, Stack, ZStack, Text, Button, Checkbox, Toggle, Badge,
 Separator/Divider and Spacer. `hstack`/`vstack` (functions and macros) alias
 Row/Column; they preserve the same layout defaults, not SwiftUI default alignment.
 Containers support `.padding(value, Edge)`, `.gap(value, Axis)`, `.flow(Flow)` and
@@ -245,6 +245,8 @@ Direction and placement are separate concepts:
 | `vstack![...]` / `column![...]` | Stack children vertically |
 | `hstack![...]` / `row![...]` | Stack children horizontally |
 | `panel![...]` | A vertical surface/container |
+| `stack![...].direction(...)` | Fixed/responsive horizontal or vertical arrangement |
+| `zstack![...]` | Independent overlapping layers, back to front |
 | `.flow(Flow::Center)` | Place the child group centrally inside available content bounds |
 | `.align(Align::Center)` | Existing cross-axis-only alignment, main-axis start retained |
 
@@ -296,6 +298,12 @@ existing start/align/stretch behavior is unchanged. Placement needs unused space
 an intrinsically sized container may have nothing to offset; give it height /
 width / flex or use the root window's bounds. Flex/spacers consume remaining main
 space before Flow computes an offset.
+
+`stack!` defaults vertical and is the only builder with `.direction(...)`.
+Container padding/gap accept scalar or typed responsive values. `zstack!` defaults
+to centered layers with independent Flow placement. See [responsive layout
+contracts and runnable example](RESPONSIVE_UI.md) for breakpoints, logical units,
+layer hit policy, validation and deferred container queries/scrolling.
 
 ## Rounding, divider and spacer
 
@@ -354,6 +362,7 @@ cargo run --locked --features native --example rust_counter
 cargo run --locked --features native --example rust_settings
 cargo run --locked --features native --example rust_keyed_list
 cargo run --locked --features native --example rust_layout
+cargo run --locked --features native --example rust_responsive
 cargo run --locked --features native --example rust_settings -- --snapshot target/rust-settings.png --scale 2
 cargo run --locked --features native --example rust_counter -- --bench 60 --scale 2
 cargo test --locked --features rust-ui

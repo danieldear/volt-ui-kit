@@ -36,3 +36,10 @@ Extracted Volt presentation models, layouts, icon paths and paint recipes.
   nine `.flow(Flow)` content placements, divider alias and flexible/fixed spacers.
 - HStack/VStack function/macro aliases preserve Row/Column behavior; new `rust_layout`
   interactive example and placement/rounding/spacer/compile-fail regressions.
+
+- Typed responsive minimum-width values for Stack direction and container spacing,
+  using logical viewport units with named/custom thresholds and bounded validation.
+- Stack/ZStack functions/macros: adaptive orientation versus independent ordered
+  layers; resize keeps nodes/handlers rather than recomposing view bodies.
+- `rust_responsive` example, size-selectable Rust snapshot/benchmark/window CLI,
+  threshold/DPI/focus/overlap regressions and responsive design documentation.

@@ -136,6 +136,7 @@ cargo run --locked --features native --example rust_counter
 cargo run --locked --features native --example rust_settings
 cargo run --locked --features native --example rust_keyed_list
 cargo run --locked --features native --example rust_layout
+cargo run --locked --features native --example rust_responsive
 # Optional JSON frontend with explicit F5 reload:
 cargo run --locked --features native --example components
 ```
@@ -167,3 +168,10 @@ inside a panel/stack. Spacing uses `.padding(20.5, Edge::Horizontal)` and
 accepts `.rounded(4)`, `.rounded(4.5)` and `.rounded(Rounding::Full)`.
 `divider()` is a horizontal separator; `spacer()` consumes remaining main-axis
 space without painting/input. Try `rust_layout` for interactive placement presets.
+
+`stack!` adds viewport-responsive horizontal/vertical direction; all containers
+accept typed responsive padding/gap as well as their existing scalar values.
+`zstack!` independently overlays children in back-to-front order. Resize resolves
+layout properties without rebuilding Rust callbacks. Try `rust_responsive` and see
+[responsive contracts](docs/RESPONSIVE_UI.md); container queries/grids/scrolling
+and free-coordinate placement remain future work.

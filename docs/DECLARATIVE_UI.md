@@ -37,6 +37,8 @@ are rejected, not ignored. Dimensions are logical pixels, scaled once in layout.
 | Component | Properties beyond type/id/width/height/flex |
 |---|---|
 | panel/row/column | children, padding, gap, align, flow |
+| stack | container properties; direction: vertical (default) / horizontal |
+| zstack | container properties; independent centered/flow-positioned layers |
 | text | exactly one of text/bind_text; font_size; tone |
 | badge | exactly one of text/bind_text |
 | checkbox/toggle | label; on_toggle_changed; checked or bind_checked; enabled; bind_enabled |
@@ -48,6 +50,8 @@ are rejected, not ignored. Dimensions are logical pixels, scaled once in layout.
   and typography inherit; surfaces, borders and radii do not.
 - Width/height optionally constrain a node; flex distributes remaining main-axis space.
 - A Row arranges horizontally; Column/Panel arrange vertically.
+- Stack has static direction; ZStack overlays children in declaration order.
+  Responsive value objects are currently Rust-only, not accepted by schema1 JSON.
 - Padding and gap default0. align: start (default), center, end, stretch.
 - Optional flow: top_left/top/top_right/left/center/right/bottom_left/bottom/bottom_right;
   places content in both axes, not wrapping. Top/Bottom are horizontally centered.

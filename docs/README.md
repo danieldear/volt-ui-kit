@@ -3,6 +3,7 @@
 - [Source audit](SOURCE_AUDIT.md): current evidence and missing layers.
 - [Architecture](ARCHITECTURE.md): ownership, compatibility, and extension boundaries.
 - [Rust-first UI](RUST_UI.md): typed composition, state/events, keys and update contracts.
+- [Responsive/layered layouts](RESPONSIVE_UI.md): Stack breakpoints, ZStack order and logical-size rules.
 - [Declarative UI](DECLARATIVE_UI.md): optional JSON schema, bindings and callbacks.
 - [Delivery plan](IMPLEMENTATION_PLAN.md): milestones and acceptance gates.
 - [Validation](VALIDATION.md): commands, performance and visual requirements.

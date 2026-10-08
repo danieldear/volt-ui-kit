@@ -207,6 +207,7 @@ impl Runtime {
             self.document.root(),
             &InheritedStyle::default(),
             self.scale,
+            viewport.width / self.scale,
             &mut styles,
         );
         let area = Rect::new(0., 0., viewport.width, viewport.height).unwrap();
@@ -454,7 +455,7 @@ impl Runtime {
                             panel.paint(p, &mut shapes);
                         }
                     }
-                    Kind::Row | Kind::Column | Kind::Text => {
+                    Kind::Row | Kind::Column | Kind::Stack | Kind::ZStack | Kind::Text => {
                         paint_overrides(p, &mut shapes, r, &b.style, self.scale);
                         if b.kind == Kind::Text {
                             p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
@@ -850,6 +851,7 @@ fn checked(n: &Node, values: &Bindings) -> bool {
 }
 #[derive(Clone, Debug)]
 struct ResolvedStyle {
+    layout: ResolvedLayout,
     text: TextStyle,
     color: Option<[f32; 4]>,
     background: Option<[f32; 4]>,
@@ -858,6 +860,40 @@ struct ResolvedStyle {
     border_width: Option<f32>,
     radius: Option<f32>,
     round_full: bool,
+}
+/// Resolve once per layout, so measurement, allocation, placement, and hits agree.
+#[derive(Clone, Debug)]
+struct ResolvedLayout {
+    axis: usize,
+    padding: [f32; 4],
+    gap: f32,
+}
+impl ResolvedLayout {
+    fn new(n: &Node, scale: f32, logical_width: f32) -> Self {
+        let axis = if n.kind == Kind::Stack {
+            n.responsive
+                .direction
+                .as_ref()
+                .map_or(n.direction, |v| *v.resolve(logical_width))
+                .axis()
+        } else {
+            usize::from(n.kind != Kind::Row)
+        };
+        let mut padding = n.padding_sides();
+        for (value, rule) in padding.iter_mut().zip(&n.responsive.padding) {
+            if let Some(rule) = rule {
+                *value = *rule.resolve(logical_width);
+            }
+        }
+        Self {
+            axis,
+            padding: padding.map(|v| v * scale),
+            gap: n.responsive.gap[axis]
+                .as_ref()
+                .map_or(n.main_gap(axis), |v| *v.resolve(logical_width))
+                * scale,
+        }
+    }
 }
 impl ResolvedStyle {
     fn surface_override(&self) -> bool {
@@ -879,6 +915,7 @@ fn resolve_styles(
     n: &Node,
     inherited: &InheritedStyle,
     scale: f32,
+    logical_width: f32,
     out: &mut BTreeMap<String, ResolvedStyle>,
 ) {
     let mut text = inherited.clone();
@@ -906,6 +943,7 @@ fn resolve_styles(
     out.insert(
         n.id.clone(),
         ResolvedStyle {
+            layout: ResolvedLayout::new(n, scale, logical_width),
             text: TextStyle {
                 family: text.family.clone().unwrap_or_else(|| "system".into()),
                 size: text.size.unwrap_or(default_size) * scale,
@@ -925,7 +963,7 @@ fn resolve_styles(
         },
     );
     for child in &n.children {
-        resolve_styles(child, &text, scale, out);
+        resolve_styles(child, &text, scale, logical_width, out);
     }
 }
 fn text(n: &Node, values: &Bindings) -> String {
@@ -970,7 +1008,7 @@ fn intrinsic(
         n.width.map_or(avail[0], |w| (w * s).min(avail[0])),
         n.height.map_or(avail[1], |h| (h * s).min(avail[1])),
     ];
-    let [top, right, bottom, left] = n.padding_sides().map(|edge| edge * s);
+    let [top, right, bottom, left] = styles[&n.id].layout.padding;
     let inset_size = [left + right, top + bottom];
     let content = [
         (limit[0] - inset_size[0]).max(0.1),
@@ -994,9 +1032,19 @@ fn intrinsic(
         }
         Kind::Separator => [content[0], s],
         Kind::Spacer => [0., 0.],
+        Kind::ZStack => {
+            let mut result = [0_f32; 2];
+            for child in &n.children {
+                let size = intrinsic(child, content, v, m, s, memo, styles);
+                for axis in 0..2 {
+                    result[axis] = result[axis].max(size[axis]);
+                }
+            }
+            [result[0] + inset_size[0], result[1] + inset_size[1]]
+        }
         _ => {
             let (sizes, gap) = child_sizes(n, content, v, m, s, memo, styles);
-            let axis = usize::from(n.kind != Kind::Row);
+            let axis = styles[&n.id].layout.axis;
             let mut result = [0_f32; 2];
             for size in sizes {
                 result[axis] += size[axis];
@@ -1025,8 +1073,11 @@ fn child_sizes(
     memo: &mut MeasureMemo,
     styles: &BTreeMap<String, ResolvedStyle>,
 ) -> (Vec<[f32; 2]>, f32) {
-    let axis = usize::from(n.kind != Kind::Row);
-    let gap = (n.main_gap() * s).min(available[axis] / n.children.len().max(1) as f32);
+    let axis = styles[&n.id].layout.axis;
+    let gap = styles[&n.id]
+        .layout
+        .gap
+        .min(available[axis] / n.children.len().max(1) as f32);
     let room = (available[axis] - gap * n.children.len().saturating_sub(1) as f32).max(0.);
     let mut sizes: Vec<_> = n
         .children
@@ -1090,7 +1141,7 @@ fn place(
         tone: n.tone,
         primary: n.primary,
     });
-    let [top, right, bottom, left] = n.padding_sides().map(|edge| edge * s);
+    let [top, right, bottom, left] = styles[&n.id].layout.padding;
     let start = [x + left, y + top];
     let available = [(w - (left + right)).max(0.), (h - (top + bottom)).max(0.)];
     if available.contains(&0.) {
@@ -1099,7 +1150,29 @@ fn place(
     let child_clip = Rect::new(start[0], start[1], available[0], available[1])
         .and_then(|r| intersection(r, clip));
     let Some(child_clip) = child_clip else { return };
-    let axis = usize::from(n.kind != Kind::Row);
+    if n.kind == Kind::ZStack {
+        let fractions = n.flow.map_or([0.5, 0.5], |flow| flow.fractions());
+        for child in &n.children {
+            let mut size = intrinsic(child, available, v, m, s, memo, styles);
+            if n.align == Align::Stretch {
+                if child.width.is_none() {
+                    size[0] = available[0];
+                }
+                if child.height.is_none() {
+                    size[1] = available[1];
+                }
+            }
+            let pos = [
+                start[0] + (available[0] - size[0]).max(0.) * fractions[0],
+                start[1] + (available[1] - size[1]).max(0.) * fractions[1],
+            ];
+            if let Some(r) = Rect::new(pos[0], pos[1], size[0], size[1]) {
+                place(child, r, child_clip, v, m, s, out, memo, styles);
+            }
+        }
+        return;
+    }
+    let axis = styles[&n.id].layout.axis;
     let cross = 1 - axis;
     let (sizes, gap) = child_sizes(n, available, v, m, s, memo, styles);
     let occupied = sizes.iter().map(|size| size[axis]).sum::<f32>()

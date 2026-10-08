@@ -29,6 +29,23 @@
 //! screen.build()?;
 //! # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
 //! ```
+//! Adaptive direction belongs to `stack!`, not the fixed-direction aliases:
+//! ```compile_fail
+//! use volt_ui_kit::ui::prelude::*;
+//! vstack![text::<()>("Fixed vertical")].direction(Direction::Horizontal);
+//! ```
+//! Responsive properties resolve during layout without composing new callbacks:
+//! ```
+//! use volt_ui_kit::ui::prelude::*;
+//! let screen: Element<()> = stack![
+//!     text("Navigation"),
+//!     zstack![text("Back"), badge("Front")].height(80.),
+//! ].direction(responsive(Direction::Vertical).at(Breakpoint::Md, Direction::Horizontal))
+//!  .padding(responsive(12.).at(Breakpoint::Md, 24.), Edge::Horizontal)
+//!  .gap(responsive(8.).at(Breakpoint::Md, 16.), Axis::Both).into();
+//! screen.build()?;
+//! # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+//! ```
 //!
 //! Button callbacks cannot accept a boolean change value:
 //! ```compile_fail
@@ -68,7 +85,9 @@ use crate::declarative::{
     document::{FontSlant, MAX_DEPTH, MAX_NODES},
     Bindings, Document, DocumentError, Handlers, Kind, Node,
 };
-pub use crate::declarative::{Align, Flow, Rounding, Tone};
+pub use crate::declarative::{
+    responsive, Align, Breakpoint, Direction, Flow, Responsive, Rounding, Tone,
+};
 
 /// Inner edges selected by `.padding(value, edge)`; left/right are absolute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,6 +213,8 @@ pub struct Spacer<C>(Element<C>);
 pub struct Button<C>(Element<C>);
 pub struct Checkable<C>(Element<C>);
 pub struct Container<C>(Element<C>);
+/// A stack whose horizontal/vertical direction can change at viewport breakpoints.
+pub struct Stack<C>(Element<C>);
 macro_rules! element_from {
     ($($name:ident),+ $(,)?) => { $(
         impl<C> From<$name<C>> for Element<C> {
@@ -201,7 +222,7 @@ macro_rules! element_from {
         }
     )+ };
 }
-element_from!(Text, Badge, Separator, Spacer, Button, Checkable, Container);
+element_from!(Text, Badge, Separator, Spacer, Button, Checkable, Container, Stack);
 
 // Deliberately common visual/layout modifiers, not a stringly property map.
 macro_rules! modifiers {
@@ -244,6 +265,7 @@ modifiers!(Spacer, [0.node], [0.auto_id]);
 modifiers!(Button, [0.node], [0.auto_id]);
 modifiers!(Checkable, [0.node], [0.auto_id]);
 modifiers!(Container, [0.node], [0.auto_id]);
+modifiers!(Stack, [0.node], [0.auto_id]);
 
 pub fn text<C>(value: impl Into<String>) -> Text<C> {
     let mut element = Element::new(Kind::Text);
@@ -344,64 +366,68 @@ pub fn vstack<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C>
 pub fn hstack<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C> {
     row(children)
 }
-impl<C> Container<C> {
-    /// Set selected inner edges, in logical pixels. Last affected-edge write wins.
-    /// Edge::All resets all previous axis/edge overrides. Rust enum selectors use
-    /// paths (`Edge::Horizontal`), not Swift-style `.horizontal` syntax.
-    pub fn padding(mut self, value: f32, edge: Edge) -> Self {
-        let n = &mut self.0.node;
-        match edge {
-            Edge::All => {
-                n.padding = value;
-                n.padding_horizontal = None;
-                n.padding_vertical = None;
-                n.padding_top = None;
-                n.padding_right = None;
-                n.padding_bottom = None;
-                n.padding_left = None;
-            }
-            Edge::Horizontal => {
-                n.padding_horizontal = Some(value);
-                n.padding_left = None;
-                n.padding_right = None;
-            }
-            Edge::Vertical => {
-                n.padding_vertical = Some(value);
-                n.padding_top = None;
-                n.padding_bottom = None;
-            }
-            Edge::Top => n.padding_top = Some(value),
-            Edge::Right => n.padding_right = Some(value),
-            Edge::Bottom => n.padding_bottom = Some(value),
-            Edge::Left => n.padding_left = Some(value),
-        }
-        self
-    }
-    /// Space between children on a selected axis; Row uses horizontal,
-    /// Column/Panel vertical. Axis::Both resets directional overrides.
-    pub fn gap(mut self, value: f32, axis: Axis) -> Self {
-        let n = &mut self.0.node;
-        match axis {
-            Axis::Both => {
-                n.gap = value;
-                n.gap_horizontal = None;
-                n.gap_vertical = None;
-            }
-            Axis::Horizontal => n.gap_horizontal = Some(value),
-            Axis::Vertical => n.gap_vertical = Some(value),
-        }
-        self
-    }
-    /// Place the content group in both axes. Not a wrapping-flow container.
-    pub fn flow(mut self, value: Flow) -> Self {
-        self.0.node.flow = Some(value);
-        self
-    }
-    pub fn align(mut self, value: Align) -> Self {
-        self.0.node.align = value;
+/// An adaptive stack; defaults to vertical. Fixed stacks do not expose direction.
+pub fn stack<C>(children: impl IntoIterator<Item = Element<C>>) -> Stack<C> {
+    Stack(container(Kind::Stack, children).0)
+}
+/// Overlapping layers, centered by default; later children paint/hit in front.
+pub fn zstack<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C> {
+    container(Kind::ZStack, children)
+}
+impl<C> Stack<C> {
+    pub fn direction(mut self, value: impl Into<Responsive<Direction>>) -> Self {
+        self.0.node.responsive.direction = Some(value.into());
         self
     }
 }
+macro_rules! container_modifiers {
+    ($target:ident) => {
+        impl<C> $target<C> {
+            /// Logical inner spacing. The last setter affecting an edge wins,
+            /// replacing that edge's entire responsive rule set, not merging it.
+            pub fn padding(mut self, value: impl Into<Responsive<f32>>, edge: Edge) -> Self {
+                let value = value.into();
+                let edges: &[usize] = match edge {
+                    Edge::All => &[0, 1, 2, 3],
+                    Edge::Horizontal => &[1, 3],
+                    Edge::Vertical => &[0, 2],
+                    Edge::Top => &[0],
+                    Edge::Right => &[1],
+                    Edge::Bottom => &[2],
+                    Edge::Left => &[3],
+                };
+                for &edge in edges {
+                    self.0.node.responsive.padding[edge] = Some(value.clone());
+                }
+                self
+            }
+            /// Inter-child spacing on the resolved main axis. ZStack ignores gaps.
+            pub fn gap(mut self, value: impl Into<Responsive<f32>>, axis: Axis) -> Self {
+                let value = value.into();
+                let axes: &[usize] = match axis {
+                    Axis::Both => &[0, 1],
+                    Axis::Horizontal => &[0],
+                    Axis::Vertical => &[1],
+                };
+                for &axis in axes {
+                    self.0.node.responsive.gap[axis] = Some(value.clone());
+                }
+                self
+            }
+            /// Place content in both axes; for ZStack, place each layer independently.
+            pub fn flow(mut self, value: Flow) -> Self {
+                self.0.node.flow = Some(value);
+                self
+            }
+            pub fn align(mut self, value: Align) -> Self {
+                self.0.node.align = value;
+                self
+            }
+        }
+    };
+}
+container_modifiers!(Container);
+container_modifiers!(Stack);
 /// Compose heterogeneous Rust builders into a vertical layout.
 #[macro_export]
 macro_rules! column { ($($child:expr),* $(,)?) => { $crate::ui::column(vec![$($crate::ui::Element::from($child)),*]) }; }
@@ -418,11 +444,18 @@ macro_rules! vstack { ($($child:expr),* $(,)?) => { $crate::column![$($child),*]
 /// SwiftUI-familiar alias for [`row!`].
 #[macro_export]
 macro_rules! hstack { ($($child:expr),* $(,)?) => { $crate::row![$($child),*] }; }
-pub use crate::{hstack, vstack};
+/// Compose heterogeneous children into an adaptive horizontal/vertical stack.
+#[macro_export]
+macro_rules! stack { ($($child:expr),* $(,)?) => { $crate::ui::stack(vec![$($crate::ui::Element::from($child)),*]) }; }
+/// Compose overlapping layers; declaration order is back to front.
+#[macro_export]
+macro_rules! zstack { ($($child:expr),* $(,)?) => { $crate::ui::zstack(vec![$($crate::ui::Element::from($child)),*]) }; }
+pub use crate::{hstack, stack, vstack, zstack};
 /// Import component functions, types and layout macros together.
 pub mod prelude {
     pub use super::{
-        badge, button, checkbox, column, divider, hstack, panel, row, separator, spacer, text,
-        toggle, vstack, Align, Axis, Edge, Element, Flow, FontStyle, Rounding, Tone,
+        badge, button, checkbox, column, divider, hstack, panel, responsive, row, separator,
+        spacer, stack, text, toggle, vstack, zstack, Align, Axis, Breakpoint, Direction, Edge,
+        Element, Flow, FontStyle, Responsive, Rounding, Tone,
     };
 }
