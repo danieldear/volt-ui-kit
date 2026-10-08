@@ -1,0 +1,70 @@
+[package]
+name = "volt-ui-kit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+license = "MIT"
+description = "Renderer-independent desktop UI components extracted from Volt"
+readme = "README.md"
+include = ["docs/**", "src/**", "examples/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md", "ROADMAP.md"]
+
+[features]
+default = []
+declarative = ["dep:serde", "dep:serde_json"]
+rust-ui = ["declarative"]
+native = ["rust-ui", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:cosmic-text"]
+
+[dependencies]
+unicode-width = "0.2"
+
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+winit = { version = "0.30.13", optional = true }
+softbuffer = { version = "0.4.8", optional = true }
+tiny-skia = { version = "0.11.4", optional = true }
+cosmic-text = { version = "0.14.2", optional = true }
+
+# CPU rasterization/shaping must be usable under the documented `cargo run`.
+# These profiles apply only when this repository is the workspace root; consumer
+# workspaces (including Volt) retain their own profile settings.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[[example]]
+name = "native_window"
+required-features = ["native"]
+[[example]]
+name = "panels_and_layout"
+required-features = ["native"]
+[[example]]
+name = "buttons_and_events"
+required-features = ["native"]
+[[example]]
+name = "declarative_ui"
+required-features = ["native"]
+[[example]]
+name = "complete_app"
+required-features = ["native"]
+[[example]]
+name = "components"
+required-features = ["native"]
+
+[[example]]
+name = "render_benchmark"
+required-features = ["native"]
+
+[[example]]
+name = "rust_counter"
+required-features = ["native"]
+[[example]]
+name = "rust_settings"
+required-features = ["native"]
+[[example]]
+name = "rust_keyed_list"
+required-features = ["native"]
+[[example]]
+name = "rust_layout"
+required-features = ["native"]
