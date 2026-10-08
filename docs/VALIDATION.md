@@ -151,3 +151,42 @@ unchanged. No Volt/Glass edits, vendor sync, commit/push or release.
 
 Native tracing for the initial10Add clicks is recorded in
 [performance](PERFORMANCE.md#live-rust-layout-input-sample-2026-10-08).
+
+## Responsive/layered stack slice (2026-10-08)
+
+Implemented: fixed VStack/HStack aliases, adaptive Stack horizontal/vertical
+direction, logical viewport breakpoints with named/custom widths, responsive
+container padding/gap, independent ordered ZStack layers, and `rust_responsive`.
+Rust examples now accept `--size WIDTHxHEIGHT` for native/headless runs.
+
+Passed local gates: all-features70library+36integration+12example tests, plus
+10rustdoc tests (5compile-fail;1ignored README fragment). Default34library+1doc,
+JSON56library+3integration+1doc and Rust-only feature suites also pass. Formatting,
+strict all-target/all-feature Clippy, Rust1.87 all-target/all-feature check and
+local package verification73files pass. All19legacy source hashes still match;
+default runtime dependency remains unicode-width0.2.2. No Volt/Glass edits,
+vendor synchronization or Volt workspace/GPU revalidation were performed.
+
+New regressions cover767/768/769 thresholds, fractional custom widths, scale and
+resize-back transitions, highest-threshold/equal-threshold precedence,32-rule
+boundary, invalid/inactive rules, directional setter replacement, scalar geometry
+parity, nested intrinsic measurement, resolved-axis Flow/spacer allocation,
+stateful callback preservation, keyed focus, cancel/outside release, padded /
+rounded overlap hits, ordered glyph paint and decorative/disabled pass-through.
+Native content tests verify no view-body calls on responsive resize/hover/render;
+the normal dispatched-action path still recomposes exactly once.
+
+Real-font example matrix:6width transitions ×5scales1/1.25/1.5/2/3 =30cases at760
+logical height, with direction and topmost front dispatch/raster checks. An
+additional two-size action test covers back/front callbacks, compact gap updates,
+Reset enabling/disabling and focus clearing after disabling Reset. Narrow480x760,
+wide960x760 and wide2x snapshots were generated; narrow/wide1x were inspected and
+polished so the compact toggle/back-layer label remain visible. Invalid CLI zero
+size is rejected before rendering. Snapshot/test evidence is headless only.
+
+**Still unverified live:** new example OS pointer/key routing, actual window
+resize across768, scale-factor transitions, close/reopen and other-platform
+runtime. Prior Add clicks on rust_layout are not proof for this new example.
+No scroll/grid/container-query/absolute-positioning/modal barrier/accessibility
+completion claim. Small-height overflow can still shrink/clip controls. Follow
+the [interactive checklist](RESPONSIVE_UI.md#try-and-test).

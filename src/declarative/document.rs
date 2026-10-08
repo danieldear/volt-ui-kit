@@ -1,3 +1,4 @@
+use super::{responsive::ResponsiveLayout, Direction};
 use super::{EventKind, Handlers};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,6 +13,9 @@ pub enum Kind {
     Panel,
     Row,
     Column,
+    Stack,
+    #[serde(rename = "zstack")]
+    ZStack,
     Text,
     Button,
     Checkbox,
@@ -172,6 +176,10 @@ pub struct Node {
     #[serde(default)]
     pub(crate) flow: Option<Flow>,
     #[serde(default)]
+    pub(crate) direction: Direction,
+    #[serde(skip)]
+    pub(crate) responsive: ResponsiveLayout,
+    #[serde(default)]
     pub(crate) text: Option<String>,
     #[serde(default)]
     pub(crate) bind_text: Option<String>,
@@ -223,6 +231,8 @@ impl Node {
             gap_vertical: None,
             align: Align::Start,
             flow: None,
+            direction: Direction::Vertical,
+            responsive: ResponsiveLayout::default(),
             text: None,
             bind_text: None,
             label: None,
@@ -250,8 +260,8 @@ impl Node {
             self.padding_left.unwrap_or(horizontal),
         ]
     }
-    pub(crate) fn main_gap(&self) -> f32 {
-        if self.kind == Kind::Row {
+    pub(crate) fn main_gap(&self, axis: usize) -> f32 {
+        if axis == 0 {
             self.gap_horizontal.unwrap_or(self.gap)
         } else {
             self.gap_vertical.unwrap_or(self.gap)
@@ -452,6 +462,8 @@ fn check_raw(
         "panel"
             | "row"
             | "column"
+            | "stack"
+            | "zstack"
             | "text"
             | "button"
             | "checkbox"
@@ -469,7 +481,7 @@ fn check_raw(
         );
         let allowed = common
             || match kind {
-                "panel" | "row" | "column" => {
+                "panel" | "row" | "column" | "stack" | "zstack" => {
                     matches!(
                         key.as_str(),
                         "children"
@@ -485,7 +497,7 @@ fn check_raw(
                             | "padding_left"
                             | "gap_horizontal"
                             | "gap_vertical"
-                    )
+                    ) || (kind == "stack" && key == "direction")
                 }
                 "text" | "badge" => {
                     matches!(key.as_str(), "text" | "bind_text" | "font_size" | "tone")
@@ -654,6 +666,7 @@ fn check_node(
         }
     }
     check_style(&n.style, &format!("{path}.style"))?;
+    n.responsive.validate(path)?;
     if n.text.as_ref().is_some_and(|v| v.len() > 8192)
         || n.label.as_ref().is_some_and(|v| v.len() > 8192)
     {

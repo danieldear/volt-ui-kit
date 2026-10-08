@@ -42,10 +42,12 @@ or terminal benchmark parity is made by the initial extraction.
 ## Declarative UI track
 
 - Delivered: primary Rust-first UI builders/layout macros, direct callbacks, action-only whole-tree composition, conditional/keyed examples.
+- Delivered: responsive Stack direction/padding/gap and layered ZStack; fixed VStack/HStack aliases retained.
 - Delivered: optional typed Rust callback registry (default dependency footprint unchanged).
 - Delivered: schema1 JSON, shared layout/input runtime, text/boolean bindings and explicit validated reload.
 - Delivered: optional software native host, progressive examples, editable typography/colors and typed Checkbox/Toggle controls.
 - Later: two-way editing bindings, richer focus/input/semantics and custom components.
+- Later: explicit container queries, adaptive grids/child wrapping, scrolling and responsive visibility.
 - See [implementation gates](docs/IMPLEMENTATION_PLAN.md); legacy Volt APIs stay intact.
 
 Next Rust UI milestones: external state-update wakeup API, measured subtree reconciliation/signals, and richer editing/accessibility. These are future work, not delivered SwiftUI/Compose parity.

@@ -349,3 +349,24 @@ fn json_flow_full_radius_and_spacer_defaults_are_additive_and_strict() {
     )
     .is_err());
 }
+
+#[test]
+fn json_stack_direction_and_zstack_are_additive_but_responsive_objects_are_rust_only() {
+    let source = r#"{"schema_version":1,"root":{"type":"stack","id":"root","direction":"horizontal","gap":6,"children":[{"type":"text","id":"a","text":"A","width":40,"height":20},{"type":"text","id":"b","text":"B","width":60,"height":10}]}}"#;
+    let r = layout(Document::parse(source).unwrap(), &Handlers::default(), 1.);
+    close(bounds(&r, "b"), [46., 0., 60., 10.]);
+    let overlay = source
+        .replace("\"stack\"", "\"zstack\"")
+        .replace("\"direction\":\"horizontal\",", "");
+    let r = layout(Document::parse(&overlay).unwrap(), &Handlers::default(), 1.);
+    close(bounds(&r, "a"), [280., 190., 40., 20.]);
+    close(bounds(&r, "b"), [270., 195., 60., 10.]);
+    for invalid in [
+        source.replace("\"horizontal\"", "\"random\""),
+        source.replace("\"stack\"", "\"column\""),
+        source.replace("\"gap\":6", "\"gap\":{\"base\":6}"),
+        source.replace("\"gap\":6", "\"responsive\":{}"),
+    ] {
+        assert!(Document::parse(&invalid).is_err());
+    }
+}

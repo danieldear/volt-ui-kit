@@ -638,6 +638,79 @@ mod rust_view_tests {
         assert_eq!(runtime.focused(), Some("add"));
     }
     #[test]
+    fn responsive_resize_changes_layout_without_calling_view_or_replacing_callbacks() {
+        use crate::ui::prelude::*;
+        let calls = Rc::new(Cell::new(0));
+        let body_calls = calls.clone();
+        let content = Content::Rust(Box::new(move |_: &usize| {
+            body_calls.set(body_calls.get() + 1);
+            let mut captured_calls = 0;
+            stack![
+                text("First").key("first").width(40.).height(20.),
+                button("Add").key("add").width(40.).height(20.).on_click(
+                    move |state: &mut usize| {
+                        captured_calls += 1;
+                        *state = captured_calls;
+                    }
+                ),
+            ]
+            .direction(responsive(Direction::Vertical).at(Breakpoint::Md, Direction::Horizontal))
+            .gap(8., Axis::Both)
+            .into()
+        }));
+        let Content::Rust(body) = &content else {
+            unreachable!()
+        };
+        let mut state = 0;
+        let (doc, mut handlers) = body(&state).build().unwrap().into_parts();
+        let mut values = Bindings::default();
+        let mut runtime = Runtime::new(doc, &handlers, &values).unwrap();
+        let mut painter = RasterPainter::new(Viewport::new(600., 400., 1.).unwrap());
+        for (width, scale) in [(767., 1.), (768., 1.5), (769., 2.), (767., 2.)] {
+            let viewport = Viewport::new(width * scale, 400. * scale, scale).unwrap();
+            painter.set_viewport(viewport);
+            runtime.cancel_input();
+            runtime.invalidate_layout();
+            runtime.layout(viewport, &values, &mut painter).unwrap();
+            let [x, y, w, h] = runtime
+                .boxes()
+                .iter()
+                .find(|b| b.id == "add")
+                .unwrap()
+                .bounds
+                .bounds();
+            assert_eq!(
+                [x / scale, y / scale],
+                if width >= 768. { [48., 0.] } else { [0., 28.] }
+            );
+            if runtime.focused().is_none() {
+                runtime.focus_next(false);
+            }
+            runtime.pointer_move(x + w / 2., y + h / 2.);
+            // Resize/hover/render dispatch no application action.
+            content
+                .after_input(
+                    InputOutcome::default(),
+                    &state,
+                    &mut runtime,
+                    &mut handlers,
+                    &mut values,
+                )
+                .unwrap();
+            runtime.paint(&mut painter, &Theme::dark());
+            assert_eq!(calls.get(), 1);
+            assert_eq!(runtime.focused(), Some("add"));
+        }
+        assert_eq!(state, 0);
+        runtime.key_down();
+        let outcome = runtime.key_up_outcome(&mut handlers, &mut state).unwrap();
+        content
+            .after_input(outcome, &state, &mut runtime, &mut handlers, &mut values)
+            .unwrap();
+        assert_eq!(state, 1);
+        assert_eq!(calls.get(), 2); // Recompose only after the dispatched action.
+    }
+    #[test]
     fn rejected_body_preserves_tree_handlers_focus_and_mutated_state_then_recovers() {
         let (mut state, mut runtime, mut handlers, content, calls) = fixture();
         let mut values = Bindings::default();

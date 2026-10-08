@@ -16,6 +16,7 @@ pub fn launch<C: 'static>(
     let mut scale = 1_f32;
     let mut bench = None;
     let mut target = None;
+    let mut size = [960_u32, 760_u32];
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -23,6 +24,11 @@ pub fn launch<C: 'static>(
                 snapshot = Some(PathBuf::from(args.next().ok_or("missing --snapshot path")?))
             }
             "--scale" => scale = args.next().ok_or("missing --scale value")?.parse()?,
+            "--size" => {
+                let value = args.next().ok_or("missing --size WIDTHxHEIGHT")?;
+                let (width, height) = value.split_once('x').ok_or("size must be WIDTHxHEIGHT")?;
+                size = [width.parse()?, height.parse()?];
+            }
             "--bench" => {
                 bench = Some(
                     args.next()
@@ -32,7 +38,7 @@ pub fn launch<C: 'static>(
             }
             "--bench-target" => target = Some(args.next().ok_or("missing --bench-target key")?),
             "--help" => {
-                println!("{title}\n--snapshot PNG    render without opening a window\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; warm CPU timings\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\nRust source edits require rebuild; no JSON or F5 source reload.");
+                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; warm CPU timings\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\nRust source edits require rebuild; no JSON or F5 source reload.");
                 return Ok(());
             }
             _ => {
@@ -44,6 +50,9 @@ pub fn launch<C: 'static>(
     }
     if !scale.is_finite() || !(0.25..=4.).contains(&scale) {
         return Err("scale must be in [0.25, 4]".into());
+    }
+    if size.contains(&0) || size.iter().any(|&v| v as f32 * scale > 16384.) {
+        return Err("size must be positive and scaled dimensions must be <=16384".into());
     }
     if snapshot.is_some() && bench.is_some() {
         return Err("--snapshot and --bench are mutually exclusive".into());
@@ -60,7 +69,7 @@ pub fn launch<C: 'static>(
         return run_ui(
             NativeOptions {
                 title: title.into(),
-                size: [960, 760],
+                size,
                 document_path: None,
             },
             state,
@@ -70,7 +79,7 @@ pub fn launch<C: 'static>(
     let values = Bindings::default();
     let (document, mut handlers) = view(&state).build()?.into_parts();
     let mut runtime = Runtime::new(document, &handlers, &values)?;
-    let viewport = Viewport::new(960. * scale, 760. * scale, scale).unwrap();
+    let viewport = Viewport::new(size[0] as f32 * scale, size[1] as f32 * scale, scale).unwrap();
     let mut painter = RasterPainter::new(viewport);
     let theme = Theme::dark();
     runtime.layout(viewport, &values, &mut painter)?;

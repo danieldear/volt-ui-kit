@@ -213,10 +213,12 @@ mod tests {
 }
 
 pub(crate) mod document;
+mod responsive;
 mod runtime;
 pub use document::{
     Align, Bindings, Document, DocumentError, Flow, Kind, Node, Rounding, Tone, Value,
 };
+pub use responsive::{responsive, Breakpoint, Direction, Responsive};
 pub use runtime::{
     ButtonState, DocumentPainter, InputOutcome, LayoutBox, PaintBatch, Runtime, TextMetrics,
     TextStyle,
