@@ -223,6 +223,34 @@ pub struct Node {
     /// Buttons that open something draw a chevron; `Some(true)` while open.
     #[serde(skip)]
     pub(crate) disclosure: Option<bool>,
+    // Rust-only semantics; schema-v1 JSON and legacy Painter stay unchanged.
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) accessible_label: Option<String>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_role: Option<super::AccessRole>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_selected: Option<bool>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_expanded: Option<bool>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_level: Option<usize>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_position: Option<usize>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_set_size: Option<usize>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_parent: Option<String>,
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_table: Option<super::AccessTableInfo>,
     #[serde(skip)]
     pub(crate) editor: Option<EditorOptions>,
     #[serde(skip)]
@@ -419,6 +447,24 @@ impl Node {
             surface: SurfaceContent::default(),
             selection_group: false,
             disclosure: None,
+            #[cfg(feature = "rust-ui")]
+            accessible_label: None,
+            #[cfg(feature = "rust-ui")]
+            access_role: None,
+            #[cfg(feature = "rust-ui")]
+            access_selected: None,
+            #[cfg(feature = "rust-ui")]
+            access_expanded: None,
+            #[cfg(feature = "rust-ui")]
+            access_level: None,
+            #[cfg(feature = "rust-ui")]
+            access_position: None,
+            #[cfg(feature = "rust-ui")]
+            access_set_size: None,
+            #[cfg(feature = "rust-ui")]
+            access_parent: None,
+            #[cfg(feature = "rust-ui")]
+            access_table: None,
             editor: None,
             on_text_changed: None,
             on_submit: None,
@@ -956,6 +1002,15 @@ fn check_node(
     }
     check_style(&n.style, &format!("{path}.style"))?;
     n.responsive.validate(path)?;
+    #[cfg(feature = "rust-ui")]
+    if n.accessible_label.as_ref().is_some_and(|label| {
+        label.trim().is_empty() || label.len() > 8192 || label.chars().any(char::is_control)
+    }) {
+        return Err(error(
+            path,
+            "accessible label must be nonempty, control-free and at most 8 KiB",
+        ));
+    }
     if n.text.as_ref().is_some_and(|v| v.len() > 8192)
         || n.label.as_ref().is_some_and(|v| v.len() > 8192)
     {

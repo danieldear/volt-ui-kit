@@ -166,6 +166,24 @@ pub struct LayoutBox {
     /// Horizontal label placement for buttons (fractions 0..1); centred if None.
     pub(crate) label_flow: Option<super::Flow>,
     pub(crate) disclosure: Option<bool>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) accessible_label: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_role: Option<super::AccessRole>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_selected: Option<bool>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_expanded: Option<bool>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_level: Option<usize>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_position: Option<usize>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_set_size: Option<usize>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_parent: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_table: Option<super::AccessTableInfo>,
     pub(crate) effects: Effects,
     pub(crate) depth: usize,
     ancestor_clip: Rect,
@@ -2643,6 +2661,24 @@ fn place(
         primary: n.primary,
         label_flow: (n.kind == Kind::Button).then_some(n.flow).flatten(),
         disclosure: n.disclosure,
+        #[cfg(feature = "rust-ui")]
+        accessible_label: n.accessible_label.clone(),
+        #[cfg(feature = "rust-ui")]
+        access_role: n.access_role,
+        #[cfg(feature = "rust-ui")]
+        access_selected: n.access_selected,
+        #[cfg(feature = "rust-ui")]
+        access_expanded: n.access_expanded,
+        #[cfg(feature = "rust-ui")]
+        access_level: n.access_level,
+        #[cfg(feature = "rust-ui")]
+        access_position: n.access_position,
+        #[cfg(feature = "rust-ui")]
+        access_set_size: n.access_set_size,
+        #[cfg(feature = "rust-ui")]
+        access_parent: n.access_parent.clone(),
+        #[cfg(feature = "rust-ui")]
+        access_table: n.access_table,
         effects: n.effects.clone(),
         depth: styles[&n.id].depth,
         ancestor_clip: ancestor,

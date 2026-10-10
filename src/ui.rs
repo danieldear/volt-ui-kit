@@ -102,8 +102,25 @@
 #![cfg_attr(feature="native",doc=include_str!("../docs/APP_RUNTIME.md"))]
 use crate::declarative::{
     document::{FontSlant, MAX_DEPTH, MAX_NODES},
-    Bindings, Document, DocumentError, Handlers, Kind, Node,
+    AccessRole, Bindings, Document, DocumentError, Handlers, Kind, Node,
 };
+
+// Generated composite names must not reject otherwise-valid Unicode cell text.
+fn bounded_semantic_name(text: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        let ch = if ch.is_control() { ' ' } else { ch };
+        if out.len() + ch.len_utf8() > 8192 {
+            break;
+        }
+        out.push(ch);
+    }
+    if out.trim().is_empty() {
+        fallback.into()
+    } else {
+        out
+    }
+}
 pub use crate::declarative::{
     responsive, Align, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
     Responsive, Rounding, Scroll, Scrollbars, Shadow, Tone, Transition, VisualStyle,
@@ -256,6 +273,7 @@ mod data;
 mod dialogs;
 mod inputs;
 mod menus;
+mod navigation;
 mod popovers;
 mod progress;
 mod split;
@@ -271,6 +289,9 @@ pub use data::{
 pub use dialogs::{dialog, Dialog};
 pub use inputs::{text_area, text_field, TextInput};
 pub use menus::{context_menu, menu, menu_item, menu_separator, ContextMenu, Menu, MenuItem};
+pub use navigation::{
+    navigation, navigation_item, Navigation, NavigationItem, NavigationPlacement,
+};
 pub use popovers::{popover, tooltip, Popover, Tooltip};
 pub use progress::{loading, progress, progress_indeterminate, spinner, Progress};
 pub use split::{split, SplitPane};
@@ -450,6 +471,11 @@ macro_rules! modifiers {
             /// Must be 1..=128 ASCII letters/digits/underscore/hyphen; checked at build.
             pub fn key(mut self, key: impl Into<String>) -> Self {
                 self.$($field)*.id = key.into(); self.$($auto)* = false; self
+            }
+            /// A screen-reader name independent of the painted label or placeholder.
+            /// Required for meaningful icon-only/custom hit targets. Does not alter layout.
+            pub fn accessible_label(mut self, label: impl Into<String>) -> Self {
+                self.$($field)*.accessible_label = Some(label.into()); self
             }
             pub fn width(mut self, value: f32) -> Self { self.$($field)*.width = Some(value); self }
             /// Remove a component's fixed-width default; use the parent's cross-axis allocation.
@@ -857,6 +883,9 @@ modifiers!(Progress, [0.node], [0.auto_id]);
 modifiers!(SplitPane, [0.node], [0.auto_id]);
 container_modifiers!(ButtonBar);
 container_modifiers!(Toolbar);
+modifiers!(Navigation, [T], [0.node], [0.auto_id]);
+container_modifiers!(Navigation, [T]);
+
 container_modifiers!(SelectionControl, [T]);
 container_modifiers!(Tabs, [T]);
 #[macro_export]
@@ -872,17 +901,19 @@ pub use crate::{button_bar, tab_bar, tabs, toolbar};
 pub mod prelude {
     pub use super::{
         badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
-        divider, hstack, loading, menu, menu_item, menu_separator, panel, popover, progress,
-        progress_indeterminate, responsive, row, segmented_control, select, select_item, separator,
-        slider, spacer, spinner, split, stack, tab, tab_bar, tab_item, table, table_column,
-        table_row, tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node,
-        tree_view, virtual_list, vstack, zstack, Align, Animation, Axes, Axis, BackgroundImage,
-        Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu, ControlSize,
-        Corner, CornerSet, Corners, DataItem, Dialog, Direction, Easing, Edge, Edges, Element,
-        Flow, FontStyle, Glow, Image, ImageFit, ImagePosition, Interaction, Menu, MenuItem,
-        Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem,
-        SelectionControl, Shadow, Slider, SortDirection, SplitPane, Tab, TabItem, TabPlacement,
-        Table, TableColumn, TableRow, Tabs, TextInput, ThemeMode, Tone, Toolbar, Tooltip,
-        Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList, VisualStyle,
+        divider, hstack, loading, menu, menu_item, menu_separator, navigation, navigation_item,
+        panel, popover, progress, progress_indeterminate, responsive, row, segmented_control,
+        select, select_item, separator, slider, spacer, spinner, split, stack, tab, tab_bar,
+        tab_item, table, table_column, table_row, tabs, text, text_area, text_field, toggle,
+        toolbar, tooltip, tree_node, tree_view, virtual_list, vstack, zstack, Align, Animation,
+        Axes, Axis, BackgroundImage, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip,
+        ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, DataItem, Dialog,
+        Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Image, ImageFit,
+        ImagePosition, Interaction, Menu, MenuItem, Navigation, NavigationItem,
+        NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
+        Select, SelectItem, SelectionControl, Shadow, Slider, SortDirection, SplitPane, Tab,
+        TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextInput, ThemeMode, Tone,
+        Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
+        VisualStyle,
     };
 }

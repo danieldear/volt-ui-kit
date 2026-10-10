@@ -47,6 +47,7 @@ pub struct App {
     pub page: Page,
     pub mode: ThemeMode,
     pub theme: usize,
+    pub glass: bool,
     pub sidebar_query: String,
     pub palette_open: bool,
     pub palette_query: String,
@@ -61,6 +62,7 @@ pub struct App {
     pub switch_on: bool,
     pub airplane: bool,
     pub segment: u8,
+    pub navigation: u8,
     pub tab: u8,
     pub name: String,
     pub email: String,
@@ -106,6 +108,7 @@ impl App {
             page: Page::Introduction,
             mode: ThemeMode::Light,
             theme: 0,
+            glass: false,
             sidebar_query: String::new(),
             palette_open: false,
             palette_query: String::new(),
@@ -118,6 +121,7 @@ impl App {
             switch_on: true,
             airplane: false,
             segment: 1,
+            navigation: 0,
             tab: 0,
             name: "Ada Lovelace".into(),
             email: String::new(),
@@ -169,9 +173,11 @@ impl App {
         self.context_open = false;
         self.popover_open = false;
         self.theme_menu_open = false;
+        self.dialog_open = false;
+        self.delete_open = false;
     }
     pub fn notify(&mut self, message: impl Into<String>) {
-        self.next_toast += 1;
+        self.next_toast = self.next_toast.wrapping_add(1);
         self.toast = Some((self.next_toast, message.into()));
     }
     pub fn start_job(&mut self) {
@@ -191,9 +197,10 @@ impl App {
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                match sender.send(Message::Progress { generation, step }) {
-                    Ok(()) | Err(UiSendError::Full) => {}
-                    Err(UiSendError::Closed) => break,
+                if !send_progress(&cancel, step, || {
+                    sender.send(Message::Progress { generation, step })
+                }) {
+                    break;
                 }
             }
         });
@@ -203,6 +210,32 @@ impl App {
         self.job_generation = self.job_generation.wrapping_add(1);
         self.job_running = false;
         self.notify("Task cancelled");
+    }
+}
+
+// Intermediate updates may coalesce, but completion must survive backpressure.
+// Retry only on the worker thread; cancellation/closure bound its lifetime.
+fn send_progress(
+    cancel: &AtomicBool,
+    step: u32,
+    mut send: impl FnMut() -> Result<(), UiSendError>,
+) -> bool {
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        match send() {
+            Ok(()) => return true,
+            Err(UiSendError::Closed) => return false,
+            Err(UiSendError::Full) if step < 100 => return true,
+            Err(UiSendError::Full) => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.job_cancel.store(true, Ordering::Relaxed);
     }
 }
 

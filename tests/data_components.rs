@@ -251,7 +251,13 @@ fn table_really_sorts_and_headers_emit_typed_sort_direction() {
     for scale in [1., 2.] {
         let (mut r, mut h) = mount(sorted_table(SortDirection::Ascending), scale);
         assert_eq!(
-            r.document().root().children()[1].children()[0].id(),
+            r.document()
+                .root()
+                .children()
+                .iter()
+                .find(|n| n.id() == "alpha" || n.id() == "beta")
+                .unwrap()
+                .id(),
             "alpha"
         );
         let mut app = App::default();
@@ -263,7 +269,16 @@ fn table_really_sorts_and_headers_emit_typed_sort_direction() {
             sorted_table(SortDirection::Descending),
             scale,
         );
-        assert_eq!(r.document().root().children()[1].children()[0].id(), "beta");
+        assert_eq!(
+            r.document()
+                .root()
+                .children()
+                .iter()
+                .find(|n| n.id() == "alpha" || n.id() == "beta")
+                .unwrap()
+                .id(),
+            "beta"
+        );
         assert!(click(&mut r, &mut h, &mut app, "alpha"));
         assert_eq!(app.selected, Some(2));
     }
@@ -284,7 +299,15 @@ fn table_typed_comparator_can_sort_numbers_not_display_strings() {
     .on_sort(|_, _, _| {})
     .into();
     let (d, _) = ui.build().unwrap().into_parts();
-    assert_eq!(d.root().children()[1].children()[0].id(), "three");
+    assert_eq!(
+        d.root()
+            .children()
+            .iter()
+            .find(|n| n.id() == "three" || n.id() == "twenty")
+            .unwrap()
+            .id(),
+        "three"
+    );
 }
 #[test]
 fn table_rejects_wrong_cells_duplicates_missing_callback_and_node_budget() {
@@ -369,4 +392,310 @@ fn tree_duplicate_values_and_oversized_models_are_rejected() {
             .on_expand(|_, _, _| {})
             .into();
     assert!(ui.build().is_err());
+}
+
+#[test]
+fn table_cells_belong_to_rows_and_numeric_alignment_matches_the_header() {
+    use volt_ui_kit::declarative::AccessRole;
+    for scale in [1., 2.] {
+        let ui: Element<App> = table(
+            [
+                table_column(0, "Name").width(140.).sortable(false),
+                table_column(1, "Amount").width(120.).align(Align::End),
+            ],
+            [
+                table_row(0, ["First", "$12.00"]).key("first"),
+                table_row(1, ["Last", "$24.00"]).key("last"),
+            ],
+        )
+        .key("table")
+        .width(360.)
+        .sort(1, SortDirection::Descending)
+        .on_select(|a: &mut App, id| a.selected = Some(id))
+        .on_sort(|a: &mut App, col, dir| a.sort = Some((col, dir)))
+        .into();
+        let (mut r, mut h) = mount(ui, scale);
+        let nodes = r.accessibility_nodes();
+        let frame = nodes.iter().find(|n| n.id == "table").unwrap();
+        let info = frame.table.unwrap();
+        assert_eq!((info.rows, info.columns), (Some(3), Some(2)));
+        let header = nodes.iter().find(|n| n.id == "table-column-1").unwrap();
+        assert_eq!(header.role, AccessRole::ColumnHeader);
+        assert_eq!(header.label, "Amount"); // no arrow glyph in the name
+        assert_eq!(header.table.unwrap().sort_ascending, Some(false));
+        assert!(header.clickable);
+        let fixed_header = nodes
+            .iter()
+            .find(|n| n.role == AccessRole::ColumnHeader && n.label == "Name")
+            .unwrap();
+        assert!(!fixed_header.clickable);
+        for id in ["first", "last"] {
+            let row = nodes.iter().find(|n| n.id == id).unwrap();
+            let box_ = r.boxes().iter().find(|b| b.id == id).unwrap();
+            let [x, y, w, height] = box_.bounds.bounds();
+            assert_eq!(box_.clip.bounds(), [x, y, w, height]);
+            assert!(x >= frame.bounds[0] + scale);
+            assert!(x + w <= frame.bounds[0] + frame.bounds[2] - scale + 0.01);
+            assert_eq!(height, 44. * scale);
+            for (index, cell) in nodes.iter().enumerate().filter(|(_, n)| {
+                n.role == AccessRole::Cell && n.parent.is_some_and(|p| nodes[p].id == id)
+            }) {
+                assert_eq!(cell.table.unwrap().row, row.table.unwrap().row);
+                if cell.table.unwrap().column == Some(1) {
+                    let end = cell.bounds[0] + cell.bounds[2];
+                    assert!(
+                        (end - (header.bounds[0] + header.bounds[2] - 12. * scale)).abs() < 0.01
+                    );
+                }
+                // Text itself is not an independent target; every cell selects its row.
+                let [cx, cy, cw, ch] = nodes[index].bounds;
+                let mut app = App::default();
+                r.pointer_down_outcome(cx + cw / 2., cy + ch / 2., &mut h, &mut app)
+                    .unwrap();
+                assert!(
+                    r.pointer_up_outcome(cx + cw / 2., cy + ch / 2., &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert_eq!(app.selected, Some(if id == "first" { 0 } else { 1 }));
+            }
+        }
+    }
+}
+
+#[test]
+fn constrained_tables_scroll_instead_of_squeezing_or_truncating_columns() {
+    for scale in [1., 2.] {
+        let ui: Element<App> = table(
+            [
+                table_column(0, "A"),
+                table_column(1, "B"),
+                table_column(2, "C"),
+            ],
+            (0..8).map(|id| table_row(id, ["A", "B", "C"]).key(format!("row-{id}"))),
+        )
+        .key("table")
+        .width(180.)
+        .height(100.)
+        .on_select(|a: &mut App, id| a.selected = Some(id))
+        .on_sort(|_, _, _| {})
+        .into();
+        let (mut r, _) = mount(ui, scale);
+        let frame = r.boxes().iter().find(|b| b.id == "table").unwrap();
+        assert!(frame.scroll_max[0] > 180.);
+        assert!(frame.scroll_max[1] > 200.);
+        let nodes = r.accessibility_nodes();
+        let last = nodes.iter().find(|n| n.id == "row-7").unwrap();
+        assert_eq!(last.bounds[2], 360. * scale);
+        assert!(r.accessibility_focus("row-7"));
+        assert!(r.scroll_offset("table")[1] > 200.);
+    }
+}
+
+#[test]
+fn tree_uses_vector_disclosures_inset_rows_and_real_semantic_hierarchy() {
+    use volt_ui_kit::declarative::{AccessRole, Kind, Node};
+    fn find<'a>(n: &'a Node, id: &str) -> Option<&'a Node> {
+        if n.id() == id {
+            Some(n)
+        } else {
+            n.children().iter().find_map(|c| find(c, id))
+        }
+    }
+    fn has_canvas(n: &Node) -> bool {
+        n.kind() == Kind::Canvas || n.children().iter().any(has_canvas)
+    }
+    for scale in [1., 2.] {
+        let app = App {
+            expanded: vec![0],
+            ..App::default()
+        };
+        let (mut r, mut h) = mount(tree(&app), scale);
+        assert!(has_canvas(
+            find(r.document().root(), "root-expand").unwrap()
+        ));
+        let nodes = r.accessibility_nodes();
+        let root = nodes.iter().find(|n| n.id == "root").unwrap();
+        let child = nodes.iter().find(|n| n.id == "child").unwrap();
+        assert_eq!(root.role, AccessRole::TreeItem);
+        assert_eq!(root.size_of_set, Some(1));
+        assert_eq!(child.position_in_set, Some(0));
+        assert_eq!(child.level, Some(1));
+        assert_eq!(nodes[child.parent.unwrap()].id, "root");
+        for id in ["root", "child", "disabled"] {
+            let b = r.boxes().iter().find(|b| b.id == id).unwrap();
+            assert_eq!(b.clip.bounds(), b.bounds.bounds());
+            assert_eq!(b.bounds.bounds()[0], 6. * scale);
+            assert_eq!(b.bounds.bounds()[3], 36. * scale);
+        }
+        let mut app = app;
+        assert!(click(&mut r, &mut h, &mut app, "root-expand"));
+        assert!(app.expanded.is_empty());
+        assert_eq!(app.selected, None); // expansion never leaks into row selection
+        replace(&mut r, &mut h, tree(&app), scale);
+        assert!(!r.accessibility_nodes().iter().any(|n| n.id == "child"));
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CornerShape {
+    bounds: [f32; 4],
+    radii: [f32; 4],
+    outline: bool,
+}
+struct CornerPainter(Metrics);
+impl TextMetrics for CornerPainter {
+    fn measure(&mut self, s: &str, size: f32, width: f32) -> [f32; 2] {
+        self.0.measure(s, size, width)
+    }
+}
+impl Painter for CornerPainter {
+    type Shape = CornerShape;
+    type Glyph = ();
+    fn viewport(&self) -> Viewport {
+        self.0.viewport()
+    }
+    fn draw_rect(&self, out: &mut Vec<CornerShape>, x: f32, y: f32, w: f32, h: f32, _: [f32; 4]) {
+        out.push(CornerShape {
+            bounds: [x, y, w, h],
+            radii: [0.; 4],
+            outline: false,
+        });
+    }
+    fn card_round(&self, out: &mut Vec<CornerShape>, bounds: [f32; 4], radius: f32, _: [f32; 4]) {
+        out.push(CornerShape {
+            bounds,
+            radii: [radius; 4],
+            outline: false,
+        });
+    }
+    fn card_corners(
+        &self,
+        out: &mut Vec<CornerShape>,
+        bounds: [f32; 4],
+        radii: [f32; 4],
+        _: [f32; 4],
+    ) {
+        out.push(CornerShape {
+            bounds,
+            radii,
+            outline: false,
+        });
+    }
+    fn card_outline(
+        &self,
+        out: &mut Vec<CornerShape>,
+        bounds: [f32; 4],
+        radii: [f32; 4],
+        _: f32,
+        _: [f32; 4],
+    ) {
+        out.push(CornerShape {
+            bounds,
+            radii,
+            outline: true,
+        });
+    }
+    fn card_triangle(&self, _: &mut Vec<CornerShape>, _: [[f32; 2]; 3], _: [f32; 4]) {}
+    fn card_text(&mut self, _: &mut Vec<()>, _: &str, _: f32, _: f32, _: f32, _: [f32; 4]) {}
+    fn draw_text_colored(
+        &mut self,
+        _: &mut Vec<()>,
+        _: &str,
+        _: f32,
+        _: f32,
+        _: f32,
+        _: f32,
+        _: &dyn Fn(usize) -> [f32; 4],
+    ) {
+    }
+}
+impl DocumentPainter for CornerPainter {
+    fn ui_text(&mut self, _: &mut Vec<()>, _: &str, _: [f32; 4], _: f32, _: [f32; 4]) {}
+}
+
+#[test]
+fn table_frame_header_last_selection_and_focus_share_one_corner_contour() {
+    for scale in [1., 2.] {
+        for radius in [0., 12., 20.] {
+            for direction in [SortDirection::Ascending, SortDirection::Descending] {
+                let last = if direction == SortDirection::Ascending {
+                    2
+                } else {
+                    0
+                };
+                let ui: Element<App> = table(
+                    [table_column(0usize, "Name")],
+                    (0..3)
+                        .map(|id| table_row(id, [format!("Record {id}")]).key(format!("row-{id}"))),
+                )
+                .key("table")
+                .rounded(radius)
+                .sort(0, direction)
+                .selected(Some(last))
+                .on_select(|a: &mut App, id| a.selected = Some(id))
+                .on_sort(|a: &mut App, k, d| a.sort = Some((k, d)))
+                .into();
+                let (doc, h) = ui.build().unwrap().into_parts();
+                let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                let mut p = CornerPainter(Metrics(scale));
+                r.layout(p.viewport(), &Bindings::default(), &mut p)
+                    .unwrap();
+                assert!(r.accessibility_focus(&format!("row-{last}")));
+                r.settle_animations();
+                let batches = r.paint_ui(&mut p, &volt_ui_kit::UiTheme::dark());
+                let shapes = batches.iter().flat_map(|b| &b.shapes).collect::<Vec<_>>();
+                let frame = r
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == "table")
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert!(
+                    shapes
+                        .iter()
+                        .any(|s| s.outline && s.bounds == frame && s.radii == [radius * scale; 4]),
+                    "outer border must be one continuous outline"
+                );
+                let header_id = r.document().root().children()[0].id();
+                let header = r
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == header_id)
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert_eq!(
+                    header[0],
+                    frame[0] + scale,
+                    "only the border stroke separates the header from the frame"
+                );
+                let inner = (radius - 1.).max(0.) * scale;
+                let small = if radius == 0. { 0. } else { 4. * scale };
+                assert!(shapes.iter().any(|s| !s.outline
+                    && s.bounds == header
+                    && s.radii == [inner, inner, small, small]));
+                let row = r
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == format!("row-{last}"))
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert!(
+                    shapes.iter().any(|s| !s.outline
+                        && s.bounds == row
+                        && s.radii == [small, small, inner, inner]),
+                    "last row selection must follow bottom table corners after sorting"
+                );
+                assert!(
+                    shapes.iter().any(|s| s.outline
+                        && s.bounds == row
+                        && s.radii == [small, small, inner, inner]),
+                    "focus outline must follow the same corners"
+                );
+            }
+        }
+    }
 }

@@ -173,6 +173,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
             .width(select.0.node.width.unwrap_or(220.))
             .on_click(move |app: &mut C| (callback.borrow_mut())(app, !open))
             .into();
+        trigger.node.accessible_label = select.0.node.accessible_label.take();
         // Public surface modifiers style the actual interactive trigger. The
         // outer layout node keeps typography and clipping, but must not paint
         // a second translucent background or border underneath that trigger.
@@ -191,6 +192,8 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
             return select.0;
         }
         let mut items = Element::new(Kind::Panel);
+        items.node.access_role = Some(AccessRole::ListBox);
+        items.node.access_set_size = Some(select.1.items.len());
         items.node.padding = 8.;
         items.node.style.radius = Some(Rounding::Radius(8.));
         items.node.style.background = Some(ColorToken::Base200.into());
@@ -200,7 +203,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
         items.node.gap = 2.;
         items.node.surface.scroll = Some(Scroll::Vertical);
         items.node.height = Some((select.1.items.len() as f32 * 36. + 16.).min(320.));
-        for item in select.1.items {
+        for (position, item) in select.1.items.into_iter().enumerate() {
             let active = item.value == selected;
             let on_select = on_select.clone();
             let on_open = on_open.clone();
@@ -220,6 +223,9 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
                 option = option.color(ColorToken::PrimaryContent);
             }
             option.0.node.checked = active;
+            option.0.node.access_role = Some(AccessRole::ListBoxOption);
+            option.0.node.access_selected = Some(active);
+            option.0.node.access_position = Some(position);
             if let Some(key) = item.key {
                 option = option.key(key);
             }

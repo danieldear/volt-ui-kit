@@ -83,7 +83,11 @@ window-control components and cross-platform custom-decoration adapters.
 
 ## Surface vertical slice (2026-10-08)
 
-The original diagnostic workbench is `ui_lab`. As of the user's 2026-10-09 direction, **Showcase is the canonical polished visual/component acceptance app**. New work extends its screens and tests with the Atelier design system; Lab and focused existing examples remain regression fixtures.
+The original diagnostic workbench is `ui_lab`. Showcase was the primary polished
+acceptance app from 2026-10-09. As of the user's 2026-10-10 direction, **Catalog
+is the canonical component demonstration/acceptance app**. New work extends
+Catalog's existing design; Showcase, Lab and focused examples remain regression
+fixtures. See [Catalog](docs/CATALOG.md).
 
 Implemented: semantic UI palettes, root/system/state theme selection, global accent,
 background images/opacity, vector paths/canvas, explicit content clips, effect
@@ -116,3 +120,13 @@ stable public-material integration before App Store-safe distribution claims.
 Physical IME, VoiceOver, cross-platform runtime, pointer/device acceptance and
 GPU energy/utilization remain distinct from automated toolkit checks.
 See [the plan and measured receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).
+
+### Application-first track (2026-10-10)
+
+First slice: additive Application configuration, standalone controlled navigation,
+GPU-first local templates/dev runner, optional macOS application-menu/tray adapters.
+Remaining: modern notifications/public window materials, command/shortcut registry,
+close veto/persistence/multi-window, deeper navigation, debugging and richer motion.
+WebKit/maps/Foundation Models/App Intents follow desktop service acceptance.
+Theme editor is explicitly deferred; templates never prescribe the developer's UI.
+See [status, APIs and gates](docs/APPLICATION_DEVELOPMENT.md).

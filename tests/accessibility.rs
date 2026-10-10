@@ -20,6 +20,270 @@ struct App {
     secret: String,
     volume: f32,
     open: bool,
+    window: std::ops::Range<usize>,
+}
+
+#[test]
+fn explicit_names_and_composite_semantics_are_exposed() {
+    let ui: Element<App> = vstack![
+        text_field("Ada")
+            .key("named")
+            .accessible_label("Profile name")
+            .placeholder("Your name")
+            .on_change(|_: &mut App, _| {}),
+        tab_bar([
+            tab_item(0u8, "Overview").key("overview"),
+            tab_item(1, "Details").key("details")
+        ])
+        .key("views")
+        .selected(1)
+        .on_select(|_: &mut App, _| {}),
+        segmented_control([(0u8, "Low"), (1, "High")])
+            .key("level")
+            .selected(1)
+            .on_select(|_: &mut App, _| {}),
+        tree_view([tree_node(0u8, "src")
+            .key("src")
+            .children([tree_node(1, "lib.rs").key("lib")])])
+        .key("files")
+        .expanded([0])
+        .selected(Some(1))
+        .on_select(|_: &mut App, _| {})
+        .on_expand(|_: &mut App, _, _| {}),
+    ]
+    .into();
+    let (doc, handlers) = ui.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            Viewport::new(800., 700., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+    let nodes = runtime.accessibility_nodes();
+    let find = |id: &str| nodes.iter().find(|n| n.id == id).unwrap();
+    assert_eq!(find("named").label, "Profile name");
+    assert_eq!(find("named").placeholder.as_deref(), Some("Your name"));
+    assert_eq!(find("views").role, AccessRole::TabList);
+    assert_eq!(find("overview").role, AccessRole::Tab);
+    assert_eq!(find("overview").selected, Some(false));
+    assert_eq!(find("details").selected, Some(true));
+    assert_eq!(find("level").role, AccessRole::RadioGroup);
+    assert!(nodes
+        .iter()
+        .any(|n| n.role == AccessRole::RadioButton && n.checked == Some(true)));
+    assert_eq!(find("src").expanded, Some(true));
+    assert_eq!(find("lib").role, AccessRole::TreeItem);
+    assert_eq!(find("lib").selected, Some(true));
+    assert_eq!(find("src").level, Some(0));
+    assert_eq!(find("lib").level, Some(1));
+    assert_eq!(find("src-expand").label, "Collapse src");
+}
+
+#[test]
+fn invalid_accessible_names_are_rejected_without_changing_painted_text() {
+    for name in ["".to_owned(), "\0".to_owned(), "x".repeat(8193)] {
+        let ui: Element<App> = button("Save")
+            .accessible_label(name)
+            .on_click(|_: &mut App| {})
+            .into();
+        assert!(ui.build().is_err());
+    }
+}
+
+#[test]
+fn clipped_virtual_viewport_can_page_without_losing_its_window_callback() {
+    let ui: Element<App> = vstack![
+        text("Above the list").height(500.),
+        virtual_list(1000, 32., |i| data_item(i, format!("Row {i}"))
+            .key(format!("off-{i}")))
+        .key("offscreen-list")
+        .height(128.)
+        .window(0..7)
+        .on_select(|_: &mut App, _| {})
+        .on_window_change(|app: &mut App, range| app.window = range),
+        button("Hidden")
+            .key("zero")
+            .width(0.)
+            .on_click(|app: &mut App| app.saves += 1),
+    ]
+    .key("outer")
+    .height(160.)
+    .scroll(Scroll::Vertical)
+    .into();
+    let (doc, mut handlers) = ui.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            Viewport::new(500., 300., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+    assert!(!runtime.boxes().iter().any(|b| b.id == "offscreen-list"));
+    let mut app = App::default();
+    let outcome = runtime
+        .accessibility_scroll("offscreen-list", [0, 1], &mut handlers, &mut app)
+        .unwrap();
+    assert!(outcome.changed && outcome.activated);
+    assert!(app.window.start > 0);
+    assert!(!runtime.accessibility_focus("zero"));
+    assert!(
+        !runtime
+            .accessibility_activate("zero", &mut handlers, &mut app)
+            .unwrap()
+            .changed
+    );
+    assert_eq!(app.saves, 0);
+}
+
+#[test]
+fn scroll_actions_page_and_clamp_virtual_windows_and_respect_modal_scope() {
+    let scrolling_view = |open: bool| -> Element<App> {
+        vstack![
+            virtual_list(1000, 32., |i| data_item(i, format!("Row {i}"))
+                .key(format!("record-{i}")))
+            .key("records")
+            .height(128.)
+            .window(0..7)
+            .on_select(|_: &mut App, _| {})
+            .on_window_change(|app: &mut App, window| app.window = window),
+            dialog(button("Close").key("close").on_click(|_: &mut App| {}))
+                .key("modal")
+                .open(open)
+                .on_dismiss(|_: &mut App| {}),
+        ]
+        .into()
+    };
+    let (doc, mut handlers) = scrolling_view(false).build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let mut app = App::default();
+    let viewport = Viewport::new(600., 500., 2.).unwrap();
+    runtime
+        .layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
+    let nodes = runtime.accessibility_nodes();
+    assert_eq!(
+        nodes
+            .iter()
+            .find(|n| n.id == "records")
+            .unwrap()
+            .size_of_set,
+        Some(1000)
+    );
+    assert_eq!(
+        nodes
+            .iter()
+            .find(|n| n.id == "record-6")
+            .unwrap()
+            .position_in_set,
+        Some(6)
+    );
+    let outcome = runtime
+        .accessibility_scroll("records", [0, 1], &mut handlers, &mut app)
+        .unwrap();
+    assert!(outcome.changed && outcome.activated);
+    assert!(runtime.scroll_offset("records")[1] > 0.);
+    assert!(app.window.start > 0);
+    let before = runtime.scroll_offset("records");
+    for (id, direction) in [
+        ("records", [2, 0]),
+        ("records", [1, 0]),
+        ("missing", [0, 1]),
+    ] {
+        assert!(
+            !runtime
+                .accessibility_scroll(id, direction, &mut handlers, &mut app)
+                .unwrap()
+                .changed
+        );
+        assert_eq!(runtime.scroll_offset("records"), before);
+    }
+    runtime
+        .accessibility_scroll("records", [0, -1], &mut handlers, &mut app)
+        .unwrap();
+    assert_eq!(runtime.scroll_offset("records"), [0.; 2]);
+    assert!(
+        !runtime
+            .accessibility_scroll("records", [0, -1], &mut handlers, &mut app)
+            .unwrap()
+            .changed
+    );
+    // Open-modal background controls must not scroll or reveal/focus.
+    let (doc, next) = scrolling_view(true).build().unwrap().into_parts();
+    runtime
+        .replace_document(doc, &next, &Bindings::default())
+        .unwrap();
+    handlers = next;
+    runtime
+        .layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
+    assert!(!runtime.accessibility_reveal("record-0"));
+    assert!(!runtime.accessibility_focus("record-0"));
+    assert!(
+        !runtime
+            .accessibility_scroll("records", [0, 1], &mut handlers, &mut app)
+            .unwrap()
+            .changed
+    );
+}
+
+#[test]
+fn accessibility_can_focus_and_reveal_a_mounted_offscreen_control() {
+    let ui: Element<App> = vstack![
+        text("Above").height(280.),
+        button("Last action").key("last").on_click(|_: &mut App| {}),
+    ]
+    .key("scroll")
+    .height(100.)
+    .scroll(Scroll::Vertical)
+    .into();
+    let (doc, handlers) = ui.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let viewport = Viewport::new(400., 150., 2.).unwrap();
+    runtime
+        .layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
+    assert!(runtime.accessibility_nodes().iter().any(|n| n.id == "last"));
+    assert!(runtime.accessibility_focus("last"));
+    assert!(runtime.scroll_offset("scroll")[1] > 0.);
+    runtime
+        .layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
+    assert!(runtime.boxes().iter().any(|b| b.id == "last"));
+    assert!(
+        !runtime.accessibility_focus("last"),
+        "already revealed focus is a no-op"
+    );
+}
+
+#[test]
+fn table_hit_targets_have_row_names() {
+    let ui: Element<App> = table(
+        [
+            table_column(0u8, "Name").sortable(false),
+            table_column(1, "Status").sortable(false),
+        ],
+        [table_row(0u8, ["Ada", "Ready"]).key("row-ada")],
+    )
+    .key("table")
+    .on_select(|_: &mut App, _| {})
+    .into();
+    let (doc, handlers) = ui.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            Viewport::new(600., 300., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+    let nodes = runtime.accessibility_nodes();
+    assert_eq!(
+        nodes.iter().find(|n| n.id == "row-ada").unwrap().label,
+        "Ada, Ready"
+    );
 }
 fn view(app: &App) -> Element<App> {
     vstack![

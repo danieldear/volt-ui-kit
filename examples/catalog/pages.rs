@@ -9,6 +9,7 @@ use volt_ui_kit::ui::{prelude::*, Element as El};
 pub enum Page {
     Introduction,
     Theming,
+    Accessibility,
     Layout,
     Badge,
     Button,
@@ -42,11 +43,13 @@ pub enum Page {
     BackgroundTasks,
     SignIn,
     Settings,
+    Navigation,
 }
 use Page::*;
-pub const PAGES: [Page; 35] = [
+pub const PAGES: [Page; 37] = [
     Introduction,
     Theming,
+    Accessibility,
     Layout,
     Badge,
     Button,
@@ -54,6 +57,7 @@ pub const PAGES: [Page; 35] = [
     Toolbar,
     Segmented,
     Tabs,
+    Navigation,
     Checkbox,
     Switch,
     TextField,
@@ -86,6 +90,7 @@ impl Page {
         match self {
             Introduction => "Introduction",
             Theming => "Theming",
+            Accessibility => "Accessibility",
             Layout => "Layout",
             Badge => "Badge",
             Button => "Button",
@@ -119,6 +124,7 @@ impl Page {
             BackgroundTasks => "Background tasks",
             SignIn => "Sign-in form",
             Settings => "Settings panel",
+            Navigation => "Navigation",
         }
     }
     pub fn slug(self) -> String {
@@ -129,7 +135,7 @@ impl Page {
     }
     pub fn group(self) -> &'static str {
         match self {
-            Introduction | Theming | Layout => "Getting started",
+            Introduction | Theming | Accessibility | Layout => "Getting started",
             BackgroundTasks | SignIn | Settings => "Patterns",
             _ => "Components",
         }
@@ -138,7 +144,9 @@ impl Page {
     pub fn is_new(self) -> bool {
         matches!(
             self,
-            Menu | ContextMenu
+            Accessibility
+                | Menu
+                | ContextMenu
                 | Popover
                 | Tooltip
                 | Progress
@@ -158,6 +166,7 @@ impl Page {
             Theming => {
                 "Semantic colour roles, light and dark palettes, accents and translucent tokens."
             }
+            Accessibility => "Named controls, semantic selection and mounted scroll/focus reveal.",
             Layout => "Stacks, layers, spacing, alignment and responsive direction.",
             Badge => "A short status or count, set in a compact pill.",
             Button => "Triggers an action. Six variants, three sizes and a disclosure style.",
@@ -191,6 +200,9 @@ impl Page {
             BackgroundTasks => "Worker threads report progress through a bounded message queue.",
             SignIn => "Inputs, validation and actions composed into a form.",
             Settings => "Grouped preferences with switches, selects and sliders.",
+            Navigation => {
+                "Independent controlled destination navigation: sidebar, rail and bottom placement."
+            }
         }
     }
 }
@@ -243,6 +255,7 @@ pub fn doc(page: Page, app: &App) -> Doc {
             api: vec![],
         },
         Theming => theming(app),
+        Accessibility => accessibility_doc(app),
         Layout => layout(),
         Badge => badge_doc(),
         Button => button_doc(app),
@@ -276,10 +289,94 @@ pub fn doc(page: Page, app: &App) -> Doc {
         BackgroundTasks => tasks_doc(app),
         SignIn => sign_in(app),
         Settings => settings_doc(app),
+        Navigation => navigation_doc(app),
     }
 }
 
 // ------------------------------------------------------------ Getting started
+
+fn accessibility_doc(app: &App) -> Doc {
+    let controls = vstack![
+        hstack![
+            label("Profile name"),
+            text_field(&app.name)
+                .key("ax-name")
+                .accessible_label("Profile name")
+                .placeholder("Your full name")
+                .width(240.)
+                .on_change(|app: &mut App, value| app.name = value),
+            zstack![
+                button("")
+                    .key("ax-notifications")
+                    .accessible_label("Show notifications")
+                    .variant(ButtonVariant::Outline)
+                    .width(36.)
+                    .height(36.)
+                    .on_click(|app: &mut App| app.notify("No new notifications")),
+                icon(Icon::Bell, 18., ColorToken::BaseContent),
+            ]
+            .width(36.)
+            .height(36.),
+        ]
+        .gap(12., Axis::Horizontal)
+        .align(Align::Center),
+        tab_bar([tab_item(0u8, "Overview"), tab_item(1, "Details")])
+            .key("ax-tabs")
+            .accessible_label("Profile views")
+            .selected(app.tab)
+            .on_select(|app: &mut App, value| app.tab = value),
+        segmented_control([(0u8, "Quiet"), (1, "Balanced"), (2, "All")])
+            .key("ax-segment")
+            .accessible_label("Notification level")
+            .selected(app.segment)
+            .on_select(|app: &mut App, value| app.segment = value),
+        muted(
+            "Names are independent of painted text. Selected tabs and choices have semantic state."
+        ),
+    ]
+    .gap(16., Axis::Vertical);
+    let actions = vstack((0..12).map(|i| -> El<App> {
+        button(format!("Action {}", i + 1))
+            .key(format!("ax-action-{i}"))
+            .variant(ButtonVariant::Outline)
+            .height(36.)
+            .fill_width()
+            .on_click(move |app: &mut App| app.notify(format!("Action {} activated", i + 1)))
+            .into()
+    }))
+    .key("ax-scroll")
+    .accessible_label("Scrollable actions")
+    .width(360.)
+    .height(156.)
+    .gap(8., Axis::Vertical)
+    .padding(12., Edge::All)
+    .scroll(Scroll::Vertical)
+    .border_width(1.)
+    .border_color(ColorToken::Border)
+    .rounded(10.);
+    Doc {
+        sections: vec![
+            section("access-names", "Names and selection", "Try Tab, arrow keys and the icon action. Password values remain withheld.", controls,
+                r#"text_field(&app.name).accessible_label("Profile name").placeholder("Your full name")
+button("").accessible_label("Show notifications").on_click(show_notifications)
+tab_bar(items).selected(app.tab).on_select(select_tab)
+segmented_control(options).selected(app.level).on_select(select_level)"#),
+            section("access-scroll", "Scroll and focus reveal", "Tab or an assistive focus request reveals mounted actions below the viewport. Scroll actions target this container only.", actions,
+                r#"vstack(actions).key("actions").accessible_label("Scrollable actions")
+    .height(156.).scroll(Scroll::Vertical)
+// Runtime::accessibility_focus(key) reveals a mounted off-screen control.
+// Native AccessKit routes ScrollUp/Down/Left/Right and ScrollIntoView."#),
+        ],
+        api: vec![
+            (".accessible_label(name)", "Nonempty, control-free name, up to 8 KiB; does not alter painted text."),
+            ("Tabs / segmented / select / table / tree", "Automatic roles and selected state; tree items also expose expansion."),
+            ("Runtime::accessibility_focus(key)", "Focus and reveal a mounted enabled control in the current modal scope."),
+            ("Runtime::accessibility_reveal(key)", "Reveal without changing keyboard focus."),
+            ("Runtime::accessibility_scroll(key, [dx, dy], …)", "Page a viewport; each direction is -1, 0 or 1. Virtual windows dispatch normally."),
+            ("Platform acceptance", "VoiceOver/Narrator/Orca and unmounted virtual-row navigation still require validation/work."),
+        ],
+    }
+}
 
 fn theming(app: &App) -> Doc {
     let swatch = |token: ColorToken, name: &'static str| -> El<App> {
@@ -384,12 +481,29 @@ panel![...].background(ColorToken::Base200).border_color(ColorToken::Border)"#),
 }
 native::run_ui_with_theme(options, app, view, theme)?;"#),
             section("theme-alpha", "Translucent tokens", "Any role at an opacity, still resolved from the active theme.", tints, r#"panel![...].background(ColorToken::Primary.alpha(15)) // "@primary/15""#),
+            section("theme-window", "Window surfaces", "The preview shows surface alpha, not desktop blur. Native GPU windows can request transparency/OS blur; text stays opaque. Software falls back to opaque.",
+                zstack![
+                    vstack![].background_image(app.image.clone().background().fit(ImageFit::Cover)),
+                    panel![
+                        text(if app.glass { "Translucent window requested" } else { "Opaque window (default)" }).font_weight(600),
+                        muted("Background alpha is separate from content opacity."),
+                        badge("SF interface · SF Mono source").font_family("SF Mono").font_size(11.),
+                    ].width(340.).background(ColorToken::Base100.alpha(88))
+                        .border_color(ColorToken::Border).border_width(1.).rounded(12.)
+                        .padding(18., Edge::All).gap(8., Axis::Vertical),
+                ].width(460.).height(210.).flow(Flow::Center).rounded(14.).clip(Clip::Bounds),
+                r#"cargo run --release --features native-gpu --example catalog -- \
+    --page theming --theme dark --background blur --window-opacity 0.86
+# --background transparent: alpha without a blur request
+# --background opaque: solid window; default and software fallback
+# OS blur is platform-dependent; pinned macOS winit uses a private blur API."#),
         ],
         api: vec![
             ("ColorToken::alpha(percent)", "A role at 0..=100% opacity, e.g. \"@primary/15\"."),
             ("Palette::with_accent(rgba)", "Set primary/accent and pick contrasting foregrounds."),
             ("UiTheme::from_palette(palette)", "Build a theme from a fully custom palette."),
             ("run_ui_with_theme(options, state, view, theme)", "Derive the theme from application state."),
+            ("Catalog: --background / --window-opacity", "Opt-in root clear alpha; does not fade text. Desktop blur is an OS request."),
         ],
     }
 }
@@ -1739,52 +1853,97 @@ const INVOICES: [(&str, &str, &str, &str); 6] = [
     ("INV005", "Paid", "PayPal", "$550.00"),
     ("INV006", "Pending", "Bank transfer", "$200.00"),
 ];
-fn table_doc(app: &App) -> Doc {
+fn invoice_table(app: &App, square: bool) -> El<App> {
+    let key = if square {
+        "invoices-square"
+    } else {
+        "invoices"
+    };
+    let row_prefix = if square { "inv-square" } else { "inv" };
     let mut t = table(
         [
             table_column(0u8, "Invoice").width(130.).sortable(true),
             table_column(1, "Status").width(120.).sortable(true),
             table_column(2, "Method").width(160.).sortable(false),
-            table_column(3, "Amount").width(110.).sortable(true),
+            table_column(3, "Amount")
+                .width(110.)
+                .align(Align::End)
+                .sortable(true),
         ],
-        INVOICES
-            .iter()
-            .enumerate()
-            .map(|(i, r)| table_row(i as u32, [r.0, r.1, r.2, r.3]).key(format!("inv-{i}"))),
+        INVOICES.iter().enumerate().map(|(i, r)| {
+            table_row(i as u32, [r.0, r.1, r.2, r.3]).key(format!("{row_prefix}-{i}"))
+        }),
     )
-    .key("invoices")
+    .key(key)
+    .width(600.)
+    .rounded(if square { 0. } else { 12. })
+    .accessible_label(if square {
+        "Square invoices"
+    } else {
+        "Rounded invoices"
+    })
     .selected(app.row)
     .on_select(|app: &mut App, r| app.row = Some(r))
     .on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)));
     if let Some((column, direction)) = app.sort {
         t = t.sort(column, direction);
     }
+    t.into()
+}
+
+fn table_doc(app: &App) -> Doc {
+    let status = || {
+        muted(format!(
+            "{} invoices{} · sorting and selection are shared between both previews",
+            INVOICES.len(),
+            app.row.map_or(String::new(), |i| format!(
+                " · {} selected",
+                INVOICES[i as usize].0
+            ))
+        ))
+        .font_size(12.)
+        .height(36.)
+    };
     Doc {
-        sections: vec![section(
-            "table",
-            "Table",
-            "Click a sortable header to sort; click a row to select it.",
-            t,
-            r#"table(
-    [table_column(0, "Invoice").width(130.).sortable(true), /* ... */],
-    invoices.iter().map(|r| table_row(r.id, [r.code, r.status, r.method, r.amount]).key(r.key())),
-)
+        sections: vec![
+            section(
+                "table",
+                "Rounded table",
+                "12px outer corners. Sort a header or select a row; the frame stays intact.",
+                vstack![invoice_table(app, false), status()].gap(12., Axis::Vertical),
+                r#"table(columns, rows)
 .key("invoices")
-.sort(app.sort_column, app.sort_direction)
+.rounded(12.) // default outer corners
 .selected(app.row)
 .on_select(|app: &mut App, row| app.row = Some(row))
 .on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))"#,
-        )],
+            ),
+            section(
+                "table-square",
+                "Square table",
+                "The same working component with 0px corners, not a static mockup.",
+                vstack![invoice_table(app, true), status()].gap(12., Axis::Vertical),
+                r#"table(columns, rows)
+.key("invoices-square")
+.rounded(0.) // square outer frame and inset rows
+.selected(app.row)
+.on_select(|app: &mut App, row| app.row = Some(row))
+.on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))"#,
+            ),
+        ],
         api: vec![
+            (".rounded(12.) / .rounded(0.)", "Rounded by default; explicit square corners retain the same sorting, selection and scrolling."),
             (
                 "table(columns, rows)",
                 "Up to 8 columns and 96 rows; requires .key(...).",
             ),
             (
                 "table_column(value, label).width(px)",
-                "Column definition; sortable unless .sortable(false).",
+                "Minimum width; wider tables grow columns proportionally. Sortable unless .sortable(false).",
             ),
             ("table_row(value, cells).key(id)", "A typed row."),
+            ("table_column(...).align(Align::Start | Center | End)", "Align header and values together; End for amounts."),
+            (".width(px).height(px)", "Bounded viewports scroll on either axis rather than cut off columns."),
             (
                 ".sort(column, direction) / .sort_by(compare)",
                 "Sorted view; custom ordering.",
@@ -1810,9 +1969,10 @@ fn tree_doc(app: &App) -> Doc {
         tree_node(7, "README.md").key("t-readme"),
     ])
     .key("files")
-    .width(300.)
-    .expanded(app.expanded.clone())
-    .selected(app.file)
+    .width(360.)
+    .accessible_label("Project files")
+    .expanded(app.expanded.iter().copied().filter(|id| *id <= 7))
+    .selected(app.file.filter(|id| *id <= 7))
     .on_select(|app: &mut App, f| app.file = Some(f))
     .on_expand(|app: &mut App, id, open| {
         app.expanded.retain(|v| *v != id);
@@ -1825,7 +1985,17 @@ fn tree_doc(app: &App) -> Doc {
             "tree",
             "Tree view",
             "Expand folders and select files with pointer or keyboard.",
-            t,
+            vstack![
+                hstack![
+                    text("Project files").font_size(13.).font_weight(600),
+                    spacer(),
+                    muted("7 items").font_size(12.)
+                ]
+                .width(360.),
+                t,
+                muted("Select a row; use the chevron to expand a branch.").font_size(12.),
+            ]
+            .gap(12., Axis::Vertical),
             r#"tree_view([
     tree_node(1, "src").key("src").children([tree_node(3, "lib.rs").key("lib")]),
     tree_node(6, "Cargo.toml").key("cargo"),
@@ -2472,5 +2642,43 @@ fn settings_doc(app: &App) -> Doc {
 ]"#,
         )],
         api: vec![],
+    }
+}
+
+fn navigation_doc(app: &App) -> Doc {
+    let make = |key: &str, placement| {
+        navigation([
+            navigation_item(0u8, "Overview").key("overview"),
+            navigation_item(1, "Messages").key("messages"),
+            navigation_item(2, "Settings").key("settings"),
+            navigation_item(3, "Unavailable")
+                .key("unavailable")
+                .enabled(false),
+        ])
+        .key(key)
+        .selected(app.navigation)
+        .placement(placement)
+        .on_select(|app: &mut App, page| app.navigation = page)
+    };
+    Doc {
+        sections: vec![Section {
+            id:"navigation-layouts", title:"Navigation, your layout", note:"All three previews share controlled app state. These are independent components, not a mandatory application shell.",
+            demo: vstack![
+                hstack![make("nav-sidebar",NavigationPlacement::Sidebar).width(190.),
+                    panel![vstack![label("YOUR WORKSPACE"), text(format!("Destination {}",app.navigation)).font_size(24.), muted("Compose your editor, settings or mail interface here.")].gap(12.,Axis::Vertical)]
+                        .padding(24.,Edge::All).width(340.).height(220.).background(ColorToken::Base200).rounded(12.)
+                ].gap(24.,Axis::Horizontal),
+                make("nav-rail",NavigationPlacement::Rail).width(140.),
+                make("nav-bottom",NavigationPlacement::Bottom),
+            ].gap(24.,Axis::Vertical).into(),
+            code: r#"navigation([
+    navigation_item(Page::Inbox, "Inbox").key("inbox"),
+    navigation_item(Page::Sent, "Sent").key("sent"),
+]).key("navigation").selected(app.page)
+  .placement(NavigationPlacement::Sidebar)
+  .on_select(|app: &mut App, page| app.page = page)
+// Use Rail or Bottom; compose independently with ordinary stacks/panels."#,
+        }],
+        api: vec![("navigation(items)","Controlled, typed destinations"),(".placement(Sidebar | Rail | Bottom)","Vertical or horizontal destination layout"),(".selected(value).on_select(callback)","Application owns routing and state"),(".key(...)","Stable group and item identities are required")],
     }
 }

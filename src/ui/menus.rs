@@ -245,6 +245,7 @@ impl<C: 'static, T: Clone + 'static> From<Menu<C, T>> for Element<C> {
             .enabled(menu.2.enabled)
             .on_click(move |app: &mut C| (callback.borrow_mut())(app, !open));
         trigger.0.node.width = menu.0.node.width;
+        trigger.0.node.accessible_label = menu.0.node.accessible_label.take();
         trigger.0.node.style = menu.0.node.style.clone();
         menu.0.children.push(trigger.into());
         if open && menu.2.enabled {

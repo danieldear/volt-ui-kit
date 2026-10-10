@@ -12,7 +12,9 @@ use volt_ui_kit::{
     ThemeMode,
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn parse_args(
+    args: impl IntoIterator<Item = String>,
+) -> Result<(catalog::App, support::RustLaunchOptions), Box<dyn std::error::Error>> {
     let mut app = catalog::App::new();
     let mut forwarded = vec!["--size".to_owned(), "1440x920".to_owned()];
     let mut chrome = if cfg!(target_os = "macos") {
@@ -20,7 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         WindowChrome::Native
     };
-    let mut args = std::env::args().skip(1);
+    let mut background = "opaque";
+    let mut opacity = 0.86f32;
+    let mut show_code = false;
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--page" => {
@@ -45,33 +50,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.mode = match value.as_str() {
                     "dark" => ThemeMode::Dark,
                     "system" => ThemeMode::System,
-                    _ => ThemeMode::Light,
+                    "light" => ThemeMode::Light,
+                    _ => return Err("--theme must be light, dark or system".into()),
                 };
                 forwarded.extend(["--theme".to_owned(), value]);
             }
             "--code" => {
                 // Show the first section's code (handy for screenshots).
-                let doc_first = catalog::first_section_id(&app);
-                if let Some(id) = doc_first {
-                    app.code.insert(id.to_owned());
-                }
+                show_code = true;
             }
             "--palette" => app.palette_open = true,
             "--dialog" => app.dialog_open = true,
             "--native-chrome" => chrome = WindowChrome::Native,
+            "--compact-chrome" => chrome = WindowChrome::CompactOverlay,
+            "--background" => {
+                background = match args.next().ok_or("missing --background mode")?.as_str() {
+                    "opaque" => "opaque",
+                    "transparent" => "transparent",
+                    "blur" => "blur",
+                    _ => return Err("--background must be opaque, transparent or blur".into()),
+                };
+            }
+            "--window-opacity" => {
+                opacity = args
+                    .next()
+                    .ok_or("missing --window-opacity value")?
+                    .parse()?;
+                if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+                    return Err("--window-opacity must be finite and between 0 and 1".into());
+                }
+            }
             _ => forwarded.push(arg),
         }
     }
+    if show_code {
+        if let Some(id) = catalog::first_section_id(&app) {
+            app.code.insert(id.to_owned());
+        }
+    }
+    app.glass = background != "opaque";
+    let background = match background {
+        "transparent" => WindowBackground::Transparent { opacity },
+        "blur" => WindowBackground::Blur { opacity },
+        _ => WindowBackground::Opaque,
+    };
+    Ok((
+        app,
+        support::RustLaunchOptions {
+            chrome,
+            background,
+            args: forwarded,
+        },
+    ))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (app, options) = parse_args(std::env::args().skip(1))?;
     support::launch_themed_with_messages(
         "Volt UI",
         app,
         catalog::view,
         catalog::theme,
-        support::RustLaunchOptions {
-            chrome,
-            background: WindowBackground::Opaque,
-            args: forwarded,
-        },
+        options,
         |app, sender| app.sender = Some(sender),
         catalog::update,
     )

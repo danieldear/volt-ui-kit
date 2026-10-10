@@ -4,17 +4,17 @@ The cards, buttons, forms, palettes and vector icons behind Volt — extracted i
 
 **Status:** working extraction, version 0.2.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
 
-## Polished component testing: Volt Atelier
+## Polished component testing: Volt Catalog
 
 ```sh
-cargo run --locked --features native-gpu --example showcase
+cargo run --release --locked --features native --example catalog
 ```
 
-The legacy diagnostic workbench remains available; new component development and visual acceptance use the polished [Showcase](docs/SHOWCASE_APPS.md). It brings controls, responsive layout,
-fonts/colors, themes/accents, effects, images, vector shapes (including ellipses),
-clipping and vertical/horizontal/nested scrolling into one stateful app. Switch
-sections without losing demo values. Previous/Next also reaches every section on
-small windows. The Lab is retained as a diagnostic fixture; new capability demos and visual acceptance extend Showcase instead.
+Catalog is the primary component demonstration/acceptance app as of 2026-10-10.
+It provides live previews, selectable Rust source, API tables, SF/SF Mono type,
+six accents and light/dark/system themes. New work extends Catalog only; Atelier,
+Desk and UI Lab remain existing regression fixtures. See [Catalog](docs/CATALOG.md)
+for accessibility, GPU and opt-in glass launch options and acceptance boundaries.
 
 ```sh
 cargo run --features native --example ui_lab -- --section scrolling --theme light
@@ -268,3 +268,21 @@ cargo run --locked --features native-gpu --example showcase -- --screen explorer
 ```
 
 See [runtime](docs/APP_RUNTIME.md), [declarations and limits](docs/EXTENDED_COMPONENTS.md), and [implementation/acceptance receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).
+
+## Application development (first slice)
+
+The additive `native::Application` builder supports app-owned views/state,
+explicit renderer/window configuration and bounded worker messages. New local
+project templates prefer GPU without renderer flags; existing embedded/default
+contracts remain unchanged. Independent typed navigation is demonstrated in
+Catalog's Navigation page. Optional `native-desktop` adds macOS application
+menus and tray menus; notifications and other native bridges are pending.
+
+```sh
+cargo run --locked --features dev-tools --bin cargo-volt -- new /tmp/my-volt-app --kit-path . --template navigation
+cargo run --manifest-path /tmp/my-volt-app/Cargo.toml
+cargo run --locked --features native-gpu --example catalog -- --page navigation
+```
+
+See [application development and remaining phases](docs/APPLICATION_DEVELOPMENT.md)
+for APIs, optional desktop templates, rebuild/restart tooling and honest limits.

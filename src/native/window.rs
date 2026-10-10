@@ -91,9 +91,13 @@ pub enum WindowChrome {
     #[default]
     Native,
     /// macOS full-size content with a transparent title bar and hidden title.
-    /// Native traffic lights remain available; callers reserve header space.
+    /// macOS 11+ uses native unified toolbar geometry for inset traffic lights.
+    /// Native button sizing/drawing is not changed; reserve a 60pt header.
     /// Other platforms retain their native decorated title bar as a fallback.
     Overlay,
+    /// Original compact macOS overlay geometry, for applications with short headers.
+    /// Other platforms retain their native decorated title bar.
+    CompactOverlay,
     /// No system decorations. Applications must supply their own window controls.
     Borderless,
 }
@@ -247,7 +251,7 @@ impl NativeOptions {
         SurfaceOptions::from(self).with_background(background)
     }
 }
-type ThemeFn<C> = Box<dyn Fn(&C, ThemeMode) -> UiTheme>;
+pub(super) type ThemeFn<C> = Box<dyn Fn(&C, ThemeMode) -> UiTheme>;
 
 /// Application state and callbacks remain owned by the caller; update projects
 /// state into named document bindings after each successful activation.
@@ -280,6 +284,7 @@ pub fn run_with_options<C: 'static>(
         Content::Document(Box::new(update)),
         None,
         None,
+        super::application::HostExtensions::default(),
     )
 }
 /// Run a Rust view with direct callbacks and application-owned state. The body is
@@ -354,6 +359,23 @@ fn run_ui_configured<C: 'static>(
     theme_fn: Option<ThemeFn<C>>,
     messages: Option<Box<dyn Messages<C>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    run_ui_extended(
+        options,
+        context,
+        view,
+        theme_fn,
+        messages,
+        super::application::HostExtensions::default(),
+    )
+}
+pub(super) fn run_ui_extended<C: 'static>(
+    options: SurfaceOptions,
+    context: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme_fn: Option<ThemeFn<C>>,
+    messages: Option<Box<dyn Messages<C>>>,
+    extensions: super::application::HostExtensions<C>,
+) -> Result<(), Box<dyn std::error::Error>> {
     if options.native.document_path.is_some() {
         return Err(
             "run_ui does not accept a JSON reload path; rebuild after Rust source changes".into(),
@@ -371,6 +393,7 @@ fn run_ui_configured<C: 'static>(
         Content::Rust(Box::new(view)),
         theme_fn,
         messages,
+        extensions,
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -383,13 +406,17 @@ fn run_host<C: 'static>(
     content: Content<C>,
     theme_fn: Option<ThemeFn<C>>,
     mut messages: Option<Box<dyn Messages<C>>>,
+    extensions: super::application::HostExtensions<C>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !options.background.opacity().is_finite()
-        || !(0. ..=1.).contains(&options.background.opacity())
-        || !options.resolve_theme(ThemeMode::Dark).palette.is_valid()
-    {
-        return Err("invalid palette/accent/window opacity".into());
-    }
+    validate_options(&options)?;
+    let renderer = if let Some(preference) = extensions.renderer {
+        preference.policy(cfg!(feature = "native-gpu"))?
+    } else {
+        gpu_policy(
+            std::env::var("VOLT_UI_RENDERER").ok().as_deref(),
+            cfg!(feature = "native-gpu"),
+        )?
+    };
     let reduced_motion = reduced_motion_enabled(
         options.reduced_motion,
         std::env::var("VOLT_UI_REDUCED_MOTION").ok().as_deref(),
@@ -406,6 +433,10 @@ fn run_host<C: 'static>(
     let proxy = event_loop.create_proxy();
     let mut app = App {
         options,
+        renderer,
+        extensions,
+        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        desktop_host: None,
         proxy,
         access: None,
         access_ids: Default::default(),
@@ -484,6 +515,8 @@ impl<C: 'static> Content<C> {
 #[derive(Debug)]
 enum HostEvent {
     Messages,
+    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    Command(String),
     /// Screen-reader activation and action requests from AccessKit.
     Access(accesskit_winit::Event),
 }
@@ -494,6 +527,11 @@ impl From<accesskit_winit::Event> for HostEvent {
 }
 struct App<C> {
     options: SurfaceOptions,
+    renderer: (bool, bool),
+    #[allow(dead_code)]
+    extensions: super::application::HostExtensions<C>,
+    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    desktop_host: Option<super::system::macos::DesktopHost>,
     /// Delivers AccessKit events into the event loop.
     proxy: winit::event_loop::EventLoopProxy<HostEvent>,
     access: Option<accesskit_winit::Adapter>,
@@ -944,6 +982,16 @@ impl<C: 'static> App<C> {
                         &mut self.handlers,
                         &mut self.context,
                     ),
+                    AccessCommand::Reveal(id) => Ok(InputOutcome {
+                        changed: self.runtime.accessibility_reveal(&id),
+                        activated: false,
+                    }),
+                    AccessCommand::Scroll(id, direction) => self.runtime.accessibility_scroll(
+                        &id,
+                        direction,
+                        &mut self.handlers,
+                        &mut self.context,
+                    ),
                 }
                 .map_err(|e| e.to_string())?;
                 self.after_input(outcome)?;
@@ -1018,7 +1066,7 @@ impl<C: 'static> App<C> {
                         w.request_redraw();
                         return Ok(());
                     }
-                    Err(error) if std::env::var("VOLT_UI_RENDERER").as_deref() == Ok("gpu") => {
+                    Err(error) if self.renderer.1 => {
                         return Err(format!(
                             "required GPU renderer could not be recreated: {error}"
                         ));
@@ -1035,7 +1083,7 @@ impl<C: 'static> App<C> {
                 }
             }
             Some(Err(error)) => {
-                if std::env::var("VOLT_UI_RENDERER").as_deref() == Ok("gpu") {
+                if self.renderer.1 {
                     return Err(format!("required GPU render failed: {error}"));
                 }
                 eprintln!(
@@ -1126,6 +1174,10 @@ impl<C: 'static> App<C> {
                 release, self.painter.shape_draw_calls - shape_calls_before,
                 self.painter.text_cache_misses - text_misses_before);
             }
+            #[cfg(target_os = "macos")]
+            if let Some(window) = &self.window {
+                super::macos_chrome::trace_geometry(window);
+            }
         }
         Ok(())
     }
@@ -1169,6 +1221,26 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             return;
         }
+        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        if let HostEvent::Command(id) = event {
+            if self
+                .extensions
+                .desktop
+                .as_ref()
+                .is_some_and(|c| c.accepts(&id))
+            {
+                if let Some(callback) = self.extensions.command.as_mut() {
+                    callback(&mut self.context, &id);
+                    if let Err(error) = self.after_input(InputOutcome {
+                        changed: true,
+                        activated: true,
+                    }) {
+                        self.fail(event_loop, error);
+                    }
+                }
+            }
+            return;
+        }
         let changed = self
             .messages
             .as_mut()
@@ -1193,6 +1265,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     .create_window(surface_window_attributes(&self.options).with_visible(false))
                     .map_err(|e| e.to_string())?,
             );
+            #[cfg(target_os = "macos")]
+            if unified_titlebar_policy(self.options.chrome, true) {
+                super::macos_chrome::install_unified_titlebar(&w)?;
+            }
             self.access = Some(accesskit_winit::Adapter::with_event_loop_proxy(
                 event_loop,
                 &w,
@@ -1204,9 +1280,17 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             } else {
                 ThemeMode::Dark
             };
-            let choice = std::env::var("VOLT_UI_RENDERER").ok();
-            let (try_gpu, require_gpu) =
-                gpu_policy(choice.as_deref(), cfg!(feature = "native-gpu"))?;
+            #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+            if let Some(config) = &self.extensions.desktop {
+                let proxy = self.proxy.clone();
+                self.desktop_host = Some(super::system::macos::DesktopHost::install(
+                    config,
+                    move |id| {
+                        let _ = proxy.send_event(HostEvent::Command(id));
+                    },
+                )?);
+            }
+            let (try_gpu, require_gpu) = self.renderer;
             #[cfg(feature = "native-gpu")]
             if try_gpu {
                 match super::gpu::GpuPresenter::new(w.clone(), self.options.background != WindowBackground::Opaque) {
@@ -1242,6 +1326,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        {
+            // Drop the previous menu before resumed installs its replacement.
+            self.desktop_host = None;
+        }
         #[cfg(feature = "native-gpu")]
         {
             self.gpu = None;
@@ -1582,14 +1671,28 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     }
 }
 
+pub(super) fn validate_options(options: &SurfaceOptions) -> Result<(), String> {
+    if !options.background.opacity().is_finite()
+        || !(0. ..=1.).contains(&options.background.opacity())
+        || !options.resolve_theme(ThemeMode::Dark).palette.is_valid()
+    {
+        return Err("invalid palette/accent/window opacity".into());
+    }
+    Ok(())
+}
+
 // Return (native decorations, integrated macOS title bar). Keeping this decision
 // separate permits platform-independent fallback tests without an OS window.
 fn chrome_policy(chrome: WindowChrome, macos: bool) -> (bool, bool) {
     match chrome {
         WindowChrome::Native => (true, false),
-        WindowChrome::Overlay => (true, macos),
+        WindowChrome::Overlay | WindowChrome::CompactOverlay => (true, macos),
         WindowChrome::Borderless => (false, false),
     }
+}
+#[cfg(any(test, target_os = "macos"))]
+fn unified_titlebar_policy(chrome: WindowChrome, macos: bool) -> bool {
+    macos && chrome == WindowChrome::Overlay
 }
 fn root_clear(theme: &Theme, background: WindowBackground, alpha_active: bool) -> [f32; 4] {
     let mut clear = theme.background;
@@ -1826,6 +1929,26 @@ mod tests {
         let overlay =
             window_attributes(&NativeOptions::default().with_chrome(WindowChrome::Overlay));
         assert!(overlay.decorations);
+    }
+    #[test]
+    fn unified_titlebar_policy_keeps_native_and_compact_chrome_unchanged() {
+        assert!(unified_titlebar_policy(WindowChrome::Overlay, true));
+        for chrome in [
+            WindowChrome::Native,
+            WindowChrome::CompactOverlay,
+            WindowChrome::Borderless,
+        ] {
+            assert!(!unified_titlebar_policy(chrome, true));
+        }
+        assert!(!unified_titlebar_policy(WindowChrome::Overlay, false));
+        assert_eq!(
+            chrome_policy(WindowChrome::CompactOverlay, true),
+            (true, true)
+        );
+        assert_eq!(
+            chrome_policy(WindowChrome::CompactOverlay, false),
+            (true, false)
+        );
     }
     #[test]
     fn reduced_motion_environment_only_opts_in() {

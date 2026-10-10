@@ -1,6 +1,6 @@
 //! Bounded data composition. Selection and expansion remain application-owned.
 use super::*;
-use crate::declarative::document::VirtualListProps;
+use crate::declarative::{document::VirtualListProps, AccessTableInfo};
 use std::{cell::RefCell, cmp::Ordering, ops::Range, rc::Rc};
 type SelectFn<C, T> = Rc<RefCell<dyn FnMut(&mut C, T)>>;
 type WindowFn<C> = Box<dyn FnMut(&mut C, Range<usize>)>;
@@ -52,6 +52,7 @@ pub fn virtual_list<C, T, F: FnMut(usize) -> DataItem<T>>(
     e.node.height = Some(320.);
     e.node.width = Some(360.);
     e.node.surface.scroll = Some(Scroll::Vertical);
+    e.node.access_role = Some(AccessRole::ListBox);
     VirtualList(
         e,
         VirtualOptions {
@@ -163,6 +164,9 @@ impl<C: 'static, T: Clone + PartialEq + 'static, F: FnMut(usize) -> DataItem<T>>
                 row = row.color(ColorToken::PrimaryContent);
             }
             row.0.node.checked = selected;
+            row.0.node.access_role = Some(AccessRole::ListBoxOption);
+            row.0.node.access_selected = Some(selected);
+            row.0.node.access_position = Some(index);
             list.0.children.push(row.into());
         }
         list.0.node.virtual_list = Some(VirtualListProps {
@@ -197,6 +201,7 @@ pub struct TableColumn<K> {
     label: String,
     width: f32,
     sortable: bool,
+    align: Align,
 }
 pub fn table_column<K>(value: K, label: impl Into<String>) -> TableColumn<K> {
     TableColumn {
@@ -204,9 +209,15 @@ pub fn table_column<K>(value: K, label: impl Into<String>) -> TableColumn<K> {
         label: label.into(),
         width: 120.,
         sortable: true,
+        align: Align::Start,
     }
 }
 impl<K> TableColumn<K> {
+    /// Align header and body values consistently (End is useful for numbers).
+    pub fn align(mut self, align: Align) -> Self {
+        self.align = align;
+        self
+    }
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
         self
@@ -259,7 +270,14 @@ pub fn table<C, T, K>(
 ) -> Table<C, T, K> {
     // Natural height by default; `.height(...)` makes the rows scroll.
     let mut e = Element::new(Kind::Panel);
-    e.node.surface.scroll = Some(Scroll::Vertical);
+    e.node.surface.scroll = Some(Scroll::Both);
+    e.node.padding = 1.; // Reserve only the border stroke, not a visual gutter.
+    e.node.style.background = Some(ColorToken::Base100.into());
+    e.node.style.border_color = Some(ColorToken::Border.into());
+    e.node.style.border_width = Some(1.);
+    e.node.style.radius = Some(Rounding::Radius(12.));
+    e.node.style.font_size = Some(13.);
+    e.node.access_role = Some(AccessRole::Table);
     Table(
         e,
         TableOptions {
@@ -312,7 +330,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
         } else if columns.is_empty() || columns.len() > 8 {
             Some("a table needs 1..=8 columns")
         } else if rows.len() > 96
-            || 2 + columns.len() + rows.len() * (3 + columns.len()) >= MAX_NODES
+            || 2 + columns.len() + rows.len() * (3 + 2 * columns.len()) >= MAX_NODES
         {
             Some("a table holds at most 96 rows; use virtual_list for larger collections")
         } else if !columns.iter().enumerate().all(|(i, c)| {
@@ -353,10 +371,23 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             table.0.validation_error = Some(error.into());
             return table.0;
         }
-        let width = columns.iter().map(|c| c.width).sum::<f32>();
-        table.0.node.width = table.0.node.width.or(Some(width));
+        let minimum = columns.iter().map(|c| c.width).sum::<f32>();
+        let [top, right, bottom, left] = table.0.node.padding_sides();
+        let width =
+            (table.0.node.width.unwrap_or(minimum + left + right) - left - right).max(minimum);
+        table.0.node.width = table.0.node.width.or(Some(width + left + right));
+        for column in &mut table.1.columns {
+            column.width *= width / minimum;
+        }
+        table.0.node.access_table = Some(AccessTableInfo {
+            rows: Some(table.1.rows.len() + 1), // includes the header row
+            columns: Some(table.1.columns.len()),
+            ..AccessTableInfo::default()
+        });
         if let Some((key, direction)) = &table.1.sort {
-            let index = columns
+            let index = table
+                .1
+                .columns
                 .iter()
                 .position(|column| &column.value == key)
                 .unwrap();
@@ -373,44 +404,72 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
                 }
             });
         }
+        // Preserve one shared silhouette instead of independent rounded pills.
+        // Explicit corner rules also select the painter's continuous inset outline,
+        // rather than the compatibility uniform-radius line-segment border.
+        let outer = table
+            .0
+            .node
+            .style
+            .corners
+            .unwrap_or([table.0.node.style.radius.unwrap_or(Rounding::Radius(12.)); 4]);
+        table.0.node.style.corners = Some(outer);
+        let natural_height = top + bottom + 40. + table.1.rows.len() as f32 * 45.;
+        let outer_limit = table
+            .0
+            .node
+            .width
+            .unwrap_or(width + left + right)
+            .min(table.0.node.height.unwrap_or(natural_height))
+            * 0.5;
+        let insets = [
+            top.max(left),
+            top.max(right),
+            bottom.max(right),
+            bottom.max(left),
+        ];
+        let inner = std::array::from_fn::<_, 4, _>(|i| {
+            let radius = match outer[i] {
+                Rounding::Radius(v) => v.min(outer_limit),
+                Rounding::Full => outer_limit,
+            };
+            Rounding::Radius((radius - insets[i]).max(0.))
+        });
+        let zero = Rounding::Radius(0.);
+        let row_corner = if outer.iter().all(|r| *r == zero) {
+            zero
+        } else {
+            Rounding::Radius(4.)
+        };
+        let mut header_corners = [inner[0], inner[1], row_corner, row_corner];
+        if table.1.rows.is_empty() {
+            header_corners[2] = inner[2];
+            header_corners[3] = inner[3];
+        }
         let mut header = Element::new(Kind::Row);
-        header.node.height = Some(36.);
+        header.node.height = Some(40.);
         header.node.width = Some(width);
         header.node.style.background = Some(ColorToken::Base200.into());
-        for (i, column) in table.1.columns.into_iter().enumerate() {
-            let selected = table
+        header.node.style.corners = Some(header_corners);
+        header.node.access_role = Some(AccessRole::Row);
+        header.node.access_table = Some(AccessTableInfo {
+            row: Some(0),
+            ..AccessTableInfo::default()
+        });
+        let columns = table.1.columns;
+        for (i, column) in columns.iter().enumerate() {
+            let sorted = table
                 .1
                 .sort
                 .as_ref()
-                .is_some_and(|(key, _)| key == &column.value);
-            let direction = if selected {
-                table.1.sort.as_ref().unwrap().1.reversed()
-            } else {
-                SortDirection::Ascending
-            };
-            let suffix = if selected {
-                if direction == SortDirection::Descending {
-                    " ↑"
-                } else {
-                    " ↓"
-                }
-            } else {
-                ""
-            };
+                .filter(|(key, _)| key == &column.value);
+            let direction = sorted.map_or(SortDirection::Ascending, |(_, d)| d.reversed());
             let callback = table.1.on_sort.clone();
-            let key = column.value;
-            // Only sortable columns are buttons; a fixed column is a label, not
-            // a disabled control.
-            let cell: Element<C> = if column.sortable {
-                button(format!("{}{suffix}", column.label))
+            let key = column.value.clone();
+            let mut cell: Element<C> = if column.sortable {
+                button("")
                     .key(format!("{}-column-{i}", table.0.node.id))
                     .variant(ButtonVariant::Ghost)
-                    .label_align(Align::Start)
-                    .color(ColorToken::Muted)
-                    .font_size(12.)
-                    .font_weight(600)
-                    .width(column.width)
-                    .height(36.)
                     .rounded(0.)
                     .enabled(table.1.enabled)
                     .on_click(move |app: &mut C| {
@@ -420,68 +479,146 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
                     })
                     .into()
             } else {
-                let mut label = Element::new(Kind::Row);
-                label.node.width = Some(column.width);
-                label.node.height = Some(36.);
-                label.node.padding = 10.;
-                label.node.align = Align::Center;
-                label.children.push(
-                    text(column.label)
-                        .color(ColorToken::Muted)
-                        .font_size(12.)
-                        .font_weight(600)
-                        .into(),
-                );
-                label
+                Element::new(Kind::Row)
             };
+            cell.node.style.corners = Some([
+                if i == 0 {
+                    header_corners[0]
+                } else {
+                    row_corner
+                },
+                if i + 1 == columns.len() {
+                    header_corners[1]
+                } else {
+                    row_corner
+                },
+                if i + 1 == columns.len() {
+                    header_corners[2]
+                } else {
+                    row_corner
+                },
+                if i == 0 {
+                    header_corners[3]
+                } else {
+                    row_corner
+                },
+            ]);
+            cell.node.width = Some(column.width);
+            cell.node.height = Some(40.);
+            let mut contents = Element::new(Kind::Row);
+            contents.node.width = Some(column.width);
+            contents.node.height = Some(40.);
+            contents.node.padding = 12.;
+            contents.node.padding_top = Some(0.);
+            contents.node.padding_bottom = Some(0.);
+            contents.node.align = Align::Center;
+            contents.node.flow = Some(cell_flow(column.align));
+            contents.node.gap = 6.;
+            cell.node.access_role = Some(AccessRole::ColumnHeader);
+            cell.node.accessible_label = Some(bounded_semantic_name(&column.label, "Column"));
+            cell.node.access_table = Some(AccessTableInfo {
+                row: Some(0),
+                column: Some(i),
+                sort_ascending: sorted.map(|(_, d)| *d == SortDirection::Ascending),
+                ..AccessTableInfo::default()
+            });
+            contents.children.push(
+                text(&column.label)
+                    .font_size(12.)
+                    .font_weight(600)
+                    .color(ColorToken::Muted)
+                    .into(),
+            );
+            if let Some((_, direction)) = sorted {
+                contents
+                    .children
+                    .push(data_sort_chevron(*direction == SortDirection::Descending));
+            }
+            cell.children.push(contents);
             header.children.push(cell);
         }
         table.0.children.push(header);
+        if !table.1.rows.is_empty() {
+            table.0.children.push(data_rule(width));
+        }
         let on_select = table.1.on_select.unwrap();
-        // Rows overlay a full-width hit target with non-interactive text cells.
-        for row in table.1.rows {
+        let count = table.1.rows.len();
+        for (row_index, row) in table.1.rows.into_iter().enumerate() {
             let active = table.1.selected.as_ref() == Some(&row.value);
             let handler = on_select.clone();
             let value = row.value;
-            let key = row.key.unwrap();
-            let mut e = Element::new(Kind::ZStack);
-            e.node.width = Some(width);
-            e.node.height = Some(34.);
-            e.node.align = Align::Stretch;
-            let hit: Element<C> = button("")
-                .key(key)
+            let enabled = table.1.enabled && row.enabled;
+            // One real row control owns its cells: no competing overlay hit layer.
+            let mut hit: Element<C> = button("")
+                .accessible_label(bounded_semantic_name(&row.cells.join(", "), "Table row"))
+                .key(row.key.unwrap())
                 .variant(if active {
                     ButtonVariant::Soft
                 } else {
                     ButtonVariant::Ghost
                 })
+                .width(width)
+                .height(44.)
                 .rounded(0.)
-                .enabled(table.1.enabled && row.enabled)
+                .enabled(enabled)
+                .opacity(if enabled { 1. } else { 0.45 })
                 .on_click(move |app: &mut C| {
                     if !active {
                         (handler.borrow_mut())(app, value.clone());
                     }
                 })
                 .into();
-            e.children.push(hit);
-            let mut cells = Element::new(Kind::Row);
-            cells.node.height = Some(34.);
-            cells.node.width = Some(width);
-            cells.node.align = Align::Center;
-            // 10px insets line cell text up with the header labels.
-            cells.node.padding = 10.;
-            cells.node.gap = 20.;
-            // Widths were already validated; use the corresponding header width.
+            hit.node.style.corners = Some([
+                row_corner,
+                row_corner,
+                if row_index + 1 == count {
+                    inner[2]
+                } else {
+                    row_corner
+                },
+                if row_index + 1 == count {
+                    inner[3]
+                } else {
+                    row_corner
+                },
+            ]);
+            let mut contents = Element::new(Kind::Row);
+            contents.node.width = Some(width);
+            contents.node.height = Some(44.);
+            contents.node.align = Align::Center;
+            hit.node.access_role = Some(AccessRole::Row);
+            hit.node.access_selected = Some(active);
+            hit.node.access_table = Some(AccessTableInfo {
+                row: Some(row_index + 1),
+                ..AccessTableInfo::default()
+            });
             for (i, label) in row.cells.into_iter().enumerate() {
-                let width = table.0.children[0].children[i].node.width.unwrap();
-                let mut cell = text(label).width((width - 20.).max(1.));
+                let column = &columns[i];
+                let mut cell = Element::new(Kind::Row);
+                cell.node.width = Some(column.width);
+                cell.node.height = Some(44.);
+                cell.node.padding = 12.;
+                cell.node.padding_top = Some(0.);
+                cell.node.padding_bottom = Some(0.);
+                cell.node.flow = Some(cell_flow(column.align));
+                let mut value = text(label);
                 if active {
-                    cell = cell.color(ColorToken::Primary).font_weight(600);
+                    value = value.color(ColorToken::Primary).font_weight(500);
                 }
-                cells.children.push(cell.into());
+                value.0.node.access_role = Some(AccessRole::Cell);
+                value.0.node.access_table = Some(AccessTableInfo {
+                    row: Some(row_index + 1),
+                    column: Some(i),
+                    ..AccessTableInfo::default()
+                });
+                cell.children.push(value.into());
+                contents.children.push(cell);
             }
-            e.children.push(cells);
-            table.0.children.push(e);
+            hit.children.push(contents);
+            table.0.children.push(hit);
+            if row_index + 1 < count {
+                table.0.children.push(data_rule(width));
+            }
         }
         table.0
     }
@@ -525,6 +662,15 @@ pub fn tree_view<C, T>(roots: impl IntoIterator<Item = TreeNode<T>>) -> TreeView
     let mut e = Element::new(Kind::Panel);
     e.node.width = Some(360.);
     e.node.surface.scroll = Some(Scroll::Vertical);
+    e.node.style.font_size = Some(13.);
+    e.node.access_role = Some(AccessRole::Tree);
+    e.node.surface.scroll = Some(Scroll::Both);
+    e.node.padding = 6.;
+    e.node.gap = 2.;
+    e.node.style.background = Some(ColorToken::Base100.into());
+    e.node.style.border_color = Some(ColorToken::Border.into());
+    e.node.style.border_width = Some(1.);
+    e.node.style.radius = Some(Rounding::Radius(8.));
     TreeView(
         e,
         TreeOptions {
@@ -604,7 +750,9 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
         }
         let on_select = tree.1.on_select.unwrap();
         let on_expand = tree.1.on_expand.unwrap();
-        let width = tree.0.node.width.unwrap_or(360.);
+        let [_, right, _, left] = tree.0.node.padding_sides();
+        let width = (tree.0.node.width.unwrap_or(360.) - left - right).max(0.);
+        tree.0.node.access_set_size = Some(tree.1.roots.len());
         struct TreeContext<'a, C, T> {
             expanded: &'a [T],
             selected: Option<&'a T>,
@@ -616,10 +764,11 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
         fn append<C: 'static, T: Clone + PartialEq + 'static>(
             nodes: Vec<TreeNode<T>>,
             depth: usize,
+            parent: Option<&str>,
             context: &TreeContext<'_, C, T>,
             out: &mut Vec<Element<C>>,
         ) -> bool {
-            for node in nodes {
+            for (position, node) in nodes.into_iter().enumerate() {
                 if out.len() >= 96 {
                     return false;
                 }
@@ -627,60 +776,95 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                 let open = context.expanded.contains(&item.value);
                 let active = context.selected == Some(&item.value);
                 let key = item.key.unwrap();
-                let mut row = Element::new(Kind::Row);
-                row.node.width = Some(context.width);
-                row.node.height = Some(32.);
-                row.children.push(
-                    spacer()
-                        .width(depth as f32 * 14.)
-                        .height(32.)
-                        .flex(0.)
-                        .into(),
-                );
-                if node.children.is_empty() {
-                    row.children
-                        .push(spacer().width(22.).height(32.).flex(0.).into());
-                } else {
-                    let value = item.value.clone();
-                    let callback = context.on_expand.clone();
-                    row.children.push(
-                        button(if open { "▾" } else { "▸" })
-                            .key(format!("{key}-expand"))
-                            .variant(ButtonVariant::Ghost)
-                            .color(ColorToken::Muted)
-                            .width(22.)
-                            .height(32.)
-                            .enabled(context.enabled && item.enabled)
-                            .on_click(move |app: &mut C| {
-                                (callback.borrow_mut())(app, value.clone(), !open)
-                            })
-                            .into(),
-                    );
-                }
-                let value = item.value;
+                let has_children = !node.children.is_empty();
+                let value = item.value.clone();
                 let callback = context.on_select.clone();
-                let mut label = button(item.label)
-                    .key(key)
+                let enabled = context.enabled && item.enabled;
+                let mut row: Element<C> = button("")
+                    .accessible_label(bounded_semantic_name(&item.label, "Tree item"))
+                    .key(&key)
                     .variant(if active {
                         ButtonVariant::Soft
                     } else {
                         ButtonVariant::Ghost
                     })
-                    .label_align(Align::Start)
-                    .height(32.)
-                    .flex(1.)
-                    .enabled(context.enabled && item.enabled)
+                    .width(context.width.max(depth as f32 * 18. + 104.))
+                    .height(36.)
+                    .rounded(4.)
+                    .enabled(enabled)
+                    .opacity(if enabled { 1. } else { 0.45 })
                     .on_click(move |app: &mut C| {
                         if !active {
                             (callback.borrow_mut())(app, value.clone());
                         }
-                    });
-                if active {
-                    label = label.font_weight(600);
+                    })
+                    .into();
+                let mut contents = Element::new(Kind::Row);
+                contents.node.width = row.node.width;
+                contents.node.height = Some(36.);
+                contents.node.align = Align::Center;
+                row.node.access_role = Some(AccessRole::TreeItem);
+                row.node.access_selected = Some(active);
+                row.node.access_expanded = has_children.then_some(open);
+                row.node.access_level = Some(depth);
+                row.node.access_position = Some(position);
+                row.node.access_set_size = has_children.then_some(node.children.len());
+                row.node.access_parent = parent.map(str::to_owned);
+                contents.children.push(
+                    spacer()
+                        .width(depth as f32 * 18.)
+                        .height(36.)
+                        .flex(0.)
+                        .into(),
+                );
+                if has_children {
+                    let value = item.value.clone();
+                    let callback = context.on_expand.clone();
+                    let mut disclosure: Element<C> = button("")
+                        .accessible_label(bounded_semantic_name(
+                            &format!(
+                                "{} {}",
+                                if open { "Collapse" } else { "Expand" },
+                                item.label
+                            ),
+                            "Expand tree item",
+                        ))
+                        .key(format!("{key}-expand"))
+                        .variant(ButtonVariant::Ghost)
+                        .width(24.)
+                        .height(28.)
+                        .rounded(4.)
+                        .enabled(enabled)
+                        .on_click(move |app: &mut C| {
+                            (callback.borrow_mut())(app, value.clone(), !open)
+                        })
+                        .into();
+                    disclosure.node.align = Align::Center;
+                    disclosure.node.flow = Some(Flow::Center);
+                    // Stroke geometry is independent of font fallback/text insets.
+                    disclosure.children.push(data_chevron(open, 12.));
+                    contents.children.push(disclosure);
+                } else {
+                    contents
+                        .children
+                        .push(spacer().width(24.).height(28.).flex(0.).into());
                 }
-                row.children.push(label.into());
+                let mut label = text(item.label);
+                if active {
+                    label = label.color(ColorToken::Primary).font_weight(500);
+                }
+                let mut content = Element::new(Kind::Row);
+                content.node.height = Some(36.);
+                content.node.flex = 1.;
+                content.node.align = Align::Center;
+                content.node.padding = 6.;
+                content.node.padding_top = Some(0.);
+                content.node.padding_bottom = Some(0.);
+                content.children.push(label.into());
+                contents.children.push(content);
+                row.children.push(contents);
                 out.push(row);
-                if open && !append(node.children, depth + 1, context, out) {
+                if open && !append(node.children, depth + 1, Some(&key), context, out) {
                     return false;
                 }
             }
@@ -694,9 +878,66 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             on_select: &on_select,
             on_expand: &on_expand,
         };
-        if !append(tree.1.roots, 0, &context, &mut tree.0.children) {
+        if !append(tree.1.roots, 0, None, &context, &mut tree.0.children) {
             tree.0.validation_error = Some("tree visible row budget exceeds 96".into());
         }
         tree.0
     }
+}
+
+fn cell_flow(align: Align) -> Flow {
+    match align {
+        Align::End => Flow::Right,
+        Align::Center => Flow::Center,
+        _ => Flow::Left,
+    }
+}
+fn data_rule<C>(width: f32) -> Element<C> {
+    canvas(|c| {
+        c.stroke(
+            VectorPath::new().move_to(0., 0.5).line_to(width, 0.5),
+            ColorToken::Border,
+            1.,
+        )
+    })
+    .width(width)
+    .height(1.)
+}
+fn data_chevron<C>(down: bool, size: f32) -> Element<C> {
+    canvas(|c| {
+        let p = if down {
+            VectorPath::new()
+                .move_to(2.5, 4.5)
+                .line_to(6., 8.)
+                .line_to(9.5, 4.5)
+        } else {
+            VectorPath::new()
+                .move_to(4.5, 2.5)
+                .line_to(8., 6.)
+                .line_to(4.5, 9.5)
+        };
+        c.stroke(
+            p.transformed([size / 12., 0., 0., size / 12., 0., 0.]),
+            ColorToken::Muted,
+            1.5,
+        );
+    })
+    .width(size)
+    .height(size)
+}
+
+fn data_sort_chevron<C>(descending: bool) -> Element<C> {
+    canvas(|c| {
+        let y = if descending { [4., 8.] } else { [8., 4.] };
+        c.stroke(
+            VectorPath::new()
+                .move_to(2.5, y[0])
+                .line_to(6., y[1])
+                .line_to(9.5, y[0]),
+            ColorToken::Muted,
+            1.5,
+        );
+    })
+    .width(12.)
+    .height(12.)
 }

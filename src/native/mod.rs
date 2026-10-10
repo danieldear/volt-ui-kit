@@ -1,8 +1,13 @@
 //! Optional native host: software rasterization or opt-in Vello GPU drawing.
 //! Native backdrop blur is an OS request, not a widget-renderer blur simulation.
 mod accessibility;
+mod application;
+pub use application::{Application, RendererPreference};
 mod assets;
+#[cfg(target_os = "macos")]
+mod macos_chrome;
 mod raster;
+pub mod system;
 pub use assets::{decode_image, load_image};
 #[cfg(feature = "native-gpu")]
 mod gpu;
