@@ -1,5 +1,6 @@
 //! Optional native host: software rasterization or opt-in Vello GPU drawing.
 //! Native backdrop blur is an OS request, not a widget-renderer blur simulation.
+mod accessibility;
 mod assets;
 mod raster;
 pub use assets::{decode_image, load_image};

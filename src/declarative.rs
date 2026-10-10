@@ -293,6 +293,8 @@ pub use runtime::{
 };
 
 #[cfg(feature = "rust-ui")]
+pub use runtime::accessibility::{AccessNode, AccessRole, AccessValue};
+#[cfg(feature = "rust-ui")]
 pub use runtime::editing::EditKey;
 #[cfg(feature = "rust-ui")]
 pub use runtime::value_controls::ValueKey;
