@@ -5,9 +5,15 @@ use super::{
     raster::{Glyph, Shape},
     RasterPainter,
 };
-use crate::declarative::PaintBatch;
-use std::sync::Arc;
-use vello::wgpu;
+use crate::{declarative::PaintBatch, graphics::Image};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
+use vello::{peniko::ImageData, wgpu};
 use winit::window::Window;
 
 pub(super) fn alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::CompositeAlphaMode> {
@@ -35,22 +41,21 @@ fn shader_source(post: bool) -> String {
 "#
     )
 }
-/// Vello 0.6 drops a frame whose layer nesting overflows its fixed blend
-/// buffer, leaving the previous image in place (a window that looks frozen).
-/// Such frames are drawn in software instead; this is reported once.
-fn report_fallback_once(slots: u32) {
-    static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+/// Vello 0.6 drops a frame that overflows any of its fixed GPU buffers, leaving
+/// the previous image in place (a window that looks frozen). Such frames are
+/// drawn in software instead; this is reported once per process.
+fn report_fallback_once(reason: &str) {
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    if !REPORTED.swap(true, Ordering::Relaxed) {
         eprintln!(
-            "Volt UI: scene needs ~{slots} GPU blend-spill slots (limit {}); drawing such frames in software. Reduce deeply nested clips/opacity over large areas to stay on the GPU.",
-            super::gpu_scene::SPILL_SLOT_LIMIT
+            "Volt UI: frame would overflow Vello's {reason} buffer; drawing such frames in software. Deeply nested clips/opacity over large areas, very dense vector paths/text or many large images cause this."
         );
     }
 }
-/// Premultiplied tiny-skia pixels to the straight alpha the present shader expects.
-fn straight_rgba(pixmap: &tiny_skia::Pixmap) -> Vec<u8> {
-    let mut data = pixmap.data().to_vec();
-    for p in data.chunks_exact_mut(4) {
+/// Premultiplied RGBA (our `Image` and tiny-skia storage) to straight alpha.
+fn unpremultiply(data: &[u8]) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for p in out.chunks_exact_mut(4) {
         let a = u16::from(p[3]);
         if a != 0 && a != 255 {
             for c in &mut p[..3] {
@@ -58,11 +63,127 @@ fn straight_rgba(pixmap: &tiny_skia::Pixmap) -> Vec<u8> {
             }
         }
     }
-    data
+    out
+}
+/// Mark the device unusable on loss or an uncaptured validation error (wgpu's
+/// default handler panics), so the host can recreate it or fall back.
+fn watch_device(device: &wgpu::Device) -> Arc<AtomicBool> {
+    let lost = Arc::new(AtomicBool::new(false));
+    let flag = lost.clone();
+    device.set_device_lost_callback(move |reason, message| {
+        eprintln!("Volt UI: GPU device lost ({reason:?}): {message}");
+        flag.store(true, Ordering::Relaxed);
+    });
+    let flag = lost.clone();
+    device.on_uncaptured_error(Box::new(move |error| {
+        eprintln!("Volt UI: GPU error: {error}");
+        flag.store(true, Ordering::Relaxed);
+    }));
+    lost
+}
+/// Images uploaded once as GPU textures and registered with Vello. Vello still
+/// packs them into its per-frame atlas, but by GPU copy instead of re-uploading
+/// CPU pixels every frame. LRU-bounded; images used this frame stay resident.
+#[derive(Default)]
+struct TextureImages {
+    map: HashMap<usize, Registered>,
+    bytes: usize,
+    clock: u64,
+}
+struct Registered {
+    /// Keeps the pixel buffer (the key's address) alive while registered.
+    _source: Image,
+    data: ImageData,
+    bytes: usize,
+    used: u64,
+}
+const TEXTURE_BUDGET: usize = 96 * 1024 * 1024;
+impl TextureImages {
+    fn resolve(
+        &mut self,
+        image: &Image,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut vello::Renderer,
+    ) -> Result<ImageData, String> {
+        let id = image.pixels().as_ptr() as usize;
+        if let Some(r) = self.map.get_mut(&id) {
+            r.used = self.clock;
+            return Ok(r.data.clone());
+        }
+        let (w, h) = (image.width(), image.height());
+        if w.max(h) > device.limits().max_texture_dimension_2d {
+            return Err("image exceeds GPU texture limits".into());
+        }
+        let bytes = w as usize * h as usize * 4;
+        while self.bytes + bytes > TEXTURE_BUDGET {
+            let Some(old) = self
+                .map
+                .iter()
+                .filter(|(_, r)| r.used < self.clock)
+                .min_by_key(|(_, r)| r.used)
+                .map(|(k, _)| *k)
+            else {
+                break; // Everything resident is in this frame; exceed briefly.
+            };
+            let old = self.map.remove(&old).unwrap();
+            self.bytes -= old.bytes;
+            renderer.unregister_texture(old.data);
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Volt UI image"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        // Vello treats registered textures as straight (unpremultiplied) alpha.
+        queue.write_texture(
+            texture.as_image_copy(),
+            &unpremultiply(image.pixels()),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let data = renderer.register_texture(texture);
+        self.bytes += bytes;
+        self.map.insert(
+            id,
+            Registered {
+                _source: image.clone(),
+                data: data.clone(),
+                bytes,
+                used: self.clock,
+            },
+        );
+        Ok(data)
+    }
+}
+/// Premultiplied tiny-skia pixels to the straight alpha the present shader expects.
+fn straight_rgba(pixmap: &tiny_skia::Pixmap) -> Vec<u8> {
+    unpremultiply(pixmap.data())
 }
 pub(super) enum PresentStatus {
     Presented,
     Retry,
+    /// The device was lost or hit an uncaptured error; recreate the presenter.
+    Lost,
 }
 pub(super) struct GpuPresenter {
     instance: wgpu::Instance,
@@ -77,6 +198,8 @@ pub(super) struct GpuPresenter {
     bind_group: Option<wgpu::BindGroup>,
     renderer: vello::Renderer,
     encoder: GpuSceneEncoder,
+    textures: TextureImages,
+    lost: Arc<AtomicBool>,
     pub adapter_name: String,
 }
 impl GpuPresenter {
@@ -116,6 +239,7 @@ impl GpuPresenter {
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;
+        let lost = watch_device(&device);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -197,8 +321,27 @@ impl GpuPresenter {
             bind_group: None,
             renderer,
             encoder: GpuSceneEncoder::default(),
+            textures: TextureImages::default(),
+            lost,
             adapter_name,
         })
+    }
+    /// Encode with GPU-resident images from this presenter's registry.
+    fn encode(
+        &mut self,
+        batches: &[PaintBatch<Shape, Glyph>],
+        painter: &mut RasterPainter,
+    ) -> Result<(), String> {
+        self.textures.clock += 1;
+        let (encoder, textures, device, queue, renderer) = (
+            &mut self.encoder,
+            &mut self.textures,
+            &self.device,
+            &self.queue,
+            &mut self.renderer,
+        );
+        let mut resolve = |image: &Image| textures.resolve(image, device, queue, renderer);
+        encoder.encode_with(batches, painter, Some(&mut resolve))
     }
     pub fn present(
         &mut self,
@@ -206,7 +349,10 @@ impl GpuPresenter {
         painter: &mut RasterPainter,
         background: [f32; 4],
     ) -> Result<PresentStatus, String> {
-        self.encoder.encode(batches, painter)?;
+        if self.lost.load(Ordering::Relaxed) {
+            return Ok(PresentStatus::Lost);
+        }
+        self.encode(batches, painter)?;
         let viewport = painter.gpu_viewport();
         let w = viewport.width as u32;
         let h = viewport.height as u32;
@@ -247,8 +393,8 @@ impl GpuPresenter {
             self.texture = Some(texture);
         }
         let texture = self.texture.as_ref().unwrap();
-        if self.encoder.exceeds_gpu_limits() {
-            report_fallback_once(self.encoder.stats().spill_slots);
+        if let Some(reason) = self.encoder.stats().over_budget {
+            report_fallback_once(reason);
             let pixmap = painter.rasterize(batches, background)?;
             self.queue.write_texture(
                 texture.as_image_copy(),
@@ -318,9 +464,12 @@ impl GpuPresenter {
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         frame.present();
+        if self.lost.load(Ordering::Relaxed) {
+            return Ok(PresentStatus::Lost);
+        }
         if std::env::var_os("VOLT_UI_TRACE").is_some() {
             let stats = self.encoder.stats();
-            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} software_frame={} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,self.encoder.exceeds_gpu_limits(),stats.resource_bytes,stats.framebuffer_upload_bytes);
+            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.over_budget,stats.resource_bytes,stats.framebuffer_upload_bytes);
         }
         Ok(PresentStatus::Presented)
     }
@@ -334,6 +483,8 @@ pub struct GpuOffscreenRenderer {
     queue: wgpu::Queue,
     renderer: vello::Renderer,
     encoder: GpuSceneEncoder,
+    textures: TextureImages,
+    lost: Arc<AtomicBool>,
     target: Option<(wgpu::Texture, wgpu::Buffer, [u32; 2])>,
     pub adapter_name: String,
 }
@@ -350,6 +501,7 @@ impl GpuOffscreenRenderer {
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;
+        let lost = watch_device(&device);
         let renderer = vello::Renderer::new(
             &device,
             vello::RendererOptions {
@@ -364,6 +516,8 @@ impl GpuOffscreenRenderer {
             queue,
             renderer,
             encoder: GpuSceneEncoder::default(),
+            textures: TextureImages::default(),
+            lost,
             target: None,
             adapter_name: format!("{} / {:?}", info.name, info.backend),
         })
@@ -377,6 +531,11 @@ impl GpuOffscreenRenderer {
     /// the renderer's fixed budget are drawn in software instead of dropped.
     pub fn last_spill_slots(&self) -> u32 {
         self.encoder.stats().spill_slots
+    }
+    /// The Vello buffer the latest frame would have overflowed (that frame was
+    /// then drawn in software), or `None` when it rendered on the GPU.
+    pub fn last_over_budget(&self) -> Option<&'static str> {
+        self.encoder.stats().over_budget
     }
     /// New CPU-side cached glyph/image bytes constructed in the latest render.
     /// Not a measurement of actual GPU transfers or total GPU memory.
@@ -395,9 +554,21 @@ impl GpuOffscreenRenderer {
         {
             return Err("invalid GPU background".into());
         }
-        self.encoder.encode(batches, painter)?;
-        if self.encoder.exceeds_gpu_limits() {
-            report_fallback_once(self.encoder.stats().spill_slots);
+        if self.lost.load(Ordering::Relaxed) {
+            return Err("GPU device lost".into());
+        }
+        self.textures.clock += 1;
+        let (encoder, textures, device, queue, renderer) = (
+            &mut self.encoder,
+            &mut self.textures,
+            &self.device,
+            &self.queue,
+            &mut self.renderer,
+        );
+        let mut resolve = |image: &Image| textures.resolve(image, device, queue, renderer);
+        encoder.encode_with(batches, painter, Some(&mut resolve))?;
+        if let Some(reason) = self.encoder.stats().over_budget {
+            report_fallback_once(reason);
             return painter.rasterize(batches, background);
         }
         let vp = painter.gpu_viewport();

@@ -219,5 +219,10 @@ fn every_screen_stays_within_the_gpu_layer_budget_at_retina_size() {
             slots <= 2048,
             "{screen:?} needs {slots} blend-spill slots at rest"
         );
+        assert_eq!(
+            gpu.last_over_budget(),
+            None,
+            "{screen:?} fell back to software"
+        );
     }
 }

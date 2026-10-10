@@ -50,6 +50,15 @@ struct EffectMask {
     used: u64,
     tint: Option<([u8; 3], Pixmap)>,
 }
+/// One face/size/style run of positioned glyphs for the GPU vector text path.
+#[cfg(feature = "native-gpu")]
+pub(super) struct GpuGlyphRun {
+    pub font: cosmic_text::fontdb::ID,
+    pub size: f32,
+    pub fake_italic: bool,
+    /// (glyph id, baseline x, baseline y) in physical pixels.
+    pub glyphs: Vec<(u16, f32, f32)>,
+}
 #[derive(Clone, PartialEq)]
 pub struct Glyph {
     pub(super) text: String,
@@ -143,6 +152,61 @@ impl RasterPainter {
             }
         }
         out
+    }
+    /// Glyphs grouped into runs sharing one face/size, at baseline origins in
+    /// physical pixels: the bitmap path's integer origin plus its subpixel bin,
+    /// so vector text lands where bitmap text and editor carets do. The flag
+    /// reports text that crosses its box and therefore still needs a clip.
+    #[cfg(feature = "native-gpu")]
+    pub(super) fn gpu_glyph_runs(&mut self, glyph: &Glyph) -> (Vec<GpuGlyphRun>, bool) {
+        let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
+        let [gx, gy, gw, gh] = glyph.bounds;
+        let (ox, oy) = (gx.round(), gy.round());
+        let mut runs: Vec<GpuGlyphRun> = Vec::new();
+        let mut overflow = false;
+        for run in self.text[&key].0.layout_runs() {
+            if run.line_top >= gh || run.line_top + run.line_height <= 0. {
+                continue;
+            }
+            overflow |= run.line_top < 0. || run.line_top + run.line_height > gh;
+            for shaped in run.glyphs {
+                if shaped.x >= gw || shaped.x + shaped.w < 0. {
+                    continue;
+                }
+                overflow |= shaped.x < 0. || shaped.x + shaped.w > gw;
+                let p = shaped.physical((0., 0.), 1.);
+                let k = p.cache_key;
+                let size = f32::from_bits(k.font_size_bits);
+                let fake_italic = k.flags.contains(cosmic_text::CacheKeyFlags::FAKE_ITALIC);
+                let x = p.x as f32 + k.x_bin.as_float() + ox;
+                let y = (p.y + run.line_y as i32) as f32 + k.y_bin.as_float() + oy;
+                match runs.last_mut() {
+                    Some(r)
+                        if r.font == k.font_id
+                            && r.size == size
+                            && r.fake_italic == fake_italic =>
+                    {
+                        r.glyphs.push((k.glyph_id, x, y));
+                    }
+                    _ => runs.push(GpuGlyphRun {
+                        font: k.font_id,
+                        size,
+                        fake_italic,
+                        glyphs: vec![(k.glyph_id, x, y)],
+                    }),
+                }
+            }
+        }
+        (runs, overflow)
+    }
+    /// The loaded face (shared, memory-mapped data) and its collection index.
+    #[cfg(feature = "native-gpu")]
+    pub(super) fn gpu_font(
+        &mut self,
+        id: cosmic_text::fontdb::ID,
+    ) -> Option<(std::sync::Arc<cosmic_text::Font>, u32)> {
+        let index = self.fonts.db().face(id)?.index;
+        Some((self.fonts.get_font(id)?, index))
     }
     #[cfg(feature = "native-gpu")]
     pub(super) fn gpu_glyph_image(

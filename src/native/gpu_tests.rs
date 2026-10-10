@@ -364,3 +364,103 @@ fn actual_gpu_virtual_list_resize_stress_uses_bounded_scenes() {
     elapsed.sort_by(f64::total_cmp);
     eprintln!("24 alternating resize frames incl readback: p50={:.3}ms p95={:.3}ms max_new_cpu_asset_bytes={} (not GPU memory)",elapsed[12],elapsed[22],max_resources);
 }
+
+/// Synthesised italic (a face with no italic style) must lean the same way on
+/// GPU vector glyphs as on software bitmaps: rightward towards the top.
+#[test]
+#[ignore = "requires an actual GPU; run with --ignored --nocapture"]
+fn actual_gpu_fake_italic_leans_like_software() {
+    use super::GpuOffscreenRenderer;
+    use crate::declarative::{DocumentPainter, TextStyle};
+    let mut gpu = GpuOffscreenRenderer::new().expect("GPU required");
+    let lean = |pixmap: &tiny_skia::Pixmap| {
+        let centroid = |rows: std::ops::Range<u32>| {
+            let (mut sum, mut weight) = (0f64, 0f64);
+            for y in rows {
+                for x in 0..pixmap.width() {
+                    let ink = f64::from(pixmap.pixel(x, y).unwrap().red());
+                    sum += f64::from(x) * ink;
+                    weight += ink;
+                }
+            }
+            sum / weight.max(1.)
+        };
+        centroid(20..40) - centroid(80..100)
+    };
+    for family in ["Arial Unicode MS", "Verdana"] {
+        let mut painter = RasterPainter::new(Viewport::new(160., 120., 1.).unwrap());
+        let style = TextStyle {
+            family: family.into(),
+            size: 96.,
+            weight: 400,
+            italic: true,
+        };
+        let mut glyphs = vec![];
+        painter.ui_text_styled(
+            &mut glyphs,
+            "I",
+            [40., 0., 100., 120.],
+            &style,
+            [1., 1., 1., 1.],
+        );
+        let batch = PaintBatch {
+            clip: Rect::new(0., 0., 160., 120.).unwrap(),
+            shapes: vec![],
+            glyphs,
+        };
+        let cpu = painter
+            .rasterize(std::slice::from_ref(&batch), [0., 0., 0., 1.])
+            .unwrap();
+        let gpu_pixels = gpu
+            .render(&mut painter, &[batch], [0., 0., 0., 1.])
+            .unwrap();
+        let (cpu_lean, gpu_lean) = (lean(&cpu), lean(&gpu_pixels));
+        eprintln!("{family}: software lean={cpu_lean:.2}px gpu lean={gpu_lean:.2}px");
+        assert!(
+            cpu_lean > 2.,
+            "{family}: expected a rightward software slant"
+        );
+        assert!(gpu_lean > 2. && (gpu_lean - cpu_lean).abs() < cpu_lean * 0.5);
+    }
+}
+
+#[test]
+fn over_budget_frames_name_the_vello_buffer_they_would_overflow() {
+    use crate::graphics::Image;
+    let (w, h) = (2640_f32, 1800_f32);
+    let mut painter = RasterPainter::new(Viewport::new(w, h, 2.).unwrap());
+    let frame = |shapes: Vec<Shape>| PaintBatch {
+        clip: Rect::new(0., 0., w, h).unwrap(),
+        glyphs: vec![],
+        shapes,
+    };
+    let mut encoder = GpuSceneEncoder::default();
+    // An ordinary frame stays on the GPU.
+    encoder
+        .encode(
+            &[frame(vec![Shape::Rectangle(
+                [0., 0., w, h],
+                [0.1, 0.1, 0.1, 1.],
+            )])],
+            &mut painter,
+        )
+        .unwrap();
+    assert_eq!(encoder.stats().over_budget, None);
+    // ~18.5k tiles per full-window fill: 150 of them exceed the tile buffer.
+    let fills = vec![Shape::Rectangle([0., 0., w, h], [0.1, 0.1, 0.1, 1.]); 150];
+    encoder.encode(&[frame(fills)], &mut painter).unwrap();
+    assert_eq!(encoder.stats().over_budget, Some("tiles"));
+    // A 9000px-wide image cannot fit Vello's 8192px atlas.
+    let wide = Image::from_rgba(9000, 1, vec![255; 9000 * 4]).unwrap();
+    encoder
+        .encode(
+            &[frame(vec![Shape::Image(
+                [0., 0., w, 10.],
+                wide.background(),
+                2.,
+            )])],
+            &mut painter,
+        )
+        .unwrap();
+    assert_eq!(encoder.stats().over_budget, Some("image atlas"));
+}

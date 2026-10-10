@@ -1,6 +1,12 @@
 //! Encode retained native commands into GPU-rendered Vello scenes. No full-frame
-//! CPU raster is used. CPU shaping and bounded, cached glyph resources are shared
-//! with the software adapter so font choice and editor geometry remain identical.
+//! CPU raster is used. Text shares CPU shaping with the software adapter (same
+//! fonts, positions and editor geometry) but is drawn as Vello vector glyphs, so
+//! colour changes and animations need no new bitmaps.
+//!
+//! Vello 0.6 renders into fixed-size GPU buffers and silently drops a frame that
+//! overflows any of them, leaving the previous image on screen. The encoder
+//! therefore estimates every buffer while encoding; the host draws an
+//! over-budget frame in software instead (see `SceneStats::over_budget`).
 use super::raster::{self, Glyph, Shape};
 use super::RasterPainter;
 use crate::{
@@ -9,13 +15,13 @@ use crate::{
 };
 use cosmic_text::{CacheKey, SwashContent};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 use vello::{
     kurbo::{Affine, BezPath, Circle, Rect, Shape as _, Stroke},
     peniko::{
-        Blob, Color, Compose, Fill, ImageAlphaType, ImageBrush, ImageData, ImageFormat,
+        Blob, Color, Compose, Fill, FontData, ImageAlphaType, ImageBrush, ImageData, ImageFormat,
         ImageQuality, ImageSampler, Mix,
     },
     Scene,
@@ -25,6 +31,8 @@ use vello::{
 pub(super) struct SceneStats {
     /// Conservative estimate of Vello blend-spill slots this scene needs.
     pub spill_slots: u32,
+    /// Name of the first Vello buffer this frame would overflow, if any.
+    pub over_budget: Option<&'static str>,
     pub shapes: usize,
     pub glyphs: usize,
     pub layers: usize,
@@ -56,7 +64,43 @@ pub(super) struct GpuSceneEncoder {
     depth: Vec<u8>,
     peak: Vec<u8>,
     open_tiles: Vec<[usize; 4]>,
+    /// Zero-copy handles to loaded faces; stable ids keep Vello's outline cache warm.
+    fonts: HashMap<cosmic_text::fontdb::ID, Option<FontData>>,
+    budget: Budget,
+    frame_images: HashSet<usize>,
 }
+/// Per-frame usage of the Vello buffers its own estimator does not cover.
+#[derive(Default)]
+struct Budget {
+    tiles: u64,
+    ptcl: u64,
+    binning: u64,
+    glyph_lines: u64,
+    atlas_area: u64,
+    oversize_image: bool,
+}
+/// Vello 0.6 fixed buffer sizes (vello_encoding `BufferSizes::new`), in elements.
+const TILE_CAPACITY: u64 = 1 << 21;
+const PTCL_CAPACITY: u64 = 1 << 23;
+const BIN_CAPACITY: u64 = 1 << 18;
+const LINE_CAPACITY: u64 = 1 << 21;
+const ATLAS_SIDE: u64 = 8192;
+/// Use at most this fraction of any buffer: estimates are approximations.
+fn over(used: u64, capacity: u64) -> bool {
+    used * 5 > capacity * 4
+}
+/// `cosmic_text::Font` owns (usually memory-mapped) font bytes; sharing the Arc
+/// avoids copying large faces such as colour emoji into Vello.
+struct FontBytes(Arc<cosmic_text::Font>);
+impl AsRef<[u8]> for FontBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.data()
+    }
+}
+/// Supplies GPU-resident images. Without one, images are uploaded from CPU
+/// memory every frame (Vello rebuilds its atlas per frame).
+pub(super) type ImageResolver<'a, 'b> =
+    &'a mut (dyn FnMut(&Image) -> Result<ImageData, String> + 'b);
 /// Vello keeps this many nested layers on chip; deeper tiles spill.
 const BLEND_STACK_SPLIT: u8 = 4;
 /// Vello 0.6's fixed blend spill buffer holds 4096 tile-layer slots per frame;
@@ -180,10 +224,55 @@ impl GpuSceneEncoder {
     pub fn stats(&self) -> SceneStats {
         self.stats
     }
-    /// True when Vello's fixed buffers would likely drop this frame; the host
-    /// must draw it another way rather than present a blank window.
-    pub fn exceeds_gpu_limits(&self) -> bool {
-        self.stats.spill_slots > SPILL_SLOT_LIMIT
+    /// Record a draw object's footprint in tiles, per-tile commands and bins.
+    fn note(&mut self, r: Rect) {
+        let r = r.intersect(Rect::new(
+            0.,
+            0.,
+            self.tiles[0] as f64 * 16.,
+            self.tiles[1] as f64 * 16.,
+        ));
+        if r.is_zero_area() {
+            return;
+        }
+        let span =
+            |a: f64, b: f64, size: f64| ((b / size).ceil() - (a / size).floor()).max(1.) as u64;
+        let tiles = span(r.x0, r.x1, 16.) * span(r.y0, r.y1, 16.);
+        self.budget.tiles += tiles;
+        // A few command words per covered tile, generous for clips/images.
+        self.budget.ptcl += tiles * 8 + 4;
+        self.budget.binning += span(r.x0, r.x1, 256.) * span(r.y0, r.y1, 256.);
+    }
+    fn finish_budget(&mut self) {
+        self.stats.spill_slots = self
+            .peak
+            .iter()
+            .map(|d| u32::from(d.saturating_sub(BLEND_STACK_SPLIT)))
+            .sum();
+        // Vello estimates path flattening itself, but not glyph outlines, which
+        // it resolves later; those are added from our own per-glyph estimate.
+        let vello = self.scene.bump_estimate(None);
+        let lines = u64::from(vello.lines.len()) + self.budget.glyph_lines;
+        let segments = u64::from(vello.segments.len()) + self.budget.glyph_lines * 3 / 2;
+        let base_ptcl = (self.tiles[0] * self.tiles[1]) as u64 * 2;
+        let b = &self.budget;
+        self.stats.over_budget = if self.stats.spill_slots > SPILL_SLOT_LIMIT {
+            Some("blend spill")
+        } else if over(lines, LINE_CAPACITY) {
+            Some("lines")
+        } else if over(segments, LINE_CAPACITY) {
+            Some("segments")
+        } else if over(b.tiles, TILE_CAPACITY) {
+            Some("tiles")
+        } else if over(b.ptcl + base_ptcl, PTCL_CAPACITY) {
+            Some("tile commands")
+        } else if over(b.binning, BIN_CAPACITY) {
+            Some("binning")
+        } else if b.oversize_image || over(b.atlas_area, ATLAS_SIDE * ATLAS_SIDE) {
+            Some("image atlas")
+        } else {
+            None
+        };
     }
     fn layer(
         &mut self,
@@ -207,6 +296,9 @@ impl GpuSceneEncoder {
             }
         }
         self.open_tiles.push(r);
+        // A layer is two draw objects (begin/end) over its clip path's tiles.
+        self.note(b);
+        self.note(b);
         self.scene.push_layer(blend, alpha, Affine::IDENTITY, shape);
     }
     fn pop_layer(&mut self) {
@@ -220,13 +312,28 @@ impl GpuSceneEncoder {
         }
         self.scene.pop_layer();
     }
+    /// Encode with CPU-memory images (headless verification only).
+    #[cfg(test)]
     pub fn encode(
         &mut self,
         batches: &[PaintBatch<Shape, Glyph>],
         painter: &mut RasterPainter,
     ) -> Result<(), String> {
+        self.encode_with(batches, painter, None)
+    }
+    /// Encode a frame. `stats().over_budget` names the first Vello buffer it
+    /// would overflow; the host must then draw it another way, not present a
+    /// stale or blank window.
+    pub fn encode_with(
+        &mut self,
+        batches: &[PaintBatch<Shape, Glyph>],
+        painter: &mut RasterPainter,
+        mut images: Option<ImageResolver<'_, '_>>,
+    ) -> Result<(), String> {
         self.scene.reset();
         self.stats = SceneStats::default();
+        self.budget = Budget::default();
+        self.frame_images.clear();
         self.clock += 1;
         let vp = painter.gpu_viewport();
         if vp.width <= 0. || vp.height <= 0. || vp.width as f64 * vp.height as f64 > 16_777_216. {
@@ -371,7 +478,10 @@ impl GpuSceneEncoder {
                     continue;
                 }
                 self.open_batch_clip(&mut open, clip, *bounds.last().unwrap());
-                self.shape(s)?;
+                if let Some(b) = shape_bounds(s) {
+                    self.note(b.intersect(rect(clip)));
+                }
+                self.shape(s, images.as_deref_mut())?;
                 self.stats.shapes += 1;
             }
             if !batch.glyphs.is_empty() {
@@ -387,11 +497,7 @@ impl GpuSceneEncoder {
         if !stack.is_empty() {
             return Err("unclosed GPU clip/opacity stream".into());
         }
-        self.stats.spill_slots = self
-            .peak
-            .iter()
-            .map(|d| u32::from(d.saturating_sub(BLEND_STACK_SPLIT)))
-            .sum();
+        self.finish_budget();
         Ok(())
     }
     /// A batch clip needs a layer only if it is tighter than the clip already
@@ -419,7 +525,7 @@ impl GpuSceneEncoder {
         }
         *open = Some((clip, !redundant));
     }
-    fn shape(&mut self, s: &Shape) -> Result<(), String> {
+    fn shape(&mut self, s: &Shape, images: Option<ImageResolver<'_, '_>>) -> Result<(), String> {
         let scene = &mut self.scene;
         match s {
             Shape::Rectangle(b, c) => {
@@ -545,12 +651,18 @@ impl GpuSceneEncoder {
                     }
                 }
             }
-            Shape::Image(b, image, scale) => self.image(*b, image, *scale)?,
+            Shape::Image(b, image, scale) => self.image(*b, image, *scale, images)?,
             _ => unreachable!("structural commands handled by encoder"),
         }
         Ok(())
     }
-    fn image(&mut self, b: [f32; 4], image: &BackgroundImage, scale: f32) -> Result<(), String> {
+    fn image(
+        &mut self,
+        b: [f32; 4],
+        image: &BackgroundImage,
+        scale: f32,
+        images: Option<ImageResolver<'_, '_>>,
+    ) -> Result<(), String> {
         if !scale.is_finite()
             || scale <= 0.
             || !image.opacity.is_finite()
@@ -561,6 +673,23 @@ impl GpuSceneEncoder {
         {
             return Err("invalid GPU image geometry/opacity".into());
         }
+        let id = image.image.pixels().as_ptr() as usize;
+        let (w, h) = (image.image.width(), image.image.height());
+        if self.frame_images.insert(id) {
+            // Vello packs every image used this frame into one atlas (max 8192²).
+            self.budget.atlas_area += u64::from(w + 2) * u64::from(h + 2);
+            self.budget.oversize_image |= u64::from(w.max(h)) > ATLAS_SIDE;
+        }
+        let data = match images {
+            Some(resolve) => resolve(&image.image)?,
+            None => self.cpu_image(image)?,
+        };
+        self.image_brush(b, image, scale, data);
+        Ok(())
+    }
+    /// CPU-memory image data, cached by pixel buffer and uploaded by Vello each
+    /// frame. Used for headless verification without a texture registry.
+    fn cpu_image(&mut self, image: &BackgroundImage) -> Result<ImageData, String> {
         let id = image.image.pixels().as_ptr() as usize;
         if !self.images.contains_key(&id) {
             let bytes = image.image.pixels().len();
@@ -594,6 +723,9 @@ impl GpuSceneEncoder {
         let cached = self.images.get_mut(&id).unwrap();
         cached.used = self.clock;
         debug_assert_eq!(cached.source, image.image);
+        Ok(cached.data.clone())
+    }
+    fn image_brush(&mut self, b: [f32; 4], image: &BackgroundImage, scale: f32, data: ImageData) {
         let (iw, ih) = (image.image.width() as f32, image.image.height() as f32);
         let (sx, sy) = match image.fit {
             ImageFit::Cover => {
@@ -613,7 +745,7 @@ impl GpuSceneEncoder {
             b[1] + (b[3] - ih * sy) * pos[1],
         ];
         let brush = ImageBrush {
-            image: cached.data.clone(),
+            image: data,
             sampler: ImageSampler::default(),
         }
         .with_alpha(image.opacity)
@@ -645,9 +777,77 @@ impl GpuSceneEncoder {
                     .fill(Fill::NonZero, Affine::IDENTITY, &brush, Some(t), &area);
             }
         }
+    }
+    fn font(
+        &mut self,
+        id: cosmic_text::fontdb::ID,
+        painter: &mut RasterPainter,
+    ) -> Option<FontData> {
+        self.fonts
+            .entry(id)
+            .or_insert_with(|| {
+                let (font, index) = painter.gpu_font(id)?;
+                Some(FontData::new(Blob::new(Arc::new(FontBytes(font))), index))
+            })
+            .clone()
+    }
+    /// Vector text: one `draw_glyphs` run per face/size. The colour is a brush,
+    /// so hover/fade colour animation costs nothing extra. A face Vello cannot
+    /// be given falls back to cached bitmaps for that text.
+    fn text(&mut self, glyph: &Glyph, painter: &mut RasterPainter) -> Result<(), String> {
+        let (runs, overflow) = painter.gpu_glyph_runs(glyph);
+        if runs.is_empty() {
+            return Ok(());
+        }
+        let mut fonts = Vec::with_capacity(runs.len());
+        for run in &runs {
+            match self.font(run.font, painter) {
+                Some(font) => fonts.push(font),
+                None => return self.text_bitmaps(glyph, painter),
+            }
+        }
+        let bounds = rect(glyph.bounds);
+        if overflow {
+            self.layer(Mix::Normal, 1., &bounds);
+        }
+        for (run, font) in runs.iter().zip(&fonts) {
+            for &(_, x, y) in &run.glyphs {
+                let s = f64::from(run.size);
+                self.note(Rect::new(
+                    x as f64,
+                    y as f64 - s,
+                    x as f64 + s,
+                    y as f64 + s * 0.35,
+                ));
+                // Flattened outline lines grow with size (0.25px tolerance).
+                self.budget.glyph_lines += 48 + (run.size * 1.5) as u64;
+            }
+            let mut draw = self
+                .scene
+                .draw_glyphs(font)
+                .font_size(run.size)
+                .brush(color(glyph.color));
+            if run.fake_italic {
+                // cosmic-text synthesises italic with a 14 degree skew.
+                draw = draw.glyph_transform(Some(Affine::skew(-(14f64.to_radians().tan()), 0.)));
+            }
+            draw.draw(
+                Fill::NonZero,
+                run.glyphs.iter().map(|&(id, x, y)| vello::Glyph {
+                    id: u32::from(id),
+                    x,
+                    y,
+                }),
+            );
+            self.stats.glyphs += run.glyphs.len();
+        }
+        if overflow {
+            self.pop_layer();
+        }
         Ok(())
     }
-    fn text(&mut self, glyph: &Glyph, painter: &mut RasterPainter) -> Result<(), String> {
+    /// Bitmap glyph fallback (per colour), kept for faces Vello cannot load.
+    fn text_bitmaps(&mut self, glyph: &Glyph, painter: &mut RasterPainter) -> Result<(), String> {
         let rgb = [
             byte(glyph.color[0]),
             byte(glyph.color[1]),
@@ -753,12 +953,14 @@ impl GpuSceneEncoder {
                 continue;
             };
             entry.used = self.clock;
+            let (gw, gh) = (entry.data.width, entry.data.height);
             let brush = ImageBrush {
                 image: entry.data.clone(),
                 sampler: ImageSampler::default(),
             }
             .with_alpha(glyph.color[3])
             .with_quality(ImageQuality::Low);
+            self.budget.atlas_area += u64::from(gw + 2) * u64::from(gh + 2);
             self.scene.draw_image(
                 &brush,
                 Affine::translate((origin[0] + entry.offset[0], origin[1] + entry.offset[1])),
