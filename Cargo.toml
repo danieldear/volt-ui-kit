@@ -128,3 +128,7 @@ required-features = ["native"]
 [[example]]
 name = "specimen"
 required-features = ["native"]
+
+[[example]]
+name = "catalog"
+required-features = ["native"]

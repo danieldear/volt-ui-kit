@@ -1,0 +1,282 @@
+//! Volt UI catalog: a documentation-style showcase of every component, in the
+//! spirit of shadcn/ui and daisyUI docs. Each page shows live previews, the
+//! Rust that produced them, variations and an API reference.
+pub mod art;
+mod pages;
+mod shell;
+#[cfg(test)]
+mod tests;
+
+pub use pages::{Page, PAGES};
+
+/// The id of the current page's first example, if it has one.
+pub fn first_section_id(app: &App) -> Option<&'static str> {
+    pages::doc(app.page, app).sections.first().map(|s| s.id)
+}
+pub use shell::view;
+use std::{
+    collections::BTreeSet,
+    ops::Range,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use volt_ui_kit::{
+    native::{UiSendError, UiSender},
+    ui::{Image, Palette, SortDirection, ThemeMode, UiTheme},
+};
+
+/// Theme colours, shown as swatches and selectable from the header menu.
+pub const THEMES: [(&str, u32, u32); 6] = [
+    ("Zinc", 0x18181B, 0xFAFAFA),
+    ("Blue", 0x2563EB, 0x3B82F6),
+    ("Violet", 0x7C3AED, 0x8B5CF6),
+    ("Rose", 0xE11D48, 0xF43F5E),
+    ("Green", 0x16A34A, 0x22C55E),
+    ("Orange", 0xEA580C, 0xF97316),
+];
+
+#[derive(Debug)]
+pub enum Message {
+    Progress { generation: u64, step: u32 },
+}
+
+pub struct App {
+    pub page: Page,
+    pub mode: ThemeMode,
+    pub theme: usize,
+    pub sidebar_query: String,
+    pub palette_open: bool,
+    pub palette_query: String,
+    pub theme_menu_open: bool,
+    /// Section ids currently showing code instead of the preview.
+    pub code: BTreeSet<String>,
+    pub toast: Option<(u32, String)>,
+    next_toast: u32,
+    // Component demo state.
+    pub checked: bool,
+    pub terms: bool,
+    pub switch_on: bool,
+    pub airplane: bool,
+    pub segment: u8,
+    pub tab: u8,
+    pub name: String,
+    pub email: String,
+    pub password: String,
+    pub bio: String,
+    pub volume: f32,
+    pub price: f32,
+    pub fruit: u8,
+    pub fruit_open: bool,
+    pub timezone: u8,
+    pub timezone_open: bool,
+    pub dialog_open: bool,
+    pub delete_open: bool,
+    pub menu_open: bool,
+    pub actions_open: bool,
+    pub context_open: bool,
+    pub context_at: [f32; 2],
+    pub popover_open: bool,
+    pub width: f32,
+    pub height: f32,
+    pub sort: Option<(u8, SortDirection)>,
+    pub row: Option<u32>,
+    pub expanded: Vec<u16>,
+    pub file: Option<u16>,
+    pub window: Range<usize>,
+    pub record: Option<usize>,
+    pub split: f32,
+    pub reveal: bool,
+    pub liked: bool,
+    pub last_action: String,
+    pub image: Image,
+    // Background task demo.
+    pub sender: Option<UiSender<Message>>,
+    pub job_running: bool,
+    pub job_progress: u32,
+    job_generation: u64,
+    job_cancel: Arc<AtomicBool>,
+}
+
+impl App {
+    pub fn new() -> Self {
+        Self {
+            page: Page::Introduction,
+            mode: ThemeMode::Light,
+            theme: 0,
+            sidebar_query: String::new(),
+            palette_open: false,
+            palette_query: String::new(),
+            theme_menu_open: false,
+            code: BTreeSet::new(),
+            toast: None,
+            next_toast: 0,
+            checked: true,
+            terms: false,
+            switch_on: true,
+            airplane: false,
+            segment: 1,
+            tab: 0,
+            name: "Ada Lovelace".into(),
+            email: String::new(),
+            password: String::new(),
+            bio: "Mathematician. Wrote the first published algorithm intended for a machine."
+                .into(),
+            volume: 0.6,
+            price: 40.,
+            fruit: 1,
+            fruit_open: false,
+            timezone: 2,
+            timezone_open: false,
+            dialog_open: false,
+            delete_open: false,
+            menu_open: false,
+            actions_open: false,
+            context_open: false,
+            context_at: [0.; 2],
+            popover_open: false,
+            width: 100.,
+            height: 25.,
+            sort: Some((0, SortDirection::Ascending)),
+            row: Some(2),
+            expanded: vec![1, 2],
+            file: Some(4),
+            window: 0..14,
+            record: None,
+            split: 0.4,
+            reveal: true,
+            liked: false,
+            last_action: "Nothing yet".into(),
+            image: art::landscape(480, 300),
+            sender: None,
+            job_running: false,
+            job_progress: 0,
+            job_generation: 0,
+            job_cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn go(&mut self, page: Page) {
+        self.page = page;
+        self.palette_open = false;
+        self.palette_query.clear();
+        // Close every open overlay that belonged to the previous page.
+        self.fruit_open = false;
+        self.timezone_open = false;
+        self.menu_open = false;
+        self.actions_open = false;
+        self.context_open = false;
+        self.popover_open = false;
+        self.theme_menu_open = false;
+    }
+    pub fn notify(&mut self, message: impl Into<String>) {
+        self.next_toast += 1;
+        self.toast = Some((self.next_toast, message.into()));
+    }
+    pub fn start_job(&mut self) {
+        let Some(sender) = self.sender.clone() else {
+            self.notify("Background workers run in the native window only");
+            return;
+        };
+        self.job_cancel.store(true, Ordering::Relaxed);
+        self.job_cancel = Arc::new(AtomicBool::new(false));
+        self.job_generation = self.job_generation.wrapping_add(1);
+        self.job_progress = 0;
+        self.job_running = true;
+        let (generation, cancel) = (self.job_generation, self.job_cancel.clone());
+        std::thread::spawn(move || {
+            for step in 1..=100 {
+                std::thread::sleep(Duration::from_millis(30));
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                match sender.send(Message::Progress { generation, step }) {
+                    Ok(()) | Err(UiSendError::Full) => {}
+                    Err(UiSendError::Closed) => break,
+                }
+            }
+        });
+    }
+    pub fn cancel_job(&mut self) {
+        self.job_cancel.store(true, Ordering::Relaxed);
+        self.job_generation = self.job_generation.wrapping_add(1);
+        self.job_running = false;
+        self.notify("Task cancelled");
+    }
+}
+
+/// Worker messages arrive here, on the UI thread, in batches.
+pub fn update(app: &mut App, message: Message) {
+    let Message::Progress { generation, step } = message;
+    // Results from a cancelled or restarted task are ignored.
+    if generation != app.job_generation || !app.job_running {
+        return;
+    }
+    app.job_progress = step.min(100);
+    if step >= 100 {
+        app.job_running = false;
+        app.notify("Task complete");
+    }
+}
+
+fn rgba(v: u32) -> [f32; 4] {
+    [
+        ((v >> 16) & 255) as f32 / 255.,
+        ((v >> 8) & 255) as f32 / 255.,
+        (v & 255) as f32 / 255.,
+        1.,
+    ]
+}
+
+/// Neutral zinc surfaces with a selectable primary colour.
+pub fn theme(app: &App, system: ThemeMode) -> UiTheme {
+    let dark = match app.mode {
+        ThemeMode::System => system == ThemeMode::Dark,
+        mode => mode == ThemeMode::Dark,
+    };
+    let mut p = if dark {
+        Palette::dark()
+    } else {
+        Palette::light()
+    };
+    p.name = THEMES[app.theme].0.into();
+    if dark {
+        p.base = [rgba(0x09090B), rgba(0x18181B), rgba(0x27272A)];
+        p.content = rgba(0xFAFAFA);
+        p.muted = rgba(0xA1A1AA);
+        p.border = rgba(0x27272A);
+        p.neutral = rgba(0xFAFAFA);
+        p.on_neutral = rgba(0x18181B);
+        p.error = rgba(0xDC2626);
+        p.on_error = rgba(0xFAFAFA);
+    } else {
+        p.base = [rgba(0xFFFFFF), rgba(0xF4F4F5), rgba(0xE4E4E7)];
+        p.content = rgba(0x09090B);
+        p.muted = rgba(0x71717A);
+        p.border = rgba(0xE4E4E7);
+        p.neutral = rgba(0x18181B);
+        p.on_neutral = rgba(0xFAFAFA);
+        p.error = rgba(0xDC2626);
+        p.on_error = rgba(0xFFFFFF);
+    }
+    p.success = rgba(if dark { 0x22C55E } else { 0x16A34A });
+    p.on_success = rgba(0xFFFFFF);
+    p.warning = rgba(if dark { 0xF59E0B } else { 0xD97706 });
+    p.on_warning = rgba(0x18181B);
+    p.info = rgba(if dark { 0x3B82F6 } else { 0x2563EB });
+    p.on_info = rgba(0xFFFFFF);
+    let (_, light_primary, dark_primary) = THEMES[app.theme];
+    let p = if app.theme == 0 {
+        // Zinc: the primary colour is the text colour itself.
+        let mut p = p;
+        p.primary = p.content;
+        p.on_primary = p.base[0];
+        p.accent = p.content;
+        p.on_accent = p.base[0];
+        p
+    } else {
+        p.with_accent(rgba(if dark { dark_primary } else { light_primary }))
+    };
+    UiTheme::from_palette(p)
+}

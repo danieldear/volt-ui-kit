@@ -306,38 +306,51 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
     fn from(mut table: Table<C, T, K>) -> Self {
         let columns = &table.1.columns;
         let rows = &table.1.rows;
-        let valid = !columns.is_empty()
-            && columns.len() <= 8
-            && rows.len() <= 96
-            && 2 + columns.len() + rows.len() * (3 + columns.len()) < MAX_NODES
-            && columns.iter().enumerate().all(|(i, c)| {
-                c.width.is_finite()
-                    && (32.0..=600.0).contains(&c.width)
-                    && !columns[..i].iter().any(|o| o.value == c.value)
-            })
-            && rows.iter().enumerate().all(|(i, r)| {
-                r.cells.len() == columns.len()
-                    && r.key.is_some()
-                    && !rows[..i].iter().any(|o| o.value == r.value)
-            })
-            && table
-                .1
-                .selected
-                .as_ref()
-                .is_none_or(|value| rows.iter().any(|row| &row.value == value))
-            && table.1.sort.as_ref().is_none_or(|(key, _)| {
-                columns
-                    .iter()
-                    .any(|column| &column.value == key && column.sortable)
-            })
-            && table.1.on_select.is_some()
-            && (!columns.iter().any(|column| column.sortable) || table.1.on_sort.is_some())
-            && !table.0.auto_id;
-        if !valid {
-            table.0.validation_error = Some(
-                "invalid table model, missing keys/callbacks or component node budget exceeded"
-                    .into(),
-            );
+        // Report the first specific problem rather than a combined message.
+        let error = if table.0.auto_id {
+            Some("table requires a stable .key(...)")
+        } else if columns.is_empty() || columns.len() > 8 {
+            Some("a table needs 1..=8 columns")
+        } else if rows.len() > 96
+            || 2 + columns.len() + rows.len() * (3 + columns.len()) >= MAX_NODES
+        {
+            Some("a table holds at most 96 rows; use virtual_list for larger collections")
+        } else if !columns.iter().enumerate().all(|(i, c)| {
+            c.width.is_finite()
+                && (32.0..=600.0).contains(&c.width)
+                && !columns[..i].iter().any(|o| o.value == c.value)
+        }) {
+            Some("column widths must be 32..=600 and column values unique")
+        } else if !rows.iter().all(|r| r.cells.len() == columns.len()) {
+            Some("every row needs exactly one cell per column")
+        } else if !rows
+            .iter()
+            .enumerate()
+            .all(|(i, r)| r.key.is_some() && !rows[..i].iter().any(|o| o.value == r.value))
+        {
+            Some("every table_row needs a .key(...) and a unique value")
+        } else if !table
+            .1
+            .selected
+            .as_ref()
+            .is_none_or(|value| rows.iter().any(|row| &row.value == value))
+        {
+            Some("selected(...) is not a row in the table")
+        } else if !table.1.sort.as_ref().is_none_or(|(key, _)| {
+            columns
+                .iter()
+                .any(|column| &column.value == key && column.sortable)
+        }) {
+            Some("sort(...) names a column that is missing or not sortable")
+        } else if table.1.on_select.is_none() {
+            Some("table requires on_select")
+        } else if columns.iter().any(|column| column.sortable) && table.1.on_sort.is_none() {
+            Some("columns are sortable by default: add on_sort or mark them .sortable(false)")
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            table.0.validation_error = Some(error.into());
             return table.0;
         }
         let width = columns.iter().map(|c| c.width).sum::<f32>();
