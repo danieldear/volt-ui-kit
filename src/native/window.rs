@@ -921,6 +921,33 @@ impl<C: 'static> App<C> {
                 w.request_redraw();
                 return Ok(());
             }
+            Some(Ok(super::gpu::PresentStatus::Lost)) => {
+                // Release the old device/surface first, then try a fresh one.
+                self.gpu = None;
+                let transparent = self.options.background != WindowBackground::Opaque;
+                match super::gpu::GpuPresenter::new(w.clone(), transparent) {
+                    Ok(gpu) => {
+                        eprintln!("Volt UI: GPU renderer recreated ({})", gpu.adapter_name);
+                        self.gpu = Some(gpu);
+                        w.request_redraw();
+                        return Ok(());
+                    }
+                    Err(error) if std::env::var("VOLT_UI_RENDERER").as_deref() == Ok("gpu") => {
+                        return Err(format!(
+                            "required GPU renderer could not be recreated: {error}"
+                        ));
+                    }
+                    Err(error) => {
+                        eprintln!("Volt UI: GPU renderer could not be recreated ({error}); switching to opaque software fallback");
+                        w.set_blur(false);
+                        let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
+                        self.surface =
+                            Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
+                        self.surface_size = None;
+                        false
+                    }
+                }
+            }
             Some(Err(error)) => {
                 if std::env::var("VOLT_UI_RENDERER").as_deref() == Ok("gpu") {
                     return Err(format!("required GPU render failed: {error}"));

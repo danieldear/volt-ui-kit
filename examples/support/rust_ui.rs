@@ -171,7 +171,7 @@ fn launch_configured<C: 'static>(
             }
             "--bench-target" => target = Some(args.next().ok_or("missing --bench-target key")?),
             "--help" => {
-                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; warm render timings (GPU mode includes blocking readback)\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_RENDERER  auto / gpu / software (gpu requires native-gpu)\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / borderless\n--reduced-motion settle effects without animation\n--theme MODE     light / dark / system (headless system falls back to dark)\nRust source edits require rebuild; no JSON or F5 source reload.");
+                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; settled warm render timings (GPU mode includes blocking readback)\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_RENDERER  auto / gpu / software (gpu requires native-gpu)\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / borderless\n--reduced-motion settle effects without animation\n--theme MODE     light / dark / system (headless system falls back to dark)\nRust source edits require rebuild; no JSON or F5 source reload.");
                 return Ok(());
             }
             _ => {
@@ -381,6 +381,9 @@ fn launch_configured<C: 'static>(
         handlers = next_handlers;
         runtime.layout(viewport, &values, &mut painter)?;
         runtime.pointer_move(x, y);
+        // Time the settled result of the action. Headless runs never advance a
+        // clock, so without this every sample was frame zero of a fade-in.
+        runtime.settle_animations();
         let compose = start.elapsed().as_secs_f64() * 1000.;
         let stage = Instant::now();
         let theme = resolve_theme(&state);

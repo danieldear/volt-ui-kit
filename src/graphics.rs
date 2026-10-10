@@ -173,7 +173,7 @@ impl VectorPath {
             .cubic_to([x + k * rx, y - ry], [x + rx, y - k * ry], [x + rx, y])
             .close()
     }
-    /// Affine matrix [a,b,c,d,tx,ty]. Can translate/scale/rotate paths in Rust.
+    /// Affine matrix `[a, b, c, d, tx, ty]`. Can translate/scale/rotate paths in Rust.
     pub fn transformed(mut self, m: [f32; 6]) -> Self {
         let point = |p: &mut [f32; 2]| {
             let [x, y] = *p;
