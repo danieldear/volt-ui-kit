@@ -1,6 +1,6 @@
 use super::{
     messages::{Messages, UiSender},
-    RasterPainter,
+    Damage, RasterPainter,
 };
 use crate::{
     declarative::{Bindings, Document, DocumentError, Handlers, InputOutcome, Runtime},
@@ -38,6 +38,16 @@ fn gpu_policy(value: Option<&str>, available: bool) -> Result<(bool, bool), Stri
 #[cfg(test)]
 mod renderer_policy_tests {
     use super::gpu_policy;
+    #[test]
+    fn damaged_rows_are_the_only_pixels_packed() {
+        let mut pixmap = tiny_skia::Pixmap::new(4, 3).unwrap();
+        pixmap.fill(tiny_skia::Color::from_rgba8(255, 0, 0, 255));
+        let mut buffer = vec![7_u32; 12];
+        super::pack_rows(&mut buffer, &pixmap, [1, 1, 3, 2]);
+        let changed: Vec<usize> = (0..12).filter(|i| buffer[*i] != 7).collect();
+        assert_eq!(changed, vec![5, 6]);
+        assert_eq!(buffer[5], 0x00ff0000);
+    }
     #[test]
     fn optional_gpu_default_and_explicit_software_and_strict_gpu_are_distinct() {
         assert_eq!(gpu_policy(None, false).unwrap(), (false, false));
@@ -967,10 +977,15 @@ impl<C: 'static> App<C> {
         #[cfg(not(feature = "native-gpu"))]
         let gpu_presented = false;
         let mut pack_done = self.trace.then(Instant::now);
+        let mut damage = None;
         if !gpu_presented {
-            let pixmap = self
-                .painter
-                .rasterize(&batches, root_clear(&theme, self.options.background, false))?;
+            // Only what changed since the previous frame is repainted; the
+            // painter keeps the full current frame.
+            let (pixmap, frame_damage) = self.painter.rasterize_incremental(
+                &batches,
+                root_clear(&theme, self.options.background, false),
+            )?;
+            damage = Some(frame_damage);
             raster_done = self.trace.then(Instant::now);
             let surface = self.surface.as_mut().ok_or("missing surface")?;
             let new_size = [size.width, size.height];
@@ -979,13 +994,33 @@ impl<C: 'static> App<C> {
                 self.surface_size = Some(new_size);
             }
             let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
-            for (dst, pixel) in buffer.iter_mut().zip(pixmap.pixels()) {
-                *dst = (u32::from(pixel.red()) << 16)
-                    | (u32::from(pixel.green()) << 8)
-                    | u32::from(pixel.blue());
+            // Age 1: the buffer still holds the previous presented frame, so
+            // only the damaged rows need copying and presenting.
+            let retained = buffer.age() == 1;
+            match frame_damage {
+                Damage::None if retained => {
+                    pack_done = self.trace.then(Instant::now);
+                }
+                Damage::Rect(rect) if retained => {
+                    pack_rows(&mut buffer, pixmap, rect);
+                    pack_done = self.trace.then(Instant::now);
+                    let [x0, y0, x1, y1] = rect;
+                    let region = softbuffer::Rect {
+                        x: x0,
+                        y: y0,
+                        width: NonZeroU32::new(x1 - x0).ok_or("empty damage")?,
+                        height: NonZeroU32::new(y1 - y0).ok_or("empty damage")?,
+                    };
+                    buffer
+                        .present_with_damage(&[region])
+                        .map_err(|e| e.to_string())?;
+                }
+                _ => {
+                    pack_rows(&mut buffer, pixmap, [0, 0, pixmap.width(), pixmap.height()]);
+                    pack_done = self.trace.then(Instant::now);
+                    buffer.present().map_err(|e| e.to_string())?;
+                }
             }
-            pack_done = self.trace.then(Instant::now);
-            buffer.present().map_err(|e| e.to_string())?;
         }
         self.frames += 1;
         self.animation_clock.presented(Instant::now());
@@ -1008,7 +1043,7 @@ impl<C: 'static> App<C> {
                     self.painter.shape_draw_calls - shape_calls_before,
                     self.painter.text_cache_misses - text_misses_before);
             } else {
-                eprintln!("VOLT_UI_TRACE renderer=software frame={} pixels={}x{} layout_ms={:.3} paint_ms={:.3} raster_ms={:.3} pack_ms={:.3} present_ms={:.3} total_ms={:.3} mouse_release_to_present_ms={} shape_calls={} text_misses={}",
+                eprintln!("VOLT_UI_TRACE renderer=software frame={} damage={damage:?} pixels={}x{} layout_ms={:.3} paint_ms={:.3} raster_ms={:.3} pack_ms={:.3} present_ms={:.3} total_ms={:.3} mouse_release_to_present_ms={} shape_calls={} text_misses={}",
                 self.frames, size.width, size.height, ms(start, layout), ms(layout, paint),
                 ms(paint, raster), ms(raster, pack), ms(pack, presented), ms(start, presented),
                 release, self.painter.shape_draw_calls - shape_calls_before,
@@ -1556,6 +1591,19 @@ impl AnimationClock {
     }
 }
 
+/// Copy a region of the frame into a softbuffer as 0RGB (opaque presentation).
+fn pack_rows(buffer: &mut [u32], pixmap: &tiny_skia::Pixmap, [x0, y0, x1, y1]: [u32; 4]) {
+    let stride = pixmap.width() as usize;
+    let pixels = pixmap.pixels();
+    for y in y0 as usize..y1 as usize {
+        let row = y * stride + x0 as usize..y * stride + x1 as usize;
+        for (dst, pixel) in buffer[row.clone()].iter_mut().zip(&pixels[row]) {
+            *dst = (u32::from(pixel.red()) << 16)
+                | (u32::from(pixel.green()) << 8)
+                | u32::from(pixel.blue());
+        }
+    }
+}
 fn needs_surface_resize(previous: Option<[u32; 2]>, next: [u32; 2]) -> bool {
     previous != Some(next)
 }

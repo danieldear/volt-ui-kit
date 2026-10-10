@@ -226,3 +226,140 @@ fn every_screen_stays_within_the_gpu_layer_budget_at_retina_size() {
         );
     }
 }
+
+/// Incremental software frames must match a full repaint pixel for pixel,
+/// while repainting only a small region for local changes such as hover.
+#[test]
+fn incremental_software_frames_match_full_repaints() {
+    use volt_ui_kit::native::Damage;
+    let mut app = App::new();
+    let viewport = Viewport::new(1320., 900., 1.).unwrap();
+    let (document, mut handlers) = view(&app).build().unwrap().into_parts();
+    let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+    let mut live = RasterPainter::new(viewport);
+    let mut reference = RasterPainter::new(viewport);
+    runtime
+        .layout(viewport, &Bindings::default(), &mut live)
+        .unwrap();
+    runtime.settle_animations();
+    let ui = theme(&app, ThemeMode::Dark);
+    let bg = [0.06, 0.11, 0.15, 1.];
+    let mut check = |runtime: &mut Runtime, live: &mut RasterPainter, label: &str| -> Damage {
+        // Animation targets resolve during paint (as in the live window), so
+        // paint once, settle, then paint the steady state.
+        runtime.paint_ui(live, &ui);
+        runtime.settle_animations();
+        let batches = runtime.paint_ui(live, &ui);
+        let (pixels, damage) = live.rasterize_incremental(&batches, bg).unwrap();
+        let pixels = pixels.clone();
+        let fresh = runtime.paint_ui(&mut reference, &ui);
+        let full = reference.rasterize(&fresh, bg).unwrap();
+        assert!(
+            pixels.data() == full.data(),
+            "{label}: incremental frame differs from full repaint"
+        );
+        damage
+    };
+    assert_eq!(check(&mut runtime, &mut live, "first"), Damage::Full);
+    assert_eq!(check(&mut runtime, &mut live, "unchanged"), Damage::None);
+    // Hover a place card: only that card (and its shadow) repaints.
+    let b = runtime
+        .boxes()
+        .iter()
+        .find(|b| b.id == "place-1")
+        .unwrap()
+        .bounds
+        .bounds();
+    runtime.pointer_move(b[0] + 20., b[1] + 20.);
+    match check(&mut runtime, &mut live, "hover") {
+        Damage::Rect([x0, y0, x1, y1]) => {
+            assert!(
+                u64::from(x1 - x0) * u64::from(y1 - y0) < 1320 * 900 / 4,
+                "hover repainted too much"
+            );
+        }
+        other => panic!("hover should be a partial repaint, got {other:?}"),
+    }
+    runtime.pointer_move(5., 890.);
+    check(&mut runtime, &mut live, "hover out");
+    // Pressing and clicking changes app state and recomposes the tree.
+    runtime.pointer_move(b[0] + 20., b[1] + 20.);
+    runtime.pointer_down(b[0] + 20., b[1] + 20.);
+    check(&mut runtime, &mut live, "pressed");
+    assert!(
+        runtime
+            .pointer_up_outcome(b[0] + 20., b[1] + 20., &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    let (document, next) = view(&app).build().unwrap().into_parts();
+    runtime
+        .replace_document(document, &next, &Bindings::default())
+        .unwrap();
+    handlers = next;
+    runtime
+        .layout(viewport, &Bindings::default(), &mut live)
+        .unwrap();
+    check(&mut runtime, &mut live, "selected another place");
+    // Scrolling moves everything inside the page.
+    runtime.scroll_at(600., 500., [0., 120.]);
+    runtime
+        .layout(viewport, &Bindings::default(), &mut live)
+        .unwrap();
+    check(&mut runtime, &mut live, "scrolled");
+    let _ = &handlers;
+}
+
+#[test]
+#[ignore = "timing report"]
+fn incremental_hover_cost_at_retina() {
+    let app = App::new();
+    let viewport = Viewport::new(2640., 1800., 2.).unwrap();
+    let (document, handlers) = view(&app).build().unwrap().into_parts();
+    let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+    let mut p = RasterPainter::new(viewport);
+    runtime
+        .layout(viewport, &Bindings::default(), &mut p)
+        .unwrap();
+    let ui = theme(&app, ThemeMode::Dark);
+    let bg = [0.06, 0.11, 0.15, 1.];
+    let b = runtime
+        .boxes()
+        .iter()
+        .find(|b| b.id == "place-1")
+        .unwrap()
+        .bounds
+        .bounds();
+    let (inside, outside) = ([b[0] + 40., b[1] + 40.], [10., 1790.]);
+    let mut frame = |at: [f32; 2], p: &mut RasterPainter, runtime: &mut Runtime| {
+        runtime.pointer_move(at[0], at[1]);
+        runtime.paint_ui(p, &ui);
+        runtime.settle_animations();
+        let batches = runtime.paint_ui(p, &ui);
+        let start = std::time::Instant::now();
+        let (_, damage) = p.rasterize_incremental(&batches, bg).unwrap();
+        (start.elapsed().as_secs_f64() * 1000., damage)
+    };
+    frame(outside, &mut p, &mut runtime);
+    let (mut inc, mut n) = (0., 0);
+    for i in 0..20 {
+        let (ms, _) = frame(
+            if i % 2 == 0 { inside } else { outside },
+            &mut p,
+            &mut runtime,
+        );
+        inc += ms;
+        n += 1;
+    }
+    let batches = runtime.paint_ui(&mut p, &ui);
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        p.rasterize(&batches, bg).unwrap();
+    }
+    let full = start.elapsed().as_secs_f64() * 100.;
+    eprintln!(
+        "hover frame: incremental {:.2}ms vs full {:.2}ms",
+        inc / n as f64,
+        full
+    );
+}
