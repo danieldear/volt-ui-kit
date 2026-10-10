@@ -15,6 +15,8 @@ use std::{
 };
 
 #[cfg(feature = "rust-ui")]
+pub(super) mod accessibility;
+#[cfg(feature = "rust-ui")]
 pub(super) mod editing;
 #[cfg(feature = "rust-ui")]
 mod overlays;

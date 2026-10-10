@@ -403,8 +403,12 @@ fn run_host<C: 'static>(
         }));
     }
     event_loop.set_control_flow(ControlFlow::Wait);
+    let proxy = event_loop.create_proxy();
     let mut app = App {
         options,
+        proxy,
+        access: None,
+        access_ids: Default::default(),
         runtime,
         context,
         handlers,
@@ -480,9 +484,21 @@ impl<C: 'static> Content<C> {
 #[derive(Debug)]
 enum HostEvent {
     Messages,
+    /// Screen-reader activation and action requests from AccessKit.
+    Access(accesskit_winit::Event),
+}
+impl From<accesskit_winit::Event> for HostEvent {
+    fn from(event: accesskit_winit::Event) -> Self {
+        Self::Access(event)
+    }
 }
 struct App<C> {
     options: SurfaceOptions,
+    /// Delivers AccessKit events into the event loop.
+    proxy: winit::event_loop::EventLoopProxy<HostEvent>,
+    access: Option<accesskit_winit::Adapter>,
+    /// AccessKit node ids of the last published tree, for action routing.
+    access_ids: std::collections::HashMap<accesskit::NodeId, String>,
     runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
@@ -877,6 +893,66 @@ impl<C: 'static> App<C> {
         }
         Ok(false)
     }
+    /// Publish the accessibility tree. AccessKit runs the builder only while
+    /// assistive technology is active, so this costs nothing otherwise.
+    fn update_access(&mut self) {
+        let (Some(access), Some(window)) = (self.access.as_mut(), self.window.as_ref()) else {
+            return;
+        };
+        let size = window.inner_size();
+        let title = &self.options.native.title;
+        let runtime = &self.runtime;
+        let ids = &mut self.access_ids;
+        access.update_if_active(|| {
+            let (update, map) = super::accessibility::tree_update(
+                &runtime.accessibility_nodes(),
+                title,
+                [size.width as f32, size.height as f32],
+            );
+            *ids = map;
+            update
+        });
+    }
+    fn access_event(&mut self, event: accesskit_winit::WindowEvent) -> Result<(), String> {
+        use super::accessibility::{command, AccessCommand};
+        match event {
+            accesskit_winit::WindowEvent::InitialTreeRequested => self.update_access(),
+            accesskit_winit::WindowEvent::ActionRequested(request) => {
+                let Some(command) = command(&request, &self.access_ids) else {
+                    return Ok(());
+                };
+                self.activation_key = None;
+                let outcome = match command {
+                    AccessCommand::Focus(id) => Ok(InputOutcome {
+                        changed: self.runtime.accessibility_focus(&id),
+                        activated: false,
+                    }),
+                    AccessCommand::Click(id) => self.runtime.accessibility_activate(
+                        &id,
+                        &mut self.handlers,
+                        &mut self.context,
+                    ),
+                    AccessCommand::SetValue(id, value) => self.runtime.accessibility_set_value(
+                        &id,
+                        value,
+                        &mut self.handlers,
+                        &mut self.context,
+                    ),
+                    AccessCommand::Step(id, up) => self.runtime.accessibility_step(
+                        &id,
+                        up,
+                        &mut self.handlers,
+                        &mut self.context,
+                    ),
+                }
+                .map_err(|e| e.to_string())?;
+                self.after_input(outcome)?;
+                self.redraw();
+            }
+            accesskit_winit::WindowEvent::AccessibilityDeactivated => {}
+        }
+        Ok(())
+    }
     fn render(&mut self) -> Result<(), String> {
         // The host clock also advances here so a delayed OS redraw never paints
         // an obsolete animation frame. This never rebuilds Rust application UI.
@@ -1023,6 +1099,7 @@ impl<C: 'static> App<C> {
             }
         }
         self.frames += 1;
+        self.update_access();
         self.animation_clock.presented(Instant::now());
         if let Some(start) = started {
             let presented = Instant::now();
@@ -1082,8 +1159,14 @@ impl<C: 'static> App<C> {
     }
 }
 impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: HostEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: HostEvent) {
         if event_loop.exiting() {
+            return;
+        }
+        if let HostEvent::Access(event) = event {
+            if let Err(error) = self.access_event(event.window_event) {
+                self.fail(event_loop, error);
+            }
             return;
         }
         let changed = self
@@ -1104,11 +1187,18 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             return;
         }
         let result = (|| -> Result<_, String> {
+            // AccessKit must be attached before the window is first shown.
             let w = Arc::new(
                 event_loop
-                    .create_window(surface_window_attributes(&self.options))
+                    .create_window(surface_window_attributes(&self.options).with_visible(false))
                     .map_err(|e| e.to_string())?,
             );
+            self.access = Some(accesskit_winit::Adapter::with_event_loop_proxy(
+                event_loop,
+                &w,
+                self.proxy.clone(),
+            ));
+            w.set_visible(true);
             self.system_theme = if w.theme() == Some(winit::window::Theme::Light) {
                 ThemeMode::Light
             } else {
@@ -1159,6 +1249,8 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         self.surface = None;
         self.surface_size = None;
         self.pending_release = None;
+        self.access = None;
+        self.access_ids.clear();
         self.window = None;
         self.ime_allowed = false;
         self.runtime.cancel_input();
@@ -1169,6 +1261,9 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
+        }
+        if let (Some(access), Some(window)) = (self.access.as_mut(), self.window.as_ref()) {
+            access.process_event(window, &event);
         }
         // Advance visuals before hit testing and dispatch, but never delay input
         // until an animation completes. Idle hosts have no periodic timer.

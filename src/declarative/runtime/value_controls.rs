@@ -13,7 +13,7 @@ pub enum ValueKey {
     PageIncrease,
 }
 
-fn snap(props: &SliderProps, value: f32) -> f32 {
+pub(super) fn snap(props: &SliderProps, value: f32) -> f32 {
     let value = f64::from(value.clamp(props.min, props.max));
     let min = f64::from(props.min);
     let max = f64::from(props.max);
@@ -91,7 +91,7 @@ impl Runtime {
                 as f32,
         ))
     }
-    fn emit_slider<C>(
+    pub(super) fn emit_slider<C>(
         &mut self,
         id: &str,
         value: f32,
