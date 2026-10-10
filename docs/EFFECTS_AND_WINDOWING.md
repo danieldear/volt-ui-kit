@@ -43,7 +43,8 @@ accepts a `Corner`, a `Corners` side group, or lists of either. The FIRST
 Later `rounded_on` calls update selected corners only; a later `rounded` resets
 all four. Top+Left selects three corners. Radius values use logical pixels and
 clamp independently to half the smaller dimension. Fill, border and pointer hit
-geometry agree. Child clipping is still rectangular, not a rounded mask.
+geometry agree. Child clipping remains rectangular by default. Opt into rounded/path masks with
+`clip_contents(true)` / `clip(...)`; see [surface composition](SURFACES_THEMES_AND_SCROLLING.md).
 
 Rust `button(...)` now defaults to **2 logical pixels**. Zero is explicitly square;
 larger/full rounding is opt-in. The legacy `Button::paint` and existing JSON
@@ -76,8 +77,8 @@ Geometry masks are cached separately from color/alpha; animated color/alpha and
 integer-position changes reuse masks. Fractional source-position changes alter
 the AA mask key. Premultiplied RGB tints have a separate bounded cache; alpha-only
 animation reuses them, while a changed RGB tint is rebuilt. Shadow/glow emit
-behind the surface, clipped to its ancestor
-area rather than its own bounds. They do not enlarge layout or pointer targets.
+behind the surface, clipped by the window and explicit clip/scroll ancestors
+rather than incidental tight layout-parent bounds. They do not enlarge layout or pointer targets.
 
 `.opacity(0.5)` is true **subtree group opacity**, not independent alpha on every
 primitive. Overlapping descendants composite once as a group; glyphs participate.
@@ -189,7 +190,7 @@ regions are not supplied as declarative components yet.
 ## Resource limits and adapter contract
 
 Build validation includes inactive patches: opacity 0..1, border 0..16, logical
-blur 0..64, spread 0..32, offsets -128..128, duration 0..10000ms, strict hex colors.
+blur 0..64, spread 0..32, offsets -128..128, duration 0..10000ms, validated hex colors or semantic color tokens.
 Corners retain the existing numeric radius 0..256 limit. Invalid views follow
 existing atomic installation rules; callback-mutated application state is not
 rolled back.
@@ -208,7 +209,10 @@ and shadow silhouettes; existing adapters do not acquire required methods.
 The shadow default is explicitly **unblurred**, not a false blur implementation.
 `DocumentPainter::ui_layer_begin/end` default to no-op for source compatibility;
 a custom adapter must override both to support group opacity/fades correctly.
-RasterPainter implements all effects. No Vello, GPU or Volt vendor changes.
+RasterPainter implements these effects in software. The optional `native-gpu`
+adapter now draws Vello GPU scenes with analytic shadows, nested clipping and
+group opacity; see [GPU rendering](GPU_RENDERING.md) for quality differences and
+resource limits. No Volt vendor changes.
 New effects/corner lists/motion metadata are Rust-only; JSON schema 1 stays strict
 and unchanged (new Rust-only fields are not silently accepted from JSON).
 

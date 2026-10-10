@@ -28,6 +28,9 @@ pub mod button;
 pub use button::{Button, ButtonColors};
 
 pub mod geometry;
+pub mod graphics;
+pub mod theme;
+pub use theme::{ColorToken, Palette, ThemeMode, UiTheme};
 pub mod panel;
 pub mod surface;
 pub use geometry::{HitMap, HitTarget, Rect};

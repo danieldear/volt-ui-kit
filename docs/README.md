@@ -14,3 +14,9 @@ Status labels: **implemented** means source exists; **proposed** means design on
 
 - [Native vertical slice](VERTICAL_SLICE.md): scope, completion gates and runtime evidence.
 - [Runnable examples](../examples/README.md): progressive native examples and CLI.
+
+- [Typed application messages](APP_RUNTIME.md)
+- [Menus, data, panes and loading](EXTENDED_COMPONENTS.md)
+- [Application milestone plan and acceptance](APP_RUNTIME_AND_COMPONENT_PLAN.md)
+
+- [Current component/runtime/Showcase verification receipt](APP_RUNTIME_VERIFICATION.md)

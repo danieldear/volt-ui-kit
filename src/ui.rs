@@ -95,14 +95,24 @@
 //! ui.build()?;
 //! # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
 //! ```
+#![cfg_attr(feature="native", doc=include_str!("../docs/SURFACES_THEMES_AND_SCROLLING.md"))]
+#![cfg_attr(feature="native", doc=include_str!("../docs/UI_LAB.md"))]
+#![doc = include_str!("../docs/COMPONENTS.md")]
+#![doc = include_str!("../docs/EXTENDED_COMPONENTS.md")]
+#![cfg_attr(feature="native",doc=include_str!("../docs/APP_RUNTIME.md"))]
 use crate::declarative::{
     document::{FontSlant, MAX_DEPTH, MAX_NODES},
     Bindings, Document, DocumentError, Handlers, Kind, Node,
 };
 pub use crate::declarative::{
     responsive, Align, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
-    Responsive, Rounding, Shadow, Tone, Transition, VisualStyle,
+    Responsive, Rounding, Scroll, Scrollbars, Shadow, Tone, Transition, VisualStyle,
 };
+
+pub use crate::graphics::{
+    BackgroundImage, Canvas, Clip, Image, ImageFit, ImagePosition, VectorPath,
+};
+pub use crate::{ColorToken, Palette, ThemeMode, UiTheme};
 
 /// Inner edges selected by `.padding(value, edge)`; left/right are absolute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,16 +235,53 @@ pub enum FontStyle {
 
 type Click<C> = Box<dyn FnMut(&mut C)>;
 type Change<C> = Box<dyn FnMut(&mut C, bool)>;
+type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
+type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
+type ContextCallback<C> = Box<dyn FnMut(&mut C, [f32; 2])>;
+type WindowCallback<C> = Box<dyn FnMut(&mut C, std::ops::Range<usize>)>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
+    Text {
+        change: Option<ChangeText<C>>,
+        submit: Option<Click<C>>,
+    },
+    Number(ChangeNumber<C>),
+    Dismiss(Click<C>),
+    Context(ContextCallback<C>),
+    Window(WindowCallback<C>),
 }
+mod bars;
+mod data;
+mod dialogs;
+mod inputs;
+mod menus;
+mod popovers;
+mod progress;
+mod split;
+mod value_controls;
+pub use bars::{
+    button_bar, segmented_control, tab, tab_bar, tab_item, tabs, toolbar, ButtonBar,
+    SelectionControl, Tab, TabItem, TabPlacement, Tabs, Toolbar,
+};
+pub use data::{
+    data_item, table, table_column, table_row, tree_node, tree_view, virtual_list, DataItem,
+    SortDirection, Table, TableColumn, TableRow, TreeNode, TreeView, VirtualList,
+};
+pub use dialogs::{dialog, Dialog};
+pub use inputs::{text_area, text_field, TextInput};
+pub use menus::{context_menu, menu, menu_item, menu_separator, ContextMenu, Menu, MenuItem};
+pub use popovers::{popover, tooltip, Popover, Tooltip};
+pub use progress::{loading, progress, progress_indeterminate, spinner, Progress};
+pub use split::{split, SplitPane};
+pub use value_controls::{select, select_item, slider, Select, SelectItem, Slider};
 /// A composed, owned UI description. No callback is run while building it.
 pub struct Element<C> {
     node: Node,
     auto_id: bool,
     children: Vec<Element<C>>,
     callback: Option<Callback<C>>,
+    validation_error: Option<String>,
 }
 impl<C> Element<C> {
     fn new(kind: Kind) -> Self {
@@ -249,6 +296,7 @@ impl<C> Element<C> {
             auto_id: true,
             children: vec![],
             callback: None,
+            validation_error: None,
         }
     }
 }
@@ -284,7 +332,11 @@ impl<C: 'static> Element<C> {
                 auto_id,
                 children,
                 callback,
+                validation_error,
             } = element;
+            if let Some(message) = validation_error {
+                return Err(DocumentError(format!("{path}: {message}")));
+            }
             if auto_id {
                 node.id = path.clone();
             }
@@ -302,6 +354,55 @@ impl<C: 'static> Element<C> {
                             .on_toggle_changed(&name, f)
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.on_toggle_changed = Some(name);
+                    }
+                    Callback::Text { change, submit } => {
+                        if let Some(f) = change {
+                            let action = format!("{name}-change");
+                            handlers
+                                .on_text_changed(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_text_changed = Some(action);
+                        }
+                        if let Some(f) = submit {
+                            let action = format!("{name}-submit");
+                            handlers
+                                .on_activate(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_submit = Some(action);
+                        }
+                    }
+                    Callback::Number(f) => {
+                        handlers
+                            .on_value_changed(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        if let Some(slider) = node.slider.as_mut() {
+                            slider.on_change = Some(name.clone());
+                        }
+                        if let Some(split) = node.split.as_mut() {
+                            split.on_change = Some(name);
+                        }
+                    }
+                    Callback::Context(f) => {
+                        handlers
+                            .on_context_requested(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        node.on_context = Some(name);
+                    }
+                    Callback::Window(f) => {
+                        handlers
+                            .on_window_changed(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        if let Some(list) = node.virtual_list.as_mut() {
+                            list.on_window_change = Some(name);
+                        }
+                    }
+                    Callback::Dismiss(f) => {
+                        handlers
+                            .on_activate(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        if let Some(overlay) = node.overlay.as_mut() {
+                            overlay.dismiss_action = Some(name);
+                        }
                     }
                 }
             }
@@ -341,13 +442,19 @@ element_from!(Text, Badge, Separator, Spacer, Button, Checkable, Container, Stac
 // Deliberately common visual/layout modifiers, not a stringly property map.
 macro_rules! modifiers {
     ($target:ident, [$($field:tt)*], [$($auto:tt)*]) => {
-        impl<C> $target<C> {
+        modifiers!($target, [], [$($field)*], [$($auto)*]);
+    };
+    ($target:ident, [$($generic:ident),*], [$($field:tt)*], [$($auto:tt)*]) => {
+        impl<C $(, $generic)*> $target<C $(, $generic)*> {
             /// Stable, globally unique identity. Required on dynamic interactive items.
             /// Must be 1..=128 ASCII letters/digits/underscore/hyphen; checked at build.
             pub fn key(mut self, key: impl Into<String>) -> Self {
                 self.$($field)*.id = key.into(); self.$($auto)* = false; self
             }
             pub fn width(mut self, value: f32) -> Self { self.$($field)*.width = Some(value); self }
+            /// Remove a component's fixed-width default; use the parent's cross-axis allocation.
+            /// In a vertical stack this fills the available width. Horizontal stacks still use flex.
+            pub fn fill_width(mut self) -> Self { self.$($field)*.width = None; self }
             pub fn height(mut self, value: f32) -> Self { self.$($field)*.height = Some(value); self }
             pub fn flex(mut self, value: f32) -> Self { self.$($field)*.flex = value; self }
             pub fn color(mut self, value: impl Into<String>) -> Self { self.$($field)*.style.color = Some(value.into()); self }
@@ -371,6 +478,16 @@ macro_rules! modifiers {
                 for (i,radius) in radii.iter_mut().enumerate() { if mask & (1 << i) != 0 { *radius = value; } }
                 self
             }
+            /// Background color/image opacity, without fading children.
+            pub fn background_opacity(mut self, value:f32)->Self { self.$($field)*.style.background_opacity=Some(value);self }
+            pub fn background_image(mut self, image:impl Into<BackgroundImage>)->Self { self.$($field)*.surface.image=Some(image.into());self }
+            /// Explicit clipping of children; own outer effects remain visible.
+            pub fn clip_contents(mut self, value:bool)->Self { self.$($field)*.surface.clip=value.then_some(Clip::Rounded);self }
+            pub fn clip(mut self, clip:Clip)->Self { self.$($field)*.surface.clip=Some(clip);self }
+            /// Skip this box as a wheel-scroll starting target. Children remain
+            /// eligible; painting and button/keyboard interaction are unchanged.
+            /// Useful for empty decorative layers above another scroll view.
+            pub fn scroll_passthrough(mut self, value: bool) -> Self { self.$($field)*.effects.scroll_passthrough = value; self }
             /// Subtree group opacity. Does not disable pointer/keyboard interaction.
             pub fn opacity(mut self, value:f32) -> Self { self.$($field)*.effects.base.opacity=Some(value); self }
             pub fn shadow(mut self, value:Shadow) -> Self { self.$($field)*.effects.base.shadow=Some(value); self }
@@ -402,6 +519,12 @@ modifiers!(Checkable, [0.node], [0.auto_id]);
 modifiers!(Container, [0.node], [0.auto_id]);
 modifiers!(Stack, [0.node], [0.auto_id]);
 
+/// Retained vector commands; the closure executes during composition, not per frame.
+pub fn canvas<C>(draw: impl FnOnce(&mut Canvas)) -> Element<C> {
+    let mut element = Element::new(Kind::Canvas);
+    draw(&mut element.node.surface.canvas);
+    element
+}
 pub fn text<C>(value: impl Into<String>) -> Text<C> {
     let mut element = Element::new(Kind::Text);
     element.node.text = Some(value.into());
@@ -517,7 +640,10 @@ impl<C> Stack<C> {
 }
 macro_rules! container_modifiers {
     ($target:ident) => {
-        impl<C> $target<C> {
+        container_modifiers!($target, []);
+    };
+    ($target:ident, [$($generic:ident),*]) => {
+        impl<C $(, $generic)*> $target<C $(, $generic)*> {
             /// Logical inner spacing. The last setter affecting an edge wins,
             /// replacing that edge's entire responsive rule set, not merging it.
             pub fn padding(
@@ -539,6 +665,16 @@ macro_rules! container_modifiers {
                 for axis in (0..2).filter(|i| mask & (1 << i) != 0) {
                     self.0.node.responsive.gap[axis] = Some(value.clone());
                 }
+                self
+            }
+            /// Opt-in overflow scrolling. Auto enables each axis only if needed.
+            pub fn scroll(mut self, mode: Scroll) -> Self {
+                self.0.node.surface.scroll = Some(mode);
+                self
+            }
+            /// Hide/show position indicators without changing overflow or input.
+            pub fn scrollbars(mut self, policy: Scrollbars) -> Self {
+                self.0.node.surface.scrollbars = policy;
                 self
             }
             /// A draggable window region; interactive controls, including disabled controls, take precedence.
@@ -583,12 +719,51 @@ macro_rules! stack { ($($child:expr),* $(,)?) => { $crate::ui::stack(vec![$($cra
 #[macro_export]
 macro_rules! zstack { ($($child:expr),* $(,)?) => { $crate::ui::zstack(vec![$($crate::ui::Element::from($child)),*]) }; }
 pub use crate::{hstack, stack, vstack, zstack};
+modifiers!(ButtonBar, [0.node], [0.auto_id]);
+modifiers!(Toolbar, [0.node], [0.auto_id]);
+modifiers!(SelectionControl, [T], [0.node], [0.auto_id]);
+modifiers!(Tabs, [T], [0.node], [0.auto_id]);
+modifiers!(TextInput, [0.node], [0.auto_id]);
+modifiers!(Slider, [0.node], [0.auto_id]);
+modifiers!(Select, [T], [0.node], [0.auto_id]);
+modifiers!(Dialog, [0.node], [0.auto_id]);
+modifiers!(Menu, [T], [0.node], [0.auto_id]);
+modifiers!(ContextMenu, [T], [0.node], [0.auto_id]);
+modifiers!(Popover, [0.node], [0.auto_id]);
+modifiers!(Tooltip, [0.node], [0.auto_id]);
+modifiers!(VirtualList, [T, F], [0.node], [0.auto_id]);
+modifiers!(Table, [T, K], [0.node], [0.auto_id]);
+modifiers!(TreeView, [T], [0.node], [0.auto_id]);
+modifiers!(Progress, [0.node], [0.auto_id]);
+modifiers!(SplitPane, [0.node], [0.auto_id]);
+container_modifiers!(ButtonBar);
+container_modifiers!(Toolbar);
+container_modifiers!(SelectionControl, [T]);
+container_modifiers!(Tabs, [T]);
+#[macro_export]
+macro_rules! button_bar { ($($child:expr),* $(,)?) => { $crate::ui::button_bar(vec![$($crate::ui::Element::from($child)),*]) }; }
+#[macro_export]
+macro_rules! toolbar { ($($child:expr),* $(,)?) => { $crate::ui::toolbar(vec![$($crate::ui::Element::from($child)),*]) }; }
+#[macro_export]
+macro_rules! tab_bar { ($($item:expr),* $(,)?) => { $crate::ui::tab_bar(vec![$($item),*]) }; }
+#[macro_export]
+macro_rules! tabs { ($($item:expr),* $(,)?) => { $crate::ui::tabs(vec![$($item),*]) }; }
+pub use crate::{button_bar, tab_bar, tabs, toolbar};
 /// Import component functions, types and layout macros together.
 pub mod prelude {
     pub use super::{
-        badge, button, checkbox, column, divider, hstack, panel, responsive, row, separator,
-        spacer, stack, text, toggle, vstack, zstack, Align, Animation, Axes, Axis, Breakpoint,
-        Corner, CornerSet, Corners, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow,
-        Interaction, Responsive, Rounding, Shadow, Tone, Transition, VisualStyle,
+        badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
+        divider, hstack, loading, menu, menu_item, menu_separator, panel, popover, progress,
+        progress_indeterminate, responsive, row, segmented_control, select, select_item, separator,
+        slider, spacer, spinner, split, stack, tab, tab_bar, tab_item, table, table_column,
+        table_row, tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node,
+        tree_view, virtual_list, vstack, zstack, Align, Animation, Axes, Axis, BackgroundImage,
+        Breakpoint, ButtonBar, Canvas, Clip, ColorToken, ContextMenu, Corner, CornerSet, Corners,
+        DataItem, Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Image,
+        ImageFit, ImagePosition, Interaction, Menu, MenuItem, Palette, Popover, Progress,
+        Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
+        Slider, SortDirection, SplitPane, Tab, TabItem, TabPlacement, Table, TableColumn, TableRow,
+        Tabs, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
+        UiTheme, VectorPath, VirtualList, VisualStyle,
     };
 }

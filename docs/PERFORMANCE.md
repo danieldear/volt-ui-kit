@@ -1,5 +1,10 @@
 # Native responsiveness: measured repair (2026-10-08)
 
+For current rich Atelier/Desk scenes, software baselines and the new Vello GPU
+readback comparison, see [resource usage](RESOURCE_USAGE_AND_DESKTOP.md) and
+[GPU rendering](GPU_RENDERING.md). The fixed older
+demo below is not evidence that the newer rich screens meet a 60 Hz frame budget.
+
 ## Reproduction and diagnosis
 
 The first native demo was usable functionally but **not acceptably responsive**
@@ -254,3 +259,13 @@ cargo run --locked --features native --example rust_effects -- --bench 40 --scal
 These effects are opt-in. Full-scene CPU repaint and full-size bounded offscreen
 buffers remain; no GPU, damage-aware rendering, Iced parity or universal latency
 claim follows from this single scene.
+
+
+## Component-batch refresh (2026-10-09)
+
+Fresh 60-action/4-warmup CPU-only totals p50/p95: Studio1x **9.267/9.685ms**,
+Studio2x **29.739/30.574ms**, Desk1x **5.714/5.935ms**. Foreground UI Lab idle
+for30.012s: no CPU-time rise at0.01s `ps` precision andRSS122.83MiB, unchanged.
+These do not measureGPU%, FPS, OS input queues or scan-out. Studio2x still exceeds
+a16.67ms frame budget. Earlier numbers above are historical snapshots, not current
+benchmarks. See [the current method, receipts and GPU boundary](RESOURCE_USAGE_AND_DESKTOP.md).

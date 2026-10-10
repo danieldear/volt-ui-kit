@@ -1,3 +1,4 @@
+use crate::graphics::{BackgroundImage, ClipRegion, ImageFit, PathCommand, VectorPath};
 use crate::{
     declarative::{DocumentPainter, PaintBatch, TextMetrics, TextStyle},
     Painter, Viewport,
@@ -7,6 +8,7 @@ use cosmic_text::{
 };
 use std::collections::BTreeMap;
 use tiny_skia::{FillRule, Mask, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, PartialEq)]
 pub enum Shape {
@@ -19,6 +21,10 @@ pub enum Shape {
     Shadow([f32; 4], [f32; 4], f32, f32, [f32; 2], [f32; 4]),
     LayerBegin(f32),
     LayerEnd,
+    ClipBegin(ClipRegion),
+    ClipEnd,
+    Image([f32; 4], BackgroundImage, f32),
+    Path(VectorPath, [f32; 4], Option<f32>),
 }
 
 const EFFECT_CACHE_BYTES: usize = 8 * 1024 * 1024;
@@ -31,6 +37,12 @@ const MAX_LAYER_DEPTH: usize = 24;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct EffectKey([u32; 9]);
+struct ClipMask {
+    x: i32,
+    y: i32,
+    mask: Mask,
+    used: u64,
+}
 struct EffectMask {
     width: u32,
     height: u32,
@@ -40,10 +52,10 @@ struct EffectMask {
 }
 #[derive(Clone, PartialEq)]
 pub struct Glyph {
-    text: String,
-    bounds: [f32; 4],
-    style: TextStyle,
-    color: [f32; 4],
+    pub(super) text: String,
+    pub(super) bounds: [f32; 4],
+    pub(super) style: TextStyle,
+    pub(super) color: [f32; 4],
 }
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct TextKey {
@@ -65,6 +77,9 @@ pub struct RasterPainter {
     viewport: Viewport,
     fonts: FontSystem,
     system_family: String,
+    sf_text: String,
+    sf_display: String,
+    sf_mono: String,
     swash: SwashCache,
     text: BTreeMap<TextKey, (Buffer, u64)>,
     clock: u64,
@@ -78,20 +93,112 @@ pub struct RasterPainter {
     pub effect_tint_misses: u64,
     /// Transparent offscreen buffers are reused on subsequent animation frames.
     pub layer_allocations: u64,
+    clip_masks: BTreeMap<Vec<u32>, ClipMask>,
+    clip_bytes: usize,
+    pub clip_cache_misses: u64,
     effect_masks: BTreeMap<EffectKey, EffectMask>,
     effect_bytes: usize,
     effect_tint_bytes: usize,
     layer_pool: Vec<Pixmap>,
+    scaled_images: BTreeMap<(usize, u32, u32), ScaledImage>,
+    scaled_bytes: usize,
 }
+/// An image resampled once to its drawn physical size. Holding the `Image`
+/// keeps its pixel buffer (the key's address) alive while cached.
+struct ScaledImage {
+    _source: crate::graphics::Image,
+    pixmap: Pixmap,
+    opaque: bool,
+    used: u64,
+}
+const SCALED_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 impl RasterPainter {
+    #[cfg(feature = "native-gpu")]
+    pub(super) fn gpu_viewport(&self) -> Viewport {
+        self.viewport
+    }
+    /// Positions come from the same shaped buffers as CPU drawing and editor
+    /// hit testing. Only glyph cache misses rasterize small glyph resources.
+    #[cfg(feature = "native-gpu")]
+    pub(super) fn gpu_glyphs(&mut self, glyph: &Glyph) -> Vec<(cosmic_text::CacheKey, [f64; 2])> {
+        let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
+        let [gx, gy, gw, gh] = glyph.bounds;
+        let mut out = Vec::new();
+        for run in self.text[&key].0.layout_runs() {
+            if run.line_top >= gh || run.line_top + run.line_height <= 0. {
+                continue;
+            }
+            for shaped in run.glyphs {
+                if shaped.x >= gw || shaped.x + shaped.w < 0. {
+                    continue;
+                }
+                let p = shaped.physical((0., 0.), 1.);
+                out.push((
+                    p.cache_key,
+                    [
+                        f64::from(p.x + gx.round() as i32),
+                        f64::from(p.y + run.line_y as i32 + gy.round() as i32),
+                    ],
+                ));
+            }
+        }
+        out
+    }
+    #[cfg(feature = "native-gpu")]
+    pub(super) fn gpu_glyph_image(
+        &mut self,
+        key: cosmic_text::CacheKey,
+    ) -> Option<&cosmic_text::SwashImage> {
+        if self.swash.image_cache.len() > 4096 || self.glyph_bytes > 16 * 1024 * 1024 {
+            self.swash.image_cache.clear();
+            self.glyph_bytes = 0;
+        }
+        if !self.swash.image_cache.contains_key(&key) {
+            self.glyph_bytes += self
+                .swash
+                .get_image(&mut self.fonts, key)
+                .as_ref()
+                .map_or(0, |i| i.data.len());
+        }
+        self.swash.get_image(&mut self.fonts, key).as_ref()
+    }
+    /// Resolve portable SF aliases to installed Apple faces on macOS.
+    /// `SF` / `SF Pro` use text faces below 24 logical px, display above.
+    /// `size` is physical px, like TextStyle; the viewport supplies DPI.
+    /// Other platforms (or missing faces) use sans-serif / monospace. This
+    /// reports the requested family, not per-glyph fallback or optical sizing.
+    /// Existing `system` and generic family choices remain unchanged.
+    pub fn resolved_font_family(&self, requested: &str, size: f32) -> String {
+        match requested {
+            "SF" | "SF Pro" if size >= 24. * self.viewport.scale => self.sf_display.clone(),
+            "SF" | "SF Pro" => self.sf_text.clone(),
+            "SF Mono" => self.sf_mono.clone(),
+            "system" | "" => self.system_family.clone(),
+            name => name.to_owned(),
+        }
+    }
     pub fn new(viewport: Viewport) -> Self {
         let mut fonts = FontSystem::new();
         configure_generic_families(&mut fonts);
         let system_family = system_family(&fonts);
+        let sf_text = apple_family(
+            &fonts,
+            &["SF Pro Text", "SF Pro", ".SF NS", "System Font"],
+            "sans-serif",
+        );
+        let sf_display = apple_family(
+            &fonts,
+            &["SF Pro Display", "SF Pro", ".SF NS", "System Font"],
+            "sans-serif",
+        );
+        let sf_mono = apple_family(&fonts, &["SF Mono", ".SF NS Mono"], "monospace");
         Self {
             viewport,
             fonts,
             system_family,
+            sf_text,
+            sf_display,
+            sf_mono,
             swash: SwashCache::new(),
             text: BTreeMap::new(),
             text_cache_misses: 0,
@@ -99,10 +206,15 @@ impl RasterPainter {
             effect_cache_misses: 0,
             effect_tint_misses: 0,
             layer_allocations: 0,
+            clip_masks: BTreeMap::new(),
+            clip_bytes: 0,
+            clip_cache_misses: 0,
             effect_masks: BTreeMap::new(),
             effect_bytes: 0,
             effect_tint_bytes: 0,
             layer_pool: Vec::new(),
+            scaled_images: BTreeMap::new(),
+            scaled_bytes: 0,
             clock: 0,
             glyph_bytes: 0,
         }
@@ -112,6 +224,8 @@ impl RasterPainter {
             || self.viewport.height as u32 != viewport.height as u32
         {
             self.layer_pool.clear();
+            self.clip_masks.clear();
+            self.clip_bytes = 0;
         }
         self.viewport = viewport;
     }
@@ -126,10 +240,7 @@ impl RasterPainter {
         } else {
             1.
         };
-        let family = match style.family.as_str() {
-            "system" | "" => self.system_family.clone(),
-            name => name.to_owned(),
-        };
+        let family = self.resolved_font_family(&style.family, size);
         let key = TextKey {
             text: text.into(),
             family,
@@ -176,6 +287,286 @@ impl RasterPainter {
         }
         self.text.get_mut(&key).unwrap().1 = self.clock;
         key
+    }
+    /// Rebuild clip coverage for one batch rectangle plus the clip stack.
+    ///
+    /// Zero-radius rectangular clips (scroll views, panels) are intersected as
+    /// pixel-snapped rectangles into `rect_mask`; that mask only changes when the
+    /// rectangle does. Curved or path clips are rasterized into `curve_mask`,
+    /// touching only the intersection of the rectangle with their bounds, so a
+    /// rounded photo inside a large scroll view costs its own area, not the
+    /// viewport's. Returns true when `rect_mask` alone describes coverage.
+    #[allow(clippy::too_many_arguments)]
+    fn rebuild_mask(
+        &mut self,
+        rect_mask: &mut Mask,
+        curve_mask: &mut Mask,
+        rect: [f32; 4],
+        clips: &[ClipRegion],
+        rect_active: &mut Option<[usize; 4]>,
+        curve_active: &mut Option<[usize; 4]>,
+    ) -> Result<bool, String> {
+        let w = rect_mask.width();
+        let h = rect_mask.height();
+        let snap = |v: f32, max: u32| v.clamp(0., max as f32) as usize;
+        let mut region = [
+            snap(rect[0].ceil(), w),
+            snap(rect[1].ceil(), h),
+            snap((rect[0] + rect[2]).ceil(), w),
+            snap((rect[1] + rect[3]).ceil(), h),
+        ];
+        let mut curved = Vec::new();
+        for clip in clips {
+            match clip {
+                ClipRegion::Rounded { bounds, radii } if radii.iter().all(|r| *r == 0.) => {
+                    region[0] = region[0].max(snap(bounds[0].round(), w));
+                    region[1] = region[1].max(snap(bounds[1].round(), h));
+                    region[2] = region[2].min(snap((bounds[0] + bounds[2]).round(), w));
+                    region[3] = region[3].min(snap((bounds[1] + bounds[3]).round(), h));
+                }
+                _ => curved.push(clip),
+            }
+        }
+        if region[0] >= region[2] || region[1] >= region[3] {
+            region = [0; 4];
+        }
+        if *rect_active != Some(region) {
+            if let Some(old) = rect_active.take() {
+                fill_mask_px(rect_mask, old, 0);
+            }
+            fill_mask_px(rect_mask, region, 255);
+            *rect_active = Some(region);
+        }
+        if curved.is_empty() {
+            return Ok(true);
+        }
+        if let Some(old) = curve_active.take() {
+            fill_mask_px(curve_mask, old, 0);
+        }
+        let mut keys: Vec<Vec<u32>> = Vec::new();
+        let mut uncached: Vec<ClipMask> = Vec::new();
+        for clip in curved {
+            let mut key = clip_key(clip);
+            key.extend([w, h]);
+            self.clock += 1;
+            let bounds = if let Some(local) = self.clip_masks.get_mut(&key) {
+                local.used = self.clock;
+                [
+                    local.x,
+                    local.y,
+                    local.mask.width() as i32,
+                    local.mask.height() as i32,
+                ]
+            } else {
+                let path = clip_path(clip).ok_or("invalid clip geometry")?;
+                let bounds = path.bounds();
+                let x = bounds.left().floor().max(0.) as i32;
+                let y = bounds.top().floor().max(0.) as i32;
+                let width = (bounds.right().ceil().min(w as f32) - x as f32).max(0.) as u32;
+                let height = (bounds.bottom().ceil().min(h as f32) - y as f32).max(0.) as u32;
+                if width == 0 || height == 0 {
+                    return Ok(false);
+                }
+                let bytes = width as usize * height as usize;
+                while self.clip_bytes + bytes > 8 * 1024 * 1024 || self.clip_masks.len() >= 32 {
+                    let Some(old) = self
+                        .clip_masks
+                        .iter()
+                        .min_by_key(|(_, v)| v.used)
+                        .map(|(k, _)| k.clone())
+                    else {
+                        break;
+                    };
+                    let old = self.clip_masks.remove(&old).unwrap();
+                    self.clip_bytes -= old.mask.data().len();
+                }
+                let mut local = Mask::new(width, height).ok_or("invalid clip mask allocation")?;
+                local.fill_path(
+                    &path,
+                    FillRule::EvenOdd,
+                    true,
+                    Transform::from_translate(-x as f32, -y as f32),
+                );
+                self.clip_cache_misses += 1;
+                let entry = ClipMask {
+                    x,
+                    y,
+                    mask: local,
+                    used: self.clock,
+                };
+                if bytes <= 8 * 1024 * 1024 {
+                    self.clip_bytes += bytes;
+                    self.clip_masks.insert(key.clone(), entry);
+                } else {
+                    uncached.push(entry);
+                }
+                [x, y, width as i32, height as i32]
+            };
+            if self.clip_masks.contains_key(&key) && !keys.contains(&key) {
+                keys.push(key);
+            }
+            // Pixels outside any clip's bounds have zero coverage.
+            region[0] = region[0].max(bounds[0].max(0) as usize);
+            region[1] = region[1].max(bounds[1].max(0) as usize);
+            region[2] = region[2].min((bounds[0] + bounds[2]).max(0) as usize);
+            region[3] = region[3].min((bounds[1] + bounds[3]).max(0) as usize);
+        }
+        if region[0] >= region[2] || region[1] >= region[3] {
+            return Ok(false);
+        }
+        fill_mask_px(curve_mask, region, 255);
+        *curve_active = Some(region);
+        for key in &keys {
+            if let Some(local) = self.clip_masks.get(key) {
+                apply_clip_mask(curve_mask, local, region);
+            }
+        }
+        for local in &uncached {
+            apply_clip_mask(curve_mask, local, region);
+        }
+        Ok(false)
+    }
+    /// Opaque, untiled images are resampled once per drawn size and then copied
+    /// row by row through the coverage mask; translucent or tiled images use the
+    /// general pattern path. Positions snap to whole physical pixels.
+    fn draw_image_cached(
+        &mut self,
+        pixmap: &mut Pixmap,
+        mask: &Mask,
+        [x, y, w, h]: [f32; 4],
+        image: &BackgroundImage,
+        scale: f32,
+    ) -> Result<(), String> {
+        if image.fit == ImageFit::Tile || image.opacity != 1. || !scale.is_finite() || scale <= 0. {
+            return draw_image(pixmap, mask, [x, y, w, h], image, scale);
+        }
+        let iw = image.image.width() as f32;
+        let ih = image.image.height() as f32;
+        let (dw, dh) = match image.fit {
+            ImageFit::Cover => {
+                let f = (w / iw).max(h / ih);
+                (iw * f, ih * f)
+            }
+            ImageFit::Contain => {
+                let f = (w / iw).min(h / ih);
+                (iw * f, ih * f)
+            }
+            _ => (w, h),
+        };
+        if !dw.is_finite() || !dh.is_finite() {
+            return draw_image(pixmap, mask, [x, y, w, h], image, scale);
+        }
+        let (sw, sh) = (dw.round() as u32, dh.round() as u32);
+        if sw == 0 || sh == 0 || u64::from(sw) * u64::from(sh) > 16_777_216 {
+            return draw_image(pixmap, mask, [x, y, w, h], image, scale);
+        }
+        let pos = image.position.fractions();
+        let ix = (x + (w - dw) * pos[0]).round() as i64;
+        let iy = (y + (h - dh) * pos[1]).round() as i64;
+        let key = (image.image.pixels().as_ptr() as usize, sw, sh);
+        self.clock += 1;
+        if !self.scaled_images.contains_key(&key) {
+            let source = tiny_skia::PixmapRef::from_bytes(
+                image.image.pixels(),
+                image.image.width(),
+                image.image.height(),
+            )
+            .ok_or("invalid RGBA image")?;
+            let mut scaled = Pixmap::new(sw, sh).ok_or("invalid scaled image")?;
+            scaled.draw_pixmap(
+                0,
+                0,
+                source,
+                &tiny_skia::PixmapPaint {
+                    quality: tiny_skia::FilterQuality::Bicubic,
+                    ..tiny_skia::PixmapPaint::default()
+                },
+                Transform::from_scale(sw as f32 / iw, sh as f32 / ih),
+                None,
+            );
+            let bytes = scaled.data().len();
+            if bytes > SCALED_IMAGE_BYTES {
+                return draw_image(pixmap, mask, [x, y, w, h], image, scale);
+            }
+            while self.scaled_bytes + bytes > SCALED_IMAGE_BYTES {
+                let Some(oldest) = self
+                    .scaled_images
+                    .iter()
+                    .min_by_key(|(_, v)| v.used)
+                    .map(|(k, _)| *k)
+                else {
+                    break;
+                };
+                let old = self.scaled_images.remove(&oldest).unwrap();
+                self.scaled_bytes -= old.pixmap.data().len();
+            }
+            self.scaled_bytes += bytes;
+            let opaque = scaled.pixels().iter().all(|p| p.alpha() == 255);
+            self.scaled_images.insert(
+                key,
+                ScaledImage {
+                    _source: image.image.clone(),
+                    pixmap: scaled,
+                    opaque,
+                    used: 0,
+                },
+            );
+        }
+        let entry = self.scaled_images.get_mut(&key).unwrap();
+        entry.used = self.clock;
+        // Contain shows the whole image; other fits fill (and crop to) the box.
+        let area = if image.fit == ImageFit::Contain {
+            [ix as f32, iy as f32, sw as f32, sh as f32]
+        } else {
+            [x, y, w, h]
+        };
+        let (pw, ph) = (i64::from(pixmap.width()), i64::from(pixmap.height()));
+        let l = (area[0].round() as i64).max(ix).max(0);
+        let t = (area[1].round() as i64).max(iy).max(0);
+        let r = ((area[0] + area[2]).round() as i64)
+            .min(ix + i64::from(sw))
+            .min(pw);
+        let b = ((area[1] + area[3]).round() as i64)
+            .min(iy + i64::from(sh))
+            .min(ph);
+        if l >= r || t >= b {
+            return Ok(());
+        }
+        let opaque = entry.opaque;
+        let source = entry.pixmap.data();
+        let coverage = mask.data();
+        let dest = pixmap.data_mut();
+        let (l, r) = (l as usize, r as usize);
+        for row in t..b {
+            let base = (row * pw) as usize;
+            let src_start = (((row - iy) * i64::from(sw) + (l as i64 - ix)) as usize) * 4;
+            let src = &source[src_start..src_start + (r - l) * 4];
+            let dst = &mut dest[(base + l) * 4..(base + r) * 4];
+            let cov = &coverage[base + l..base + r];
+            // Interior rows of an opaque photo are a straight copy.
+            if opaque && cov.iter().all(|c| *c == 255) {
+                dst.copy_from_slice(src);
+                continue;
+            }
+            for ((d, s), c) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)).zip(cov) {
+                if *c == 0 {
+                    continue;
+                }
+                if *c == 255 && s[3] == 255 {
+                    d.copy_from_slice(s);
+                    continue;
+                }
+                // Premultiplied source-over, with the source scaled by coverage.
+                let c = u32::from(*c);
+                let inverse = 255 - (u32::from(s[3]) * c + 127) / 255;
+                for k in 0..4 {
+                    let sv = (u32::from(s[k]) * c + 127) / 255;
+                    let dv = (u32::from(d[k]) * inverse + 127) / 255;
+                    d[k] = (sv + dv).min(255) as u8;
+                }
+            }
+        }
+        Ok(())
     }
     /// Blur uses three separable box passes approximating a Gaussian with
     /// sigma=blur/2. Coverage masks are color independent and bounded by an LRU.
@@ -383,26 +774,101 @@ impl RasterPainter {
         }
         let mut pixmap = Pixmap::new(w, h).ok_or("invalid framebuffer")?;
         pixmap.fill(
-            tiny_skia::Color::from_rgba(background[0], background[1], background[2], 1.)
+            tiny_skia::Color::from_rgba(background[0], background[1], background[2], background[3])
                 .ok_or("invalid background color")?,
         );
-        let mut mask = Mask::new(w, h).ok_or("invalid clip mask")?;
+        let mut rect_mask = Mask::new(w, h).ok_or("invalid clip mask")?;
+        // Allocated on first use: most frames have no curved clip at all.
+        let mut curve_mask: Option<Mask> = None;
         let mut last_clip = None;
+        let (mut rect_active, mut curve_active) = (None, None);
+        let mut plain_mask = true;
+        let mut clips = Vec::<ClipRegion>::new();
+
         let mut layers: Vec<(Pixmap, f32)> = Vec::new();
         let mut effect_pixels = 0_u64;
         for batch in batches {
             let [x, y, cw, ch] = batch.clip.bounds();
-            if !batch.shapes.is_empty() && last_clip != Some([x, y, cw, ch]) {
-                // One reusable rectangular mask; empty/text-only batches do not touch it.
-                if let Some([lx, ly, lw, lh]) = last_clip {
-                    fill_mask(&mut mask, w, h, [lx, ly, lw, lh], 0);
-                }
-                fill_mask(&mut mask, w, h, [x, y, cw, ch], 255);
+            if last_clip != Some([x, y, cw, ch]) {
+                plain_mask = self.rebuild_mask(
+                    &mut rect_mask,
+                    curve_mask.get_or_insert_with(|| Mask::new(w, h).expect("checked dimensions")),
+                    [x, y, cw, ch],
+                    &clips,
+                    &mut rect_active,
+                    &mut curve_active,
+                )?;
                 last_clip = Some([x, y, cw, ch]);
             }
             let mut shapes = batch.shapes.iter().peekable();
             while let Some(shape) = shapes.next() {
+                let mask = match (&curve_mask, plain_mask) {
+                    (Some(curve), false) => curve,
+                    _ => &rect_mask,
+                };
                 match shape {
+                    Shape::ClipBegin(region) => {
+                        if clips.len() >= 48 {
+                            return Err("clip depth exceeds limit".into());
+                        }
+                        clips.push(region.clone());
+                        plain_mask = self.rebuild_mask(
+                            &mut rect_mask,
+                            curve_mask.get_or_insert_with(|| {
+                                Mask::new(w, h).expect("checked dimensions")
+                            }),
+                            [x, y, cw, ch],
+                            &clips,
+                            &mut rect_active,
+                            &mut curve_active,
+                        )?;
+                        continue;
+                    }
+                    Shape::ClipEnd => {
+                        clips.pop().ok_or("unbalanced clip end")?;
+                        plain_mask = self.rebuild_mask(
+                            &mut rect_mask,
+                            curve_mask.get_or_insert_with(|| {
+                                Mask::new(w, h).expect("checked dimensions")
+                            }),
+                            [x, y, cw, ch],
+                            &clips,
+                            &mut rect_active,
+                            &mut curve_active,
+                        )?;
+                        continue;
+                    }
+                    Shape::Image(bounds, image, scale) => {
+                        self.draw_image_cached(&mut pixmap, mask, *bounds, image, *scale)?;
+                        self.shape_draw_calls += 1;
+                        continue;
+                    }
+                    Shape::Path(path, color, stroke) => {
+                        if let Some(path) = native_path(path) {
+                            if let Some(width) = stroke {
+                                pixmap.stroke_path(
+                                    &path,
+                                    &shape_paint(*color),
+                                    &Stroke {
+                                        width: *width,
+                                        ..Stroke::default()
+                                    },
+                                    Transform::identity(),
+                                    Some(mask),
+                                );
+                            } else {
+                                pixmap.fill_path(
+                                    &path,
+                                    &shape_paint(*color),
+                                    FillRule::EvenOdd,
+                                    Transform::identity(),
+                                    Some(mask),
+                                );
+                            }
+                            self.shape_draw_calls += 1;
+                        }
+                        continue;
+                    }
                     Shape::LayerBegin(opacity) => {
                         if !opacity.is_finite() || !(0. ..=1.).contains(opacity) {
                             return Err("invalid layer opacity".into());
@@ -433,7 +899,7 @@ impl RasterPainter {
                     Shape::Shadow(bounds, radii, blur, spread, offset, color) => {
                         self.draw_shadow(
                             &mut pixmap,
-                            &mask,
+                            mask,
                             [x, y, cw, ch],
                             *bounds,
                             *radii,
@@ -458,7 +924,7 @@ impl RasterPainter {
                             &shape_paint(*color),
                             FillRule::EvenOdd,
                             Transform::identity(),
-                            Some(&mask),
+                            Some(mask),
                         );
                         self.shape_draw_calls += 1;
                         continue;
@@ -494,7 +960,7 @@ impl RasterPainter {
                             &paint,
                             &stroke,
                             Transform::identity(),
-                            Some(&mask),
+                            Some(mask),
                         );
                         self.shape_draw_calls += 1;
                     }
@@ -508,10 +974,10 @@ impl RasterPainter {
                         (PathBuilder::from_rect(r), *c)
                     }
                     Shape::Rounded(bounds, radius, c) => {
-                        if layers.is_empty()
+                        if plain_mask
                             && fill_rounded_fast(
                                 &mut pixmap,
-                                &mask,
+                                mask,
                                 [x, y, cw, ch],
                                 *bounds,
                                 *radius,
@@ -536,7 +1002,11 @@ impl RasterPainter {
                     Shape::Outline(..)
                     | Shape::Shadow(..)
                     | Shape::LayerBegin(..)
-                    | Shape::LayerEnd => unreachable!("effect commands handled above"),
+                    | Shape::LayerEnd
+                    | Shape::ClipBegin(..)
+                    | Shape::ClipEnd
+                    | Shape::Image(..)
+                    | Shape::Path(..) => unreachable!("effect commands handled above"),
                     Shape::Triangle(points, c) => {
                         let mut p = PathBuilder::new();
                         p.move_to(points[0][0], points[0][1]);
@@ -553,10 +1023,14 @@ impl RasterPainter {
                     &paint,
                     FillRule::Winding,
                     Transform::identity(),
-                    Some(&mask),
+                    Some(mask),
                 );
                 self.shape_draw_calls += 1;
             }
+            let mask = match (&curve_mask, plain_mask) {
+                (Some(curve), false) => curve,
+                _ => &rect_mask,
+            };
             for glyph in &batch.glyphs {
                 let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
                 let buffer = &self.text[&key].0;
@@ -610,7 +1084,10 @@ impl RasterPainter {
                                     return;
                                 }
                                 let [r, g, b, a] = color.as_rgba();
-                                let alpha = a as f32 / 255. * c[3];
+                                let alpha = a as f32 / 255.
+                                    * c[3]
+                                    * mask.data()[py as usize * w as usize + px as usize] as f32
+                                    / 255.;
                                 let pixel = &mut pixmap.pixels_mut()
                                     [py as usize * w as usize + px as usize];
                                 blend_pixel(pixel, [r, g, b], alpha);
@@ -619,6 +1096,9 @@ impl RasterPainter {
                     }
                 }
             }
+        }
+        if !clips.is_empty() {
+            return Err("unbalanced clip begin".into());
         }
         if !layers.is_empty() {
             return Err("unbalanced opacity layer begin".into());
@@ -675,6 +1155,22 @@ fn configure_generic_families(fonts: &mut FontSystem) {
         }
     }
 }
+// Only fonts already discovered on the machine are used. No downloads,
+// private font paths, font bundling, global registration or font mutation.
+fn apple_family(fonts: &FontSystem, candidates: &[&str], fallback: &str) -> String {
+    if cfg!(target_os = "macos") {
+        for &candidate in candidates {
+            if fonts
+                .db()
+                .faces()
+                .any(|f| f.families.iter().any(|(n, _)| n == candidate))
+            {
+                return candidate.into();
+            }
+        }
+    }
+    fallback.into()
+}
 fn system_family(fonts: &FontSystem) -> String {
     if cfg!(target_os = "macos")
         && fonts
@@ -701,6 +1197,47 @@ fn byte(v: f32) -> u8 {
     (v.clamp(0., 1.) * 255.).round() as u8
 }
 impl TextMetrics for RasterPainter {
+    fn line_advances(&mut self, text: &str, style: &TextStyle, byte_offsets: &[usize]) -> Vec<f32> {
+        // Share the same shaped buffer as painting: prefix measurement would
+        // lose kerning/ligatures. Interpolate grapheme stops within a cluster,
+        // as cosmic-text's editor does; complex bidi editing is not promised.
+        let key = self.key(text, style, 1_000_000.);
+        let buffer = &self.text[&key].0;
+        let Some(run) = buffer.layout_runs().next() else {
+            return vec![0.; byte_offsets.len()];
+        };
+        byte_offsets
+            .iter()
+            .map(|&at| {
+                if !text.is_char_boundary(at) {
+                    return 0.;
+                }
+                for glyph in run.glyphs {
+                    if at >= glyph.start && at < glyph.end {
+                        let cluster = &text[glyph.start..glyph.end];
+                        let count = cluster.graphemes(true).count().max(1);
+                        let before = cluster
+                            .grapheme_indices(true)
+                            .take_while(|(offset, _)| glyph.start + offset < at)
+                            .count();
+                        let advance = glyph.w * before as f32 / count as f32;
+                        return if glyph.level.is_rtl() {
+                            glyph.x + glyph.w - advance
+                        } else {
+                            glyph.x + advance
+                        };
+                    }
+                }
+                run.glyphs.iter().find(|g| g.end == at).map_or(0., |g| {
+                    if g.level.is_rtl() {
+                        g.x
+                    } else {
+                        g.x + g.w
+                    }
+                })
+            })
+            .collect()
+    }
     fn measure(&mut self, text: &str, size: f32, max_width: f32) -> [f32; 2] {
         self.measure_styled(text, &default_style(size), max_width)
     }
@@ -806,6 +1343,31 @@ impl Painter for RasterPainter {
     }
 }
 impl DocumentPainter for RasterPainter {
+    fn ui_clip_begin(&mut self, out: &mut Vec<Shape>, clip: ClipRegion) {
+        out.push(Shape::ClipBegin(clip));
+    }
+    fn ui_clip_end(&mut self, out: &mut Vec<Shape>) {
+        out.push(Shape::ClipEnd);
+    }
+    fn ui_image(
+        &mut self,
+        out: &mut Vec<Shape>,
+        bounds: [f32; 4],
+        image: &BackgroundImage,
+        scale: f32,
+    ) {
+        out.push(Shape::Image(bounds, image.clone(), scale));
+    }
+    fn ui_path(
+        &mut self,
+        out: &mut Vec<Shape>,
+        path: &VectorPath,
+        color: [f32; 4],
+        stroke: Option<f32>,
+    ) {
+        out.push(Shape::Path(path.clone(), color, stroke));
+    }
+
     fn ui_layer_begin(&mut self, out: &mut Vec<Shape>, opacity: f32) {
         out.push(Shape::LayerBegin(opacity));
     }
@@ -841,15 +1403,6 @@ impl DocumentPainter for RasterPainter {
     }
 }
 
-fn fill_mask(mask: &mut Mask, w: u32, h: u32, r: [f32; 4], value: u8) {
-    let left = r[0].ceil().clamp(0., w as f32) as usize;
-    let top = r[1].ceil().clamp(0., h as f32) as usize;
-    let right = (r[0] + r[2]).ceil().clamp(left as f32, w as f32) as usize;
-    let bottom = (r[1] + r[3]).ceil().clamp(top as f32, h as f32) as usize;
-    for row in top..bottom {
-        mask.data_mut()[row * w as usize + left..row * w as usize + right].fill(value);
-    }
-}
 /// Split on integer scanlines: AA caps/edges retain tiny-skia's original cubic
 /// geometry; fully covered middle pixels use a direct integer source-over span.
 /// Disjoint regions guarantee translucent fills never overlap at split seams.
@@ -932,13 +1485,186 @@ fn fill_rounded_fast(
                     blend(source.red(), pixel.red()),
                     blend(source.green(), pixel.green()),
                     blend(source.blue(), pixel.blue()),
-                    255, // rasterize always begins with an opaque framebuffer
+                    // Same formula for alpha: an opaque destination stays exactly
+                    // 255, and transparent layers/windows keep correct coverage.
+                    blend(source.alpha(), pixel.alpha()),
                 )
                 .expect("source-over preserves premultiplied channels");
             }
         }
     }
     true
+}
+fn clip_key(region: &ClipRegion) -> Vec<u32> {
+    let mut key = vec![];
+    match region {
+        ClipRegion::Rounded { bounds, radii } => {
+            key.push(0);
+            key.extend(bounds.iter().chain(radii).map(|v| v.to_bits()));
+        }
+        ClipRegion::Circle { bounds } => {
+            key.push(1);
+            key.extend(bounds.map(f32::to_bits));
+        }
+        ClipRegion::Path(p) => {
+            key.push(2);
+            for c in &p.commands {
+                match c {
+                    PathCommand::Move(a) => {
+                        key.push(0);
+                        key.extend(a.map(f32::to_bits));
+                    }
+                    PathCommand::Line(a) => {
+                        key.push(1);
+                        key.extend(a.map(f32::to_bits));
+                    }
+                    PathCommand::Quad(a, b) => {
+                        key.push(2);
+                        key.extend(a.iter().chain(b).map(|v| v.to_bits()));
+                    }
+                    PathCommand::Cubic(a, b, c) => {
+                        key.push(3);
+                        key.extend(a.iter().chain(b).chain(c).map(|v| v.to_bits()));
+                    }
+                    PathCommand::Close => key.push(4),
+                }
+            }
+        }
+    }
+    key
+}
+fn apply_clip_mask(mask: &mut Mask, local: &ClipMask, [l, t, r, b]: [usize; 4]) {
+    let w = mask.width() as usize;
+    let lw = local.mask.width() as usize;
+    let lh = local.mask.height() as i32;
+    let data = mask.data_mut();
+    for y in t..b {
+        let row = &mut data[y * w + l..y * w + r];
+        let ly = y as i32 - local.y;
+        if ly < 0 || ly >= lh {
+            row.fill(0);
+            continue;
+        }
+        let source = &local.mask.data()[ly as usize * lw..(ly as usize + 1) * lw];
+        for (i, dest) in row.iter_mut().enumerate() {
+            let lx = (l + i) as i32 - local.x;
+            let coverage = if lx >= 0 && (lx as usize) < lw {
+                source[lx as usize]
+            } else {
+                0
+            };
+            if coverage != 255 {
+                *dest = ((u16::from(*dest) * u16::from(coverage) + 127) / 255) as u8;
+            }
+        }
+    }
+}
+#[cfg(test)]
+fn fill_mask(mask: &mut Mask, w: u32, h: u32, r: [f32; 4], value: u8) {
+    let left = r[0].ceil().clamp(0., w as f32) as usize;
+    let top = r[1].ceil().clamp(0., h as f32) as usize;
+    let right = (r[0] + r[2]).ceil().clamp(left as f32, w as f32) as usize;
+    let bottom = (r[1] + r[3]).ceil().clamp(top as f32, h as f32) as usize;
+    fill_mask_px(mask, [left, top, right, bottom], value);
+}
+fn fill_mask_px(mask: &mut Mask, [l, t, r, b]: [usize; 4], value: u8) {
+    let w = mask.width() as usize;
+    let data = mask.data_mut();
+    for row in t..b {
+        data[row * w + l..row * w + r].fill(value);
+    }
+}
+pub(super) fn native_path(path: &VectorPath) -> Option<tiny_skia::Path> {
+    if path.commands.is_empty() || path.commands.len() > 1024 {
+        return None;
+    }
+    let mut b = PathBuilder::new();
+    for cmd in &path.commands {
+        match *cmd {
+            PathCommand::Move([x, y]) => b.move_to(x, y),
+            PathCommand::Line([x, y]) => b.line_to(x, y),
+            PathCommand::Quad([x, y], [a, c]) => b.quad_to(x, y, a, c),
+            PathCommand::Cubic([x, y], [a, c], [d, e]) => b.cubic_to(x, y, a, c, d, e),
+            PathCommand::Close => b.close(),
+        }
+    }
+    b.finish()
+}
+fn clip_path(clip: &ClipRegion) -> Option<tiny_skia::Path> {
+    match clip {
+        ClipRegion::Rounded { bounds, radii } => rounded_corners(*bounds, *radii),
+        ClipRegion::Circle {
+            bounds: [x, y, w, h],
+        } => native_path(&VectorPath::circle(
+            x + w * 0.5,
+            y + h * 0.5,
+            w.min(*h) * 0.5,
+        )),
+        ClipRegion::Path(path) => native_path(path),
+    }
+}
+fn draw_image(
+    pixmap: &mut Pixmap,
+    mask: &Mask,
+    [x, y, w, h]: [f32; 4],
+    image: &BackgroundImage,
+    scale: f32,
+) -> Result<(), String> {
+    if !image.opacity.is_finite()
+        || !(0. ..=1.).contains(&image.opacity)
+        || !scale.is_finite()
+        || scale <= 0.
+    {
+        return Err("invalid image opacity/scale".into());
+    }
+    let iw = image.image.width() as f32;
+    let ih = image.image.height() as f32;
+    let (dw, dh) = match image.fit {
+        ImageFit::Cover => {
+            let f = (w / iw).max(h / ih);
+            (iw * f, ih * f)
+        }
+        ImageFit::Contain => {
+            let f = (w / iw).min(h / ih);
+            (iw * f, ih * f)
+        }
+        ImageFit::Stretch => (w, h),
+        ImageFit::Tile => (iw * scale, ih * scale),
+    };
+    let pos = image.position.fractions();
+    let ox = x + (w - dw) * pos[0];
+    let oy = y + (h - dh) * pos[1];
+    // A pattern handles tiling in a single bounded command (not thousands of quads).
+    let source = tiny_skia::PixmapRef::from_bytes(
+        image.image.pixels(),
+        image.image.width(),
+        image.image.height(),
+    )
+    .ok_or("invalid RGBA image")?;
+    let transform = Transform::from_row(dw / iw, 0., 0., dh / ih, ox, oy);
+    let paint = Paint {
+        shader: tiny_skia::Pattern::new(
+            source,
+            if image.fit == ImageFit::Tile {
+                tiny_skia::SpreadMode::Repeat
+            } else {
+                tiny_skia::SpreadMode::Pad
+            },
+            tiny_skia::FilterQuality::Bilinear,
+            image.opacity,
+            transform,
+        ),
+        ..Paint::default()
+    };
+    let bounds = if image.fit == ImageFit::Contain {
+        [ox, oy, dw, dh]
+    } else {
+        [x, y, w, h]
+    };
+    if let Some(r) = tiny_skia::Rect::from_xywh(bounds[0], bounds[1], bounds[2], bounds[3]) {
+        pixmap.fill_rect(r, &paint, Transform::identity(), Some(mask));
+    }
+    Ok(())
 }
 fn rounded_cap([x, y, w, h]: [f32; 4], r: f32, cut: f32, top: bool) -> Option<tiny_skia::Path> {
     let k = r * 0.5522848;
@@ -982,7 +1708,7 @@ fn rounded([x, y, w, h]: [f32; 4], r: f32) -> Option<tiny_skia::Path> {
     p.finish()
 }
 
-fn rounded_corners([x, y, w, h]: [f32; 4], radii: [f32; 4]) -> Option<tiny_skia::Path> {
+pub(super) fn rounded_corners([x, y, w, h]: [f32; 4], radii: [f32; 4]) -> Option<tiny_skia::Path> {
     if ![x, y, w, h, x + w, y + h].into_iter().all(f32::is_finite)
         || w <= 0.
         || h <= 0.
@@ -1027,7 +1753,7 @@ fn rounded_corners([x, y, w, h]: [f32; 4], radii: [f32; 4]) -> Option<tiny_skia:
     p.finish()
 }
 
-fn outline(bounds: [f32; 4], radii: [f32; 4], width: f32) -> Option<tiny_skia::Path> {
+pub(super) fn outline(bounds: [f32; 4], radii: [f32; 4], width: f32) -> Option<tiny_skia::Path> {
     let outer = rounded_corners(bounds, radii)?;
     if width * 2. >= bounds[2].min(bounds[3]) {
         return Some(outer);
@@ -1851,6 +2577,150 @@ mod generic_font_tests {
                 let face = fonts.db().face(selected).unwrap();
                 assert!(face.families.iter().any(|(name, _)| name == expected));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod sf_alias_tests {
+    use super::*;
+    #[test]
+    fn sf_aliases_resolve_installed_faces_without_changing_existing_defaults() {
+        let mut p = RasterPainter::new(Viewport::new(400., 120., 1.).unwrap());
+        assert_eq!(
+            p.resolved_font_family("system", 14.),
+            system_family(&p.fonts)
+        );
+        assert_eq!(p.resolved_font_family("monospace", 14.), "monospace");
+        for (alias, size, candidates, fallback) in [
+            (
+                "SF",
+                14.,
+                &["SF Pro Text", "SF Pro", ".SF NS", "System Font"][..],
+                "sans-serif",
+            ),
+            (
+                "SF",
+                36.,
+                &["SF Pro Display", "SF Pro", ".SF NS", "System Font"][..],
+                "sans-serif",
+            ),
+            ("SF Mono", 14., &["SF Mono", ".SF NS Mono"][..], "monospace"),
+        ] {
+            let expected = apple_family(&p.fonts, candidates, fallback);
+            let resolved = p.resolved_font_family(alias, size);
+            assert_eq!(resolved, expected);
+            let style = TextStyle {
+                family: alias.into(),
+                size,
+                ..TextStyle::default()
+            };
+            let key = p.key("Native Rust 012345", &style, 380.);
+            let buffer = &p.text[&key].0;
+            let glyphs: Vec<_> = buffer.layout_runs().flat_map(|r| r.glyphs).collect();
+            assert!(!glyphs.is_empty());
+            if resolved != fallback {
+                assert!(
+                    glyphs.iter().all(|g| p
+                        .fonts
+                        .db()
+                        .face(g.font_id)
+                        .unwrap()
+                        .families
+                        .iter()
+                        .any(|(name, _)| name == &resolved)),
+                    "alias must shape with the resolved SF face"
+                );
+            }
+        }
+        let text_family = p.resolved_font_family("SF", 14.);
+        let display_family = p.resolved_font_family("SF", 36.);
+        p.set_viewport(Viewport::new(800., 240., 2.).unwrap());
+        assert_eq!(p.resolved_font_family("SF", 28.), text_family);
+        assert_eq!(p.resolved_font_family("SF", 72.), display_family);
+        assert_eq!(
+            p.resolved_font_family("SF Pro", 36.),
+            p.resolved_font_family("SF", 36.)
+        );
+    }
+}
+#[cfg(test)]
+mod scaled_image_tests {
+    use super::*;
+    use crate::declarative::PaintBatch;
+    use crate::graphics::Image;
+    fn frame(shapes: Vec<Shape>) -> Pixmap {
+        let mut p = RasterPainter::new(Viewport::new(40., 40., 1.).unwrap());
+        let batch = PaintBatch {
+            clip: crate::geometry::Rect::new(0., 0., 40., 40.).unwrap(),
+            shapes,
+            glyphs: vec![],
+        };
+        p.rasterize(&[batch], [0., 0., 1., 1.]).unwrap()
+    }
+    #[test]
+    fn opaque_images_blit_through_offscreen_origins_and_rounded_clips() {
+        let red = Image::from_rgba(4, 4, [255, 0, 0, 255].repeat(16)).unwrap();
+        // Starts above/left of the framebuffer, so source offsets must not wrap.
+        let pixmap = frame(vec![
+            Shape::ClipBegin(ClipRegion::Rounded {
+                bounds: [0., 0., 30., 30.],
+                radii: [10.; 4],
+            }),
+            Shape::Image([-10., -10., 40., 40.], red.background(), 1.),
+            Shape::ClipEnd,
+        ]);
+        let px = |x: u32, y: u32| pixmap.pixel(x, y).unwrap();
+        assert_eq!((px(15, 15).red(), px(15, 15).blue()), (255, 0));
+        // Outside the rounded corner and outside the clip: background shows.
+        assert_eq!((px(0, 0).red(), px(0, 0).blue()), (0, 255));
+        assert_eq!((px(35, 35).red(), px(35, 35).blue()), (0, 255));
+    }
+    #[test]
+    fn translucent_images_keep_the_pattern_path_and_blend() {
+        let half = Image::from_rgba(2, 2, [255, 0, 0, 128].repeat(4)).unwrap();
+        let pixmap = frame(vec![Shape::Image(
+            [0., 0., 40., 40.],
+            half.background(),
+            1.,
+        )]);
+        let p = pixmap.pixel(20, 20).unwrap();
+        assert!(
+            p.red() > 100 && p.blue() > 100,
+            "blended {:?}",
+            (p.red(), p.blue())
+        );
+    }
+}
+
+#[cfg(test)]
+mod editor_metric_tests {
+    use super::*;
+    #[test]
+    fn editor_advances_share_shaped_clusters_without_prefix_buffers() {
+        for scale in [1., 2.] {
+            let mut painter =
+                RasterPainter::new(Viewport::new(400. * scale, 160. * scale, scale).unwrap());
+            let style = TextStyle {
+                family: "SF".into(),
+                ..default_style(14. * scale)
+            };
+            let value = "AV office e\u{301} 👨‍👩‍👧‍👦";
+            let offsets: Vec<_> = value
+                .grapheme_indices(true)
+                .map(|(i, _)| i)
+                .chain(std::iter::once(value.len()))
+                .collect();
+            let advances = painter.line_advances(value, &style, &offsets);
+            let width = painter.measure_styled(value, &style, 1_000_000.)[0];
+            assert_eq!(advances.len(), offsets.len());
+            assert!(advances.iter().all(|x| x.is_finite() && *x >= 0.));
+            assert!((advances.last().unwrap() - width).abs() < 0.1);
+            assert_eq!(
+                painter.text_cache_misses, 1,
+                "one shaped line, not one prefix buffer per grapheme"
+            );
+            assert_eq!(painter.line_advances("", &style, &[0]), vec![0.]);
         }
     }
 }

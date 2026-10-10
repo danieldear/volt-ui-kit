@@ -8,12 +8,18 @@ pub enum EventKind {
     Activate,
     TextChanged,
     ToggleChanged,
+    ValueChanged,
+    ContextRequested,
+    WindowChanged,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Activate,
     TextChanged(String),
     ToggleChanged(bool),
+    ValueChanged { bits: u32 },
+    ContextRequested { x_bits: u32, y_bits: u32 },
+    WindowChanged { start: usize, end: usize },
 }
 impl Event {
     pub fn kind(&self) -> EventKind {
@@ -21,12 +27,16 @@ impl Event {
             Self::Activate => EventKind::Activate,
             Self::TextChanged(_) => EventKind::TextChanged,
             Self::ToggleChanged(_) => EventKind::ToggleChanged,
+            Self::ValueChanged { .. } => EventKind::ValueChanged,
+            Self::ContextRequested { .. } => EventKind::ContextRequested,
+            Self::WindowChanged { .. } => EventKind::WindowChanged,
         }
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HandlerError {
     InvalidName,
+    InvalidValue,
     Duplicate(String),
     Missing(String),
     WrongKind {
@@ -121,6 +131,52 @@ impl<'a, C> Handlers<'a, C> {
             }),
         )
     }
+    /// Finite numeric events preserve Event equality through their IEEE bit payload.
+    pub fn on_value_changed(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, f32) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::ValueChanged,
+            Box::new(move |ctx, event| {
+                if let Event::ValueChanged { bits } = event {
+                    f(ctx, f32::from_bits(bits));
+                }
+            }),
+        )
+    }
+    pub fn on_context_requested(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, [f32; 2]) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::ContextRequested,
+            Box::new(move |ctx, event| {
+                if let Event::ContextRequested { x_bits, y_bits } = event {
+                    f(ctx, [f32::from_bits(x_bits), f32::from_bits(y_bits)]);
+                }
+            }),
+        )
+    }
+    pub fn on_window_changed(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, std::ops::Range<usize>) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::WindowChanged,
+            Box::new(move |ctx, event| {
+                if let Event::WindowChanged { start, end } = event {
+                    f(ctx, start..end);
+                }
+            }),
+        )
+    }
     /// Validate a document connection without running application code.
     pub fn validate(&self, name: &str, kind: EventKind) -> Result<(), HandlerError> {
         let (expected, _) = self
@@ -143,6 +199,14 @@ impl<'a, C> Handlers<'a, C> {
         context: &mut C,
     ) -> Result<(), HandlerError> {
         self.validate(name, event.kind())?;
+        if matches!(event, Event::ValueChanged { bits } if !f32::from_bits(bits).is_finite()) {
+            return Err(HandlerError::InvalidValue);
+        }
+        if matches!(event, Event::ContextRequested { x_bits, y_bits } if !f32::from_bits(x_bits).is_finite() || !f32::from_bits(y_bits).is_finite())
+            || matches!(event, Event::WindowChanged { start, end } if start > end)
+        {
+            return Err(HandlerError::InvalidValue);
+        }
         let (_, callback) = self.entries.get_mut(name).expect("validated handler");
         callback(context, event);
         Ok(())
@@ -219,10 +283,16 @@ pub use effects::{Animation, Easing, Glow, Interaction, Shadow, Transition, Visu
 mod motion;
 mod runtime;
 pub use document::{
-    Align, Bindings, Document, DocumentError, Flow, Kind, Node, Rounding, Tone, Value,
+    Align, Bindings, Document, DocumentError, Flow, Kind, Node, Rounding, Scroll, Scrollbars, Tone,
+    Value,
 };
 pub use responsive::{responsive, Breakpoint, Direction, Responsive};
 pub use runtime::{
-    ButtonState, DocumentPainter, InputOutcome, LayoutBox, PaintBatch, Runtime, TextMetrics,
-    TextStyle,
+    ButtonState, DocumentPainter, InputOutcome, LayoutBox, PaintBatch, Runtime, SelectionKey,
+    TextMetrics, TextStyle,
 };
+
+#[cfg(feature = "rust-ui")]
+pub use runtime::editing::EditKey;
+#[cfg(feature = "rust-ui")]
+pub use runtime::value_controls::ValueKey;

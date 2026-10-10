@@ -13,7 +13,8 @@
 ## Next: polish and generalization (high priority)
 
 - Replace compatibility-specific labels/action IDs with application-supplied metadata.
-- General-purpose Input, Tabs and selectable List APIs (declarative Checkbox/Toggle and Panel delivered).
+- General-purpose Input and selectable List APIs (declarative Checkbox/Toggle,
+  Panel and typed Tabs delivered; editing/selection semantics remain required).
 - Measured typography, clipping, long text, narrow-window and DPI improvements.
 - Shared keyboard focus model, pointer capture and predictable disabled/hover states.
 - Validate each change in the gallery and Volt; retain screenshot and performance gates.
@@ -47,10 +48,30 @@ or terminal benchmark parity is made by the initial extraction.
 - Delivered: schema1 JSON, shared layout/input runtime, text/boolean bindings and explicit validated reload.
 - Delivered: optional software native host, progressive examples, editable typography/colors and typed Checkbox/Toggle controls.
 - Later: two-way editing bindings, richer focus/input/semantics and custom components.
-- Later: explicit container queries, adaptive grids/child wrapping, scrolling and responsive visibility.
+- Later: explicit container queries, adaptive grids/child wrapping and responsive visibility
+  (keyed scrolling, mounted focus auto-reveal and fixed-row virtualization are delivered).
 - See [implementation gates](docs/IMPLEMENTATION_PLAN.md); legacy Volt APIs stay intact.
 
-Next Rust UI milestones: external state-update wakeup API, measured subtree reconciliation/signals, and richer editing/accessibility. These are future work, not delivered SwiftUI/Compose parity.
+Next Rust UI milestones: measured subtree reconciliation/signals and richer editing/accessibility. The bounded external state-update wakeup API is delivered. These are future work, not delivered SwiftUI/Compose parity.
+
+### Component delivery (2026-10-08)
+
+Delivered: reusable action/tool bars, typed segmented controls and tab bars,
+active-page-only tabs, group-scoped selection keys, and joined outer corners.
+See [the exact API, tests and unfinished phases](docs/COMPONENTS.md).
+
+Delivered 2026-10-09: controlled text/IME/clipboard foundation, bounded slider/select
+controls and modal focus/dismissal; UI Lab and Desk now exercise real editing.
+Next: platform accessibility/IME/device acceptance, unmounted focus navigation,
+wrapping/bidi completeness and renderer optimization. Mounted focus reveal, opt-in soft wrap and bounded background messages are delivered.
+Software rasterization dominated the earlier rich-screen baseline; optional
+Vello GPU drawing is now delivered. See [GPU rendering](docs/GPU_RENDERING.md)
+for the feature policy, measurements and remaining platform gates.
+Do not label the whole component set or toolkit complete yet.
+
+Later, explicitly deferred: an original desktop-style panel/dock/launcher demo
+using these widgets, not a replacement OS session/window manager. A real Wayland
+compositor is a separate Linux project. See [resource usage and experiment scope](docs/RESOURCE_USAGE_AND_DESKTOP.md).
 
 ### Delivered bounded motion/chrome slice
 
@@ -59,3 +80,39 @@ appearance animation/fade and integrated macOS window chrome are implemented.
 Native OS acceptance remains pending. Future: automatic OS reduced-motion
 discovery, display-synchronized scheduling, layout transforms/springs/keyframes,
 window-control components and cross-platform custom-decoration adapters.
+
+## Surface vertical slice (2026-10-08)
+
+The original diagnostic workbench is `ui_lab`. As of the user's 2026-10-09 direction, **Showcase is the canonical polished visual/component acceptance app**. New work extends its screens and tests with the Atelier design system; Lab and focused existing examples remain regression fixtures.
+
+Implemented: semantic UI palettes, root/system/state theme selection, global accent,
+background images/opacity, vector paths/canvas, explicit content clips, effect
+overflow fix, keyed nested scrolling and optional alpha-capable window presenter.
+
+Remaining acceptance: OS desktop transparency/blur and appearance changes, Windows
+and Linux runtime verification, trackpad feel. Delivered follow-ups: draggable visible scrollbars, mounted keyboard focus auto-reveal and bounded fixed-row virtualization. Remaining: touch/drag scrolling, smooth scrolling, SVG asset parsing, variable-height virtualization and general accessibility/IME. Default legacy
+renderers and terminal/vendor integration remain unchanged.
+
+### Native GPU drawing (2026-10-09)
+
+Delivered: feature-pruned Vello/wgpu scene drawing, opaque/alpha native windows,
+explicit auto/gpu/software selection, software fallback, cached glyph/image
+resources, GPU clips/opacity/analytic shadows and hardware readback acceptance.
+Rust 1.87 and the default embedded footprint are retained.
+Next: cross-platform runtime, GPU profiling/memory, damage/cached scenes and
+real device-loss stress. Mobile and compositor work remain deferred.
+
+### Application runtime and richer components (2026-10-09)
+
+Delivered: std-only bounded typed messages, one batch per native turn with
+coalesced wake/fairness; controlled menus/context/popovers/tooltips; progress and
+reduced-motion loading; 10,000-record fixed-row viewport; sortable tables,
+expandable trees, captured/keyboard split resizing; opt-in wrapped editing.
+Showcase Activity/Explorer own new acceptance and GPU Showcase requests
+translucent smoke/blur by default. Default embedded/Volt behavior stays opaque.
+
+Explicit release gate: replace the pinned winit macOS private blur API with a
+stable public-material integration before App Store-safe distribution claims.
+Physical IME, VoiceOver, cross-platform runtime, pointer/device acceptance and
+GPU energy/utilization remain distinct from automated toolkit checks.
+See [the plan and measured receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).

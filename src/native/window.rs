@@ -1,8 +1,11 @@
-use super::RasterPainter;
+use super::{
+    messages::{Messages, UiSender},
+    RasterPainter,
+};
 use crate::{
     declarative::{Bindings, Document, DocumentError, Handlers, InputOutcome, Runtime},
     ui::Element,
-    Theme, Viewport,
+    Palette, Theme, ThemeMode, UiTheme, Viewport,
 };
 use softbuffer::{Context, Surface};
 use std::{
@@ -14,12 +17,37 @@ use std::{
 };
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
-    event::{ElementState, MouseButton, WindowEvent},
+    dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
+    event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowAttributes, WindowId},
 };
+
+/// Renderer choice stays additive without changing public legacy option structs.
+fn gpu_policy(value: Option<&str>, available: bool) -> Result<(bool, bool), String> {
+    match value {
+        None | Some("auto") => Ok((available, false)),
+        Some("software") => Ok((false, false)),
+        Some("gpu") if available => Ok((true, true)),
+        Some("gpu") => Err("VOLT_UI_RENDERER=gpu requires the native-gpu feature".into()),
+        Some(_) => Err("VOLT_UI_RENDERER must be auto, gpu or software".into()),
+    }
+}
+
+#[cfg(test)]
+mod renderer_policy_tests {
+    use super::gpu_policy;
+    #[test]
+    fn optional_gpu_default_and_explicit_software_and_strict_gpu_are_distinct() {
+        assert_eq!(gpu_policy(None, false).unwrap(), (false, false));
+        assert_eq!(gpu_policy(None, true).unwrap(), (true, false));
+        assert_eq!(gpu_policy(Some("software"), true).unwrap(), (false, false));
+        assert_eq!(gpu_policy(Some("gpu"), true).unwrap(), (true, true));
+        assert!(gpu_policy(Some("gpu"), false).is_err());
+        assert!(gpu_policy(Some("unknown"), true).is_err());
+    }
+}
 
 pub struct NativeOptions {
     pub title: String,
@@ -91,6 +119,126 @@ impl Default for WindowOptions {
     }
 }
 
+/// Window background alpha applies to the root clear, not text or controls.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum WindowBackground {
+    #[default]
+    Opaque,
+    Transparent {
+        opacity: f32,
+    },
+    Blur {
+        opacity: f32,
+    },
+}
+impl WindowBackground {
+    fn opacity(self) -> f32 {
+        match self {
+            Self::Opaque => 1.,
+            Self::Transparent { opacity } | Self::Blur { opacity } => opacity,
+        }
+    }
+}
+/// Additive surface configuration; old options structs keep their field contracts.
+pub struct SurfaceOptions {
+    pub window: WindowOptions,
+    pub theme: ThemeMode,
+    pub palette: Option<Palette>,
+    pub accent: Option<[f32; 4]>,
+    pub background: WindowBackground,
+}
+impl std::ops::Deref for SurfaceOptions {
+    type Target = WindowOptions;
+    fn deref(&self) -> &Self::Target {
+        &self.window
+    }
+}
+impl From<WindowOptions> for SurfaceOptions {
+    fn from(window: WindowOptions) -> Self {
+        Self {
+            window,
+            theme: ThemeMode::Dark,
+            palette: None,
+            accent: None,
+            background: WindowBackground::Opaque,
+        }
+    }
+}
+impl From<NativeOptions> for SurfaceOptions {
+    fn from(native: NativeOptions) -> Self {
+        Self::from(WindowOptions::from(native))
+    }
+}
+impl Default for SurfaceOptions {
+    fn default() -> Self {
+        WindowOptions::default().into()
+    }
+}
+impl SurfaceOptions {
+    pub fn with_theme(mut self, mode: ThemeMode) -> Self {
+        self.theme = mode;
+        self
+    }
+    pub fn with_palette(mut self, palette: Palette) -> Self {
+        self.palette = Some(palette);
+        self
+    }
+    pub fn with_accent(mut self, color: [f32; 4]) -> Self {
+        self.accent = Some(color);
+        self
+    }
+    pub fn with_background(mut self, background: WindowBackground) -> Self {
+        self.background = background;
+        self
+    }
+    pub fn with_chrome(mut self, chrome: WindowChrome) -> Self {
+        self.window.chrome = chrome;
+        self
+    }
+    pub fn with_reduced_motion(mut self, value: bool) -> Self {
+        self.window.reduced_motion = value;
+        self
+    }
+    pub fn resolve_theme(&self, system: ThemeMode) -> UiTheme {
+        let mut theme = if let Some(palette) = &self.palette {
+            UiTheme::from_palette(palette.clone())
+        } else {
+            match self.theme {
+                ThemeMode::Light => UiTheme::light(),
+                ThemeMode::System if system == ThemeMode::Light => UiTheme::light(),
+                _ => UiTheme::from_legacy(&Theme::dark()),
+            }
+        };
+        if let Some(accent) = self.accent {
+            theme = theme.with_accent(accent)
+        };
+        theme
+    }
+}
+impl WindowOptions {
+    pub fn with_theme(self, mode: ThemeMode) -> SurfaceOptions {
+        SurfaceOptions::from(self).with_theme(mode)
+    }
+    pub fn with_palette(self, palette: Palette) -> SurfaceOptions {
+        SurfaceOptions::from(self).with_palette(palette)
+    }
+    pub fn with_accent(self, color: [f32; 4]) -> SurfaceOptions {
+        SurfaceOptions::from(self).with_accent(color)
+    }
+    pub fn with_background(self, background: WindowBackground) -> SurfaceOptions {
+        SurfaceOptions::from(self).with_background(background)
+    }
+}
+impl NativeOptions {
+    pub fn with_theme(self, mode: ThemeMode) -> SurfaceOptions {
+        SurfaceOptions::from(self).with_theme(mode)
+    }
+    pub fn with_background(self, background: WindowBackground) -> SurfaceOptions {
+        SurfaceOptions::from(self).with_background(background)
+    }
+}
+type ThemeFn<C> = Box<dyn Fn(&C, ThemeMode) -> UiTheme>;
+
 /// Application state and callbacks remain owned by the caller; update projects
 /// state into named document bindings after each successful activation.
 pub fn run<C: 'static>(
@@ -100,11 +248,11 @@ pub fn run<C: 'static>(
     handlers: Handlers<'static, C>,
     update: impl Fn(&C, &mut Bindings) + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    run_with_options(options.into(), source, context, handlers, update)
+    run_with_options(options, source, context, handlers, update)
 }
 /// Run a JSON declaration with additive chrome and animation configuration.
 pub fn run_with_options<C: 'static>(
-    options: WindowOptions,
+    options: impl Into<SurfaceOptions>,
     source: &str,
     context: C,
     handlers: Handlers<'static, C>,
@@ -114,12 +262,14 @@ pub fn run_with_options<C: 'static>(
     update(&context, &mut bindings);
     let runtime = Runtime::new(Document::parse(source)?, &handlers, &bindings)?;
     run_host(
-        options,
+        options.into(),
         runtime,
         context,
         handlers,
         bindings,
         Content::Document(Box::new(update)),
+        None,
+        None,
     )
 }
 /// Run a Rust view with direct callbacks and application-owned state. The body is
@@ -130,7 +280,7 @@ pub fn run_ui<C: 'static>(
     context: C,
     view: impl Fn(&C) -> Element<C> + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    run_ui_with_options(options.into(), context, view)
+    run_ui_with_options(options, context, view)
 }
 /// Run a Rust view with custom chrome or reduced-motion configuration.
 ///
@@ -138,9 +288,61 @@ pub fn run_ui<C: 'static>(
 /// invoke application callbacks. See [`WindowChrome::Overlay`] for platform
 /// behavior and native traffic-light clearance requirements.
 pub fn run_ui_with_options<C: 'static>(
-    options: WindowOptions,
+    options: impl Into<SurfaceOptions>,
     context: C,
     view: impl Fn(&C) -> Element<C> + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_ui_configured(options.into(), context, view, None, None)
+}
+/// State-derived themes switch immediately after callbacks; no global mutable theme.
+pub fn run_ui_with_theme<C: 'static>(
+    options: impl Into<SurfaceOptions>,
+    context: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme: impl Fn(&C, ThemeMode) -> UiTheme + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_ui_configured(options.into(), context, view, Some(Box::new(theme)), None)
+}
+/// Run a view with bounded typed worker messages and event-driven wakeups.
+/// `initialize` installs the sender in app state (and may start workers) before
+/// initial composition. `update` runs on the UI thread, at most 64 messages per
+/// wake. It must be short; spawn expensive work outside UI callbacks.
+pub fn run_ui_with_messages<C: 'static, M: Send + 'static>(
+    options: impl Into<SurfaceOptions>,
+    mut context: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    initialize: impl FnOnce(&mut C, UiSender<M>),
+    update: impl FnMut(&mut C, M) + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (sender, pump) = super::messages::channel(update);
+    initialize(&mut context, sender);
+    run_ui_configured(options.into(), context, view, None, Some(pump))
+}
+/// Typed background messages with state-derived theme resolution.
+pub fn run_ui_with_messages_and_theme<C: 'static, M: Send + 'static>(
+    options: impl Into<SurfaceOptions>,
+    mut context: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme: impl Fn(&C, ThemeMode) -> UiTheme + 'static,
+    initialize: impl FnOnce(&mut C, UiSender<M>),
+    update: impl FnMut(&mut C, M) + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (sender, pump) = super::messages::channel(update);
+    initialize(&mut context, sender);
+    run_ui_configured(
+        options.into(),
+        context,
+        view,
+        Some(Box::new(theme)),
+        Some(pump),
+    )
+}
+fn run_ui_configured<C: 'static>(
+    options: SurfaceOptions,
+    context: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme_fn: Option<ThemeFn<C>>,
+    messages: Option<Box<dyn Messages<C>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if options.native.document_path.is_some() {
         return Err(
@@ -157,22 +359,39 @@ pub fn run_ui_with_options<C: 'static>(
         handlers,
         bindings,
         Content::Rust(Box::new(view)),
+        theme_fn,
+        messages,
     )
 }
+#[allow(clippy::too_many_arguments)]
 fn run_host<C: 'static>(
-    options: WindowOptions,
+    options: SurfaceOptions,
     mut runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
     bindings: Bindings,
     content: Content<C>,
+    theme_fn: Option<ThemeFn<C>>,
+    mut messages: Option<Box<dyn Messages<C>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !options.background.opacity().is_finite()
+        || !(0. ..=1.).contains(&options.background.opacity())
+        || !options.resolve_theme(ThemeMode::Dark).palette.is_valid()
+    {
+        return Err("invalid palette/accent/window opacity".into());
+    }
     let reduced_motion = reduced_motion_enabled(
         options.reduced_motion,
         std::env::var("VOLT_UI_REDUCED_MOTION").ok().as_deref(),
     );
     runtime.set_reduced_motion(reduced_motion);
-    let event_loop = EventLoop::new()?;
+    let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
+    if let Some(messages) = messages.as_mut() {
+        let proxy = event_loop.create_proxy();
+        messages.connect(Arc::new(move || {
+            proxy.send_event(HostEvent::Messages).is_ok()
+        }));
+    }
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App {
         options,
@@ -181,6 +400,12 @@ fn run_host<C: 'static>(
         handlers,
         bindings,
         content,
+        theme_fn,
+        messages,
+        window_update_in_progress: false,
+        system_theme: ThemeMode::Dark,
+        #[cfg(feature = "native-gpu")]
+        gpu: None,
         window: None,
         surface: None,
         surface_size: None,
@@ -190,6 +415,8 @@ fn run_host<C: 'static>(
         pointer: None,
         modifiers: ModifiersState::empty(),
         activation_key: None,
+        clipboard: None,
+        ime_allowed: false,
         error: None,
         frames: 0,
         animation_clock: AnimationClock::new(Instant::now()),
@@ -240,13 +467,23 @@ impl<C: 'static> Content<C> {
         Ok(())
     }
 }
+#[derive(Debug)]
+enum HostEvent {
+    Messages,
+}
 struct App<C> {
-    options: WindowOptions,
+    options: SurfaceOptions,
     runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
     bindings: Bindings,
     content: Content<C>,
+    theme_fn: Option<ThemeFn<C>>,
+    messages: Option<Box<dyn Messages<C>>>,
+    window_update_in_progress: bool,
+    system_theme: ThemeMode,
+    #[cfg(feature = "native-gpu")]
+    gpu: Option<super::gpu::GpuPresenter>,
     window: Option<Arc<Window>>,
     surface: Option<Surface<Arc<Window>, Arc<Window>>>,
     surface_size: Option<[u32; 2]>,
@@ -256,6 +493,8 @@ struct App<C> {
     pointer: Option<[f32; 2]>,
     modifiers: ModifiersState,
     activation_key: Option<NamedKey>,
+    clipboard: Option<arboard::Clipboard>,
+    ime_allowed: bool,
     error: Option<String>,
     frames: u64,
     animation_clock: AnimationClock,
@@ -265,6 +504,9 @@ struct App<C> {
 }
 impl<C: 'static> App<C> {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl ToString) {
+        if let Some(messages) = self.messages.as_mut() {
+            messages.close();
+        }
         self.error = Some(error.to_string());
         event_loop.exit();
     }
@@ -320,6 +562,23 @@ impl<C: 'static> App<C> {
         if let Some([x, y]) = self.pointer {
             self.runtime.pointer_move(x, y);
         }
+        self.sync_ime();
+        // Viewport/resize changes can alter the visible virtual window too, not
+        // just wheel input. Bound this corrective recomposition to one per layout.
+        if !self.window_update_in_progress
+            && self
+                .runtime
+                .dispatch_virtual_windows(&mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?
+        {
+            self.window_update_in_progress = true;
+            let result = self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            });
+            self.window_update_in_progress = false;
+            result?;
+        }
         Ok(())
     }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
@@ -353,15 +612,260 @@ impl<C: 'static> App<C> {
             }
             Ok(()) => {}
         }
-        if outcome.activated {
+        if outcome.activated || outcome.changed {
             self.layout()?;
-            self.redraw();
-        } else if outcome.changed {
             self.redraw();
         } else {
             self.pending_release = None;
         }
         Ok(())
+    }
+    fn clipboard(&mut self) -> Option<&mut arboard::Clipboard> {
+        // Retain ownership after a copy, as required by X11/Wayland clipboard
+        // services. Access remains lazy and only follows explicit shortcuts.
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(clipboard) => self.clipboard = Some(clipboard),
+                Err(error) => {
+                    eprintln!("Clipboard unavailable: {error}");
+                    return None;
+                }
+            }
+        }
+        self.clipboard.as_mut()
+    }
+    fn copy_to_clipboard(&mut self, text: String) -> bool {
+        let Some(clipboard) = self.clipboard() else {
+            return false;
+        };
+        match clipboard.set_text(text) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("Clipboard unavailable: {error}");
+                false
+            }
+        }
+    }
+    fn paste_from_clipboard(&mut self) -> Option<String> {
+        self.clipboard()?
+            .get_text()
+            .ok()
+            .filter(|text| !text.is_empty())
+    }
+    fn sync_ime(&mut self) {
+        let allowed = self.focused && !self.occluded && self.runtime.editing_ime_allowed();
+        if let Some(window) = &self.window {
+            if allowed != self.ime_allowed {
+                window.set_ime_allowed(allowed);
+                self.ime_allowed = allowed;
+                if !allowed {
+                    self.runtime.ime_cancel();
+                }
+            }
+            if allowed {
+                window.set_ime_purpose(if self.runtime.editing_password() {
+                    winit::window::ImePurpose::Password
+                } else {
+                    winit::window::ImePurpose::Normal
+                });
+                if let Some([x, y, w, h]) = self.runtime.editor_candidate_bounds() {
+                    window.set_ime_cursor_area(
+                        PhysicalPosition::new(f64::from(x), f64::from(y)),
+                        PhysicalSize::new(f64::from(w), f64::from(h)),
+                    );
+                }
+            }
+        } else {
+            self.ime_allowed = false;
+        }
+    }
+    /// Route a key press to the focused text editor. Returns true when consumed.
+    /// Tab and Escape stay with focus traversal and overlay dismissal.
+    fn editor_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
+        use crate::declarative::EditKey;
+        if !self.runtime.editing_focus() {
+            return Ok(false);
+        }
+        let shift = self.modifiers.shift_key();
+        let command = if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        };
+        let document_jump = if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        };
+        let word_jump = if cfg!(target_os = "macos") {
+            self.modifiers.alt_key()
+        } else {
+            self.modifiers.control_key()
+        };
+        if self.runtime.ime_active() {
+            if event.logical_key == Key::Named(NamedKey::Escape) && self.runtime.ime_cancel() {
+                self.redraw();
+            }
+            return Ok(true);
+        }
+        let outcome = match &event.logical_key {
+            Key::Named(NamedKey::Tab | NamedKey::Escape) => return Ok(false),
+            Key::Character(c) if command => match c.to_lowercase().as_str() {
+                "a" => {
+                    if self.runtime.editor_select_all() {
+                        self.redraw();
+                    }
+                    return Ok(true);
+                }
+                "c" => {
+                    if let Some(text) = self.runtime.editor_copy() {
+                        self.copy_to_clipboard(text);
+                    }
+                    return Ok(true);
+                }
+                "x" => {
+                    let Some(text) = self.runtime.editor_copy() else {
+                        return Ok(true);
+                    };
+                    // Never delete selected text if the system refused the copy.
+                    if !self.copy_to_clipboard(text) {
+                        return Ok(true);
+                    }
+                    self.runtime
+                        .editor_cut(&mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?
+                        .1
+                }
+                "v" => match self.paste_from_clipboard() {
+                    Some(text) => self
+                        .runtime
+                        .text_input(&text, &mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?,
+                    None => return Ok(true),
+                },
+                "z" => self
+                    .runtime
+                    .editor_key(
+                        if shift { EditKey::Redo } else { EditKey::Undo },
+                        false,
+                        &mut self.handlers,
+                        &mut self.context,
+                    )
+                    .map_err(|e| e.to_string())?,
+                "y" => self
+                    .runtime
+                    .editor_key(EditKey::Redo, false, &mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?,
+                _ => return Ok(false),
+            },
+            Key::Named(key) => {
+                let edit = match key {
+                    NamedKey::Backspace => EditKey::Backspace,
+                    NamedKey::Delete => EditKey::Delete,
+                    NamedKey::Enter if command => EditKey::Submit,
+                    NamedKey::Enter => EditKey::Enter,
+                    NamedKey::ArrowLeft if cfg!(target_os = "macos") && document_jump => {
+                        EditKey::Home
+                    }
+                    NamedKey::ArrowRight if cfg!(target_os = "macos") && document_jump => {
+                        EditKey::End
+                    }
+                    NamedKey::ArrowLeft if word_jump => EditKey::WordLeft,
+                    NamedKey::ArrowRight if word_jump => EditKey::WordRight,
+                    NamedKey::ArrowLeft => EditKey::Left,
+                    NamedKey::ArrowRight => EditKey::Right,
+                    NamedKey::ArrowUp if document_jump => EditKey::DocumentStart,
+                    NamedKey::ArrowDown if document_jump => EditKey::DocumentEnd,
+                    NamedKey::ArrowUp => EditKey::Up,
+                    NamedKey::ArrowDown => EditKey::Down,
+                    NamedKey::Home if document_jump => EditKey::DocumentStart,
+                    NamedKey::End if document_jump => EditKey::DocumentEnd,
+                    NamedKey::Home => EditKey::Home,
+                    NamedKey::End => EditKey::End,
+                    NamedKey::Space => {
+                        return self.insert_text(" ");
+                    }
+                    _ => return Ok(false),
+                };
+                self.runtime
+                    .editor_key(edit, shift, &mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?
+            }
+            _ if command || self.modifiers.control_key() => return Ok(false),
+            _ => match event
+                .text
+                .as_ref()
+                .filter(|t| !t.chars().any(char::is_control))
+            {
+                Some(text) => {
+                    let text = text.to_string();
+                    return self.insert_text(&text);
+                }
+                None => return Ok(false),
+            },
+        };
+        self.activation_key = None;
+        self.after_input(outcome)?;
+        self.redraw();
+        Ok(true)
+    }
+    fn insert_text(&mut self, text: &str) -> Result<bool, String> {
+        let outcome = self
+            .runtime
+            .text_input(text, &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        self.activation_key = None;
+        self.after_input(outcome)?;
+        self.redraw();
+        Ok(true)
+    }
+    /// Arrow/Page/Home/End keys for a focused slider, then an open popup list.
+    fn value_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
+        use crate::declarative::{SelectionKey, ValueKey};
+        let Key::Named(key) = &event.logical_key else {
+            return Ok(false);
+        };
+        let value = match key {
+            NamedKey::ArrowLeft | NamedKey::ArrowDown => Some(ValueKey::Decrease),
+            NamedKey::ArrowRight | NamedKey::ArrowUp => Some(ValueKey::Increase),
+            NamedKey::PageDown => Some(ValueKey::PageDecrease),
+            NamedKey::PageUp => Some(ValueKey::PageIncrease),
+            NamedKey::Home => Some(ValueKey::First),
+            NamedKey::End => Some(ValueKey::Last),
+            _ => None,
+        };
+        if let Some(value) = value {
+            let mut outcome = self
+                .runtime
+                .slider_key(value, &mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            if !outcome.changed && !outcome.activated {
+                outcome = self
+                    .runtime
+                    .split_key(value, &mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?;
+            }
+            if outcome.changed || outcome.activated {
+                self.activation_key = None;
+                self.after_input(outcome)?;
+                self.redraw();
+                return Ok(true);
+            }
+        }
+        let selection = match key {
+            NamedKey::ArrowUp | NamedKey::ArrowLeft => SelectionKey::Previous,
+            NamedKey::ArrowDown | NamedKey::ArrowRight => SelectionKey::Next,
+            NamedKey::Home => SelectionKey::First,
+            NamedKey::End => SelectionKey::Last,
+            _ => return Ok(false),
+        };
+        if self.runtime.overlay_key(selection) {
+            self.activation_key = None;
+            self.layout()?;
+            self.redraw();
+            return Ok(true);
+        }
+        Ok(false)
     }
     fn render(&mut self) -> Result<(), String> {
         // The host clock also advances here so a delayed OS redraw never paints
@@ -377,27 +881,85 @@ impl<C: 'static> App<C> {
         else {
             return Ok(());
         };
-        let theme = Theme::dark();
+        let ui = self.theme_fn.as_ref().map_or_else(
+            || self.options.resolve_theme(self.system_theme),
+            |f| f(&self.context, self.system_theme),
+        );
+        if !ui.palette.is_valid() {
+            return Err("theme callback returned invalid palette".into());
+        }
+        if self.theme_fn.is_some() && self.options.theme != ThemeMode::System {
+            let bg = ui.palette.base[0];
+            w.set_theme(Some(if bg[0] + bg[1] + bg[2] > 1.5 {
+                winit::window::Theme::Light
+            } else {
+                winit::window::Theme::Dark
+            }));
+        }
+        let theme = ui.legacy_theme();
         let shape_calls_before = self.painter.shape_draw_calls;
         let text_misses_before = self.painter.text_cache_misses;
-        let batches = self.runtime.paint(&mut self.painter, &theme);
+        let batches = self.runtime.paint_ui(&mut self.painter, &ui);
         let paint_done = self.trace.then(Instant::now);
-        let pixmap = self.painter.rasterize(&batches, theme.background)?;
-        let raster_done = self.trace.then(Instant::now);
-        let surface = self.surface.as_mut().ok_or("missing surface")?;
-        let new_size = [size.width, size.height];
-        if needs_surface_resize(self.surface_size, new_size) {
-            surface.resize(width, height).map_err(|e| e.to_string())?;
-            self.surface_size = Some(new_size);
+        #[cfg(feature = "native-gpu")]
+        let alpha_active = self.gpu.is_some();
+        #[cfg(not(feature = "native-gpu"))]
+        let alpha_active = false;
+        #[cfg(feature = "native-gpu")]
+        let background = root_clear(&theme, self.options.background, alpha_active);
+        #[cfg(not(feature = "native-gpu"))]
+        let _ = alpha_active;
+        let mut raster_done = paint_done;
+        #[cfg(feature = "native-gpu")]
+        let gpu_presented = match self
+            .gpu
+            .as_mut()
+            .map(|gpu| gpu.present(&batches, &mut self.painter, background))
+        {
+            Some(Ok(super::gpu::PresentStatus::Presented)) => true,
+            Some(Ok(super::gpu::PresentStatus::Retry)) => {
+                w.request_redraw();
+                return Ok(());
+            }
+            Some(Err(error)) => {
+                if std::env::var("VOLT_UI_RENDERER").as_deref() == Ok("gpu") {
+                    return Err(format!("required GPU render failed: {error}"));
+                }
+                eprintln!(
+                    "Volt UI: GPU drawing failed ({error}); switching to opaque software fallback"
+                );
+                self.gpu = None;
+                w.set_blur(false);
+                let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
+                self.surface = Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
+                self.surface_size = None;
+                false
+            }
+            None => false,
+        };
+        #[cfg(not(feature = "native-gpu"))]
+        let gpu_presented = false;
+        let mut pack_done = self.trace.then(Instant::now);
+        if !gpu_presented {
+            let pixmap = self
+                .painter
+                .rasterize(&batches, root_clear(&theme, self.options.background, false))?;
+            raster_done = self.trace.then(Instant::now);
+            let surface = self.surface.as_mut().ok_or("missing surface")?;
+            let new_size = [size.width, size.height];
+            if needs_surface_resize(self.surface_size, new_size) {
+                surface.resize(width, height).map_err(|e| e.to_string())?;
+                self.surface_size = Some(new_size);
+            }
+            let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
+            for (dst, pixel) in buffer.iter_mut().zip(pixmap.pixels()) {
+                *dst = (u32::from(pixel.red()) << 16)
+                    | (u32::from(pixel.green()) << 8)
+                    | u32::from(pixel.blue());
+            }
+            pack_done = self.trace.then(Instant::now);
+            buffer.present().map_err(|e| e.to_string())?;
         }
-        let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
-        for (dst, pixel) in buffer.iter_mut().zip(pixmap.pixels()) {
-            *dst = (u32::from(pixel.red()) << 16)
-                | (u32::from(pixel.green()) << 8)
-                | u32::from(pixel.blue());
-        }
-        let pack_done = self.trace.then(Instant::now);
-        buffer.present().map_err(|e| e.to_string())?;
         self.frames += 1;
         self.animation_clock.presented(Instant::now());
         if let Some(start) = started {
@@ -412,11 +974,19 @@ impl<C: 'static> App<C> {
                 |released| format!("{:.3}", ms(released, presented)),
             );
             // Present return is measured, not the display's scanout/photon time.
-            eprintln!("VOLT_UI_TRACE frame={} pixels={}x{} layout_ms={:.3} paint_ms={:.3} raster_ms={:.3} pack_ms={:.3} present_ms={:.3} total_ms={:.3} mouse_release_to_present_ms={} shape_calls={} text_misses={}",
+            if gpu_presented {
+                eprintln!("VOLT_UI_TRACE renderer=gpu frame={} pixels={}x{} layout_ms={:.3} paint_ms={:.3} gpu_encode_submit_present_ms={:.3} total_ms={:.3} mouse_release_to_present_ms={} shape_calls={} text_misses={}",
+                    self.frames, size.width, size.height, ms(start, layout), ms(layout, paint),
+                    ms(paint, pack), ms(start, presented), release,
+                    self.painter.shape_draw_calls - shape_calls_before,
+                    self.painter.text_cache_misses - text_misses_before);
+            } else {
+                eprintln!("VOLT_UI_TRACE renderer=software frame={} pixels={}x{} layout_ms={:.3} paint_ms={:.3} raster_ms={:.3} pack_ms={:.3} present_ms={:.3} total_ms={:.3} mouse_release_to_present_ms={} shape_calls={} text_misses={}",
                 self.frames, size.width, size.height, ms(start, layout), ms(layout, paint),
                 ms(paint, raster), ms(raster, pack), ms(pack, presented), ms(start, presented),
                 release, self.painter.shape_draw_calls - shape_calls_before,
                 self.painter.text_cache_misses - text_misses_before);
+            }
         }
         Ok(())
     }
@@ -449,7 +1019,24 @@ impl<C: 'static> App<C> {
         }
     }
 }
-impl<C: 'static> ApplicationHandler for App<C> {
+impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: HostEvent) {
+        if event_loop.exiting() {
+            return;
+        }
+        let changed = self
+            .messages
+            .as_mut()
+            .is_some_and(|messages| messages.drain(&mut self.context));
+        if changed {
+            if let Err(error) = self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            }) {
+                self.fail(event_loop, error);
+            }
+        }
+    }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -457,17 +1044,41 @@ impl<C: 'static> ApplicationHandler for App<C> {
         let result = (|| -> Result<_, String> {
             let w = Arc::new(
                 event_loop
-                    .create_window(window_attributes(&self.options))
+                    .create_window(surface_window_attributes(&self.options))
                     .map_err(|e| e.to_string())?,
             );
+            self.system_theme = if w.theme() == Some(winit::window::Theme::Light) {
+                ThemeMode::Light
+            } else {
+                ThemeMode::Dark
+            };
+            let choice = std::env::var("VOLT_UI_RENDERER").ok();
+            let (try_gpu, require_gpu) =
+                gpu_policy(choice.as_deref(), cfg!(feature = "native-gpu"))?;
+            #[cfg(feature = "native-gpu")]
+            if try_gpu {
+                match super::gpu::GpuPresenter::new(w.clone(), self.options.background != WindowBackground::Opaque) {
+                    Ok(gpu)=>{eprintln!("Volt UI: Vello GPU drawing active ({}) — no CPU framebuffer raster; native blur remains an OS request",gpu.adapter_name);self.gpu=Some(gpu);return Ok((w,None));},
+                    Err(error) if require_gpu => return Err(format!("required GPU renderer unavailable: {error}")),
+                    Err(error)=>eprintln!("Volt UI: GPU renderer unavailable ({error}); using opaque software fallback"),
+                }
+            }
+            #[cfg(not(feature = "native-gpu"))]
+            let _ = (try_gpu, require_gpu);
+            #[cfg(not(feature = "native-gpu"))]
+            if self.options.background != WindowBackground::Opaque {
+                eprintln!("Volt UI: enable native-gpu for real window alpha; using opaque software fallback");
+            }
+            w.set_blur(false);
+            eprintln!("Volt UI: software renderer active");
             let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
             let surface = Surface::new(&context, w.clone()).map_err(|e| e.to_string())?;
-            Ok((w, surface))
+            Ok((w, Some(surface)))
         })();
         match result {
             Ok((w, surface)) => {
                 self.window = Some(w);
-                self.surface = Some(surface);
+                self.surface = surface;
                 self.surface_size = None;
                 self.runtime.invalidate_layout();
                 self.focused = true;
@@ -479,10 +1090,15 @@ impl<C: 'static> ApplicationHandler for App<C> {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        #[cfg(feature = "native-gpu")]
+        {
+            self.gpu = None;
+        }
         self.surface = None;
         self.surface_size = None;
         self.pending_release = None;
         self.window = None;
+        self.ime_allowed = false;
         self.runtime.cancel_input();
         self.settle_animations();
         self.pointer = None;
@@ -501,6 +1117,9 @@ impl<C: 'static> ApplicationHandler for App<C> {
         let result = (|| -> Result<(), String> {
             match event {
                 WindowEvent::CloseRequested => {
+                    if let Some(messages) = self.messages.as_mut() {
+                        messages.close();
+                    }
                     eprintln!(
                         "Closed after {} frames; {} shaped-text cache misses",
                         self.frames, self.painter.text_cache_misses
@@ -518,17 +1137,76 @@ impl<C: 'static> ApplicationHandler for App<C> {
                 WindowEvent::CursorMoved { position, .. } => {
                     self.layout()?;
                     self.pointer = Some([position.x as f32, position.y as f32]);
-                    if self
+                    // Outcome-aware moves keep slider drags and text selection live.
+                    let outcome = self
                         .runtime
-                        .pointer_move(position.x as f32, position.y as f32)
-                    {
+                        .pointer_move_outcome(
+                            position.x as f32,
+                            position.y as f32,
+                            &mut self.handlers,
+                            &mut self.context,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    if outcome.activated {
+                        self.after_input(outcome)?;
+                    } else if outcome.changed {
+                        self.layout()?;
                         self.redraw();
+                    }
+                }
+                WindowEvent::ThemeChanged(theme) => {
+                    self.system_theme = if theme == winit::window::Theme::Light {
+                        ThemeMode::Light
+                    } else {
+                        ThemeMode::Dark
+                    };
+                    self.redraw();
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    self.layout()?;
+                    if let Some([x, y]) = self.pointer {
+                        let scale = self.window.as_ref().map_or(1., |w| w.scale_factor() as f32);
+                        let mut delta = match delta {
+                            MouseScrollDelta::LineDelta(x, y) => [-x * 40., -y * 40.],
+                            MouseScrollDelta::PixelDelta(p) => {
+                                [-p.x as f32 / scale, -p.y as f32 / scale]
+                            }
+                        };
+                        if self.modifiers.shift_key() && delta[0] == 0. {
+                            delta.swap(0, 1);
+                        }
+                        let outcome = self
+                            .runtime
+                            .scroll_outcome(x, y, delta, &mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?;
+                        if outcome.changed || outcome.activated {
+                            self.after_input(outcome)?;
+                            self.layout()?;
+                            self.runtime.pointer_move(x, y);
+                            self.redraw();
+                        }
                     }
                 }
                 WindowEvent::CursorLeft { .. } => {
                     self.pointer = None;
                     if self.runtime.pointer_leave() {
                         self.redraw();
+                    }
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Right,
+                    ..
+                } => {
+                    self.layout()?;
+                    self.activation_key = None;
+                    self.runtime.cancel_input();
+                    if let Some([x, y]) = self.pointer {
+                        let outcome = self
+                            .runtime
+                            .context_menu_at(x, y, &mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?;
+                        self.after_input(outcome)?;
                     }
                 }
                 WindowEvent::MouseInput {
@@ -555,7 +1233,22 @@ impl<C: 'static> ApplicationHandler for App<C> {
                                         }
                                     }
                                 } else {
-                                    self.runtime.pointer_down(x, y);
+                                    if self.modifiers.shift_key()
+                                        && self.runtime.editor_pointer_down(x, y, true)
+                                    {
+                                        self.redraw();
+                                        return Ok(());
+                                    }
+                                    let outcome = self
+                                        .runtime
+                                        .pointer_down_outcome(
+                                            x,
+                                            y,
+                                            &mut self.handlers,
+                                            &mut self.context,
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                    self.after_input(outcome)?;
                                 }
                                 self.redraw();
                             }
@@ -574,6 +1267,7 @@ impl<C: 'static> ApplicationHandler for App<C> {
                 }
                 WindowEvent::Focused(false) => {
                     self.focused = false;
+                    self.runtime.set_tooltips_active(false);
                     self.pointer = None;
                     self.activation_key = None;
                     self.runtime.cancel_input();
@@ -582,6 +1276,10 @@ impl<C: 'static> ApplicationHandler for App<C> {
                 }
                 WindowEvent::Focused(true) => {
                     self.focused = true;
+                    if self.runtime.set_tooltips_active(true) {
+                        self.layout()?;
+                        self.redraw();
+                    }
                     self.animation_clock.reset();
                 }
                 WindowEvent::Occluded(occluded) => {
@@ -595,8 +1293,34 @@ impl<C: 'static> ApplicationHandler for App<C> {
                         self.redraw();
                     }
                 }
+                WindowEvent::Ime(ime) => match ime {
+                    Ime::Enabled => self.sync_ime(),
+                    Ime::Preedit(text, cursor) => {
+                        if self.runtime.ime_preedit(&text, cursor) {
+                            self.redraw();
+                        }
+                    }
+                    Ime::Commit(text) => {
+                        let outcome = self
+                            .runtime
+                            .ime_commit(&text, &mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?;
+                        self.after_input(outcome)?;
+                    }
+                    Ime::Disabled => {
+                        if self.runtime.ime_cancel() {
+                            self.redraw();
+                        }
+                    }
+                },
                 WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
                 WindowEvent::KeyboardInput { event, .. } => {
+                    if event.state == ElementState::Pressed && self.editor_keyboard(&event)? {
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.value_keyboard(&event)? {
+                        return Ok(());
+                    }
                     if let Key::Named(key) = event.logical_key {
                         match key {
                             NamedKey::F5
@@ -607,7 +1331,30 @@ impl<C: 'static> ApplicationHandler for App<C> {
                             NamedKey::Tab if event.state == ElementState::Pressed => {
                                 self.activation_key = None;
                                 self.runtime.focus_next(self.modifiers.shift_key());
+                                self.layout()?;
                                 self.redraw();
+                            }
+                            NamedKey::ArrowLeft
+                            | NamedKey::ArrowRight
+                            | NamedKey::Home
+                            | NamedKey::End
+                                if event.state == ElementState::Pressed =>
+                            {
+                                use crate::declarative::SelectionKey;
+                                let selection = match key {
+                                    NamedKey::ArrowLeft => SelectionKey::Previous,
+                                    NamedKey::ArrowRight => SelectionKey::Next,
+                                    NamedKey::Home => SelectionKey::First,
+                                    _ => SelectionKey::Last,
+                                };
+                                let outcome = self
+                                    .runtime
+                                    .selection_key(selection, &mut self.handlers, &mut self.context)
+                                    .map_err(|e| e.to_string())?;
+                                if outcome.changed || outcome.activated {
+                                    self.activation_key = None;
+                                }
+                                self.after_input(outcome)?;
                             }
                             NamedKey::Enter | NamedKey::Space => match event.state {
                                 ElementState::Pressed
@@ -628,9 +1375,15 @@ impl<C: 'static> ApplicationHandler for App<C> {
                                 }
                                 _ => {}
                             },
-                            NamedKey::Escape => {
+                            NamedKey::Escape if event.state == ElementState::Pressed => {
                                 self.activation_key = None;
-                                if self.runtime.cancel_input() {
+                                let outcome = self
+                                    .runtime
+                                    .dismiss_overlay(&mut self.handlers, &mut self.context)
+                                    .map_err(|e| e.to_string())?;
+                                if outcome.activated {
+                                    self.after_input(outcome)?;
+                                } else if self.runtime.cancel_input() {
                                     self.redraw();
                                 }
                             }
@@ -640,6 +1393,7 @@ impl<C: 'static> ApplicationHandler for App<C> {
                 }
                 _ => {}
             }
+            self.sync_ime();
             Ok(())
         })();
         if let Err(e) = result {
@@ -647,6 +1401,12 @@ impl<C: 'static> ApplicationHandler for App<C> {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if event_loop.exiting() {
+            return;
+        }
+        if let Some(messages) = self.messages.as_mut() {
+            messages.finish_turn();
+        }
         let now = Instant::now();
         let changed = self.advance_animations(now);
         let active = self.animations_can_run() && self.runtime.is_animating();
@@ -673,6 +1433,31 @@ fn chrome_policy(chrome: WindowChrome, macos: bool) -> (bool, bool) {
         WindowChrome::Overlay => (true, macos),
         WindowChrome::Borderless => (false, false),
     }
+}
+fn root_clear(theme: &Theme, background: WindowBackground, alpha_active: bool) -> [f32; 4] {
+    let mut clear = theme.background;
+    clear[3] = if alpha_active {
+        clear[3] * background.opacity()
+    } else {
+        1.
+    };
+    clear
+}
+fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
+    let theme = match options.theme {
+        ThemeMode::Light => Some(winit::window::Theme::Light),
+        ThemeMode::Dark => Some(winit::window::Theme::Dark),
+        ThemeMode::System => None,
+    };
+    window_attributes(&options.window)
+        .with_theme(theme)
+        .with_transparent(
+            cfg!(feature = "native-gpu") && options.background != WindowBackground::Opaque,
+        )
+        .with_blur(
+            cfg!(feature = "native-gpu")
+                && matches!(options.background, WindowBackground::Blur { .. }),
+        )
 }
 fn window_attributes(options: &WindowOptions) -> WindowAttributes {
     let (decorations, integrated_titlebar) =
@@ -770,6 +1555,69 @@ pub fn load_document(path: &std::path::Path) -> Result<String, std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn worker_batch_updates_non_send_state_and_composes_once() {
+        use std::{cell::Cell, rc::Rc};
+        struct Local {
+            count: usize,
+            calls: Rc<Cell<usize>>,
+        }
+        let calls = Rc::new(Cell::new(0));
+        let mut context = Local {
+            count: 0,
+            calls: calls.clone(),
+        };
+        let content = Content::Rust(Box::new(|app: &Local| {
+            app.calls.set(app.calls.get() + 1);
+            crate::ui::text(format!("Count {}", app.count))
+                .key("count")
+                .into()
+        }));
+        let Content::Rust(view) = &content else {
+            unreachable!()
+        };
+        let (doc, mut handlers) = view(&context).build().unwrap().into_parts();
+        let mut bindings = Bindings::default();
+        let mut runtime = Runtime::new(doc, &handlers, &bindings).unwrap();
+        let (sender, mut messages) =
+            super::super::messages::channel(|app: &mut Local, n: usize| app.count += n);
+        for _ in 0..100 {
+            sender.send(1).unwrap();
+        }
+        messages.connect(Arc::new(|| true));
+        assert!(messages.drain(&mut context));
+        assert_eq!(context.count, 64);
+        content
+            .after_input(
+                InputOutcome {
+                    changed: true,
+                    activated: true,
+                },
+                &context,
+                &mut runtime,
+                &mut handlers,
+                &mut bindings,
+            )
+            .unwrap();
+        assert_eq!(calls.get(), 2);
+        assert_eq!(runtime.document().root().text.as_deref(), Some("Count 64"));
+        messages.finish_turn();
+        messages.drain(&mut context);
+        content
+            .after_input(
+                InputOutcome {
+                    changed: true,
+                    activated: true,
+                },
+                &context,
+                &mut runtime,
+                &mut handlers,
+                &mut bindings,
+            )
+            .unwrap();
+        assert_eq!(context.count, 100);
+        assert_eq!(calls.get(), 3);
+    }
     #[test]
     fn window_options_are_additive_and_native_stays_default() {
         // This exhaustive literal protects the original public options contract.
@@ -1236,5 +2084,47 @@ mod rust_view_tests {
         );
         assert!(result.is_err());
         assert_eq!(calls.get(), 0);
+    }
+}
+#[cfg(test)]
+mod surface_option_tests {
+    use super::*;
+    #[test]
+    fn mode_and_accent_resolve_without_altering_legacy_option_fields() {
+        let native = NativeOptions::default();
+        let options = native
+            .with_theme(ThemeMode::System)
+            .with_accent([0.2, 0.3, 0.9, 1.]);
+        assert_eq!(options.chrome, WindowChrome::Native);
+        assert_eq!(
+            options.resolve_theme(ThemeMode::Light).palette.base[0],
+            Theme::light().background
+        );
+        assert_eq!(
+            options.resolve_theme(ThemeMode::Dark).palette.base[0],
+            Theme::dark().background
+        );
+        assert_eq!(
+            options.resolve_theme(ThemeMode::Light).palette.primary,
+            [0.2, 0.3, 0.9, 1.]
+        );
+    }
+    #[test]
+    fn opaque_fallback_never_packs_a_premultiplied_translucent_clear() {
+        let mut theme = Theme::dark();
+        theme.background[3] = 0.5;
+        assert_eq!(
+            root_clear(
+                &theme,
+                WindowBackground::Transparent { opacity: 0.6 },
+                false
+            )[3],
+            1.
+        );
+        assert!(
+            (root_clear(&theme, WindowBackground::Transparent { opacity: 0.6 }, true)[3] - 0.3)
+                .abs()
+                < 0.001
+        );
     }
 }
