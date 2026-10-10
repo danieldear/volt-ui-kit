@@ -8,6 +8,117 @@ fn batch(shapes: Vec<Shape>) -> PaintBatch<Shape, super::raster::Glyph> {
         clip: Rect::new(0., 0., 64., 64.).unwrap(),
     }
 }
+
+#[test]
+#[ignore = "requires a GPU and installed macOS fonts; explicit hardening acceptance"]
+#[cfg(target_os = "macos")]
+fn gpu_text_alpha_and_ink_clipping_regressions() {
+    use crate::declarative::{DocumentPainter, TextMetrics, TextStyle};
+    let mut gpu = super::GpuOffscreenRenderer::new().unwrap();
+    let mut p = RasterPainter::new(Viewport::new(128., 128., 1.).unwrap());
+    for (family, text) in [("Apple Color Emoji", "😀"), ("Verdana", "Ab")] {
+        let mut b = batch(vec![]);
+        b.clip = Rect::new(0., 0., 128., 128.).unwrap();
+        p.ui_text_styled(
+            &mut b.glyphs,
+            text,
+            [16., 16., 100., 100.],
+            &TextStyle {
+                family: family.into(),
+                size: 64.,
+                ..Default::default()
+            },
+            [1., 1., 1., 0.2],
+        );
+        let pix = gpu.render(&mut p, &[b], [0.; 4]).unwrap();
+        let alpha = pix.pixels().iter().map(|p| p.alpha()).max().unwrap();
+        assert!(
+            (48..=52).contains(&alpha),
+            "{family}: max alpha {alpha}, expected 51"
+        );
+    }
+    for family in ["Arial Unicode MS", "Verdana"] {
+        let style = TextStyle {
+            family: family.into(),
+            size: 64.,
+            italic: true,
+            ..Default::default()
+        };
+        let [w, h] = p.measure_styled("f", &style, 100.);
+        let mut b = batch(vec![]);
+        b.clip = Rect::new(0., 0., 128., 128.).unwrap();
+        p.ui_text_styled(&mut b.glyphs, "f", [16., 16., w, h], &style, [1.; 4]);
+        let pix = gpu.render(&mut p, &[b], [0.; 4]).unwrap();
+        let outside = (0..128)
+            .flat_map(|y| (0..128).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                (x as f32 >= 16. + w || (x as f32) < 16.) && pix.pixel(x, y).unwrap().alpha() > 0
+            })
+            .count();
+        assert_eq!(outside, 0, "{family} ink escaped text box");
+    }
+}
+
+#[test]
+#[ignore = "requires an actual GPU; explicit atlas admission acceptance"]
+fn incompatible_skinny_images_fall_back_before_texture_upload() {
+    use crate::graphics::{Image, ImageFit};
+    let mut gpu = super::GpuOffscreenRenderer::new().unwrap();
+    let mut p = RasterPainter::new(Viewport::new(64., 64., 1.).unwrap());
+    let mut b = batch(vec![]);
+    for (i, (w, h, c)) in [(8192, 1, [255, 0, 0, 255]), (1, 8192, [0, 255, 0, 255])]
+        .into_iter()
+        .enumerate()
+    {
+        let image = Image::from_rgba(w, h, c.repeat(w as usize * h as usize)).unwrap();
+        b.shapes.push(Shape::Image(
+            [i as f32 * 32., 0., 32., 32.],
+            image.background().fit(ImageFit::Stretch),
+            1.,
+        ));
+    }
+    let pix = gpu.render(&mut p, &[b], [0., 0., 0., 1.]).unwrap();
+    assert_eq!(gpu.last_over_budget(), Some("image atlas packing"));
+    assert_eq!(pix.pixel(48, 16).unwrap().green(), 255);
+    assert_eq!(
+        gpu.resident_image_bytes(),
+        0,
+        "reject before any GPU image uploads"
+    );
+    // Fallback is per-frame; a later admitted scene must use the GPU again.
+    gpu.render(
+        &mut p,
+        &[batch(vec![Shape::Rectangle(
+            [0., 0., 64., 64.],
+            [0., 0., 1., 1.],
+        )])],
+        [0.; 4],
+    )
+    .unwrap();
+    assert_eq!(gpu.last_over_budget(), None);
+}
+
+#[test]
+#[ignore = "requires an actual GPU; explicit residency admission acceptance"]
+fn over_budget_images_use_software_without_resident_uploads() {
+    use crate::graphics::{Image, ImageFit};
+    let mut gpu = super::GpuOffscreenRenderer::new().unwrap();
+    let mut p = RasterPainter::new(Viewport::new(64., 64., 1.).unwrap());
+    let mut b = batch(vec![]);
+    for (i, c) in [[255, 0, 0, 255], [0, 255, 0, 255]].into_iter().enumerate() {
+        let image = Image::from_rgba(4096, 4096, c.repeat(4096 * 4096)).unwrap();
+        b.shapes.push(Shape::Image(
+            [i as f32 * 32., 0., 32., 32.],
+            image.background().fit(ImageFit::Stretch),
+            1.,
+        ));
+    }
+    let pix = gpu.render(&mut p, &[b], [0.; 4]).unwrap();
+    assert_eq!(gpu.last_over_budget(), Some("image residency"));
+    assert_eq!(gpu.resident_image_bytes(), 0);
+    assert_eq!(pix.pixel(16, 16).unwrap().red(), 255);
+    assert_eq!(pix.pixel(48, 16).unwrap().green(), 255);
+}
 #[test]
 fn scene_is_reset_and_shape_commands_are_not_cpu_framebuffer_uploads() {
     let mut encoder = GpuSceneEncoder::default();

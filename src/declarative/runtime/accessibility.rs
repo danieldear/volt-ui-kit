@@ -44,6 +44,14 @@ pub enum AccessValue {
 }
 
 impl Runtime {
+    // Treat adapter requests as untrusted commands. Check the current mounted
+    // target before touching focus, selection, composition or application state.
+    fn access_target(&self, id: &str) -> Option<&LayoutBox> {
+        self.scope_allows_id(id).then_some(())?;
+        self.boxes
+            .iter()
+            .find(|b| b.id == id && b.enabled && !b.departing && b.layout_visible)
+    }
     /// The current accessibility tree. While a modal overlay is open only its
     /// contents are exposed, matching what pointer and keyboard can reach.
     pub fn accessibility_nodes(&self) -> Vec<AccessNode> {
@@ -121,11 +129,7 @@ impl Runtime {
     }
     /// Move keyboard focus to a node, as a screen reader's focus action does.
     pub fn accessibility_focus(&mut self, id: &str) -> bool {
-        let reachable = self.scope_allows_id(id)
-            && self
-                .boxes
-                .iter()
-                .any(|b| b.id == id && b.enabled && interactive_box(b));
+        let reachable = self.access_target(id).is_some_and(interactive_box);
         if reachable && self.focused.as_deref() != Some(id) {
             self.cancel_input();
             self.focused = Some(id.to_owned());
@@ -140,10 +144,16 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
-        self.accessibility_focus(id);
+        if !self
+            .access_target(id)
+            .is_some_and(|b| interactive(b.kind) && b.editor.is_none() && b.slider.is_none())
+        {
+            return Ok(InputOutcome::default());
+        }
+        let focused = self.accessibility_focus(id);
         let activated = self.activate(id, handlers, context)?;
         Ok(InputOutcome {
-            changed: true,
+            changed: focused || activated,
             activated,
         })
     }
@@ -155,30 +165,43 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
-        if !self.accessibility_focus(id) && self.focused.as_deref() != Some(id) {
-            return Ok(InputOutcome::default());
-        }
         match value {
             AccessValue::Text(text) => {
-                if !self.editing_focus() {
+                if text.len() > editing::MAX_TEXT {
                     return Ok(InputOutcome::default());
                 }
-                self.editor_select_all();
-                self.text_input(&text, handlers, context)
-            }
-            AccessValue::Number(n) => {
-                let Some(props) = self
-                    .boxes
-                    .iter()
-                    .find(|b| b.id == id)
-                    .and_then(|b| b.slider.clone())
+                let Some(multiline) = self
+                    .access_target(id)
+                    .and_then(|b| b.editor.as_ref())
+                    .filter(|e| !e.read_only)
+                    .map(|e| e.multiline)
                 else {
                     return Ok(InputOutcome::default());
                 };
+                let sanitized = editing::sanitize(&text, multiline);
+                if sanitized.len() > editing::MAX_TEXT || (!text.is_empty() && sanitized.is_empty())
+                {
+                    return Ok(InputOutcome::default());
+                }
+                let focused = self.accessibility_focus(id);
+                self.editor_select_all();
+                let mut result = self.text_input(&text, handlers, context)?;
+                result.changed |= focused;
+                Ok(result)
+            }
+            AccessValue::Number(n) => {
+                let Some(props) = self
+                    .access_target(id)
+                    .and_then(|b| b.slider.clone())
+                    .filter(|_| n.is_finite())
+                else {
+                    return Ok(InputOutcome::default());
+                };
+                let focused = self.accessibility_focus(id);
                 let activated =
                     self.emit_slider(id, value_controls::snap(&props, n), handlers, context)?;
                 Ok(InputOutcome {
-                    changed: activated,
+                    changed: focused || activated,
                     activated,
                 })
             }
@@ -192,14 +215,17 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
-        if !self.accessibility_focus(id) && self.focused.as_deref() != Some(id) {
+        if self.access_target(id).is_none_or(|b| b.slider.is_none()) {
             return Ok(InputOutcome::default());
         }
+        let focused = self.accessibility_focus(id);
         let key = if increase {
             value_controls::ValueKey::Increase
         } else {
             value_controls::ValueKey::Decrease
         };
-        self.slider_key(key, handlers, context)
+        let mut result = self.slider_key(key, handlers, context)?;
+        result.changed |= focused;
+        Ok(result)
     }
 }

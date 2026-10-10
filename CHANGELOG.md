@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 (unreleased)
+
+- Security/performance hardening: validate accessibility targets and values
+  before side effects; enforce a hard 96 MiB GPU image registry budget and
+  packing admission before uploads; borrow opaque image staging pixels and
+  cache outline-ink bounds. Fix miter damage, GPU colour-glyph alpha/italic
+  clipping and primary-variant contrast. See `docs/SECURITY_AND_PERFORMANCE.md`
+  for measured results, advisory warnings and remaining limitations.
 
 - Components: `ButtonVariant`/`ControlSize` presets, `.disclosure(open)` and
   `.label_align`, token opacity (`ColorToken::alpha`, `"@role/NN"`), readable
@@ -13,7 +20,7 @@
 - Software renderer damage tracking: only changed regions are repainted and
   presented; incremental frames match full repaints pixel for pixel.
 - GPU: Vello vector text, GPU-resident images, estimates for every Vello fixed
-  buffer with per-frame software fallback (never a stale frame), device-loss
+  buffer with per-frame software fallback for detected overflows, device-loss
   recovery. Benchmarks time settled frames. Windows added to CI.
 - Document limits raised to 4096 nodes and depth 48.
 

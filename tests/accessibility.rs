@@ -67,6 +67,85 @@ fn mount(app: &App) -> (Runtime, Handlers<'static, App>) {
         .unwrap();
     (runtime, handlers)
 }
+
+#[test]
+fn invalid_accessibility_actions_do_not_change_focus_or_call_handlers() {
+    let mut app = App::default();
+    let (mut runtime, mut handlers) = mount(&app);
+    runtime.accessibility_focus("save");
+    assert!(runtime
+        .accessibility_activate("name", &mut handlers, &mut app)
+        .is_ok());
+    for (id, value) in [
+        ("name", AccessValue::Text("x".repeat(8193))),
+        ("save", AccessValue::Number(1.)),
+        ("volume", AccessValue::Number(f32::NAN)),
+        ("volume", AccessValue::Text("wrong type".into())),
+        ("name", AccessValue::Text("\t".repeat(3000))),
+        ("name", AccessValue::Text("\0\u{1}".into())),
+    ] {
+        let result = runtime
+            .accessibility_set_value(id, value, &mut handlers, &mut app)
+            .unwrap();
+        assert!(!result.changed && !result.activated);
+        assert!(runtime
+            .accessibility_nodes()
+            .iter()
+            .any(|n| n.id == "save" && n.focused));
+    }
+    assert!(
+        !runtime
+            .accessibility_step("name", true, &mut handlers, &mut app)
+            .unwrap()
+            .changed
+    );
+    assert_eq!(app.saves, 0);
+    assert!(app.name.is_empty());
+    assert_eq!(app.volume, 0.);
+}
+
+#[test]
+fn rejected_text_requests_preserve_editor_selection_and_read_only_state() {
+    let mut app = App {
+        name: "Ada".into(),
+        ..Default::default()
+    };
+    let (mut runtime, mut handlers) = mount(&app);
+    runtime.accessibility_focus("name");
+    let before = runtime.editor_selection("name");
+    for text in ["x".repeat(8193), "\t".repeat(3000), "\0".into()] {
+        let result = runtime
+            .accessibility_set_value("name", AccessValue::Text(text), &mut handlers, &mut app)
+            .unwrap();
+        assert!(!result.changed && !result.activated);
+        assert_eq!(runtime.editor_selection("name"), before);
+        assert_eq!(app.name, "Ada");
+    }
+    let ui: Element<App> = text_field("Locked")
+        .key("locked")
+        .read_only(true)
+        .on_change(|app: &mut App, value| app.name = value)
+        .into();
+    let (doc, mut h) = ui.build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(300., 100., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    assert!(
+        !r.accessibility_set_value(
+            "locked",
+            AccessValue::Text("overwrite".into()),
+            &mut h,
+            &mut app
+        )
+        .unwrap()
+        .changed
+    );
+    assert_eq!(app.name, "Ada");
+}
 fn rebuild(app: &App, runtime: &mut Runtime, handlers: &mut Handlers<'static, App>) {
     let (document, next) = view(app).build().unwrap().into_parts();
     runtime

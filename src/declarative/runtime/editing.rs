@@ -1,7 +1,7 @@
 //! Bounded plain-text editing, independent of a window/clipboard implementation.
 use super::*;
 use unicode_segmentation::UnicodeSegmentation;
-const MAX_TEXT: usize = 8192;
+pub(super) const MAX_TEXT: usize = 8192;
 const MAX_UNDO: usize = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditKey {
@@ -163,7 +163,7 @@ fn next(text: &str, at: usize) -> usize {
         .find(|i| *i > at)
         .unwrap_or(text.len())
 }
-fn sanitize(text: &str, multiline: bool) -> String {
+pub(super) fn sanitize(text: &str, multiline: bool) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .chars()

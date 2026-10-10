@@ -1,6 +1,6 @@
 [package]
 name = "volt-ui-kit"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.87"
 license = "MIT"
@@ -13,7 +13,7 @@ default = []
 declarative = ["dep:serde", "dep:serde_json"]
 rust-ui = ["declarative", "dep:unicode-segmentation"]
 native = ["rust-ui", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:cosmic-text", "dep:image", "dep:arboard", "dep:accesskit", "dep:accesskit_winit"]
-native-gpu = ["native", "dep:vello", "dep:wgpu", "dep:pollster"]
+native-gpu = ["native", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
 
 [dependencies]
 unicode-width = "0.2"
@@ -33,6 +33,9 @@ image = { version = "=0.25.8", default-features = false, features = ["png", "jpe
 # releases require newer Rust. This is isolated to the optional native host.
 vello = { version = "=0.6.0", optional = true, default-features = false, features = ["wgpu", "bump_estimate"] }
 pollster = { version = "0.4", optional = true }
+# Reuse Vello 0.6's already-transitive allocator for packing admission. This
+# adds no new locked packages and is absent from the default/native CPU build.
+guillotiere = { version = "=0.6.2", optional = true }
 cosmic-text = { version = "0.14.2", optional = true }
 
 # One native compute backend per platform; no unused GLES/WebGPU backend.

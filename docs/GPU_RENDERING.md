@@ -1,9 +1,13 @@
 # Native GPU drawing and dependency policy
 
-Source/runtime checked **2026-10-09**. The optional `native-gpu` host now draws
+Source/runtime checked **2026-10-09**, image admission/text hardening **2026-10-10**.
+The optional `native-gpu` host now draws
 shapes, paths, image/glyph textures, clips, group opacity and shadows with
 **Vello 0.6 / wgpu 26**. It no longer software-rasterizes the full window and
-uploads that framebuffer. Opaque windows use this path too.
+uploads that framebuffer for admitted GPU scenes. Detected over-budget frames
+deliberately use software fallback; opaque windows use the GPU path too.
+See [security/performance hardening](SECURITY_AND_PERFORMANCE.md) for the hard
+image registry limit, packing admission, fresh measurements and remaining gaps.
 
 ## The boundary
 
