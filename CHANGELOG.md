@@ -2,6 +2,48 @@
 
 ## 0.1.0 (unreleased)
 
+- Bounded typed native worker messages with coalesced winit wakeups, batched
+  UI-thread state updates, reentrant-producer fairness and close/cancel contracts.
+- Nested focus reveal, captured draggable scrollbars and opt-in multiline soft
+  wrap with shared paint/caret/selection metrics. Physical IME/bidi and OS
+  accessibility acceptance remain separate gates.
+- Typed in-window menus/context actions, tooltip/popover, progress/loading,
+  fixed-row virtualization, sortable tables, expandable trees and split panes.
+- Showcase Activity/Explorer are the new polished component acceptance surface;
+  legacy Lab routes remain fixtures. GPU Showcase requests a smoke-tinted blurred
+  window by default; opaque override, default Volt APIs/dependencies unchanged.
+  Document the pinned winit macOS private-blur-API release limitation explicitly.
+- Additive `.fill_width()` clears fixed component defaults for parent allocation;
+  virtual rows stretch with their list and menu styling reaches the actual trigger.
+
+- Replace the optional native GPU texture presenter with Vello 0.6/wgpu 26 GPU
+  scene drawing for opaque/alpha windows: paths, glyph/image textures, nested
+  clips, opacity and analytic shadows. Explicit auto/gpu/software policy,
+  cached resources, diagnostic boundaries and actual hardware readback tests.
+  Prune unused backend features while retaining Rust 1.87 and default embedded
+  dependencies. No full CPU framebuffer raster/upload on the native GPU path.
+
+- Rust-only reusable ButtonBar/Toolbar, typed SegmentedControl/TabBar and Tabs
+  composites, with controlled selection, active-page-only callbacks, joined
+  Full/selected outer corners and disabled-item validation. Additive group-scoped
+  Left/Right/Home/End selection preserves ordinary button/legacy JSON behavior.
+  UI Lab covers these controls; Atelier navigation now uses the typed tab bar.
+- Controlled TextField/TextArea with grapheme editing, bounded undo/redo, selection,
+  clipped viewport and IME; lazy native text clipboard, read-only/password protection.
+  Typed Slider/Select and controlled modal/popup portals with input isolation and
+  focus trapping/restoration. UI Lab exercises them together; Desk has real editing.
+  Preserve Northbound contributor app. OS accessibility and mobile remain pending.
+
+- Canonical `ui_lab` app with persistent demo state, section navigation, appearance
+  controls, text/color specimens, ellipse/path clipping, horizontal/both-axis/nested
+  scroll views, launch flags and headless section snapshots. Future feature demos
+  extend this one workbench; focused examples remain regression fixtures.
+- Additive `.scrollbars(Scrollbars::Hidden)` indicator policy. Hiding indicators
+  leaves scroll input, offsets, clipping and callbacks intact.
+- Fix natural scroll sizing through nested automatic containers while preserving
+  bounded flex/spacers inside fixed-size panels, and round natural badge widths
+  outward to prevent fractional-width last-glyph wrapping/clipping.
+
 Extracted Volt presentation models, layouts, icon paths and paint recipes.
 
 - Glass Browser-inspired optional surface tokens, adaptive tint, generic Panel and rounded/clipped layered pointer routing. Existing Volt visuals remain unchanged.
@@ -55,3 +97,34 @@ Extracted Volt presentation models, layouts, icon paths and paint recipes.
   active-only timers, focus/occlusion settling and explicit reduced-motion policy.
 - rust_effects example and native pixel/latency/drag/compatibility regressions;
   no required Painter methods, new default dependencies or Volt vendor edits.
+
+### Semantic surfaces and scrolling
+
+- Fixed glow/shadow overflow through tight ordinary layout parents.
+- Added semantic palettes, Light/Dark/System mode, custom palettes/global accents,
+  and state-derived theme callbacks without changing legacy options structs.
+- Added shared bounded PNG/JPEG image handles, fit/position/opacity, retained vector
+  canvas commands, and explicit rounded/circle/path clips with input routing.
+- Added opt-in Auto/Vertical/Horizontal/Both scrolling, keyed offsets, wheel/trackpad
+  routing, nested edge bubbling, resize clamps and overlay position indicators.
+- Added optional `native-gpu` alpha presenter and native blur request with logged
+  opaque fallback. Real compositor/device acceptance remains separate.
+- Added surface/scroll/transparent examples and regression tests.
+
+### Original app-scale showcases
+
+- Added Volt Atelier Welcome/Workspace/Component Studio screens to the shared UI
+  Lab state, with a thin `showcase` launcher, responsive columns, real callbacks,
+  live semantic palettes, typography, vectors, clips and horizontal gallery.
+- Added original Volt Desk three-pane desktop composition with keyed local
+  conversations, fixed sample composer, independently scrolling panes and compact
+  launch mode. Still not an AI client; the later input batch adds an editable composer.
+- Added installed-font SF/SF Pro and SF Mono aliases in the optional native painter;
+  preserve old system/generic font behavior and never bundle Apple fonts.
+- Added opt-in wheel-target passthrough for empty decorative overlay layout boxes;
+  descendants still receive input, and existing routing defaults remain unchanged.
+- Added font/glyph identity, geometry, callback, scroll, DPI and bounded-state
+  regressions plus app-scale design and manual acceptance documentation.
+- Fixed Atelier's Full corner selector: retain `Rounding::Full` rather than an
+  invalid 999px sentinel, so selecting it no longer rejects later UI updates.
+  Added all-preset rendering and pointer/keyboard/recomposition regressions.

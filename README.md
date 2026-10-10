@@ -4,6 +4,55 @@ The cards, buttons, forms, palettes and vector icons behind Volt — extracted i
 
 **Status:** working extraction, version 0.1.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
 
+## Polished component testing: Volt Atelier
+
+```sh
+cargo run --locked --features native-gpu --example showcase
+```
+
+The legacy diagnostic workbench remains available; new component development and visual acceptance use the polished [Showcase](docs/SHOWCASE_APPS.md). It brings controls, responsive layout,
+fonts/colors, themes/accents, effects, images, vector shapes (including ellipses),
+clipping and vertical/horizontal/nested scrolling into one stateful app. Switch
+sections without losing demo values. Previous/Next also reaches every section on
+small windows. The Lab is retained as a diagnostic fixture; new capability demos and visual acceptance extend Showcase instead.
+
+```sh
+cargo run --features native --example ui_lab -- --section scrolling --theme light
+cargo run --features native-gpu --example ui_lab -- --section window --background blur --chrome overlay
+```
+
+See [the lab guide](docs/UI_LAB.md) for all sections, flags and testing steps.
+The smaller examples remain focused regression/learning fixtures, not the main
+manual-testing workflow. Native window alpha/blur still requires platform acceptance.
+
+The Controls section also includes reusable toolbars, joined button bars, typed
+segmented controls and active-page-only tabs, controlled text fields/areas, bounded
+sliders, typed selection popups and modal dialogs. See [the component API](docs/COMPONENTS.md)
+for Rust declarations, keyboard behavior and honest platform limits.
+See [resource usage and the later desktop experiment](docs/RESOURCE_USAGE_AND_DESKTOP.md)
+for software baseline costs, an idle CPU/RSS sample and measurement boundaries.
+See [GPU drawing and dependencies](docs/GPU_RENDERING.md) for the optional Vello
+renderer, feature-pruned backend policy and explicit software comparison.
+
+## Polished app-scale examples
+
+```sh
+# Original multi-screen product showcase; also accessible inside UI Lab
+cargo run --locked --features native --example showcase
+# Original Codex-style desktop workbench, with local sample conversations
+cargo run --locked --features native --example desk
+```
+
+**Volt Atelier** has Welcome, Workspace and Component Studio screens, paired
+midnight/paper themes, original vector art and real Rust callbacks. **Volt Desk**
+has conversation navigation, independently scrolling panes, an editable local composer
+and optional inspector. SF/SF Mono resolve to installed Apple faces on macOS with
+explicit sans/mono fallbacks elsewhere; no Apple fonts are bundled. Desk is not an
+AI client: Send uses your edited text but replies remain fixed local samples.
+
+See [showcase apps and verification](docs/SHOWCASE_APPS.md) for direct routes,
+compact mode, font resolution, design tokens and interaction checklists.
+
 ## What is here
 
 - A reusable icon-and-label `Button`, also used by Volt's Settings footer.
@@ -146,8 +195,15 @@ Both frontends use the same validated tree/layout/input runtime, with no JSON
 round-trip for Rust composition. Panel/Row/Column/Text/Button/Checkbox/Toggle/Badge/
 Separator/Divider and Spacer support layout; visible components support font
 family/size/weight/italic and text/surface/border styles.
-The native host uses winit, softbuffer, tiny-skia and cosmic-text; one Solid-only
-software-rendered window, not GPU glass or a complete cross-platform framework.
+The optional native host uses winit and cosmic-text. `native` draws through
+tiny-skia/softbuffer; `native-gpu` draws through Vello/wgpu for opaque and alpha
+windows, with software fallback. Window blur is an OS request, not widget backdrop
+blur or a complete cross-platform framework.
+
+```sh
+VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example ui_lab
+VOLT_UI_RENDERER=software cargo run --locked --features native-gpu --example ui_lab
+```
 Rust source edits require rebuild. Current composition rebuilds the whole tree,
 not dependency-tracked signals/subtree diffing. Background state updates do not
 automatically notify the native runner yet.
@@ -174,8 +230,8 @@ space without painting/input. Try `rust_layout` for interactive placement preset
 accept typed responsive padding/gap as well as their existing scalar values.
 `zstack!` independently overlays children in back-to-front order. Resize resolves
 layout properties without rebuilding Rust callbacks. Try `rust_responsive` and see
-[responsive contracts](docs/RESPONSIVE_UI.md); container queries/grids/scrolling
-and free-coordinate placement remain future work.
+[responsive contracts](docs/RESPONSIVE_UI.md); container queries/adaptive grids and free-coordinate placement remain future work.
+Opt-in overflow scrolling is described below.
 
 ## Effects and custom window chrome
 
@@ -187,3 +243,28 @@ animation and fade transitions work in the native software renderer.
 provide Volt-style integrated macOS chrome without changing old option literals.
 See [effects/windowing contracts and limits](docs/EFFECTS_AND_WINDOWING.md).
 Native OS chrome/input/timer acceptance remains separate from headless tests.
+
+## Semantic surfaces and scrolling (Rust UI)
+
+Panels and stacks share image backgrounds, background-only opacity, explicit
+rounded/circle/path clipping and semantic `ColorToken` styling. `canvas` retains
+Rust vector commands. Opt into overflow with `.scroll(Scroll::Auto)` or a specific
+axis; native wheel/trackpad input bubbles through nested views.
+
+- `cargo run --features native --example rust_surfaces` — images, vectors, theme toggle
+- `cargo run --features native --example rust_scroll` — fixed headers and nested scrolling
+- `cargo run --features native-gpu --example rust_transparent` — optional real window alpha
+
+See [Themes, surfaces, clipping and scrolling](docs/SURFACES_THEMES_AND_SCROLLING.md)
+for APIs, limits, compatibility and native-blur platform caveats.
+
+### Application runtime and extended components
+
+Typed bounded worker messages wake the native event loop without idle polling. New visual acceptance uses **Showcase Activity** (jobs, menus, tooltip/popover, wrapping) and **Explorer** (10,000 virtual rows, tables, trees, split panes), preserving Atelier typography and tokens. Existing Lab routes remain regression fixtures; new demos are not added there. GPU Showcase defaults to a translucent blur-request window; `--background opaque` restores a solid window.
+
+```sh
+cargo run --locked --features native-gpu --example showcase -- --screen activity
+cargo run --locked --features native-gpu --example showcase -- --screen explorer
+```
+
+See [runtime](docs/APP_RUNTIME.md), [declarations and limits](docs/EXTENDED_COMPONENTS.md), and [implementation/acceptance receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).

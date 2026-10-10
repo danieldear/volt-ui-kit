@@ -1,9 +1,12 @@
 use std::{path::PathBuf, time::Instant};
 use volt_ui_kit::{
-    declarative::{Bindings, Kind, Runtime},
-    native::{run_ui_with_options, NativeOptions, RasterPainter, WindowChrome},
+    declarative::{Bindings, Kind, PaintBatch, Runtime},
+    native::{
+        run_ui_with_messages_and_theme, run_ui_with_options, run_ui_with_theme, NativeOptions,
+        RasterPainter, SurfaceOptions, UiSender, WindowBackground, WindowChrome,
+    },
     ui::Element,
-    Theme, Viewport,
+    Painter, ThemeMode, UiTheme, Viewport,
 };
 
 /// Rust examples share the native host. Source edits require a Rust rebuild.
@@ -19,19 +22,128 @@ pub fn launch<C: 'static>(
 #[allow(dead_code)]
 pub fn launch_with_chrome<C: 'static>(
     title: &str,
+    state: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    chrome: WindowChrome,
+) -> Result<(), Box<dyn std::error::Error>> {
+    launch_configured(
+        title,
+        state,
+        view,
+        chrome,
+        None,
+        WindowBackground::Opaque,
+        std::env::args().skip(1).collect(),
+        None,
+    )
+}
+#[allow(dead_code)]
+pub fn launch_themed<C: 'static>(
+    title: &str,
+    state: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme: fn(&C, ThemeMode) -> UiTheme,
+) -> Result<(), Box<dyn std::error::Error>> {
+    launch_configured(
+        title,
+        state,
+        view,
+        WindowChrome::Native,
+        Some(theme),
+        WindowBackground::Opaque,
+        std::env::args().skip(1).collect(),
+        None,
+    )
+}
+/// The lab adds its own flags, then delegates shared snapshot/benchmark hosting here.
+#[allow(dead_code)]
+pub struct RustLaunchOptions {
+    pub chrome: WindowChrome,
+    pub background: WindowBackground,
+    pub args: Vec<String>,
+}
+#[allow(dead_code)]
+pub fn launch_themed_with_args<C: 'static>(
+    title: &str,
+    state: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme: fn(&C, ThemeMode) -> UiTheme,
+    options: RustLaunchOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    launch_configured(
+        title,
+        state,
+        view,
+        options.chrome,
+        Some(theme),
+        options.background,
+        options.args,
+        None,
+    )
+}
+type NativeLaunch<C> = Box<
+    dyn FnOnce(
+        SurfaceOptions,
+        C,
+        Box<dyn Fn(&C) -> Element<C>>,
+        Box<dyn Fn(&C, ThemeMode) -> UiTheme>,
+    ) -> Result<(), Box<dyn std::error::Error>>,
+>;
+/// The lab's native worker channel; headless snapshots do not start workers.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub fn launch_themed_with_messages<C: 'static, M: Send + 'static>(
+    title: &str,
+    state: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme: fn(&C, ThemeMode) -> UiTheme,
+    options: RustLaunchOptions,
+    initialize: impl FnOnce(&mut C, UiSender<M>) + 'static,
+    update: impl FnMut(&mut C, M) + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let launch: NativeLaunch<C> = Box::new(move |options, state, view, theme| {
+        run_ui_with_messages_and_theme(options, state, view, theme, initialize, update)
+    });
+    launch_configured(
+        title,
+        state,
+        view,
+        options.chrome,
+        Some(theme),
+        options.background,
+        options.args,
+        Some(launch),
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn launch_configured<C: 'static>(
+    title: &str,
     mut state: C,
     view: impl Fn(&C) -> Element<C> + 'static,
     mut chrome: WindowChrome,
+    custom_theme: Option<fn(&C, ThemeMode) -> UiTheme>,
+    background: WindowBackground,
+    args: Vec<String>,
+    native_launch: Option<NativeLaunch<C>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut theme_mode = ThemeMode::Dark;
     let mut reduced_motion = false;
     let mut snapshot = None;
     let mut scale = 1_f32;
     let mut bench = None;
     let mut target = None;
     let mut size = [960_u32, 760_u32];
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--theme" => {
+                theme_mode = match args.next().as_deref() {
+                    Some("light") => ThemeMode::Light,
+                    Some("dark") => ThemeMode::Dark,
+                    Some("system") => ThemeMode::System,
+                    _ => return Err("--theme must be light, dark or system".into()),
+                };
+            }
             "--reduced-motion" => reduced_motion = true,
             "--chrome" => {
                 chrome = match args.next().as_deref() {
@@ -59,7 +171,7 @@ pub fn launch_with_chrome<C: 'static>(
             }
             "--bench-target" => target = Some(args.next().ok_or("missing --bench-target key")?),
             "--help" => {
-                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; warm CPU timings\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / borderless\n--reduced-motion settle effects without animation\nRust source edits require rebuild; no JSON or F5 source reload.");
+                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; warm render timings (GPU mode includes blocking readback)\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_RENDERER  auto / gpu / software (gpu requires native-gpu)\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / borderless\n--reduced-motion settle effects without animation\n--theme MODE     light / dark / system (headless system falls back to dark)\nRust source edits require rebuild; no JSON or F5 source reload.");
                 return Ok(());
             }
             _ => {
@@ -87,32 +199,136 @@ pub fn launch_with_chrome<C: 'static>(
         }
     }
     if snapshot.is_none() && bench.is_none() {
-        return run_ui_with_options(
-            NativeOptions {
-                title: title.into(),
-                size,
-                document_path: None,
-            }
-            .with_chrome(chrome)
-            .with_reduced_motion(reduced_motion),
-            state,
-            view,
-        );
+        let options = NativeOptions {
+            title: title.into(),
+            size,
+            document_path: None,
+        }
+        .with_chrome(chrome)
+        .with_reduced_motion(reduced_motion)
+        .with_theme(theme_mode)
+        .with_background(background);
+        if let Some(launch) = native_launch {
+            return launch(
+                options,
+                state,
+                Box::new(view),
+                Box::new(move |state, system| {
+                    let mode = if theme_mode == ThemeMode::System {
+                        system
+                    } else {
+                        theme_mode
+                    };
+                    custom_theme.map_or_else(
+                        || {
+                            if mode == ThemeMode::Light {
+                                UiTheme::light()
+                            } else {
+                                UiTheme::dark()
+                            }
+                        },
+                        |theme| theme(state, mode),
+                    )
+                }),
+            );
+        }
+        return if let Some(theme) = custom_theme {
+            run_ui_with_theme(options, state, view, move |state, system| {
+                theme(
+                    state,
+                    if theme_mode == ThemeMode::System {
+                        system
+                    } else {
+                        theme_mode
+                    },
+                )
+            })
+        } else {
+            run_ui_with_options(options, state, view)
+        };
     }
     let values = Bindings::default();
     let (document, mut handlers) = view(&state).build()?.into_parts();
     let mut runtime = Runtime::new(document, &handlers, &values)?;
     let viewport = Viewport::new(size[0] as f32 * scale, size[1] as f32 * scale, scale).unwrap();
     let mut painter = RasterPainter::new(viewport);
-    let theme = Theme::dark();
+    let resolve_theme = |state: &C| {
+        custom_theme.map_or_else(
+            || {
+                if theme_mode == ThemeMode::Light {
+                    UiTheme::light()
+                } else {
+                    UiTheme::dark()
+                }
+            },
+            |f| f(state, theme_mode),
+        )
+    };
+    let theme = resolve_theme(&state);
+    let clear = |theme: &UiTheme| {
+        let mut color = theme.palette.base[0];
+        color[3] = match background {
+            WindowBackground::Opaque => 1.,
+            WindowBackground::Transparent { opacity } | WindowBackground::Blur { opacity } => {
+                opacity
+            }
+        };
+        color
+    };
     runtime.set_reduced_motion(reduced_motion);
     runtime.layout(viewport, &values, &mut painter)?;
+    let requested = std::env::var("VOLT_UI_RENDERER").ok();
+    if requested
+        .as_deref()
+        .is_some_and(|r| !["auto", "gpu", "software"].contains(&r))
+    {
+        return Err("VOLT_UI_RENDERER must be auto, gpu or software".into());
+    }
+    #[cfg(feature = "native-gpu")]
+    let mut gpu = if requested.as_deref() != Some("software") {
+        match volt_ui_kit::native::GpuOffscreenRenderer::new() {
+            Ok(gpu) => {
+                eprintln!(
+                    "Headless GPU drawing: {} (readback enabled)",
+                    gpu.adapter_name
+                );
+                Some(gpu)
+            }
+            Err(error) if requested.as_deref() == Some("gpu") => return Err(error.into()),
+            Err(error) => {
+                eprintln!("GPU unavailable ({error}); software snapshot/benchmark fallback");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(feature = "native-gpu")]
+    let gpu_active = gpu.is_some();
+    #[cfg(not(feature = "native-gpu"))]
+    let gpu_active = false;
+    #[cfg(not(feature = "native-gpu"))]
+    if requested.as_deref() == Some("gpu") {
+        return Err("GPU rendering requires native-gpu".into());
+    }
+    #[allow(unused_mut)] // GPU closure mutably borrows the optional renderer.
+    let mut render = |p: &mut RasterPainter,
+                      batches: &[PaintBatch<
+        <RasterPainter as Painter>::Shape,
+        <RasterPainter as Painter>::Glyph,
+    >],
+                      clear: [f32; 4]|
+     -> Result<tiny_skia::Pixmap, String> {
+        #[cfg(feature = "native-gpu")]
+        if let Some(gpu) = &mut gpu {
+            return gpu.render(p, batches, clear);
+        }
+        p.rasterize(batches, clear)
+    };
     if let Some(path) = snapshot {
         runtime.settle_animations(); // snapshots show the settled design, not fade frame zero
-        let batches = runtime.paint(&mut painter, &theme);
-        painter
-            .rasterize(&batches, theme.background)?
-            .save_png(&path)?;
+        let batches = runtime.paint_ui(&mut painter, &theme);
+        render(&mut painter, &batches, clear(&theme))?.save_png(&path)?;
         println!(
             "Rendered {} Rust nodes to {} (not native input proof)",
             runtime.boxes().len(),
@@ -153,8 +369,8 @@ pub fn launch_with_chrome<C: 'static>(
         if runtime.focused() != Some(target.as_str()) {
             return Err("benchmark target is clipped or not hittable".into());
         }
-        let pressed = runtime.paint(&mut painter, &theme);
-        painter.rasterize(&pressed, theme.background)?;
+        let pressed = runtime.paint_ui(&mut painter, &theme);
+        render(&mut painter, &pressed, clear(&theme))?;
         let start = Instant::now();
         let outcome = runtime.pointer_up_outcome(x, y, &mut handlers, &mut state)?;
         if !outcome.activated {
@@ -167,10 +383,11 @@ pub fn launch_with_chrome<C: 'static>(
         runtime.pointer_move(x, y);
         let compose = start.elapsed().as_secs_f64() * 1000.;
         let stage = Instant::now();
-        let batches = runtime.paint(&mut painter, &theme);
+        let theme = resolve_theme(&state);
+        let batches = runtime.paint_ui(&mut painter, &theme);
         let paint = stage.elapsed().as_secs_f64() * 1000.;
         let stage = Instant::now();
-        let pixmap = painter.rasterize(&batches, theme.background)?;
+        let pixmap = render(&mut painter, &batches, clear(&theme))?;
         let raster = stage.elapsed().as_secs_f64() * 1000.;
         let stage = Instant::now();
         for (dst, pixel) in packed.iter_mut().zip(pixmap.pixels()) {
@@ -190,11 +407,23 @@ pub fn launch_with_chrome<C: 'static>(
             ]);
         }
     }
-    println!("BENCH {title} {}x{} scale={scale} target={target} samples={count} warmup=4 (CPU only; excludes OS event queue/presentation)",viewport.width,viewport.height);
+    let boundary = if gpu_active {
+        "GPU completion + CPU readback; excludes OS event queue/presentation"
+    } else {
+        "CPU only; excludes OS event queue/presentation"
+    };
+    println!(
+        "BENCH {title} {}x{} scale={scale} target={target} samples={count} warmup=4 ({boundary})",
+        viewport.width, viewport.height
+    );
     for (column, name) in [
         "dispatch+compose+layout",
         "paint",
-        "raster",
+        if gpu_active {
+            "GPU render+readback"
+        } else {
+            "raster"
+        },
         "pack",
         "release-to-pixels",
     ]

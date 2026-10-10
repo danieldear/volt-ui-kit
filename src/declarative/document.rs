@@ -23,6 +23,8 @@ pub enum Kind {
     Badge,
     Separator,
     Spacer,
+    #[serde(skip)]
+    Canvas,
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -114,6 +116,8 @@ pub(crate) struct NodeStyle {
     pub border_color: Option<String>,
     pub accent_color: Option<String>,
     pub border_width: Option<f32>,
+    #[serde(skip)]
+    pub background_opacity: Option<f32>,
     pub radius: Option<Rounding>,
     #[serde(skip)]
     pub corners: Option<[Rounding; 4]>,
@@ -139,7 +143,7 @@ pub(crate) fn parse_color(value: &str) -> Option<[f32; 4]> {
     }
     Some(color)
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
     #[serde(rename = "type")]
@@ -209,6 +213,162 @@ pub struct Node {
     pub(crate) style: NodeStyle,
     #[serde(skip)]
     pub(crate) effects: super::effects::Effects,
+    #[serde(skip)]
+    pub(crate) surface: SurfaceContent,
+    // Rust composite opt-in only; legacy JSON buttons keep their keyboard contract.
+    #[serde(skip)]
+    pub(crate) selection_group: bool,
+    #[serde(skip)]
+    pub(crate) editor: Option<EditorOptions>,
+    #[serde(skip)]
+    pub(crate) on_text_changed: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_submit: Option<String>,
+    #[serde(skip)]
+    pub(crate) slider: Option<SliderProps>,
+    #[serde(skip)]
+    pub(crate) overlay: Option<Overlay>,
+    #[serde(skip)]
+    pub(crate) on_context: Option<String>,
+    #[serde(skip)]
+    pub(crate) virtual_list: Option<VirtualListProps>,
+    #[serde(skip)]
+    pub(crate) split: Option<SplitProps>,
+    #[serde(skip)]
+    pub(crate) split_handle: Option<String>,
+    #[serde(skip)]
+    pub(crate) progress: Option<ProgressProps>,
+}
+impl std::fmt::Debug for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = if self.editor.as_ref().is_some_and(|options| options.password) {
+            self.text.as_ref().map(|_| "<redacted>")
+        } else {
+            self.text.as_deref()
+        };
+        f.debug_struct("Node")
+            .field("kind", &self.kind)
+            .field("id", &self.id)
+            .field("children", &self.children)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("flex", &self.flex)
+            .field("padding", &self.padding)
+            .field("gap", &self.gap)
+            .field("align", &self.align)
+            .field("flow", &self.flow)
+            .field("direction", &self.direction)
+            .field("text", &text)
+            .field("label", &self.label)
+            .field("enabled", &self.enabled)
+            .field("on_activate", &self.on_activate)
+            .field("on_toggle_changed", &self.on_toggle_changed)
+            .field("style", &self.style)
+            .field("effects", &self.effects)
+            .field("surface", &self.surface)
+            .field("editor", &self.editor)
+            .field("slider", &self.slider)
+            .field("overlay", &self.overlay)
+            .finish_non_exhaustive()
+    }
+}
+/// Rust-only editable role; schema-v1 remains unchanged.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
+pub(crate) struct EditorOptions {
+    pub multiline: bool,
+    pub read_only: bool,
+    pub password: bool,
+    pub placeholder: String,
+    pub soft_wrap: bool,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct SliderProps {
+    pub value: f32,
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+    pub on_change: Option<String>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
+pub(crate) enum OverlayKind {
+    Modal,
+    Popup,
+    Tooltip,
+}
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
+pub(crate) struct Overlay {
+    pub kind: OverlayKind,
+    pub dismiss_action: Option<String>,
+    pub backdrop_dismiss: bool,
+    pub escape_dismiss: bool,
+    pub anchor: Option<String>,
+    pub position: Option<[f32; 2]>,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct VirtualListProps {
+    pub count: usize,
+    pub start: usize,
+    pub end: usize,
+    pub row_height: f32,
+    pub overscan: usize,
+    pub on_window_change: Option<String>,
+}
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
+pub(crate) struct SplitProps {
+    pub axis: Direction,
+    pub ratio: f32,
+    pub min_first: f32,
+    pub min_second: f32,
+    pub handle_size: f32,
+    pub on_change: Option<String>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
+pub(crate) enum ProgressKind {
+    Bar,
+    Spinner,
+}
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
+pub(crate) struct ProgressProps {
+    pub value: Option<f32>,
+    pub kind: ProgressKind,
+    pub period_ms: u32,
+}
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SurfaceContent {
+    pub image: Option<crate::graphics::BackgroundImage>,
+    pub canvas: crate::graphics::Canvas,
+    pub clip: Option<crate::graphics::Clip>,
+    pub scroll: Option<Scroll>,
+    pub scrollbars: Scrollbars,
+}
+/// Indicator policy only; Hidden retains wheel/trackpad scrolling and clipping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scrollbars {
+    #[default]
+    Auto,
+    Hidden,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scroll {
+    Vertical,
+    Horizontal,
+    Both,
+    Auto,
+}
+impl Scroll {
+    pub(crate) fn axes(self) -> [bool; 2] {
+        match self {
+            Self::Vertical => [false, true],
+            Self::Horizontal => [true, false],
+            Self::Both | Self::Auto => [true, true],
+        }
+    }
 }
 fn yes() -> bool {
     true
@@ -251,6 +411,18 @@ impl Node {
             on_toggle_changed: None,
             style: NodeStyle::default(),
             effects: super::effects::Effects::default(),
+            surface: SurfaceContent::default(),
+            selection_group: false,
+            editor: None,
+            on_text_changed: None,
+            on_submit: None,
+            slider: None,
+            overlay: None,
+            on_context: None,
+            virtual_list: None,
+            split: None,
+            split_handle: None,
+            progress: None,
         }
     }
     /// Logical insets in top/right/bottom/left order. JSON precedence is explicit
@@ -366,7 +538,47 @@ impl Document {
     /// Constructs the same validated tree as JSON, without serializing Rust UI.
     #[cfg(feature = "rust-ui")]
     pub(crate) fn from_node(root: Node) -> Result<Self, DocumentError> {
-        check_node(&root, "root", 0, &mut 0, &mut BTreeSet::new())?;
+        let mut ids = BTreeSet::new();
+        check_node(&root, "root", 0, &mut 0, &mut ids)?;
+        fn references(
+            node: &Node,
+            ids: &BTreeSet<String>,
+            root: &Node,
+        ) -> Result<(), DocumentError> {
+            fn contains(node: &Node, id: &str) -> bool {
+                node.id == id || node.children.iter().any(|child| contains(child, id))
+            }
+            fn find<'a>(node: &'a Node, id: &str) -> Option<&'a Node> {
+                if node.id == id {
+                    Some(node)
+                } else {
+                    node.children.iter().find_map(|child| find(child, id))
+                }
+            }
+            if let Some(anchor) = node.overlay.as_ref().and_then(|o| o.anchor.as_ref()) {
+                if !ids.contains(anchor) || contains(node, anchor) {
+                    return Err(error(
+                        &node.id,
+                        "overlay anchor must exist outside its own subtree",
+                    ));
+                }
+            }
+            if let Some(parent) = &node.split_handle {
+                if !find(root, parent).is_some_and(|p| {
+                    p.split.is_some() && p.children.get(1).is_some_and(|child| child.id == node.id)
+                }) {
+                    return Err(error(
+                        &node.id,
+                        "split handle must reference its owning pane",
+                    ));
+                }
+            }
+            for child in &node.children {
+                references(child, ids, root)?;
+            }
+            Ok(())
+        }
+        references(&root, &ids, &root)?;
         Ok(Self { root })
     }
     /// Called before installation and after host binding updates.
@@ -411,10 +623,41 @@ impl Document {
             for (name, kind) in [
                 (&n.on_activate, EventKind::Activate),
                 (&n.on_toggle_changed, EventKind::ToggleChanged),
+                (&n.on_text_changed, EventKind::TextChanged),
+                (&n.on_submit, EventKind::Activate),
+                (&n.on_context, EventKind::ContextRequested),
             ] {
                 if let Some(name) = name {
                     handlers
                         .validate(name, kind)
+                        .map_err(|e| error(&n.id, &e.to_string()))?;
+                }
+            }
+            if let Some(slider) = &n.slider {
+                if let Some(name) = &slider.on_change {
+                    handlers
+                        .validate(name, EventKind::ValueChanged)
+                        .map_err(|e| error(&n.id, &e.to_string()))?;
+                }
+            }
+            if let Some(list) = &n.virtual_list {
+                if let Some(name) = &list.on_window_change {
+                    handlers
+                        .validate(name, EventKind::WindowChanged)
+                        .map_err(|e| error(&n.id, &e.to_string()))?;
+                }
+            }
+            if let Some(split) = &n.split {
+                if let Some(name) = &split.on_change {
+                    handlers
+                        .validate(name, EventKind::ValueChanged)
+                        .map_err(|e| error(&n.id, &e.to_string()))?;
+                }
+            }
+            if let Some(overlay) = &n.overlay {
+                if let Some(name) = &overlay.dismiss_action {
+                    handlers
+                        .validate(name, EventKind::Activate)
                         .map_err(|e| error(&n.id, &e.to_string()))?;
                 }
             }
@@ -599,7 +842,10 @@ fn check_style(style: &NodeStyle, path: &str) -> Result<(), DocumentError> {
         ("border_color", &style.border_color),
         ("accent_color", &style.accent_color),
     ] {
-        if value.as_ref().is_some_and(|v| parse_color(v).is_none()) {
+        if value
+            .as_ref()
+            .is_some_and(|v| parse_color(v).is_none() && crate::ColorToken::parse(v).is_none())
+        {
             return Err(error(&format!("{path}.{name}"), "invalid style value"));
         }
     }
@@ -673,6 +919,35 @@ fn check_node(
             }
         }
     }
+    if n.style
+        .background_opacity
+        .is_some_and(|a| !a.is_finite() || !(0. ..=1.).contains(&a))
+    {
+        return Err(error(path, "invalid background opacity"));
+    }
+    if n.surface
+        .image
+        .as_ref()
+        .is_some_and(|i| !i.opacity.is_finite() || !(0. ..=1.).contains(&i.opacity))
+    {
+        return Err(error(path, "invalid image opacity"));
+    }
+    if n.surface.canvas.paths.len() > 256
+        || n.surface.canvas.paths.iter().any(|p| {
+            !p.path.is_valid()
+                || (parse_color(&p.color).is_none() && crate::ColorToken::parse(&p.color).is_none())
+                || p.stroke
+                    .is_some_and(|w| !w.is_finite() || !(0. ..=256.).contains(&w))
+        })
+    {
+        return Err(error(
+            path,
+            "invalid canvas path/color/stroke or exceeds 256 paths",
+        ));
+    }
+    if matches!(&n.surface.clip,Some(crate::graphics::Clip::Path(p)) if !p.is_valid()) {
+        return Err(error(path, "invalid clip path"));
+    }
     check_style(&n.style, &format!("{path}.style"))?;
     n.responsive.validate(path)?;
     if n.text.as_ref().is_some_and(|v| v.len() > 8192)
@@ -697,12 +972,118 @@ fn check_node(
             "Checkbox/Toggle requires label and on_toggle_changed",
         ));
     }
+    if let Some(editor) = &n.editor {
+        if n.kind != Kind::Text
+            || editor.placeholder.len() > 8192
+            || (!editor.read_only && n.on_text_changed.is_none())
+            || (!editor.multiline && editor.soft_wrap)
+            || (!editor.multiline && n.text.as_ref().is_some_and(|t| t.contains(['\n', '\r'])))
+        {
+            return Err(error(
+                path,
+                "invalid editable text role or missing on_change",
+            ));
+        }
+    }
+    if let Some(slider) = &n.slider {
+        if n.kind != Kind::Panel
+            || ![slider.value, slider.min, slider.max, slider.step]
+                .iter()
+                .all(|v| v.is_finite() && v.abs() <= 1e9)
+            || slider.min >= slider.max
+            || slider.value < slider.min
+            || slider.value > slider.max
+            || slider.step <= 0.
+            || slider.step > slider.max - slider.min
+            || (f64::from(slider.min) + f64::from(slider.step)) as f32 == slider.min
+            || (f64::from(slider.max) - f64::from(slider.step)) as f32 == slider.max
+            || slider.on_change.is_none()
+        {
+            return Err(error(
+                path,
+                "invalid slider range/value/step or missing on_change",
+            ));
+        }
+        if !slider.on_change.as_deref().is_some_and(valid_name) {
+            return Err(error(path, "invalid slider handler name"));
+        }
+    }
+    if let Some(list) = &n.virtual_list {
+        if n.kind != Kind::Panel
+            || list.start > list.end
+            || list.end > list.count
+            || list.end - list.start > 96
+            || list.overscan > 16
+            || list.count > 10_000_000
+            || !list.row_height.is_finite()
+            || list.row_height <= 0.
+            || list.row_height > 1e6
+            || (list.count as f64 * list.row_height as f64) > 1e9
+            || !list.on_window_change.as_deref().is_some_and(valid_name)
+        {
+            return Err(error(path, "invalid virtual list window or callback"));
+        }
+    }
+    if let Some(split) = &n.split {
+        if !matches!(n.kind, Kind::Row | Kind::Column)
+            || n.children.len() != 3
+            || ![
+                split.ratio,
+                split.min_first,
+                split.min_second,
+                split.handle_size,
+            ]
+            .iter()
+            .all(|v| v.is_finite())
+            || !(0.0..=1.0).contains(&split.ratio)
+            || split.min_first < 0.
+            || split.min_second < 0.
+            || split.min_first > 1e6
+            || split.min_second > 1e6
+            || !(1.0..=64.0).contains(&split.handle_size)
+            || !split.on_change.as_deref().is_some_and(valid_name)
+        {
+            return Err(error(path, "invalid split pane geometry or callback"));
+        }
+    }
+    if n.split_handle.as_deref().is_some_and(|id| !valid_name(id)) {
+        return Err(error(path, "invalid split handle reference"));
+    }
+    if let Some(progress) = &n.progress {
+        if n.kind != Kind::Panel
+            || !(100..=60_000).contains(&progress.period_ms)
+            || progress
+                .value
+                .is_some_and(|v| !v.is_finite() || !(0.0..=1.0).contains(&v))
+        {
+            return Err(error(path, "invalid progress value or period"));
+        }
+    }
+    if let Some(overlay) = &n.overlay {
+        if n.kind != Kind::ZStack
+            || n.children.len() != 1
+            || (overlay.kind != OverlayKind::Tooltip
+                && !overlay.dismiss_action.as_deref().is_some_and(valid_name))
+            || overlay
+                .position
+                .is_some_and(|p| !p.iter().all(|v| v.is_finite() && v.abs() <= 1e9))
+            || overlay.anchor.as_deref().is_some_and(|a| !valid_name(a))
+        {
+            return Err(error(
+                path,
+                "invalid overlay role or missing dismiss callback",
+            ));
+        }
+    }
     for name in [
         &n.bind_text,
         &n.bind_enabled,
         &n.on_activate,
         &n.bind_checked,
         &n.on_toggle_changed,
+        &n.on_text_changed,
+        &n.on_submit,
+        &n.on_context,
     ]
     .into_iter()
     .flatten()

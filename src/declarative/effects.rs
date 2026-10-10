@@ -9,6 +9,7 @@ pub enum Interaction {
     Focus,
 }
 impl Interaction {
+    #[cfg(feature = "rust-ui")]
     pub(crate) fn index(self) -> usize {
         match self {
             Self::Hover => 0,
@@ -181,6 +182,7 @@ impl VisualStyle {
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Effects {
+    pub scroll_passthrough: bool,
     pub base: VisualStyle,
     pub states: [VisualStyle; 3],
     pub animations: [Option<Animation>; 3],
@@ -196,7 +198,7 @@ impl Effects {
                 .into_iter()
                 .flatten()
             {
-                if parse_color(color).is_none() {
+                if parse_color(color).is_none() && crate::ColorToken::parse(color).is_none() {
                     return Err(invalid());
                 }
             }
@@ -210,7 +212,8 @@ impl Effects {
                 return Err(invalid());
             }
             for shadow in style.shadow.iter().chain(style.glow.iter().map(|v| &v.0)) {
-                if parse_color(&shadow.color).is_none()
+                if (parse_color(&shadow.color).is_none()
+                    && crate::ColorToken::parse(&shadow.color).is_none())
                     || !shadow.blur.is_finite()
                     || !(0. ..=64.).contains(&shadow.blur)
                     || !shadow.spread.is_finite()
