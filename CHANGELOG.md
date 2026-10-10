@@ -2,6 +2,21 @@
 
 ## 0.1.0 (unreleased)
 
+- Components: `ButtonVariant`/`ControlSize` presets, `.disclosure(open)` and
+  `.label_align`, token opacity (`ColorToken::alpha`, `"@role/NN"`), readable
+  primary labels under inherited colours, 6px default corners, padded panels,
+  seamed joined bars, cleaner tables/trees and specific tree errors. New
+  `specimen` example shows every default.
+- Accessibility: AccessKit screen-reader tree and actions for native windows
+  (roles, labels, values, ranges, states, focus; modal scoping; passwords never
+  exposed), built on a toolkit-neutral runtime snapshot.
+- Software renderer damage tracking: only changed regions are repainted and
+  presented; incremental frames match full repaints pixel for pixel.
+- GPU: Vello vector text, GPU-resident images, estimates for every Vello fixed
+  buffer with per-frame software fallback (never a stale frame), device-loss
+  recovery. Benchmarks time settled frames. Windows added to CI.
+- Document limits raised to 4096 nodes and depth 48.
+
 - Bounded typed native worker messages with coalesced winit wakeups, batched
   UI-thread state updates, reentrant-producer fairness and close/cancel contracts.
 - Nested focus reveal, captured draggable scrollbars and opt-in multiline soft

@@ -238,7 +238,8 @@ impl<C: 'static, T: Clone + 'static> From<Menu<C, T>> for Element<C> {
         let change = menu.2.change.unwrap();
         let open = menu.2.open;
         let callback = change.clone();
-        let mut trigger = button(format!("{}  {}", menu.1, if open { "▴" } else { "▾" }))
+        let mut trigger = button(menu.1.clone())
+            .disclosure(open)
             .key(trigger_key.clone())
             .height(menu.0.node.height.unwrap_or(36.))
             .enabled(menu.2.enabled)

@@ -39,6 +39,49 @@ Shared layout / pointer / focus / painting
                    +--> Rust on_select -> update App -> recompose
 ```
 
+## Variants, sizes and refined defaults (2026-10-10)
+
+Review every default together with `cargo run --features native --example specimen`
+(add `--theme light`, or `--snapshot PNG --size 1400x1000` for headless review).
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let actions: Element<()> = hstack![
+    button("Save").key("save").variant(ButtonVariant::Primary).on_click(|_: &mut ()| {}),
+    button("Preview").key("preview").variant(ButtonVariant::Soft).on_click(|_: &mut ()| {}),
+    button("Cancel").key("cancel").variant(ButtonVariant::Ghost).on_click(|_: &mut ()| {}),
+    button("Delete").key("delete").variant(ButtonVariant::Danger).size(ControlSize::Small)
+        .on_click(|_: &mut ()| {}),
+    button("Sort by").key("sort").disclosure(false).label_align(Align::Start)
+        .width(140.).on_click(|_: &mut ()| {}),
+]
+.gap(8., Axis::Horizontal)
+.background(ColorToken::Primary.alpha(8))
+.into();
+actions.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+- `ButtonVariant` (Neutral, Primary, Soft, Outline, Ghost, Danger) and
+  `ControlSize` (Small 28px/12pt, Medium 36/14, Large 44/16) are theme-token
+  presets; later `.background`/`.color`/`.hover_style` calls still override them.
+- `.disclosure(open)` draws a trailing vector chevron (up while open) and
+  left-aligns the label; select and menu triggers use it. `.label_align(Align)`
+  places any button label at the start, centre or end.
+- Theme tokens accept an opacity: `ColorToken::Primary.alpha(15)` (`"@primary/15"`)
+  resolves from the active palette, so tints follow light/dark and accents.
+- Primary buttons pair their label with `PrimaryContent` explicitly, so an
+  inherited text colour can no longer make them unreadable; built-in palettes
+  derive `on_primary` by contrast with the primary fill.
+- Defaults: buttons and bars use 6px corners (JSON documents keep their
+  legacy recipe); `panel(...)` is a padded surface (12px, override with
+  `.padding`); joined bars and segmented controls show 1px seams.
+- Tables: sortable headers are left-aligned ghost buttons and fixed columns are
+  plain labels (no disabled look); rows are ghost targets with a soft selected
+  tint; cells are inset to align with headers; height is natural unless set.
+  Trees use left-aligned ghost rows with a soft selection and muted expanders,
+  and report the specific validation problem.
+
 ## A complete declaration
 
 ```rust

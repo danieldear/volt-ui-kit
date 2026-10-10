@@ -220,6 +220,9 @@ pub struct Node {
     // Rust composite opt-in only; legacy JSON buttons keep their keyboard contract.
     #[serde(skip)]
     pub(crate) selection_group: bool,
+    /// Buttons that open something draw a chevron; `Some(true)` while open.
+    #[serde(skip)]
+    pub(crate) disclosure: Option<bool>,
     #[serde(skip)]
     pub(crate) editor: Option<EditorOptions>,
     #[serde(skip)]
@@ -415,6 +418,7 @@ impl Node {
             effects: super::effects::Effects::default(),
             surface: SurfaceContent::default(),
             selection_group: false,
+            disclosure: None,
             editor: None,
             on_text_changed: None,
             on_submit: None,

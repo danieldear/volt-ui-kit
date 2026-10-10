@@ -289,7 +289,7 @@ impl<C> Element<C> {
             node: {
                 let mut node = Node::new(kind);
                 if kind == Kind::Button {
-                    node.style.radius = Some(Rounding::Radius(2.));
+                    node.style.radius = Some(Rounding::Radius(6.));
                 }
                 node
             },
@@ -578,13 +578,128 @@ impl<C> Badge<C> {
         self
     }
 }
+/// Visual emphasis for a button. Every variant resolves through theme tokens,
+/// so it follows light/dark mode and accent changes. Later style modifiers
+/// (`.background`, `.hover_style`, ...) still override the variant.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ButtonVariant {
+    /// The theme's standard control surface.
+    #[default]
+    Neutral,
+    /// Filled with the primary colour; the label picks a contrasting colour.
+    Primary,
+    /// A light primary tint with primary-coloured text: secondary emphasis.
+    Soft,
+    /// Transparent with a border.
+    Outline,
+    /// Transparent until hovered: toolbars and inline actions.
+    Ghost,
+    /// Destructive actions.
+    Danger,
+}
+/// Standard control heights and label sizes, shared by buttons and bars.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ControlSize {
+    /// 28px tall, 12px labels.
+    Small,
+    /// 36px tall, 14px labels.
+    #[default]
+    Medium,
+    /// 44px tall, 16px labels.
+    Large,
+}
+impl ControlSize {
+    pub fn height(self) -> f32 {
+        match self {
+            Self::Small => 28.,
+            Self::Medium => 36.,
+            Self::Large => 44.,
+        }
+    }
+    pub fn font_size(self) -> f32 {
+        match self {
+            Self::Small => 12.,
+            Self::Medium => 14.,
+            Self::Large => 16.,
+        }
+    }
+}
 impl<C> Button<C> {
     pub fn enabled(mut self, value: bool) -> Self {
         self.0.node.enabled = value;
         self
     }
+    /// Apply a themed emphasis preset (see [`ButtonVariant`]).
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        let style = &mut self.0.node.style;
+        style.background = None;
+        style.color = None;
+        style.border_color = None;
+        style.border_width = None;
+        self.0.node.primary = variant == ButtonVariant::Primary;
+        self.0.node.effects.states = Default::default();
+        let tint = |token: ColorToken, percent: u8| token.alpha(percent);
+        match variant {
+            ButtonVariant::Neutral | ButtonVariant::Primary => self,
+            ButtonVariant::Soft => self
+                .background(tint(ColorToken::Primary, 16))
+                .color(ColorToken::Primary)
+                .border_width(0.)
+                .hover_style(|s| s.background(tint(ColorToken::Primary, 26)))
+                .pressed_style(|s| s.background(tint(ColorToken::Primary, 36))),
+            ButtonVariant::Outline => self
+                .background(tint(ColorToken::BaseContent, 0))
+                .color(ColorToken::BaseContent)
+                .border_color(ColorToken::Border)
+                .border_width(1.)
+                .hover_style(|s| s.background(tint(ColorToken::BaseContent, 6)))
+                .pressed_style(|s| s.background(tint(ColorToken::BaseContent, 12))),
+            ButtonVariant::Ghost => self
+                .background(tint(ColorToken::BaseContent, 0))
+                .color(ColorToken::BaseContent)
+                .border_width(0.)
+                .hover_style(|s| s.background(tint(ColorToken::BaseContent, 8)))
+                .pressed_style(|s| s.background(tint(ColorToken::BaseContent, 14))),
+            ButtonVariant::Danger => self
+                .background(ColorToken::Error)
+                .color(ColorToken::ErrorContent)
+                .border_width(0.)
+                .hover_style(|s| s.opacity(0.9))
+                .pressed_style(|s| s.opacity(0.78)),
+        }
+    }
+    /// Standard height and label size (see [`ControlSize`]).
+    pub fn size(self, size: ControlSize) -> Self {
+        self.height(size.height()).font_size(size.font_size())
+    }
+    /// Mark a button that opens a menu, popup or section: a chevron is drawn
+    /// at the trailing edge (pointing up while `open`) and the label starts
+    /// at the leading edge.
+    pub fn disclosure(mut self, open: bool) -> Self {
+        self.0.node.disclosure = Some(open);
+        self
+    }
+    /// Place the label at the start, centre (default) or end of the button.
+    pub fn label_align(mut self, align: Align) -> Self {
+        self.0.node.flow = Some(match align {
+            Align::Start => Flow::Left,
+            Align::End => Flow::Right,
+            Align::Center | Align::Stretch => Flow::Center,
+        });
+        self
+    }
+    /// Fill with the primary colour. The label uses the paired
+    /// `PrimaryContent` colour so an inherited text colour (set on a parent)
+    /// cannot make it unreadable; a later `.color(...)` still wins.
     pub fn primary(mut self, value: bool) -> Self {
+        const LABEL: &str = "@primary-content";
         self.0.node.primary = value;
+        let color = &mut self.0.node.style.color;
+        if value && color.is_none() {
+            *color = Some(LABEL.into());
+        } else if !value && color.as_deref() == Some(LABEL) {
+            *color = None;
+        }
         self
     }
     pub fn on_click(mut self, callback: impl FnMut(&mut C) + 'static) -> Self {
@@ -613,8 +728,11 @@ pub fn column<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C>
 pub fn row<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C> {
     container(Kind::Row, children)
 }
+/// A padded surface (12px on every edge unless `.padding(...)` overrides it).
 pub fn panel<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C> {
-    container(Kind::Panel, children)
+    let mut panel = container(Kind::Panel, children);
+    panel.0.node.padding = 12.;
+    panel
 }
 /// Alias for [`column()`]: a vertically arranged stack of children.
 pub fn vstack<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C> {
@@ -758,12 +876,12 @@ pub mod prelude {
         slider, spacer, spinner, split, stack, tab, tab_bar, tab_item, table, table_column,
         table_row, tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node,
         tree_view, virtual_list, vstack, zstack, Align, Animation, Axes, Axis, BackgroundImage,
-        Breakpoint, ButtonBar, Canvas, Clip, ColorToken, ContextMenu, Corner, CornerSet, Corners,
-        DataItem, Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Image,
-        ImageFit, ImagePosition, Interaction, Menu, MenuItem, Palette, Popover, Progress,
-        Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
-        Slider, SortDirection, SplitPane, Tab, TabItem, TabPlacement, Table, TableColumn, TableRow,
-        Tabs, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
-        UiTheme, VectorPath, VirtualList, VisualStyle,
+        Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu, ControlSize,
+        Corner, CornerSet, Corners, DataItem, Dialog, Direction, Easing, Edge, Edges, Element,
+        Flow, FontStyle, Glow, Image, ImageFit, ImagePosition, Interaction, Menu, MenuItem,
+        Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem,
+        SelectionControl, Shadow, Slider, SortDirection, SplitPane, Tab, TabItem, TabPlacement,
+        Table, TableColumn, TableRow, Tabs, TextInput, ThemeMode, Tone, Toolbar, Tooltip,
+        Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList, VisualStyle,
     };
 }

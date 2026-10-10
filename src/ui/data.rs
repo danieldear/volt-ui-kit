@@ -257,8 +257,8 @@ pub fn table<C, T, K>(
     columns: impl IntoIterator<Item = TableColumn<K>>,
     rows: impl IntoIterator<Item = TableRow<T>>,
 ) -> Table<C, T, K> {
+    // Natural height by default; `.height(...)` makes the rows scroll.
     let mut e = Element::new(Kind::Panel);
-    e.node.height = Some(360.);
     e.node.surface.scroll = Some(Scroll::Vertical);
     Table(
         e,
@@ -363,6 +363,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
         let mut header = Element::new(Kind::Row);
         header.node.height = Some(36.);
         header.node.width = Some(width);
+        header.node.style.background = Some(ColorToken::Base200.into());
         for (i, column) in table.1.columns.into_iter().enumerate() {
             let selected = table
                 .1
@@ -385,17 +386,41 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             };
             let callback = table.1.on_sort.clone();
             let key = column.value;
-            let cell: Element<C> = button(format!("{}{suffix}", column.label))
-                .key(format!("{}-column-{i}", table.0.node.id))
-                .width(column.width)
-                .height(36.)
-                .enabled(table.1.enabled && column.sortable)
-                .on_click(move |app: &mut C| {
-                    if let Some(callback) = &callback {
-                        (callback.borrow_mut())(app, key.clone(), direction);
-                    }
-                })
-                .into();
+            // Only sortable columns are buttons; a fixed column is a label, not
+            // a disabled control.
+            let cell: Element<C> = if column.sortable {
+                button(format!("{}{suffix}", column.label))
+                    .key(format!("{}-column-{i}", table.0.node.id))
+                    .variant(ButtonVariant::Ghost)
+                    .label_align(Align::Start)
+                    .color(ColorToken::Muted)
+                    .font_size(12.)
+                    .font_weight(600)
+                    .width(column.width)
+                    .height(36.)
+                    .rounded(0.)
+                    .enabled(table.1.enabled)
+                    .on_click(move |app: &mut C| {
+                        if let Some(callback) = &callback {
+                            (callback.borrow_mut())(app, key.clone(), direction);
+                        }
+                    })
+                    .into()
+            } else {
+                let mut label = Element::new(Kind::Row);
+                label.node.width = Some(column.width);
+                label.node.height = Some(36.);
+                label.node.padding = 10.;
+                label.node.align = Align::Center;
+                label.children.push(
+                    text(column.label)
+                        .color(ColorToken::Muted)
+                        .font_size(12.)
+                        .font_weight(600)
+                        .into(),
+                );
+                label
+            };
             header.children.push(cell);
         }
         table.0.children.push(header);
@@ -412,7 +437,12 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             e.node.align = Align::Stretch;
             let hit: Element<C> = button("")
                 .key(key)
-                .primary(active)
+                .variant(if active {
+                    ButtonVariant::Soft
+                } else {
+                    ButtonVariant::Ghost
+                })
+                .rounded(0.)
                 .enabled(table.1.enabled && row.enabled)
                 .on_click(move |app: &mut C| {
                     if !active {
@@ -425,12 +455,15 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             cells.node.height = Some(34.);
             cells.node.width = Some(width);
             cells.node.align = Align::Center;
+            // 10px insets line cell text up with the header labels.
+            cells.node.padding = 10.;
+            cells.node.gap = 20.;
             // Widths were already validated; use the corresponding header width.
             for (i, label) in row.cells.into_iter().enumerate() {
                 let width = table.0.children[0].children[i].node.width.unwrap();
-                let mut cell = text(label).width(width);
+                let mut cell = text(label).width((width - 20.).max(1.));
                 if active {
-                    cell = cell.color(ColorToken::PrimaryContent);
+                    cell = cell.color(ColorToken::Primary).font_weight(600);
                 }
                 cells.children.push(cell.into());
             }
@@ -477,7 +510,6 @@ struct TreeOptions<C, T> {
 }
 pub fn tree_view<C, T>(roots: impl IntoIterator<Item = TreeNode<T>>) -> TreeView<C, T> {
     let mut e = Element::new(Kind::Panel);
-    e.node.height = Some(320.);
     e.node.width = Some(360.);
     e.node.surface.scroll = Some(Scroll::Vertical);
     TreeView(
@@ -537,16 +569,24 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             true
         }
         let mut seen = vec![];
-        let valid = values(&tree.1.roots, 0, &mut seen)
-            && tree.1.expanded.len() <= 128
-            && tree.1.expanded.iter().all(|id| seen.contains(&id))
-            && tree.1.selected.as_ref().is_none_or(|id| seen.contains(&id))
-            && tree.1.on_select.is_some()
-            && tree.1.on_expand.is_some()
-            && !tree.0.auto_id;
-        if !valid {
-            tree.0.validation_error =
-                Some("invalid tree model, missing keys/callbacks or tree budget exceeded".into());
+        // Report the first specific problem rather than a combined message.
+        let error = if tree.0.auto_id {
+            Some("tree_view requires a stable .key(...)")
+        } else if !values(&tree.1.roots, 0, &mut seen) {
+            Some("every tree_node needs a unique value and a .key(...); trees allow at most 128 nodes, 16 levels deep")
+        } else if tree.1.expanded.len() > 128
+            || !tree.1.expanded.iter().all(|id| seen.contains(&id))
+        {
+            Some("expanded(...) names a value that is not a node in the tree")
+        } else if !tree.1.selected.as_ref().is_none_or(|id| seen.contains(&id)) {
+            Some("selected(...) is not a node in the tree")
+        } else if tree.1.on_select.is_none() || tree.1.on_expand.is_none() {
+            Some("tree_view requires on_select and on_expand")
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            tree.0.validation_error = Some(error.into());
             return tree.0;
         }
         let on_select = tree.1.on_select.unwrap();
@@ -593,6 +633,8 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                     row.children.push(
                         button(if open { "▾" } else { "▸" })
                             .key(format!("{key}-expand"))
+                            .variant(ButtonVariant::Ghost)
+                            .color(ColorToken::Muted)
                             .width(22.)
                             .height(32.)
                             .enabled(context.enabled && item.enabled)
@@ -606,17 +648,22 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                 let callback = context.on_select.clone();
                 let mut label = button(item.label)
                     .key(key)
+                    .variant(if active {
+                        ButtonVariant::Soft
+                    } else {
+                        ButtonVariant::Ghost
+                    })
+                    .label_align(Align::Start)
                     .height(32.)
                     .flex(1.)
                     .enabled(context.enabled && item.enabled)
-                    .primary(active)
                     .on_click(move |app: &mut C| {
                         if !active {
                             (callback.borrow_mut())(app, value.clone());
                         }
                     });
                 if active {
-                    label = label.color(ColorToken::PrimaryContent);
+                    label = label.font_weight(600);
                 }
                 row.children.push(label.into());
                 out.push(row);
