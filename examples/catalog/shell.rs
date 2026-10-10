@@ -37,7 +37,11 @@ pub fn view(app: &App) -> El<App> {
         .font_family("SF")
         .font_size(14.)
         .color(ColorToken::BaseContent)
-        .background(ColorToken::Base100)
+        .background(if app.glass {
+            "#00000000".to_owned()
+        } else {
+            ColorToken::Base100.into()
+        })
         .into()
 }
 
@@ -46,6 +50,11 @@ fn mode_button(app: &App) -> El<App> {
     zstack![
         button("")
             .key("mode-toggle")
+            .accessible_label(if dark {
+                "Use light appearance"
+            } else {
+                "Use dark appearance"
+            })
             .variant(ButtonVariant::Ghost)
             .width(36.)
             .height(36.)
@@ -110,6 +119,7 @@ fn header(app: &App) -> El<App> {
             .map(|(i, (name, ..))| menu_item(i, *name)),
     )
     .key("theme-menu")
+    .accessible_label("Accent color")
     .open(app.theme_menu_open)
     .width(116.)
     .height(36.)
@@ -122,13 +132,22 @@ fn header(app: &App) -> El<App> {
     vstack![
         toolbar![
             mark(26.),
-            text("Volt UI").font_size(16.).font_weight(700),
+            text("Volt UI").width(64.).font_size(16.).font_weight(700),
             spacer().width(12.).flex(0.),
-            nav("Docs", Page::Introduction),
-            nav("Components", Page::Button),
-            nav("Themes", Page::Theming),
-            nav("Patterns", Page::SignIn),
-            spacer(),
+            hstack![
+                nav("Docs", Page::Introduction),
+                nav("Components", Page::Button),
+                nav("Themes", Page::Theming),
+                nav("Patterns", Page::SignIn),
+            ]
+            .key("header-navigation")
+            .accessible_label("Documentation navigation")
+            .height(36.)
+            .gap(6., Axis::Horizontal)
+            .align(Align::Center)
+            .scroll(Scroll::Horizontal)
+            .scrollbars(Scrollbars::Hidden)
+            .flex(1.),
             search,
             themes,
             mode_button(app),
@@ -137,7 +156,7 @@ fn header(app: &App) -> El<App> {
         .height(60.)
         .gap(6., Axis::Horizontal)
         // Leave room for the macOS traffic lights in the integrated title bar.
-        .padding(if mac { 86. } else { 20. }, Edge::Left)
+        .padding(if mac { 100. } else { 20. }, Edge::Left)
         .padding(20., Edge::Right)
         .drag_region(true),
         divider().background(ColorToken::Border),
@@ -149,6 +168,7 @@ fn sidebar(app: &App) -> El<App> {
     let query = app.sidebar_query.trim().to_lowercase();
     let mut items: Vec<El<App>> = vec![text_field(&app.sidebar_query)
         .key("sidebar-filter")
+        .accessible_label("Filter component pages")
         .placeholder("Filter…")
         .height(34.)
         .font_size(13.)
@@ -216,6 +236,7 @@ fn sidebar(app: &App) -> El<App> {
     }
     vstack(items)
         .key("sidebar")
+        .accessible_label("Component navigation")
         .width(SIDEBAR)
         .padding(16., Edge::All)
         .padding(20., Edge::Top)
@@ -234,6 +255,7 @@ fn landing(app: &App) -> El<App> {
         zstack![
             button("")
                 .key(key.clone())
+                .accessible_label(format!("Open {}", page.title()))
                 .variant(ButtonVariant::Outline)
                 .rounded(12.)
                 .hover_style(|s| s
@@ -477,6 +499,7 @@ fn palette(app: &App) -> El<App> {
         vstack![
             text_field(&app.palette_query)
                 .key("palette-query")
+                .accessible_label("Find a component page")
                 .placeholder("Type a component name…")
                 .height(40.)
                 .on_change(|app: &mut App, v| app.palette_query = v)

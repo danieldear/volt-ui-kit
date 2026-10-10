@@ -160,13 +160,19 @@ Existing `NativeOptions { title, size, document_path }` literals and `run_ui` /
 | Chrome | Policy |
 |---|---|
 | Native | Existing system title bar; default |
-| Overlay | macOS transparent title bar + hidden title + full-size content; native traffic lights retained |
+| Overlay | macOS transparent, unified title bar + hidden title + full-size content; native traffic lights retained and inset by AppKit (macOS 11+) |
+| CompactOverlay | Original compact transparent title bar; for applications with shorter custom headers |
 | Borderless | Remove system decorations; application must supply usable window controls |
 
-Overlay matches Volt's custom-tab mode flags; it is **not** complete borderless
-mode. Other platforms deliberately retain a native decorated title bar for
-Overlay, not pretend to supply macOS-style controls. macOS uses the existing
-[winit title-bar API](https://docs.rs/winit/latest/winit/platform/macos/trait.WindowAttributesExtMacOS.html).
+Neither overlay mode is complete borderless mode. `CompactOverlay` retains
+Volt's original custom-tab mode flags. Other platforms deliberately retain a
+native decorated title bar for both overlay modes. On macOS 11+, `Overlay`
+adds an empty public AppKit `NSToolbar` with unified styling to winit's transparent
+full-size titlebar. AppKit owns control size, drawing and resize/fullscreen layout;
+Volt does not stretch, repaint or reparent the traffic lights. Earlier macOS
+versions retain compact geometry. Native/default and Borderless are unchanged.
+The [pinned winit title-bar API](https://docs.rs/winit/0.30.13/winit/platform/macos/trait.WindowAttributesExtMacOS.html)
+does not expose a traffic-light inset or unified-toolbar setter.
 
 ```text
 +---------------------------------------------------+
@@ -176,8 +182,9 @@ Overlay, not pretend to supply macOS-style controls. macOS uses the existing
 +---------------------------------------------------+
 ```
 
-Reserve traffic-light clearance yourself; the example uses an 80px left inset
-and a 48px header.
+Reserve traffic-light clearance yourself; Catalog uses a 100-point left inset
+and a 60-point header for unified `Overlay`. Use `CompactOverlay` for an existing
+application whose shorter header depends on the old geometry.
 These are example dimensions, not a promise of system metrics on every macOS
 version/fullscreen state. `.drag_region(true)` marks a container header. Header
 text/decorations inherit the drag region. Interactive controls (including

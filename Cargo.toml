@@ -12,7 +12,9 @@ include = ["docs/**", "src/**", "examples/**", "tests/**", "Cargo.toml", "README
 default = []
 declarative = ["dep:serde", "dep:serde_json"]
 rust-ui = ["declarative", "dep:unicode-segmentation"]
-native = ["rust-ui", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:cosmic-text", "dep:image", "dep:arboard", "dep:accesskit", "dep:accesskit_winit"]
+native = ["rust-ui", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:cosmic-text", "dep:image", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+native-desktop = ["native", "dep:muda", "dep:tray-icon"]
+dev-tools = ["dep:serde_json"]
 native-gpu = ["native", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
 
 [dependencies]
@@ -40,6 +42,11 @@ cosmic-text = { version = "0.14.2", optional = true }
 
 # One native compute backend per platform; no unused GLES/WebGPU backend.
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"], optional = true }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSGeometry"], optional = true }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSWindow", "NSView", "NSResponder", "NSToolbar", "NSButton", "NSControl"], optional = true }
+muda = { version = "=0.19.3", default-features = false, optional = true }
+tray-icon = { version = "=0.24.2", default-features = false, optional = true }
 wgpu = { version = "=26.0.1", optional = true, default-features = false, features = ["std", "wgsl", "metal"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { version = "=26.0.1", optional = true, default-features = false, features = ["std", "wgsl", "dx12"] }
@@ -132,3 +139,8 @@ required-features = ["native"]
 [[example]]
 name = "catalog"
 required-features = ["native"]
+
+[[bin]]
+name = "cargo-volt"
+path = "src/bin/cargo-volt.rs"
+required-features = ["dev-tools"]

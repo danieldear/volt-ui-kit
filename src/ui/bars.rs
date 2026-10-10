@@ -114,6 +114,7 @@ pub fn tab_bar<C, T>(items: impl IntoIterator<Item = TabItem<T>>) -> SelectionCo
     let mut e = Element::new(Kind::Row);
     e.node.gap = 4.;
     e.node.selection_group = true;
+    e.node.access_role = Some(AccessRole::TabList);
     SelectionControl(
         e,
         SelectionOptions {
@@ -134,6 +135,7 @@ pub fn segmented_control<C, T>(
             .map(|(value, label)| tab_item(value, label)),
     );
     bar.1.joined = true;
+    bar.0.node.access_role = Some(AccessRole::RadioGroup);
     bar
 }
 impl<C, T> SelectionControl<C, T> {
@@ -210,6 +212,13 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<SelectionControl<C, T>> fo
                 child = child.color(ColorToken::PrimaryContent);
             }
             child.0.node.checked = active;
+            child.0.node.access_selected = Some(active);
+            child.0.node.access_role =
+                Some(if bar.0.node.access_role == Some(AccessRole::RadioGroup) {
+                    AccessRole::RadioButton
+                } else {
+                    AccessRole::Tab
+                });
             if let Some(key) = item.key {
                 child = child.key(key);
             }

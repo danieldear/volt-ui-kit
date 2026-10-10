@@ -5,7 +5,11 @@ separate windowing or rendering systems. `native` uses software drawing;
 `native-gpu` uses Vello GPU drawing with cosmic-text shaping and software fallback.
 Use `VOLT_UI_RENDERER=gpu|software` to compare; see
 [GPU rendering/dependencies](../docs/GPU_RENDERING.md). Widget backdrop blur and
-a platform accessibility adapter remain future work.
+full platform accessibility acceptance remain future work (the AccessKit adapter
+and bounded semantic/actions foundation are implemented).
+
+**Primary acceptance app:** `catalog`. New capability demos go here, not UI Lab
+or the older Showcase. See [Catalog](../docs/CATALOG.md).
 
 ```sh
 cargo run --locked --example gallery

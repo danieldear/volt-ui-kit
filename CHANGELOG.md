@@ -2,6 +2,24 @@
 
 ## 0.2.0 (unreleased)
 
+- macOS overlay chrome uses public AppKit unified toolbar geometry, giving native
+  traffic lights more top/leading clearance. Catalog reserves a 60-point header
+  and 100-point leading inset. New `CompactOverlay` preserves the earlier short
+  titlebar; standard Native/default chrome is unchanged. Native controls are not
+  resized or repainted when switching appearance.
+
+- Catalog data views: working rounded (12px default) and square table previews,
+  continuous rounded frames, matching header/last-row focus contours without
+  an internal gutter, dividers, column alignment and two-axis overflow;
+  tables expose cell/header ancestry, indices and sort direction. Trees use vector
+  chevrons, inset selection rows and logical accessible child relationships.
+
+- Catalog is now the primary component demo: named controls, semantic selection,
+  mounted accessibility focus/scroll reveal, scoped scroll actions, opt-in window
+  alpha/blur, reliable worker completion and launch/state regression tests.
+  Rust-only `.accessible_label(...)` and composite roles/states preserve schema1
+  and legacy Painter/default dependencies. See `docs/CATALOG.md` for limits.
+
 - Security/performance hardening: validate accessibility targets and values
   before side effects; enforce a hard 96 MiB GPU image registry budget and
   packing admission before uploads; borrow opaque image staging pixels and
@@ -150,3 +168,13 @@ Extracted Volt presentation models, layouts, icon paths and paint recipes.
 - Fixed Atelier's Full corner selector: retain `Rounding::Full` rather than an
   invalid 999px sentinel, so selecting it no longer rejects later UI updates.
   Added all-preset rendering and pointer/keyboard/recomposition regressions.
+
+### Application development first slice (unreleased)
+
+- Additive standalone Application API with explicit renderer/theme/window policy,
+  existing typed messages, and GPU-required recovery behavior.
+- Independent typed destination navigation in Catalog; no mandatory shell.
+- Opt-in cargo-volt local project templates and rebuild/restart development runner.
+- Optional macOS application menu/tray menus with validated command delivery;
+  default core/native dependency graphs preserved. Modern notifications and
+  web/maps/AI/intents remain pending, not unsupported-operation success stubs.

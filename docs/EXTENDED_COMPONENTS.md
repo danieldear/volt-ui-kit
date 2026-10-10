@@ -116,6 +116,15 @@ ui.build()?;
   is lexical by displayed cell; use `.sort_by(|column, left_id, right_id| ...)` for
   numeric/application comparisons. Store requested sort column/direction in app state.
   Rows/cells are bounded by the document budget; this is not a virtualized spreadsheet.
+- Tables default to `.rounded(12.)`; `.rounded(0.)` makes both the outer frame and
+  inset rows square. Catalog shows both as live, sortable/selectable examples.
+  `.align(Align::Start | Center | End)` on a column aligns its header and cells;
+  use End for amounts. Column widths are minima; a wider table grows them
+  proportionally. Bounded `.width(...).height(...)` viewports scroll on either
+  axis. Only the 1px stroke is reserved internally; header top and sorted last-row
+  bottom selection/focus corners follow the table radius. Cell padding is unchanged.
+- Trees use vector disclosure chevrons, inset rows and semantic TreeItem parents.
+  Selecting a row and expanding its branch remain separate actions.
 - Trees mount only expanded branches. Expansion/selection remain controlled; stable
   node keys/IDs, bounded depth/model/visible-row budgets prevent oversized trees.
 - Splits have a real captured draggable divider, not a decorative line. Ratio is

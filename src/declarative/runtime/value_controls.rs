@@ -587,40 +587,52 @@ impl Runtime {
         let candidates: Vec<_> = self
             .boxes
             .iter()
-            .filter_map(|b| {
-                b.virtual_list
-                    .as_ref()
-                    .filter(|_| self.scope_allows_id(&b.id))
-                    .map(|props| (b.clone(), props.clone()))
-            })
+            .filter(|b| b.virtual_list.is_some() && self.scope_allows_id(&b.id))
+            .cloned()
             .collect();
         let mut activated = false;
-        for (b, props) in candidates {
-            let r = b.bounds.bounds();
-            let pad = b.style.layout.padding;
-            let height = ((r[3] - pad[0] - pad[2]) / self.scale).max(0.);
-            let offset = self.scroll_offsets.get(&b.id).map_or(0., |v| v[1]);
-            let first = (f64::from(offset) / f64::from(props.row_height))
-                .floor()
-                .max(0.) as usize;
-            let visible = (height / props.row_height).ceil() as usize;
-            let start = first.saturating_sub(props.overscan).min(props.count);
-            let end = first
-                .saturating_add(visible)
-                .saturating_add(props.overscan)
-                .saturating_add(1)
-                .min(props.count)
-                .min(start.saturating_add(96));
-            if start != props.start || end != props.end {
-                if let Some(action) = props.on_window_change {
-                    handlers
-                        .dispatch(&action, Event::WindowChanged { start, end }, context)
-                        .map_err(|e| DocumentError(e.to_string()))?;
-                    activated = true;
-                }
-            }
+        for b in candidates {
+            activated |= self.dispatch_virtual_window(&b, handlers, context)?;
         }
         Ok(activated)
+    }
+    pub(super) fn dispatch_virtual_window<C>(
+        &self,
+        b: &LayoutBox,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        let Some(props) = b
+            .virtual_list
+            .as_ref()
+            .filter(|_| self.scope_allows_id(&b.id))
+        else {
+            return Ok(false);
+        };
+        let r = b.bounds.bounds();
+        let pad = b.style.layout.padding;
+        let height = ((r[3] - pad[0] - pad[2]) / self.scale).max(0.);
+        let offset = self.scroll_offsets.get(&b.id).map_or(0., |v| v[1]);
+        let first = (f64::from(offset) / f64::from(props.row_height))
+            .floor()
+            .max(0.) as usize;
+        let visible = (height / props.row_height).ceil() as usize;
+        let start = first.saturating_sub(props.overscan).min(props.count);
+        let end = first
+            .saturating_add(visible)
+            .saturating_add(props.overscan)
+            .saturating_add(1)
+            .min(props.count)
+            .min(start.saturating_add(96));
+        if start != props.start || end != props.end {
+            if let Some(action) = props.on_window_change.as_deref() {
+                handlers
+                    .dispatch(action, Event::WindowChanged { start, end }, context)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     pub(super) fn advance_progress(&mut self, now: Duration) -> bool {
         let changed = now > self.progress_clock.now;

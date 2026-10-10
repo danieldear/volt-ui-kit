@@ -1,0 +1,224 @@
+# Application development: delivery plan and first slice
+
+Date: 2026-10-10. Scope: application-first, macOS-first. Theme editor is deferred.
+**This milestone is not complete.** The current slice is explicitly separated
+from remaining desktop services, application lifecycle and tooling below.
+
+## Design contracts
+
+- Developers choose every layout, theme, opacity, material and effect. No required
+  shell, navigation placement, "blur only sidebars" rule, or AI provider.
+- GPU-first generated standalone apps; automatic opaque software fallback.
+  `RendererPreference::GpuRequired` instead returns an error when GPU cannot run.
+- Existing `run_ui` options, default dependency footprint, static `Painter`,
+  schema 1 and Volt's separate vendored consumer are preserved.
+- New system services are opt-in. Capability flags report compiled adapters,
+  not permission, hardware availability, deployment acceptance or live OS state.
+- No silent dummy WebKit/map/AI view or notification-success stub.
+- A UI template is not an editor engine, mail protocol implementation or agent.
+
+### macOS chrome follow-up
+
+`WindowChrome::Overlay` now uses public AppKit unified toolbar geometry on macOS
+11+, rather than compact titlebar spacing. Reserve approximately 60 points of
+header height and leading clearance (Catalog uses 100 points). AppKit owns native
+button drawing and sizing, including light/dark and fullscreen. It does not force
+blur or a particular background material. `CompactOverlay` preserves earlier
+short-header geometry; default `Native` is unchanged. Detailed contracts are in
+[Effects and windowing](EFFECTS_AND_WINDOWING.md#volt-style-window-chrome).
+
+On the test Mac, close/minimize/zoom bounds are 14 by 14 points in both modes,
+at x=19/42/65 and y=19 in windowed mode. Native zoom and fullscreen entry were
+exercised; colored-circle visual acceptance remains outstanding because native
+controls are obscured/omitted by the automation capture. Do not interpret square
+control bounds as proof of the final painted silhouette on every macOS version.
+
+**Runtime release gate:** repeated GPU animated zoom on a larger display stalled
+in `GpuPresenter::present -> Surface::configure -> Metal wait`, then produced a
+wait-for-idle validation error and queue-drop timeout. Normal windowed light/dark
+rendering and a smaller-screen zoom round trip worked. A completion-gated resize
+experiment avoided blocking but produced a redraw busy-loop; it was reverted,
+not shipped. The GPU resize regression needs separate remediation and full
+large-display/fullscreen acceptance. The existing 16-megapixel frame limit is
+also retained. Evidence is in `work/window-chrome-2026-10-10/` (local, ignored).
+
+```text
+Developer-owned state + Rust view + callbacks
+                  |
+             Application
+              /       \
+      UI runtime       Optional desktop adapters
+       /      \         (capability checked)
+    Vello   software      menu / tray
+      |
+   Metal on this Mac
+
+Independent components: navigation, tabs, panels, fields, tables...
+Optional starter layouts: navigation / mail / settings / agent
+No required shell, background material, layout or AI provider.
+```
+
+## Delivery phases
+
+| Phase | Work | Status / acceptance |
+|---|---|---|
+| A | Additive Application entry point, explicit renderer/theme/background, typed background messages | Implemented; tests and generated-project checks |
+| A | Controlled standalone navigation: sidebar, centered rail, bottom placement | Implemented basic label destinations; Catalog light/dark and callbacks; icons, nested groups, collapse/resizing and roving keyboard navigation remain |
+| A | Local project scaffolding + dev rebuild/restart | Implemented; minimal/navigation/mail/settings/agent UI starters; no state-preserving hot reload |
+| B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback accepted on macOS; tray-click acceptance pending; static definitions, one standalone host/process |
+| B | Modern notifications and permission/action lifecycle | Pending; suitable safe UserNotifications bridge compatible with Rust 1.87 required |
+| B | Public macOS window materials, reduced-transparency discovery | Pending; current pinned winit blur path is not the final public-material bridge |
+| C | Command registry/shortcuts/palette, close veto, dirty documents, persistence, multi-window | Pending; existing single-window run loop is not a complete application lifecycle |
+| C | Shipping application bundles, icons, permission declarations, signing/notarization | Pending application tooling; generated Cargo projects are not distributable signed app bundles |
+| C | Deeper nav, document tabs, inspector/output/status compositions | Pending beyond basic reusable navigation |
+| D | UI inspector, debug overlay, code-change development-loop improvements | Pending; existing trace timings remain available |
+| E | Translation/scale/layout/spring motion with correct clipping/hit testing | Pending; existing bounded appearance effects retained |
+| F | Embedded web, maps, Foundation Models and App Intents | Deferred until foundation/desktop services accepted |
+| Later | Visual theme editor | Deferred explicitly by user |
+
+## Application API (implemented)
+
+```rust,no_run
+use volt_ui_kit::{native::{Application, RendererPreference, WindowBackground}, ui::prelude::*};
+#[derive(Default)]
+struct App { count: u32 }
+fn view(app: &App) -> Element<App> {
+    vstack![
+        text(format!("Count: {}", app.count)),
+        button("Add").key("add").on_click(|app: &mut App| app.count += 1),
+    ].padding(24., Edge::All).into()
+}
+Application::new("My application", App::default(), view)
+    .size(1100, 760)
+    .renderer(RendererPreference::Auto)
+    .background(WindowBackground::Blur { opacity: 0.82 })
+    .run()?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`Application` defaults to system theme, GPU-if-compiled, ordinary native chrome,
+opaque background. Appearance is explicit Rust configuration, not launch flags.
+It also accepts `theme_with`, `palette`, `chrome`, `reduced_motion`, `messages`
+and optional `desktop`. Configuration is validated before creating an event loop.
+The new renderer preference is authoritative; existing `run_ui` still honors
+`VOLT_UI_RENDERER`. Renderer-required behavior also holds during GPU recovery.
+
+Window alpha changes the root clear, not text/control opacity. Desktop background
+blur, panel-backdrop blur and content blur are separate capabilities. Current
+window Blur is only an OS request; unsupported platforms may ignore it. The new
+system capability flags do not promise blur support or automatic accessibility
+preference discovery. Do not distribute it as a universally supported material.
+
+## Scaffolding and development runner (implemented)
+
+Until a registry release, supply an explicit local toolkit path:
+
+```sh
+cargo run --locked --features dev-tools --bin cargo-volt -- new /tmp/my-volt-app \
+  --kit-path /Users/neo/workspace/rust/volt-ui-kit --template navigation
+cargo run --manifest-path /tmp/my-volt-app/Cargo.toml
+```
+
+Templates: `minimal`, `navigation`, `mail`, `settings`, `agent`. `--desktop` adds
+macOS menu/tray setup and the optional `native-desktop` feature. Without it, the
+new project has no menu/tray dependencies. Generated projects use `native-gpu` by
+default. Unsupported desktop adapters return explicit errors on other platforms.
+Generated manifests explicitly select resolver 3 to prefer dependencies compatible
+with their Rust 1.87 minimum, including when Cargo is launched with `--manifest-path`.
+An initial fresh-project check caught a newer transitive UUID requiring Rust 1.89;
+the generated resolver policy now selects a compatible version. Keep application
+lockfiles in version control. External workspaces own their resolver configuration.
+See [Cargo resolver versions](https://doc.rust-lang.org/cargo/reference/resolver.html#resolver-versions).
+
+To make `cargo volt` available locally:
+
+```sh
+cargo install --path /Users/neo/workspace/rust/volt-ui-kit --features dev-tools --bin cargo-volt
+cargo volt dev /tmp/my-volt-app
+```
+
+`dev` executes the **trusted local project's Cargo build/build scripts and app**.
+It watches source/manifest/.cargo metadata at 500ms intervals, rebuilds and
+restarts after a successful build, and retains the running app on compiler errors.
+It does not poll/render UI frames. It does not preserve unsaved app state, watch
+path dependencies/assets, hot-swap Rust closures, sandbox build scripts or package
+applications. One binary target is required. Use only on projects you trust.
+Scaffolding never overwrites an existing destination and performs no build itself.
+
+## Native desktop services (implemented menu/tray; notifications pending)
+
+`native::system::{DesktopConfig, DesktopMenu, DesktopCommand, TrayConfig}` defines
+bounded validated configuration; `Application::desktop(config, callback)` routes
+known enabled command IDs on the UI thread and recomposes the view. Menu/tray IDs
+share commands; inconsistent definitions are rejected. Tray RGBA size is bounded
+at 128x128. The application retains and drops OS menu/tray resources with its host.
+No global background polling or OS subprocess is used.
+
+macOS uses compatible pinned `muda 0.19.3` and `tray-icon 0.24.2`, defaults disabled;
+no Linux GTK backend/dependencies are selected. They expose safe Rust APIs to this
+crate, which retains `forbid(unsafe_code)`. Native calls internally require platform
+FFI: "safe toolkit" is not a dependency-level security certification. OS services
+are initialized in winit's resumed/main-thread lifecycle. The menu includes standard
+About/Services/Hide/Quit actions. This is the **application menu**, not customization
+of macOS's system Apple-logo menu. Predefined edit actions are intentionally not
+added: custom text input is not automatically an AppKit responder.
+
+Limitations: one process-global muda handler, single standalone host, static
+menu definitions, no tray-click callback/hide-to-tray lifecycle, accelerator
+mapping or dirty-document close veto. Existing embedders can own their adapters;
+this host must not share a process-global menu handler with another framework.
+Capability booleans for notifications/web/maps/AI/intents are false until real
+adapters ship. Notifications were not replaced by deprecated NSUserNotification
+or AppleScript: checked modern mac-usernotifications releases require Rust 1.90.
+
+## Later public Apple bridges (planned, not implemented)
+
+| Module | Public API / requirements |
+|---|---|
+| Window material | NSVisualEffectView; public AppKit integration, compositing/resize/contrast/reduced-transparency acceptance |
+| Notifications | UserNotifications: explicit authorization, stable request IDs, async delivery/action callbacks; denied/unsupported errors; packaged bundle acceptance |
+| Embedded web | WKWebView/native-view placement and lifecycle, URL/scheme/navigation policies, isolated optional JS bridge, permission/storage controls, clipping/focus |
+| Maps | MapKit/native-view integration; developer-selected provider; explicit location permission only when location is requested; attribution/provider rules |
+| On-device models | Foundation Models Swift bridge; runtime device/OS/model availability, cancellation, safety/resource bounds; no blanket Siri-chat API |
+| Siri/Shortcuts | App Intents in application Swift packaging/metadata; developer-declared app actions, not unrestricted access to Siri internals |
+
+Primary API references checked 2026-10-10:
+[UserNotifications](https://developer.apple.com/documentation/usernotifications),
+[WKWebView](https://developer.apple.com/documentation/webkit/wkwebview),
+[MapKit](https://developer.apple.com/documentation/mapkit),
+[App Intents](https://developer.apple.com/documentation/appintents),
+[Apple Intelligence](https://developer.apple.com/apple-intelligence/),
+[NSVisualEffectView](https://developer.apple.com/documentation/appkit/nsvisualeffectview).
+These require narrow optional platform bridges, not unsafe modifications to the
+renderer-independent core. Windows/Linux adapters and runtime acceptance follow.
+
+## Release acceptance
+
+- Default, rust-ui, native, GPU, desktop and dev-tools test/build/lint/MSRV gates.
+- Generated applications compile and launch; real menus/tray callbacks update UI.
+- Native permissions and user controls tested, not inferred from SDK compilation.
+- Runtime input/IME/VoiceOver and Windows/Linux acceptance remain separate.
+- New component visuals live in Catalog only. No theme editor or mandatory shell.
+- No claim that a full code editor, mail backend, AI client, multi-window runtime
+  or complete application framework was delivered in this first slice.
+
+## First-slice verification (2026-10-10)
+
+- All-features/all-targets suite: 440 passed, 12 explicitly ignored; the all-feature
+  doctest suite separately passed 28, with 1 ignored. Default suite: 40 passed.
+- Strict all-features/all-targets Clippy and native-only library/test Clippy passed.
+  Rust 1.87 all-feature/all-target check passed. Generated native/GPU desktop
+  navigation project also checked on Rust 1.87 using fresh dependency resolution.
+- All five generated template kinds checked; no unused generated-state warnings.
+- Real Cargo dev loop accepted initial launch, retained child on a deliberate
+  compiler error, then replaced/reaped the child after successful compilation.
+- Generated navigation app launched with Vello / Apple M4 Pro / Metal, with
+  `framebuffer_upload_bytes=0`; navigation and native Workspace/Settings commands
+  updated Rust state through real macOS UI interaction.
+- Catalog Navigation accepted sidebar, rail and bottom callbacks, disabled
+  destination behavior, and light/dark appearance on GPU.
+- Tray resource installation compiled/launched, but status-item click acceptance
+  remains unverified. No notification authorization, VoiceOver session, Windows/
+  Linux native acceptance, new performance benchmark or Volt vendored integration
+  acceptance is claimed. Logs/temporary generated fixtures are ignored under
+  `work/application-foundation-2026-10-10/`.
