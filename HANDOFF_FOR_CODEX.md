@@ -73,6 +73,17 @@ user which files you touched) rather than editing `main` directly.
   Windows headlessly.
 - Real device loss under stress.
 
+## Catalog example (after your 0.2.0 commit)
+
+`examples/catalog.rs` + `examples/catalog/` is a shadcn-style documentation
+site covering every component (including menus, context menu, popover,
+tooltip, progress, table, tree, virtual list, split pane and worker messages),
+with Preview/Code tabs, API tables, a search palette and six themes. It adds
+files, an `[[example]]` entry, a README row, and specific table validation
+errors in `src/ui/data.rs` (columns are sortable by default, which the old
+combined message hid). Tests: every page builds in both modes, at two widths,
+with every code view and the overlays open.
+
 ## Suggested next steps
 
 1. Icons inside `ui::button` (leading/trailing slots) — currently apps layer a

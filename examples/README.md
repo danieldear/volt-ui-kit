@@ -23,6 +23,7 @@ cargo run --locked --features native --example complete_app
 cargo run --locked --features native --example components
 cargo run --locked --features native --example northbound
 cargo run --locked --features native --example specimen
+cargo run --locked --features native --example catalog
 ```
 
 | Example | Demonstrates | Expected result |
@@ -32,6 +33,7 @@ cargo run --locked --features native --example specimen
 | rust_keyed_list | Rust loops, stable keys, captured IDs | Reverse/remove target correct items; removed focus clears |
 | rust_layout | HStack/VStack aliases, nine placements, selector padding/gap, pill/fractional rounding, dividers/spacers | Placement switches move the content; Add/Reset use typed Rust callbacks |
 | rust_responsive | Responsive Stack direction/padding/gap, fixed stacks, layered ZStack, typed callbacks | Resize across768 logical pixels; front button wins overlap, exposed back area reaches back button |
+| catalog | Documentation-style showcase of every component (shadcn/ui-like): sidebar, search palette, live previews with Preview/Code tabs, API tables, themes (Zinc/Blue/Violet/Rose/Green/Orange, light/dark), patterns and a real background worker | `--page table`, `--theme dark`, `--accent violet`, `--code`, `--palette`, `--dialog`, `--snapshot PNG` |
 | specimen | Every component at its default styling, including button variants/sizes and disclosure triggers, for design review and visual regression | Dark by default; `--theme light`, `--open-overlays`, `--dialog`, `--snapshot PNG` |
 | northbound | App-scale trip planner using every Rust UI component: tabs, segmented controls, toolbars, joined button bars, text field/area, slider, select, dialog, checkbox/toggle, canvas icons, clipped image backgrounds, themes/accents, hover/press/focus effects, keyed animations and fade transitions. Photos are generated in Rust at startup | Select stops, search, plan days, write journal entries, reserve a stay and switch Polar night / Midnight sun themes. Flags: `--screen route\|days\|journal\|settings`, `--theme light`, `--accent ember`, `--reserve` |
 | gallery | Existing renderer-independent recipes | Static SVG files in target/gallery |
