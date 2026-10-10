@@ -4,8 +4,10 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_DOCUMENT_BYTES: usize = 262_144;
-pub(crate) const MAX_NODES: usize = 512;
-pub(crate) const MAX_DEPTH: usize = 24;
+/// Per-document limits. Large collections should use virtual lists, which mount
+/// only their visible window of rows.
+pub(crate) const MAX_NODES: usize = 4096;
+pub(crate) const MAX_DEPTH: usize = 48;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1144,7 +1146,7 @@ mod tests {
     fn bounded_depth_and_size() {
         assert!(Document::parse(&" ".repeat(MAX_DOCUMENT_BYTES + 1)).is_err());
         let mut n = serde_json::json!({"type":"column","id":"leaf"});
-        for i in 0..26 {
+        for i in 0..MAX_DEPTH + 2 {
             n = serde_json::json!({"type":"column","id":format!("node{i}"),"children":[n]});
         }
         assert!(
@@ -1162,7 +1164,7 @@ mod budget_tests {
             let doc = serde_json::json!({"schema_version":1,"root":{"type":"text","id":"t","text":"Budget","font_size":size}});
             assert!(Document::parse(&doc.to_string()).is_err());
         }
-        let children: Vec<_> = (0..513)
+        let children: Vec<_> = (0..=MAX_NODES)
             .map(|i| serde_json::json!({"type":"text","id":format!("t{i}"),"text":"x"}))
             .collect();
         assert!(Document::parse(&serde_json::json!({"schema_version":1,"root":{"type":"column","id":"root","children":children}}).to_string()).is_err());

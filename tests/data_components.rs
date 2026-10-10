@@ -294,7 +294,8 @@ fn table_rejects_wrong_cells_duplicates_missing_callback_and_node_budget() {
     assert!(Element::from(make()).build().is_err());
     let ui: Element<App> = table(
         (0..8).map(|i| table_column(i, "C")),
-        (0..96).map(|i| {
+        // 2 + 8 + 400 * (3 + 8) nodes exceeds the 4096-node document budget.
+        (0..400).map(|i| {
             table_row(i, ["1", "2", "3", "4", "5", "6", "7", "8"]).key(format!("row-{i}"))
         }),
     )

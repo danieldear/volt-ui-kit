@@ -225,10 +225,11 @@ fn validation_rejects_duplicate_keys_missing_callbacks_limits_and_bad_styles() {
     assert!(Element::<App>::from(text("a".repeat(8193)))
         .build()
         .is_err());
-    let nodes: Vec<Element<App>> = (0..513).map(|i| text(i.to_string()).into()).collect();
+    // Document limits: 4096 nodes, depth 48.
+    let nodes: Vec<Element<App>> = (0..4097).map(|i| text(i.to_string()).into()).collect();
     assert!(Element::from(column(nodes)).build().is_err());
     let mut deep: Element<App> = text("Leaf").into();
-    for _ in 0..26 {
+    for _ in 0..50 {
         deep = column(vec![deep]).into();
     }
     assert!(deep.build().is_err());

@@ -201,7 +201,7 @@ cumulative processed shadow-mask pixels 16,777,216/frame; alpha mask cache
 and aggregate RGBA buffers 64MiB including root.
 Group buffers are cleared/reused and discarded on framebuffer resize. Raster
 budgets fail explicitly with `Err`, rather than silently removing an effect.
-At most 512 detached nodes are retained; repeated removals exceeding that cap
+At most 4096 detached nodes are retained; repeated removals exceeding that cap
 settle the oldest exit group early. Motion tracks are pruned after exits expire.
 
 Legacy `Painter` gains **defaulted** methods for independent corners, outlines
