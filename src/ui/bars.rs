@@ -9,7 +9,7 @@ pub struct Toolbar<C>(pub(super) Element<C>);
 pub fn button_bar<C>(children: impl IntoIterator<Item = Element<C>>) -> ButtonBar<C> {
     let mut e = container(Kind::Row, children).0;
     e.node.gap = 8.;
-    e.node.style.radius = Some(Rounding::Radius(2.));
+    e.node.style.radius = Some(Rounding::Radius(6.));
     ButtonBar(e, false)
 }
 pub fn toolbar<C>(children: impl IntoIterator<Item = Element<C>>) -> Toolbar<C> {
@@ -18,11 +18,15 @@ pub fn toolbar<C>(children: impl IntoIterator<Item = Element<C>>) -> Toolbar<C> 
     e.node.align = Align::Center;
     Toolbar(e)
 }
+/// Square the inner corners of a group's children and separate them with a
+/// 1px seam through which the surface behind shows, so the segments read as
+/// one divided control. (A group background would fill the full row width
+/// when a column stretches the group.)
 fn join<C>(e: &mut Element<C>) {
-    e.node.gap = 0.;
+    e.node.gap = 1.;
     e.node.gap_horizontal = None;
     e.node.responsive.gap = [None, None];
-    let radius = e.node.style.radius.unwrap_or(Rounding::Radius(2.));
+    let radius = e.node.style.radius.unwrap_or(Rounding::Radius(6.));
     let corners = e.node.style.corners.unwrap_or([radius; 4]);
     let last = e.children.len().saturating_sub(1);
     for (i, child) in e.children.iter_mut().enumerate() {
@@ -361,7 +365,7 @@ mod tests {
             .gap(20., Axis::Both)
             .into();
         let zero = Rounding::Radius(0.);
-        assert_eq!(e.node.gap, 0.);
+        assert_eq!(e.node.gap, 1., "a 1px seam between joined segments");
         assert_eq!(
             e.children[0].node.style.corners,
             Some([Rounding::Full, zero, zero, Rounding::Full])

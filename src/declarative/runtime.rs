@@ -163,6 +163,9 @@ pub struct LayoutBox {
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
+    /// Horizontal label placement for buttons (fractions 0..1); centred if None.
+    pub(crate) label_flow: Option<super::Flow>,
+    pub(crate) disclosure: Option<bool>,
     pub(crate) effects: Effects,
     pub(crate) depth: usize,
     ancestor_clip: Rect,
@@ -1577,10 +1580,13 @@ impl Runtime {
                 let surface =
                     visual.map_or_else(|| state_surface(base, state, theme), |v| v.background);
                 let radius = b.radius_spec(self.scale);
-                let mut color =
-                    b.style
-                        .color
-                        .unwrap_or(if b.primary { theme.background } else { c.text });
+                // Primary labels pick black or white for contrast with the
+                // actual fill, as `Palette::with_accent` does for themes.
+                let mut color = b.style.color.unwrap_or(if b.primary {
+                    crate::theme::contrast(base)
+                } else {
+                    c.text
+                });
                 if state.disabled && visual.is_none() {
                     color[3] *= 0.45;
                 }
@@ -1630,13 +1636,36 @@ impl Runtime {
                     );
                 }
                 let inset = 10. * self.scale;
-                let max_width = (r[2] - 2. * inset).max(0.1);
+                // A disclosure chevron takes the trailing edge; its label
+                // starts at the leading edge like a native pop-up button.
+                let chevron = if b.disclosure.is_some() {
+                    18. * self.scale
+                } else {
+                    0.
+                };
+                if let Some(open) = b.disclosure {
+                    let s = self.scale;
+                    let (cx, cy) = (r[0] + r[2] - inset - 5. * s, r[1] + r[3] * 0.5);
+                    let dy = if open { -2. * s } else { 2. * s };
+                    let path = VectorPath::new()
+                        .move_to(cx - 4. * s, cy - dy)
+                        .line_to(cx, cy + dy)
+                        .line_to(cx + 4. * s, cy - dy);
+                    let mut ink = color;
+                    ink[3] *= 0.75;
+                    p.ui_path(&mut shapes, &path, ink, Some(1.5 * s));
+                }
+                let max_width = (r[2] - 2. * inset - chevron).max(0.1);
                 let [w, h] = p.measure_styled(&b.text, &b.text_style, max_width);
+                let default_along = if b.disclosure.is_some() { 0. } else { 0.5 };
+                let along = b
+                    .label_flow
+                    .map_or(default_along, |flow| flow.fractions()[0]);
                 p.ui_text_styled(
                     &mut glyphs,
                     &b.text,
                     [
-                        r[0] + ((r[2] - w) * 0.5).max(inset),
+                        r[0] + inset + ((r[2] - 2. * inset - w) * along).max(0.),
                         r[1] + (r[3] - h) * 0.5,
                         max_width,
                         h,
@@ -2612,6 +2641,8 @@ fn place(
             .or_else(|| n.on_toggle_changed.clone()),
         tone: n.tone,
         primary: n.primary,
+        label_flow: (n.kind == Kind::Button).then_some(n.flow).flatten(),
+        disclosure: n.disclosure,
         effects: n.effects.clone(),
         depth: styles[&n.id].depth,
         ancestor_clip: ancestor,
@@ -3013,9 +3044,10 @@ mod tests {
                 assert!((second[axis] - first[axis] - first[axis + 2] - 16.).abs() < 0.01);
                 assert_eq!(first[3], 100.);
                 assert!(bounds("intro")[3] >= 14. * 1.2);
-                // The fixed-height panel is bounded again: its spacer must fill.
+                // The fixed-height panel is bounded again: its spacer must fill
+                // down to the panel's 12px bottom padding.
                 let bottom = bounds("bottom");
-                assert!((bottom[1] + bottom[3] - first[1] - first[3]).abs() < 0.01);
+                assert!((bottom[1] + bottom[3] + 12. - first[1] - first[3]).abs() < 0.01);
             }
         }
     }

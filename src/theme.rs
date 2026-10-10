@@ -59,9 +59,21 @@ impl ColorToken {
             Self::Muted => "muted",
         }
     }
+    /// Parse `@name`, optionally with an opacity suffix `@name/NN` (0..=100).
     pub fn parse(value: &str) -> Option<Self> {
+        Self::parse_with_alpha(value).map(|(token, _)| token)
+    }
+    /// Parse a token and its opacity (1.0 when no `/NN` suffix is given).
+    pub fn parse_with_alpha(value: &str) -> Option<(Self, f32)> {
         let value = value.strip_prefix('@')?;
-        [
+        let (name, alpha) = match value.split_once('/') {
+            Some((name, percent)) => {
+                let percent: u8 = percent.parse().ok().filter(|p| *p <= 100)?;
+                (name, f32::from(percent) / 100.)
+            }
+            None => (value, 1.),
+        };
+        let token = [
             Self::Base100,
             Self::Base200,
             Self::Base300,
@@ -86,7 +98,13 @@ impl ColorToken {
             Self::Muted,
         ]
         .into_iter()
-        .find(|v| v.name() == value)
+        .find(|v| v.name() == name)?;
+        Some((token, alpha))
+    }
+    /// This role at a percentage opacity, still resolved from the active
+    /// theme: `ColorToken::Primary.alpha(15)` is a primary tint.
+    pub fn alpha(self, percent: u8) -> String {
+        format!("@{}/{}", self.name(), percent.min(100))
     }
 }
 impl From<ColorToken> for String {
@@ -119,7 +137,7 @@ pub struct Palette {
     pub border: [f32; 4],
     pub muted: [f32; 4],
 }
-fn contrast(c: [f32; 4]) -> [f32; 4] {
+pub(crate) fn contrast(c: [f32; 4]) -> [f32; 4] {
     let linear = |v: f32| {
         if v <= 0.04045 {
             v / 12.92
@@ -239,7 +257,9 @@ impl UiTheme {
             base: [theme.background, c.panel, c.selected],
             content: theme.foreground,
             primary: c.accent,
-            on_primary: theme.background,
+            // Contrast with the primary fill itself, like `on_accent`; the old
+            // window-background choice made primary labels nearly unreadable.
+            on_primary: contrast(c.accent),
             secondary: info,
             on_secondary: contrast(info),
             accent: c.accent,
@@ -297,8 +317,10 @@ impl UiTheme {
         c
     }
     pub fn resolve(&self, value: &str) -> Option<[f32; 4]> {
-        if let Some(t) = ColorToken::parse(value) {
-            return Some(self.palette.color(t));
+        if let Some((token, alpha)) = ColorToken::parse_with_alpha(value) {
+            let mut color = self.palette.color(token);
+            color[3] *= alpha;
+            return Some(color);
         };
         let hex = value.strip_prefix('#')?;
         if !matches!(hex.len(), 6 | 8) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -330,6 +352,11 @@ mod tests {
         assert_eq!(ui.palette.on_primary, [1.; 4]);
         assert_eq!(ui.resolve("@accent"), Some([0., 0., 0., 1.]));
         assert_eq!(ui.resolve("@missing"), None);
+        assert_eq!(ui.resolve("@accent/25"), Some([0., 0., 0., 0.25]));
+        assert_eq!(ColorToken::Accent.alpha(25), "@accent/25");
+        for bad in ["@accent/101", "@accent/x", "@accent/", "@missing/10"] {
+            assert_eq!(ui.resolve(bad), None, "{bad}");
+        }
         assert_eq!(
             UiTheme::dark().with_accent([1.; 4]).palette.on_primary,
             [0., 0., 0., 1.]

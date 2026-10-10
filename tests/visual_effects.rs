@@ -177,7 +177,7 @@ fn replace(r: &mut Runtime, e: Element<usize>) {
 #[test]
 fn small_rust_default_does_not_change_json_button_default() {
     let r = runtime(button("New").on_click(|_: &mut usize| {}).into());
-    assert!(draws(&r).contains(&Draw::Corners([2.; 4])));
+    assert!(draws(&r).contains(&Draw::Corners([6.; 4])));
     let mut h = volt_ui_kit::declarative::Handlers::<usize>::default();
     h.on_activate("legacy", |_: &mut usize| {}).unwrap();
     let d = volt_ui_kit::declarative::Document::parse(
@@ -382,4 +382,29 @@ fn reinserted_fade_key_resumes_visible_opacity() {
     assert_eq!(layers(&r), vec![0.5]);
     r.advance_animations(Duration::from_millis(200));
     assert_eq!(layers(&r), vec![0.75]);
+}
+
+#[test]
+fn primary_labels_keep_their_paired_colour_under_an_inherited_text_colour() {
+    use volt_ui_kit::ui::prelude::*;
+    let ui: Element<usize> = vstack![button("Save")
+        .key("save")
+        .primary(true)
+        .on_click(|_: &mut usize| {})]
+    .color(ColorToken::BaseContent)
+    .into();
+    let (document, _) = ui.build().unwrap().into_parts();
+    let json = format!("{:?}", document.root());
+    assert!(
+        json.contains("@primary-content"),
+        "primary label colour must be explicit"
+    );
+    // Turning primary off again restores inheritance.
+    let plain: Element<usize> = button("Save")
+        .primary(true)
+        .primary(false)
+        .on_click(|_: &mut usize| {})
+        .into();
+    let (document, _) = plain.build().unwrap().into_parts();
+    assert!(!format!("{:?}", document.root()).contains("@primary-content"));
 }

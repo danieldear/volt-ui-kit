@@ -165,17 +165,14 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
         let popup_key = format!("{}-popup", select.0.node.id);
         let open = select.1.open;
         let callback = on_open.clone();
-        let mut trigger: Element<C> = button(format!(
-            "{}  {}",
-            select.1.items[index].label,
-            if open { "▴" } else { "▾" }
-        ))
-        .key(trigger_key.clone())
-        .enabled(select.1.enabled)
-        .height(select.0.node.height.unwrap_or(36.))
-        .width(select.0.node.width.unwrap_or(220.))
-        .on_click(move |app: &mut C| (callback.borrow_mut())(app, !open))
-        .into();
+        let mut trigger: Element<C> = button(select.1.items[index].label.clone())
+            .disclosure(open)
+            .key(trigger_key.clone())
+            .enabled(select.1.enabled)
+            .height(select.0.node.height.unwrap_or(36.))
+            .width(select.0.node.width.unwrap_or(220.))
+            .on_click(move |app: &mut C| (callback.borrow_mut())(app, !open))
+            .into();
         // Public surface modifiers style the actual interactive trigger. The
         // outer layout node keeps typography and clipping, but must not paint
         // a second translucent background or border underneath that trigger.

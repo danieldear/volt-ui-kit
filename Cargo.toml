@@ -121,3 +121,7 @@ required-features = ["native"]
 [[example]]
 name = "northbound"
 required-features = ["native"]
+
+[[example]]
+name = "specimen"
+required-features = ["native"]
