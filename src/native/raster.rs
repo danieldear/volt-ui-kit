@@ -109,6 +109,11 @@ pub struct RasterPainter {
     effect_bytes: usize,
     effect_tint_bytes: usize,
     layer_pool: Vec<Pixmap>,
+    /// Pixel region [x0, y0, x1, y1] being repainted by an incremental frame;
+    /// every write is confined to it through the clip masks.
+    damage: Option<[usize; 4]>,
+    /// The previous incremental frame, diffed against the next one.
+    last: Option<LastFrame>,
     scaled_images: BTreeMap<(usize, u32, u32), ScaledImage>,
     scaled_bytes: usize,
 }
@@ -121,6 +126,140 @@ struct ScaledImage {
     used: u64,
 }
 const SCALED_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+struct LastFrame {
+    batches: Vec<PaintBatch<Shape, Glyph>>,
+    pixmap: Pixmap,
+    background: [f32; 4],
+}
+/// What an incremental frame had to repaint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Damage {
+    /// Identical to the previous frame; the previous pixels are still valid.
+    None,
+    /// Only this pixel region `[x0, y0, x1, y1]` (exclusive) changed.
+    Rect([u32; 4]),
+    /// The whole frame was repainted.
+    Full,
+}
+/// Conservative pixel bounds of a drawing command, including blur/stroke
+/// extents. `None` for structural commands (layers and clips).
+fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
+    let pad = |[x, y, w, h]: [f32; 4], p: f32| [x - p, y - p, w + 2. * p, h + 2. * p];
+    let span = |xs: &[f32], ys: &[f32]| {
+        let (x0, x1) = xs
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+        let (y0, y1) = ys
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+        [x0, y0, x1 - x0, y1 - y0]
+    };
+    Some(match s {
+        Shape::Rectangle(b, _)
+        | Shape::Rounded(b, ..)
+        | Shape::Corners(b, ..)
+        | Shape::Image(b, ..) => pad(*b, 1.),
+        Shape::Outline(b, _, w, _) => pad(*b, w + 1.),
+        Shape::Triangle(p, _) => pad(
+            span(&[p[0][0], p[1][0], p[2][0]], &[p[0][1], p[1][1], p[2][1]]),
+            1.,
+        ),
+        Shape::Line(a, b, w, _) => pad(span(&[a[0], b[0]], &[a[1], b[1]]), w + 1.),
+        Shape::Path(p, _, w) => {
+            let b = native_path(p)?.bounds();
+            pad([b.x(), b.y(), b.width(), b.height()], w.unwrap_or(0.) + 1.)
+        }
+        // Three box passes at sigma = blur/2 reach about 1.5 blur; pad more.
+        Shape::Shadow(b, _, blur, spread, offset, _) => pad(
+            [b[0] + offset[0], b[1] + offset[1], b[2], b[3]],
+            spread.max(0.) + blur * 2. + 2.,
+        ),
+        Shape::ClipBegin(_) | Shape::ClipEnd | Shape::LayerBegin(_) | Shape::LayerEnd => {
+            return None
+        }
+    })
+}
+fn union(a: Option<[f32; 4]>, b: [f32; 4]) -> Option<[f32; 4]> {
+    if !(b[2] > 0. && b[3] > 0.) {
+        return a;
+    }
+    Some(match a {
+        None => b,
+        Some(a) => {
+            let (x0, y0) = (a[0].min(b[0]), a[1].min(b[1]));
+            let (x1, y1) = (
+                (a[0] + a[2]).max(b[0] + b[2]),
+                (a[1] + a[3]).max(b[1] + b[3]),
+            );
+            [x0, y0, x1 - x0, y1 - y0]
+        }
+    })
+}
+fn intersect(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let (x0, y0) = (a[0].max(b[0]), a[1].max(b[1]));
+    let (x1, y1) = (
+        (a[0] + a[2]).min(b[0] + b[2]),
+        (a[1] + a[3]).min(b[1] + b[3]),
+    );
+    [x0, y0, (x1 - x0).max(0.), (y1 - y0).max(0.)]
+}
+/// Pixels a batch can touch: its commands and text, within its clip.
+fn batch_extent(b: &PaintBatch<Shape, Glyph>) -> Result<Option<[f32; 4]>, ()> {
+    let clip = b.clip.bounds();
+    let mut out = None;
+    for s in &b.shapes {
+        out = union(out, intersect(shape_extent(s).ok_or(())?, clip));
+    }
+    for g in &b.glyphs {
+        out = union(out, intersect(g.bounds, clip));
+    }
+    Ok(out)
+}
+/// Region that differs between two frames, or `Full` when the change is
+/// structural (layers/clips) or covers most of the frame. Batches are matched
+/// by common prefix and suffix, so an effect that inserts or removes a batch
+/// (a hover shadow, a tooltip) only damages its own area.
+fn frame_damage(
+    old: &[PaintBatch<Shape, Glyph>],
+    new: &[PaintBatch<Shape, Glyph>],
+    w: u32,
+    h: u32,
+) -> Damage {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut region = None;
+    for batch in old[prefix..old.len() - suffix]
+        .iter()
+        .chain(&new[prefix..new.len() - suffix])
+    {
+        match batch_extent(batch) {
+            Ok(Some(r)) => region = union(region, r),
+            Ok(None) => {}
+            Err(()) => return Damage::Full,
+        }
+    }
+    let Some(r) = region else {
+        return Damage::None;
+    };
+    // One extra pixel for antialiased edges, clamped to the frame.
+    let x0 = (r[0] - 1.).floor().clamp(0., w as f32) as u32;
+    let y0 = (r[1] - 1.).floor().clamp(0., h as f32) as u32;
+    let x1 = (r[0] + r[2] + 1.).ceil().clamp(0., w as f32) as u32;
+    let y1 = (r[1] + r[3] + 1.).ceil().clamp(0., h as f32) as u32;
+    if x0 >= x1 || y0 >= y1 {
+        return Damage::None;
+    }
+    // Repainting most of the frame incrementally saves nothing.
+    if u64::from(x1 - x0) * u64::from(y1 - y0) * 2 > u64::from(w) * u64::from(h) {
+        return Damage::Full;
+    }
+    Damage::Rect([x0, y0, x1, y1])
+}
 impl RasterPainter {
     #[cfg(feature = "native-gpu")]
     pub(super) fn gpu_viewport(&self) -> Viewport {
@@ -277,6 +416,8 @@ impl RasterPainter {
             effect_bytes: 0,
             effect_tint_bytes: 0,
             layer_pool: Vec::new(),
+            damage: None,
+            last: None,
             scaled_images: BTreeMap::new(),
             scaled_bytes: 0,
             clock: 0,
@@ -379,6 +520,14 @@ impl RasterPainter {
             snap((rect[0] + rect[2]).ceil(), w),
             snap((rect[1] + rect[3]).ceil(), h),
         ];
+        if let Some(d) = self.damage {
+            region = [
+                region[0].max(d[0]),
+                region[1].max(d[1]),
+                region[2].min(d[2]),
+                region[3].min(d[3]),
+            ];
+        }
         let mut curved = Vec::new();
         for clip in clips {
             match clip {
@@ -826,21 +975,101 @@ impl RasterPainter {
         );
         Ok(())
     }
+    /// Draw a complete frame into a new pixmap.
     pub fn rasterize(
         &mut self,
         batches: &[PaintBatch<Shape, Glyph>],
         background: [f32; 4],
+    ) -> Result<Pixmap, String> {
+        self.rasterize_into(batches, background, None)
+    }
+    /// Draw a frame, repainting only what changed since the previous call.
+    /// The returned pixels are the full, current frame; `Damage` says which
+    /// part changed, so a host can upload and present just that region.
+    pub fn rasterize_incremental(
+        &mut self,
+        batches: &[PaintBatch<Shape, Glyph>],
+        background: [f32; 4],
+    ) -> Result<(&Pixmap, Damage), String> {
+        let (w, h) = (self.viewport.width as u32, self.viewport.height as u32);
+        let damage = match &self.last {
+            Some(last)
+                if last.background == background
+                    && last.pixmap.width() == w
+                    && last.pixmap.height() == h =>
+            {
+                frame_damage(&last.batches, batches, w, h)
+            }
+            _ => Damage::Full,
+        };
+        let pixmap = match damage {
+            Damage::None => None,
+            Damage::Rect([x0, y0, x1, y1]) => {
+                // Taken first: on error the next frame starts from scratch.
+                let base = self
+                    .last
+                    .take()
+                    .expect("damage implies a previous frame")
+                    .pixmap;
+                let region = [x0 as usize, y0 as usize, x1 as usize, y1 as usize];
+                Some(self.rasterize_into(batches, background, Some((base, region)))?)
+            }
+            Damage::Full => {
+                self.last = None;
+                Some(self.rasterize_into(batches, background, None)?)
+            }
+        };
+        if let Some(pixmap) = pixmap {
+            self.last = Some(LastFrame {
+                batches: batches.to_vec(),
+                pixmap,
+                background,
+            });
+        }
+        Ok((&self.last.as_ref().expect("frame stored").pixmap, damage))
+    }
+    fn rasterize_into(
+        &mut self,
+        batches: &[PaintBatch<Shape, Glyph>],
+        background: [f32; 4],
+        base: Option<(Pixmap, [usize; 4])>,
     ) -> Result<Pixmap, String> {
         let w = self.viewport.width as u32;
         let h = self.viewport.height as u32;
         if u64::from(w) * u64::from(h) > 16_777_216 {
             return Err("framebuffer exceeds 16 megapixel limit".into());
         }
-        let mut pixmap = Pixmap::new(w, h).ok_or("invalid framebuffer")?;
-        pixmap.fill(
+        let clear =
             tiny_skia::Color::from_rgba(background[0], background[1], background[2], background[3])
-                .ok_or("invalid background color")?,
-        );
+                .ok_or("invalid background color")?;
+        self.damage = base.as_ref().map(|(_, region)| *region);
+        let mut pixmap = match base {
+            Some((mut pixmap, [x0, y0, x1, y1])) => {
+                // Replace (not blend) the damaged pixels with the background.
+                let paint = Paint {
+                    shader: tiny_skia::Shader::SolidColor(clear),
+                    blend_mode: tiny_skia::BlendMode::Source,
+                    ..Paint::default()
+                };
+                if let Some(r) =
+                    tiny_skia::Rect::from_ltrb(x0 as f32, y0 as f32, x1 as f32, y1 as f32)
+                {
+                    pixmap.fill_rect(r, &paint, Transform::identity(), None);
+                }
+                pixmap
+            }
+            None => {
+                let mut pixmap = Pixmap::new(w, h).ok_or("invalid framebuffer")?;
+                pixmap.fill(clear);
+                pixmap
+            }
+        };
+        // Bounds that any write must stay inside (the damage region, if any).
+        let limit = self
+            .damage
+            .map_or([0., 0., w as f32, h as f32], |[x0, y0, x1, y1]| {
+                [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32]
+            });
         let mut rect_mask = Mask::new(w, h).ok_or("invalid clip mask")?;
         // Allocated on first use: most frames have no curved clip at all.
         let mut curve_mask: Option<Mask> = None;
@@ -866,6 +1095,15 @@ impl RasterPainter {
             }
             let mut shapes = batch.shapes.iter().peekable();
             while let Some(shape) = shapes.next() {
+                // Incremental frames skip drawing that cannot reach the damage.
+                if self.damage.is_some() {
+                    if let Some(extent) = shape_extent(shape) {
+                        let visible = intersect(extent, limit);
+                        if visible[2] <= 0. || visible[3] <= 0. {
+                            continue;
+                        }
+                    }
+                }
                 let mask = match (&curve_mask, plain_mask) {
                     (Some(curve), false) => curve,
                     _ => &rect_mask,
@@ -1042,7 +1280,7 @@ impl RasterPainter {
                             && fill_rounded_fast(
                                 &mut pixmap,
                                 mask,
-                                [x, y, cw, ch],
+                                intersect([x, y, cw, ch], limit),
                                 *bounds,
                                 *radius,
                                 *c,
@@ -1096,6 +1334,10 @@ impl RasterPainter {
                 _ => &rect_mask,
             };
             for glyph in &batch.glyphs {
+                let visible = intersect(glyph.bounds, limit);
+                if self.damage.is_some() && (visible[2] <= 0. || visible[3] <= 0.) {
+                    continue;
+                }
                 let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
                 let buffer = &self.text[&key].0;
                 let [gx, gy, gw, gh] = glyph.bounds;
