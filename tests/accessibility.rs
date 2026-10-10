@@ -185,3 +185,45 @@ fn an_open_modal_hides_the_content_behind_it() {
     );
     assert_eq!(app.saves, 0);
 }
+
+/// The node budget admits dense real screens (forms, tables, dashboards).
+#[test]
+fn four_thousand_node_screens_build_and_lay_out() {
+    let rows: Vec<Element<App>> = (0..1300)
+        .map(|i| {
+            hstack![
+                text(format!("Row {i}")),
+                button("Edit")
+                    .key(format!("edit-{i}"))
+                    .on_click(|app: &mut App| app.saves += 1),
+            ]
+            .into()
+        })
+        .collect();
+    let deep = (0..40).fold(Element::from(text("leaf")), |inner, _| {
+        vstack![inner].into()
+    });
+    let ui: Element<App> = vstack![vstack(rows).scroll(Scroll::Vertical).height(600.), deep].into();
+    let start = std::time::Instant::now();
+    let (document, handlers) = ui
+        .build()
+        .expect("4k nodes and depth 40 are within limits")
+        .into_parts();
+    let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            Viewport::new(800., 900., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+    // Rows scrolled out of view are laid out but not kept as visible boxes.
+    assert!(runtime.boxes().iter().any(|b| b.id == "edit-0"));
+    eprintln!(
+        "4k-node build+layout: {:.1}ms",
+        start.elapsed().as_secs_f64() * 1000.
+    );
+    // Past the budget, building fails with an error instead of degrading.
+    let too_many: Vec<Element<App>> = (0..4200).map(|i| text(format!("{i}")).into()).collect();
+    assert!(Element::<App>::from(vstack(too_many)).build().is_err());
+}

@@ -62,7 +62,7 @@ are rejected, not ignored. Dimensions are logical pixels, scaled once in layout.
 - Button defaults enabled=true, primary=false; handler signature must be Activate.
 - No expressions, imports, arbitrary code or document-side file access.
 
-Limits:256KiB document,512 nodes,depth24,8KiB per text value; numeric layout values
+Limits:256KiB document,4096 nodes,depth48,8KiB per text value; numeric layout values
 0–16384. Runtime scale0.25–4 and framebuffer16MP maximum. Oversized/mistyped named
 bindings are rejected. Public Document cannot bypass validation with Deserialize.
 Syntax errors have line/column; semantic errors identify tree path or widget ID.

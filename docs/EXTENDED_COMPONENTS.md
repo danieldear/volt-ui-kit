@@ -69,7 +69,7 @@ view(&App { window: 0..12, selected: None }).build()?;
 This is actual bounded **composition**, not painting all records and hiding them.
 The factory runs only for the supplied window (at most 96 rows). It can borrow view
 state, because it is invoked and dropped while composing, not captured in callbacks.
-A 10,000-record model therefore does not consume the document's 512-node budget.
+A 10,000-record model therefore does not consume the document's 4096-node budget.
 Stable item keys/values are required; selected IDs can live outside the mounted window.
 
 Rows are fixed height, 8..=512 logical pixels. Model count, total extent, viewport and
