@@ -7,7 +7,8 @@ use super::{
 };
 use crate::{declarative::PaintBatch, graphics::Image};
 use std::{
-    collections::HashMap,
+    borrow::Cow,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -53,7 +54,12 @@ fn report_fallback_once(reason: &str) {
     }
 }
 /// Premultiplied RGBA (our `Image` and tiny-skia storage) to straight alpha.
-fn unpremultiply(data: &[u8]) -> Vec<u8> {
+fn unpremultiply(data: &[u8]) -> Cow<'_, [u8]> {
+    // Opaque assets (and already-zero transparent pixels) are already straight
+    // alpha. Borrow them for queue.write_texture instead of cloning up to 64 MiB.
+    if data.chunks_exact(4).all(|p| p[3] == 0 || p[3] == 255) {
+        return Cow::Borrowed(data);
+    }
     let mut out = data.to_vec();
     for p in out.chunks_exact_mut(4) {
         let a = u16::from(p[3]);
@@ -63,7 +69,7 @@ fn unpremultiply(data: &[u8]) -> Vec<u8> {
             }
         }
     }
-    out
+    Cow::Owned(out)
 }
 /// Mark the device unusable on loss or an uncaptured validation error (wgpu's
 /// default handler panics), so the host can recreate it or fall back.
@@ -98,6 +104,90 @@ struct Registered {
     used: u64,
 }
 const TEXTURE_BUDGET: usize = 96 * 1024 * 1024;
+
+/// Admit explicit images before any GPU upload. Area alone is insufficient:
+/// a full-width strip and a full-height strip cannot coexist in the atlas.
+/// Match Vello 0.6's allocator and image order at its maximum atlas size.
+fn image_admission(
+    batches: &[PaintBatch<Shape, Glyph>],
+    max_side: u32,
+) -> Result<HashSet<usize>, &'static str> {
+    admit_images(
+        batches
+            .iter()
+            .flat_map(|b| &b.shapes)
+            .filter_map(|s| match s {
+                Shape::Image(_, background, _) => {
+                    let image = &background.image;
+                    Some((
+                        image.pixels().as_ptr() as usize,
+                        image.width(),
+                        image.height(),
+                        image.pixels().len(),
+                    ))
+                }
+                _ => None,
+            }),
+        max_side,
+    )
+}
+
+fn admit_images(
+    images: impl Iterator<Item = (usize, u32, u32, usize)>,
+    max_side: u32,
+) -> Result<HashSet<usize>, &'static str> {
+    let mut ids = HashSet::new();
+    let mut bytes = 0usize;
+    let mut atlas = None;
+    for (id, w, h, len) in images {
+        if !ids.insert(id) {
+            continue;
+        }
+        if w == 0 || h == 0 || w.max(h) > max_side.min(8192) {
+            return Err("image dimensions");
+        }
+        bytes = bytes.checked_add(len).ok_or("image residency")?;
+        if bytes > TEXTURE_BUDGET {
+            return Err("image residency");
+        }
+        if atlas
+            .get_or_insert_with(|| guillotiere::AtlasAllocator::new(guillotiere::size2(8192, 8192)))
+            .allocate(guillotiere::size2(w as i32, h as i32))
+            .is_none()
+        {
+            return Err("image atlas packing");
+        }
+    }
+    Ok(ids)
+}
+
+fn encode_frame(
+    encoder: &mut GpuSceneEncoder,
+    textures: &mut TextureImages,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut vello::Renderer,
+    batches: &[PaintBatch<Shape, Glyph>],
+    painter: &mut RasterPainter,
+) -> Result<(), String> {
+    let ids = match image_admission(batches, device.limits().max_texture_dimension_2d) {
+        Ok(ids) => ids,
+        Err(reason) => {
+            encoder.reject_frame(reason);
+            return Ok(());
+        }
+    };
+    textures.clock += 1;
+    // Protect all needed cache hits, not just those already encountered in
+    // draw order, avoiding evict/re-upload churn within the same frame.
+    for id in ids {
+        if let Some(r) = textures.map.get_mut(&id) {
+            r.used = textures.clock;
+        }
+    }
+    let mut resolve = |image: &Image| textures.resolve(image, device, queue, renderer);
+    encoder.encode_with(batches, painter, Some(&mut resolve))
+}
 impl TextureImages {
     fn resolve(
         &mut self,
@@ -124,7 +214,7 @@ impl TextureImages {
                 .min_by_key(|(_, r)| r.used)
                 .map(|(k, _)| *k)
             else {
-                break; // Everything resident is in this frame; exceed briefly.
+                return Err("GPU image residency budget exceeded".into());
             };
             let old = self.map.remove(&old).unwrap();
             self.bytes -= old.bytes;
@@ -177,7 +267,7 @@ impl TextureImages {
 }
 /// Premultiplied tiny-skia pixels to the straight alpha the present shader expects.
 fn straight_rgba(pixmap: &tiny_skia::Pixmap) -> Vec<u8> {
-    unpremultiply(pixmap.data())
+    unpremultiply(pixmap.data()).into_owned()
 }
 pub(super) enum PresentStatus {
     Presented,
@@ -332,16 +422,15 @@ impl GpuPresenter {
         batches: &[PaintBatch<Shape, Glyph>],
         painter: &mut RasterPainter,
     ) -> Result<(), String> {
-        self.textures.clock += 1;
-        let (encoder, textures, device, queue, renderer) = (
+        encode_frame(
             &mut self.encoder,
             &mut self.textures,
             &self.device,
             &self.queue,
             &mut self.renderer,
-        );
-        let mut resolve = |image: &Image| textures.resolve(image, device, queue, renderer);
-        encoder.encode_with(batches, painter, Some(&mut resolve))
+            batches,
+            painter,
+        )
     }
     pub fn present(
         &mut self,
@@ -489,6 +578,10 @@ pub struct GpuOffscreenRenderer {
     pub adapter_name: String,
 }
 impl GpuOffscreenRenderer {
+    #[cfg(test)]
+    pub(super) fn resident_image_bytes(&self) -> usize {
+        self.textures.bytes
+    }
     pub fn new() -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let adapter =
@@ -557,16 +650,15 @@ impl GpuOffscreenRenderer {
         if self.lost.load(Ordering::Relaxed) {
             return Err("GPU device lost".into());
         }
-        self.textures.clock += 1;
-        let (encoder, textures, device, queue, renderer) = (
+        encode_frame(
             &mut self.encoder,
             &mut self.textures,
             &self.device,
             &self.queue,
             &mut self.renderer,
-        );
-        let mut resolve = |image: &Image| textures.resolve(image, device, queue, renderer);
-        encoder.encode_with(batches, painter, Some(&mut resolve))?;
+            batches,
+            painter,
+        )?;
         if let Some(reason) = self.encoder.stats().over_budget {
             report_fallback_once(reason);
             return painter.rasterize(batches, background);
@@ -676,6 +768,78 @@ impl GpuOffscreenRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn opaque_image_staging_borrows_pixels_and_alpha_conversion_is_exact() {
+        let opaque = [255, 128, 64, 255, 0, 0, 0, 0];
+        let result = unpremultiply(&opaque);
+        assert_eq!(
+            result.as_ptr(),
+            opaque.as_ptr(),
+            "unchanged RGBA must not allocate a staging copy"
+        );
+        assert_eq!(&*result, &opaque);
+        assert_eq!(&*unpremultiply(&[128, 64, 0, 128]), &[255, 128, 0, 128]);
+    }
+    #[test]
+    #[ignore = "timing report; not a performance threshold"]
+    fn opaque_upload_staging_timing() {
+        use std::{hint::black_box, time::Instant};
+        let data = [255, 128, 64, 255].repeat(2048 * 2048);
+        let old = |data: &[u8]| {
+            let mut out = data.to_vec();
+            for p in out.chunks_exact_mut(4) {
+                let a = u16::from(p[3]);
+                if a != 0 && a != 255 {
+                    for c in &mut p[..3] {
+                        *c = ((u16::from(*c) * 255 + a / 2) / a).min(255) as u8;
+                    }
+                }
+            }
+            out
+        };
+        black_box(old(black_box(&data)));
+        black_box(unpremultiply(black_box(&data)));
+        let iterations = 30;
+        let start = Instant::now();
+        for _ in 0..iterations {
+            black_box(old(black_box(&data)));
+        }
+        let before = start.elapsed().as_secs_f64() * 1000. / f64::from(iterations);
+        let start = Instant::now();
+        for _ in 0..iterations {
+            black_box(unpremultiply(black_box(&data)));
+        }
+        let after = start.elapsed().as_secs_f64() * 1000. / f64::from(iterations);
+        println!("opaque 2048x2048 staging (16 MiB), {iterations} iterations: before={before:.3}ms after={after:.3}ms; temporary copied bytes 16777216 -> 0");
+    }
+    #[test]
+    fn image_preflight_bounds_bytes_dimensions_and_deduplicates_handles() {
+        let a = (1, 4096, 4096, 64 * 1024 * 1024);
+        assert_eq!(admit_images([a, a].into_iter(), 8192).unwrap().len(), 1);
+        assert_eq!(
+            admit_images([a, (2, 4096, 4096, 64 * 1024 * 1024)].into_iter(), 8192),
+            Err("image residency")
+        );
+        assert_eq!(
+            admit_images([(1, 8193, 1, 8193 * 4)].into_iter(), 8192),
+            Err("image dimensions")
+        );
+        assert_eq!(
+            admit_images([(1, 4096, 1, 4096 * 4)].into_iter(), 2048),
+            Err("image dimensions")
+        );
+        assert_eq!(
+            admit_images(
+                [(1, 8192, 1, 8192 * 4), (2, 1, 8192, 8192 * 4)].into_iter(),
+                8192
+            ),
+            Err("image atlas packing")
+        );
+        assert_eq!(
+            admit_images([(1, 1, 1, usize::MAX), (2, 1, 1, 4)].into_iter(), 8192),
+            Err("image residency")
+        );
+    }
     #[test]
     fn premultiplied_and_straight_alpha_shaders_parse_and_validate() {
         for post in [false, true] {

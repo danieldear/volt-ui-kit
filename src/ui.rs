@@ -640,7 +640,8 @@ impl<C> Button<C> {
         self.0.node.effects.states = Default::default();
         let tint = |token: ColorToken, percent: u8| token.alpha(percent);
         match variant {
-            ButtonVariant::Neutral | ButtonVariant::Primary => self,
+            ButtonVariant::Neutral => self,
+            ButtonVariant::Primary => self.primary(true),
             ButtonVariant::Soft => self
                 .background(tint(ColorToken::Primary, 16))
                 .color(ColorToken::Primary)

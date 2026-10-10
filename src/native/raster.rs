@@ -90,6 +90,10 @@ pub struct RasterPainter {
     sf_display: String,
     sf_mono: String,
     swash: SwashCache,
+    /// Normalized outline ink boxes, not rasterized glyphs. Bounded independently
+    /// so repeated GPU frames need no font-table parsing to decide clipping.
+    #[cfg(feature = "native-gpu")]
+    gpu_ink: BTreeMap<(cosmic_text::fontdb::ID, u16), Option<[f32; 4]>>,
     text: BTreeMap<TextKey, (Buffer, u64)>,
     clock: u64,
     glyph_bytes: usize,
@@ -164,10 +168,15 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
             span(&[p[0][0], p[1][0], p[2][0]], &[p[0][1], p[1][1], p[2][1]]),
             1.,
         ),
-        Shape::Line(a, b, w, _) => pad(span(&[a[0], b[0]], &[a[1], b[1]]), w + 1.),
+        // Adjacent lines are stroked as one path. Their miter joins can extend
+        // beyond the centerline by miter_limit * half-width, not just width.
+        Shape::Line(a, b, w, _) => pad(span(&[a[0], b[0]], &[a[1], b[1]]), stroke_extent(*w)),
         Shape::Path(p, _, w) => {
             let b = native_path(p)?.bounds();
-            pad([b.x(), b.y(), b.width(), b.height()], w.unwrap_or(0.) + 1.)
+            pad(
+                [b.x(), b.y(), b.width(), b.height()],
+                stroke_extent(w.unwrap_or(0.)),
+            )
         }
         // Three box passes at sigma = blur/2 reach about 1.5 blur; pad more.
         Shape::Shadow(b, _, blur, spread, offset, _) => pad(
@@ -178,6 +187,10 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
             return None
         }
     })
+}
+
+pub(super) fn stroke_extent(width: f32) -> f32 {
+    width * Stroke::default().miter_limit * 0.5 + 1.
 }
 fn union(a: Option<[f32; 4]>, b: [f32; 4]) -> Option<[f32; 4]> {
     if !(b[2] > 0. && b[3] > 0.) {
@@ -319,6 +332,55 @@ impl RasterPainter {
                 let fake_italic = k.flags.contains(cosmic_text::CacheKeyFlags::FAKE_ITALIC);
                 let x = p.x as f32 + k.x_bin.as_float() + ox;
                 let y = (p.y + run.line_y as i32) as f32 + k.y_bin.as_float() + oy;
+                // Advance widths are not ink bounds (italic f, negative side
+                // bearings, accents). Elide the GPU clip only after proving
+                // the face's actual ink fits, with a one-pixel AA margin.
+                if self.gpu_ink.len() >= 4096
+                    && !self.gpu_ink.contains_key(&(k.font_id, k.glyph_id))
+                {
+                    self.gpu_ink.clear();
+                }
+                let ink = self
+                    .gpu_ink
+                    .entry((k.font_id, k.glyph_id))
+                    .or_insert_with(|| {
+                        let font = self.fonts.get_font(k.font_id)?;
+                        let face = font.rustybuzz();
+                        let tables = face.tables();
+                        if tables.colr.is_some()
+                            || tables.sbix.is_some()
+                            || tables.cbdt.is_some()
+                            || tables.bdat.is_some()
+                            || tables.ebdt.is_some()
+                            || tables.svg.is_some()
+                        {
+                            return None;
+                        }
+                        let b =
+                            face.glyph_bounding_box(cosmic_text::ttf_parser::GlyphId(k.glyph_id))?;
+                        let em = face.units_per_em() as f32;
+                        if em <= 0. {
+                            return None;
+                        }
+                        Some([
+                            f32::from(b.x_min) / em,
+                            f32::from(b.y_min) / em,
+                            f32::from(b.x_max) / em,
+                            f32::from(b.y_max) / em,
+                        ])
+                    });
+                let fits = ink.is_some_and(|[xmin, ymin, xmax, ymax]| {
+                    let skew = if fake_italic {
+                        ymin.abs().max(ymax.abs()) * size * 14f32.to_radians().tan()
+                    } else {
+                        0.
+                    };
+                    x + xmin * size - skew - 1. >= gx
+                        && x + xmax * size + skew + 1. <= gx + gw
+                        && y - ymax * size - 1. >= gy
+                        && y - ymin * size + 1. <= gy + gh
+                });
+                overflow |= !fits;
                 match runs.last_mut() {
                     Some(r)
                         if r.font == k.font_id
@@ -403,6 +465,8 @@ impl RasterPainter {
             sf_display,
             sf_mono,
             swash: SwashCache::new(),
+            #[cfg(feature = "native-gpu")]
+            gpu_ink: BTreeMap::new(),
             text: BTreeMap::new(),
             text_cache_misses: 0,
             shape_draw_calls: 0,
@@ -3027,6 +3091,51 @@ mod editor_metric_tests {
                 "one shaped line, not one prefix buffer per grapheme"
             );
             assert_eq!(painter.line_advances("", &style, &[0]), vec![0.]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod damage_regression_tests {
+    use super::*;
+    use crate::Rect;
+    #[test]
+    fn acute_miter_repaint_matches_full_frame() {
+        let vp = Viewport::new(300., 300., 1.).unwrap();
+        let mut p = RasterPainter::new(vp);
+        let path = crate::graphics::VectorPath::new()
+            .move_to(140., 160.)
+            .line_to(150., 130.)
+            .line_to(160., 160.);
+        for lines in [false, true] {
+            let frame = |c| PaintBatch {
+                clip: Rect::new(0., 0., 300., 300.).unwrap(),
+                shapes: if lines {
+                    vec![
+                        Shape::Line([140., 160.], [150., 130.], 12., c),
+                        Shape::Line([150., 130.], [160., 160.], 12., c),
+                    ]
+                } else {
+                    vec![Shape::Path(path.clone(), c, Some(12.))]
+                },
+                glyphs: vec![],
+            };
+            p.rasterize_incremental(&[frame([1., 0., 0., 1.])], [0., 0., 0., 1.])
+                .unwrap();
+            let b = frame([0., 1., 0., 1.]);
+            let (actual, damage) = p
+                .rasterize_incremental(std::slice::from_ref(&b), [0., 0., 0., 1.])
+                .unwrap();
+            let actual = actual.clone();
+            assert!(
+                matches!(damage, Damage::Rect(_)),
+                "retain partial repaint, not just full fallback"
+            );
+            let full = p.rasterize(&[b], [0., 0., 0., 1.]).unwrap();
+            assert!(
+                actual.data() == full.data(),
+                "miter damage must include stroke joins (lines={lines})"
+            );
         }
     }
 }

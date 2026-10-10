@@ -167,11 +167,11 @@ fn shape_bounds(s: &Shape) -> Option<Rect> {
         }
         Shape::Line(a, b, w, _) => pad(
             Rect::from_points((a[0] as f64, a[1] as f64), (b[0] as f64, b[1] as f64)),
-            *w,
+            raster::stroke_extent(*w),
         ),
         Shape::Path(p, _, w) => pad(
             path(&raster::native_path(p)?).bounding_box(),
-            w.unwrap_or(0.),
+            raster::stroke_extent(w.unwrap_or(0.)),
         ),
         Shape::Shadow(b, _, blur, spread, offset, _) => pad(
             rect([b[0] + offset[0], b[1] + offset[1], b[2], b[3]]),
@@ -221,6 +221,14 @@ fn opacity_layer_bounds(batches: &[PaintBatch<Shape, Glyph>]) -> Vec<Rect> {
     out
 }
 impl GpuSceneEncoder {
+    pub(super) fn reject_frame(&mut self, reason: &'static str) {
+        // Do not retain the previous frame's resources/statistics on fallback.
+        self.scene.reset();
+        self.stats = SceneStats {
+            over_budget: Some(reason),
+            ..Default::default()
+        };
+    }
     pub fn stats(&self) -> SceneStats {
         self.stats
     }
@@ -826,7 +834,11 @@ impl GpuSceneEncoder {
                 .scene
                 .draw_glyphs(font)
                 .font_size(run.size)
-                .brush(color(glyph.color));
+                // Bitmap/COLR glyphs use brush_alpha independently of the
+                // foreground brush. Keep the brush opaque to avoid applying
+                // alpha twice to outline glyphs.
+                .brush(color([glyph.color[0], glyph.color[1], glyph.color[2], 1.]))
+                .brush_alpha(glyph.color[3]);
             if run.fake_italic {
                 // cosmic-text synthesises italic with a 14 degree skew.
                 draw = draw.glyph_transform(Some(Affine::skew(-(14f64.to_radians().tan()), 0.)));

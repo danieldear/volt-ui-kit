@@ -151,16 +151,19 @@ pub(super) fn command(
     request: &ActionRequest,
     ids: &HashMap<NodeId, String>,
 ) -> Option<AccessCommand> {
+    if request.target_tree != TreeId::ROOT {
+        return None;
+    }
     let key = ids.get(&request.target_node)?.clone();
     Some(match (request.action, &request.data) {
         (Action::Focus, _) => AccessCommand::Focus(key),
         (Action::Click, _) => AccessCommand::Click(key),
         (Action::Increment, _) => AccessCommand::Step(key, true),
         (Action::Decrement, _) => AccessCommand::Step(key, false),
-        (Action::SetValue, Some(ActionData::Value(text))) => {
+        (Action::SetValue, Some(ActionData::Value(text))) if text.len() <= 8192 => {
             AccessCommand::SetValue(key, AccessValue::Text(text.to_string()))
         }
-        (Action::SetValue, Some(ActionData::NumericValue(n))) => {
+        (Action::SetValue, Some(ActionData::NumericValue(n))) if (*n as f32).is_finite() => {
             AccessCommand::SetValue(key, AccessValue::Number(*n as f32))
         }
         _ => return None,
@@ -170,6 +173,25 @@ pub(super) fn command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn requests_reject_foreign_trees_and_invalid_payloads() {
+        let ids = HashMap::from([(node_id("name"), "name".into())]);
+        let mut r = ActionRequest {
+            action: Action::SetValue,
+            target_tree: TreeId::ROOT,
+            target_node: node_id("name"),
+            data: Some(ActionData::Value("x".repeat(8193).into())),
+        };
+        assert_eq!(command(&r, &ids), None);
+        r.data = Some(ActionData::NumericValue(f64::INFINITY));
+        assert_eq!(command(&r, &ids), None);
+        r.data = Some(ActionData::NumericValue(f64::MAX));
+        assert_eq!(command(&r, &ids), None);
+        r.action = Action::Click;
+        r.data = None;
+        r.target_tree = TreeId("11111111-1111-1111-1111-111111111111".parse().unwrap());
+        assert_eq!(command(&r, &ids), None);
+    }
     fn node(id: &str, role: AccessRole, parent: Option<usize>) -> AccessNode {
         AccessNode {
             id: id.into(),

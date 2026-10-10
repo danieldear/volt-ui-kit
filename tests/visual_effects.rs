@@ -408,3 +408,15 @@ fn primary_labels_keep_their_paired_colour_under_an_inherited_text_colour() {
     let (document, _) = plain.build().unwrap().into_parts();
     assert!(!format!("{:?}", document.root()).contains("@primary-content"));
 }
+
+#[test]
+fn primary_variant_uses_the_paired_content_token() {
+    use volt_ui_kit::ui::prelude::*;
+    let ui: Element<usize> = vstack![button("Save")
+        .variant(ButtonVariant::Primary)
+        .on_click(|_: &mut usize| {})]
+    .color(ColorToken::BaseContent)
+    .into();
+    let (document, _) = ui.build().unwrap().into_parts();
+    assert!(format!("{:?}", document.root()).contains("@primary-content"));
+}
