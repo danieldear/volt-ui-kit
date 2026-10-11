@@ -119,7 +119,8 @@ open VoltDesktopQA.app
 
 Choose **Desktop services** in Catalog. No permission or test notification is
 requested at launch. The page requests alert permission explicitly, submits a
-generic local message eight seconds later, and removes its fixed
+generic local message eight seconds later (or sixty seconds with the explicit
+Cancellation test checkbox), and removes its fixed
 `volt.catalog.test` ID. Hide/switch away from Catalog before the delay when testing
 background presentation. Focus/preferences can still suppress it. Packaging does
 not grant permission or provide Developer ID/notarization; see
@@ -129,7 +130,9 @@ The page uses a one-slot completion mailbox plus event-driven `UiSender`.
 If the wake queue is full, another queued Catalog message drains the slot.
 No notification worker thread, unbounded result queue or idle polling is added.
 Only one OS operation is started at a time. Reset is disabled while busy and
-resets the UI witness only, not OS authorization or requests. Stale generations
+resets the UI witness only, not OS authorization or requests. The cancellation
+checkbox is disabled while busy; completion captures its original requested delay
+even if a later plan changes. Stale generations
 cannot replace a newer witness; errors remain visible.
 
 With `native-desktop`, the V-shaped template status item shares the application
@@ -144,16 +147,40 @@ Automated checks exercise content bounds, capability precision, synchronous
 errors without callback, wrong-thread/unsupported safety, one-shot completion,
 stale results, busy/permission registry guards and explicit accepted-not-displayed
 status. Catalog's software and hardware-offscreen GPU page tests cover the new
-page at both scales. The all-feature/all-target suite passed 499 tests (13
+page at both scales. The all-feature/all-target suite passed 502 tests (13
 ignored); 29 doctests passed (one ignored), strict Clippy passed, and Rust 1.87
 plus Linux cross-compilation passed. Default-only tests passed 40 (one ignored);
-native without notifications passed its four notification-contract and 19 Catalog
+native without notifications passed its four notification-contract and 22 Catalog
 tests. These are not native notification delivery tests.
 
 An actual main-thread **unbundled** executable exercised authorization, valid
 send and removal: all returned `MissingAppBundle` before center initialization,
 with no permission callback, prompt or notification. Receipt:
 `work/desktop-services-2026-10-11/preflight.log` (local, ignored).
+
+### Repeatable pending-cancellation / command-guard check
+
+1. On **Desktop services**, verify Send is disabled before the page's explicit
+   permission action. After a granted decision it becomes enabled. This witness
+   is deliberately reset on relaunch; it is not a live OS settings query.
+2. Enable **Cancellation test: use a 60-second delay**. Send uses the same stable
+   ID and generic content; neither the checkbox nor opening the page sends it.
+3. Wait for **OS accepted**, then select **Remove test notification** promptly.
+   Never bypass busy serialization or assume removal can cancel an in-flight add.
+4. Hide Catalog and wait past sixty seconds. Inspect Notification Center without
+   manually clearing it. Record absence as a human presentation witness, not an
+   OS queue inspection/removal-completion receipt. Focus and OS policy still apply.
+5. With the command palette open (Cmd/Ctrl+K), inspect the native tray menu:
+   all application command items should be disabled. Dismiss the palette and
+   verify enablement recovers; Count must change its shared counter exactly once.
+
+The 2026-10-11 follow-up also passed Rust 1.87, Linux all-feature/all-target
+cross-check, default/native-only tests and the Catalog hardware-offscreen GPU
+check at both scales. It adds no crates or host/public API changes. A fresh local
+ad-hoc bundle uses the already-approved QA identity. CUA observed the new
+checkbox default-off, disabled Send and no automatic permission on launch.
+Pending-only cancellation and native tray enablement/modal acceptance still
+require separate runtime witnesses; regression tests alone do not close them.
 
 ### Native receipt after unlocking the test Mac
 
