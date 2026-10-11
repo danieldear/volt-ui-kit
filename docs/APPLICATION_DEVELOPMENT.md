@@ -69,7 +69,7 @@ No required shell, background material, layout or AI provider.
 | A | Controlled standalone navigation: sidebar, centered rail, bottom placement | Implemented basic label destinations; Catalog light/dark and callbacks; icons, nested groups, collapse/resizing and roving keyboard navigation remain |
 | A | Local project scaffolding + dev rebuild/restart | Implemented; minimal/navigation/mail/settings/agent UI starters; no state-preserving hot reload |
 | B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback accepted on macOS; tray-click acceptance pending; static menu layout, dynamic command enabled state, one standalone host/process |
-| B | Modern notifications and permission/action lifecycle | Pending; suitable safe UserNotifications bridge compatible with Rust 1.87 required |
+| B | Modern notifications and permission/action lifecycle | Partial: independent `native-notifications` safe Rust 1.87-compatible macOS adapter; explicit alert decision, silent local requests/removal and Catalog witness. Settings/action/foreground delegates unsupported; native QA pending. See [notifications](DESKTOP_NOTIFICATIONS.md) |
 | B | Public macOS window materials | Implemented for decorated GPU windows on macOS 10.14+; native light/dark, tint and zoom/restore checked. Borderless material, live preference-change acceptance and broader fullscreen/platform acceptance remain |
 | C | Command registry/shortcuts/palette, close veto and dirty-document UI | Implemented single-window slice after v0.3.0; Catalog in-memory draft, dynamic commands and owned guarded Quit. Bounded notes-file workflow now implemented; OS termination, state restoration and multi-window remain pending; see [command policies](APPLICATION_COMMANDS.md) and [document files](DOCUMENT_FILES.md) |
 | C | macOS local bundles, icons, resources, privacy declarations | Implemented `cargo volt bundle` for prebuilt executables, dependency/deployment checks and local ad-hoc signing; Developer ID, hardened-runtime shipping, notarization and installers remain separate owner-controlled release work; see [packaging](MACOS_PACKAGING.md) |
@@ -149,7 +149,7 @@ path dependencies/assets, hot-swap Rust closures, sandbox build scripts or packa
 applications. One binary target is required. Use only on projects you trust.
 Scaffolding never overwrites an existing destination and performs no build itself.
 
-## Native desktop services (implemented menu/tray; notifications pending)
+## Native desktop services (menu/tray and bounded notification slice)
 
 `native::system::{DesktopConfig, DesktopMenu, DesktopCommand, TrayConfig}` defines
 bounded validated configuration; `Application::desktop(config, callback)` routes
@@ -172,16 +172,19 @@ menu layout and no tray-click callback/hide-to-tray lifecycle. Registered comman
 accelerators and close veto are now implemented; full OS quit protection and
 multi-window/persistence remain pending. See [command policies](APPLICATION_COMMANDS.md). Existing embedders can own their adapters;
 this host must not share a process-global menu handler with another framework.
-Capability booleans for notifications/web/maps/AI/intents are false until real
-adapters ship. Notifications were not replaced by deprecated NSUserNotification
-or AppleScript: checked modern mac-usernotifications releases require Rust 1.90.
+Web/maps/AI/intents capabilities remain false. Notifications now use independent
+`native-notifications` and pinned safe `objc2-user-notifications 0.3.2`, not a
+deprecated NSUserNotification/AppleScript fallback. `system::capabilities()`
+reports the compiled local-notification adapter; detailed capabilities explicitly
+exclude live settings, action callbacks and forced foreground presentation.
+See [notifications, feature boundaries and acceptance](DESKTOP_NOTIFICATIONS.md).
 
 ## Later public Apple bridges (planned, not implemented)
 
 | Module | Public API / requirements |
 |---|---|
 | Window material | Public NSVisualEffectView bridge implemented for decorated macOS GPU windows; borderless and comprehensive fullscreen/reduced-transparency acceptance remain |
-| Notifications | UserNotifications: explicit authorization, stable request IDs, async delivery/action callbacks; denied/unsupported errors; packaged bundle acceptance |
+| Notifications | Bounded local authorization/send/removal implemented; no delivery receipt. Settings/action/foreground delegates and broader packaged native acceptance remain |
 | Embedded web | WKWebView/native-view placement and lifecycle, URL/scheme/navigation policies, isolated optional JS bridge, permission/storage controls, clipping/focus |
 | Maps | MapKit/native-view integration; developer-selected provider; explicit location permission only when location is requested; attribution/provider rules |
 | On-device models | Foundation Models Swift bridge; runtime device/OS/model availability, cancellation, safety/resource bounds; no blanket Siri-chat API |
@@ -304,3 +307,16 @@ public macOS file panels, background I/O, external-edit conflict errors and
 async save-before-close. The earlier memory example is unchanged. No claim of
 large-file editing, generic state persistence, OS quit protection or finished
 application packaging is made. See [exact APIs and native receipt](DOCUMENT_FILES.md).
+
+
+## Notifications/tray follow-up (2026-10-11; Unreleased)
+
+Independent `native-notifications` implements explicit alert-only authorization,
+silent one-shot stable-ID local submission, removal and synchronous
+validation/main-thread/bundle errors. Catalog's Desktop services page and tray
+share guarded registry IDs and a count witness. Only one additional pinned
+framework crate; core/default footprint unchanged. OS acceptance is not visible
+delivery. Settings queries/actions/foreground delegates remain unavailable.
+The approved disposable native QA was blocked at launch by the locked Mac;
+permission/banner/removal/tray-click acceptance remains pending, not passed.
+See [exact API, bounds and evidence](DESKTOP_NOTIFICATIONS.md).

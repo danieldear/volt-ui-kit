@@ -104,7 +104,9 @@ reminder, photo-library, Apple Events and speech usage descriptions. Applicabili
 varies by API/OS. **A description is not an entitlement or granted permission**;
 your application must still implement the right APIs, authorization and denied
 states. No permission prompt or entitlement is granted by packaging. Modern
-notifications do not gain a runtime implementation from these plist options.
+notifications require the independent `native-notifications` adapter and an explicit
+authorization action; these plist options do not implement or grant notifications.
+See [local notifications](DESKTOP_NOTIFICATIONS.md).
 
 Use `include_bytes!` for small compile-time assets, or locate packaged Resources
 relative to `std::env::current_exe()` (`MacOS/../Resources`) for your known leaf

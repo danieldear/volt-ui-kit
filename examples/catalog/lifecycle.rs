@@ -17,6 +17,29 @@ pub fn save(app: &mut App) {
 }
 pub fn commands() -> CommandRegistry<App> {
     CommandRegistry::new()
+        .command(Command::new(
+            "desktop-services",
+            "Show desktop services page",
+            |app: &mut App| app.go(super::Page::DesktopServices),
+        ))
+        .command(
+            Command::new(
+                "notification-send",
+                "Send test notification",
+                super::desktop_services::send,
+            )
+            .enabled_when(super::desktop_services::can_send),
+        )
+        .command(
+            Command::new(
+                "notification-remove",
+                "Remove test notification",
+                super::desktop_services::remove,
+            )
+            .enabled_when(|app| {
+                !app.services.busy && volt_ui_kit::native::notifications::capabilities().removal
+            }),
+        )
         .command(
             Command::new("save-draft", "Save active draft", |app: &mut App| {
                 if app.page == super::Page::Documents {
@@ -235,17 +258,39 @@ pub fn overlays(app: &App) -> Vec<El<App>> {
 }
 #[cfg(all(feature = "native-desktop", target_os = "macos"))]
 pub fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
-    use volt_ui_kit::native::system::{DesktopCommand, DesktopConfig, DesktopMenu};
-    DesktopConfig::new("Volt UI").menu(DesktopMenu::new(
-        "File",
-        [
-            DesktopCommand::new("save-draft", "Save active draft"),
-            DesktopCommand::new("open-file", "Open notes file…"),
-            DesktopCommand::new("save-file", "Save notes file"),
-            DesktopCommand::new("save-as-file", "Save notes file as…"),
-            DesktopCommand::new("command-probe", "Count command execution"),
-            DesktopCommand::new("command-palette", "Open command palette"),
-            DesktopCommand::new("close-window", "Close window"),
-        ],
-    ))
+    use volt_ui_kit::native::system::{DesktopCommand, DesktopConfig, DesktopMenu, TrayConfig};
+    let rgba = (0i32..18 * 18)
+        .flat_map(|n| {
+            let (x, y) = (n % 18, n / 18);
+            let stroke = (4..=14).contains(&y)
+                && ((x - (4 + (y - 4) / 2)).abs() <= 1 || (x - (14 - (y - 4) / 2)).abs() <= 1);
+            [255, 255, 255, if stroke { 255 } else { 0 }]
+        })
+        .collect();
+    DesktopConfig::new("Volt UI")
+        .tray(TrayConfig {
+            tooltip: "Volt Catalog desktop services".into(),
+            rgba,
+            width: 18,
+            height: 18,
+            template: true,
+            commands: vec![
+                DesktopCommand::new("desktop-services", "Show desktop services page"),
+                DesktopCommand::new("command-probe", "Count command execution"),
+                DesktopCommand::new("notification-send", "Send test notification"),
+                DesktopCommand::new("notification-remove", "Remove test notification"),
+            ],
+        })
+        .menu(DesktopMenu::new(
+            "File",
+            [
+                DesktopCommand::new("save-draft", "Save active draft"),
+                DesktopCommand::new("open-file", "Open notes file…"),
+                DesktopCommand::new("save-file", "Save notes file"),
+                DesktopCommand::new("save-as-file", "Save notes file as…"),
+                DesktopCommand::new("command-probe", "Count command execution"),
+                DesktopCommand::new("command-palette", "Open command palette"),
+                DesktopCommand::new("close-window", "Close window"),
+            ],
+        ))
 }
