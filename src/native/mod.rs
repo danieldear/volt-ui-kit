@@ -6,6 +6,8 @@ pub use application::{Application, RendererPreference};
 mod assets;
 #[cfg(target_os = "macos")]
 mod macos_chrome;
+#[cfg(all(target_os = "macos", feature = "native-gpu"))]
+mod macos_material;
 mod raster;
 pub mod system;
 pub use assets::{decode_image, load_image};

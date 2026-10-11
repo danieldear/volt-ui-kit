@@ -531,7 +531,8 @@ impl Runtime {
         let id = b.id.clone();
         let submit = b.on_submit.clone();
         let interaction_changed = self.reveal_focus(&id) | self.cancel_pointer_captures();
-        if key == EditKey::Submit || (key == EditKey::Enter && !options.multiline) {
+        let enter_submits = !options.multiline || (options.enter_submits && !shift);
+        if key == EditKey::Submit || (key == EditKey::Enter && enter_submits) {
             if let Some(name) = submit {
                 handlers
                     .dispatch(&name, Event::Activate, ctx)

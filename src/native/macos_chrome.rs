@@ -37,7 +37,10 @@ pub(super) fn install_unified_titlebar(window: &Window) -> Result<(), String> {
     Ok(())
 }
 
-fn app_window(window: &Window, mtm: MainThreadMarker) -> Result<Retained<NSWindow>, String> {
+pub(super) fn app_window(
+    window: &Window,
+    mtm: MainThreadMarker,
+) -> Result<Retained<NSWindow>, String> {
     let handle = window.window_handle().map_err(|e| e.to_string())?;
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return Err("expected AppKit window handle".into());

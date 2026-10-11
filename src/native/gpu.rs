@@ -482,7 +482,7 @@ impl GpuPresenter {
             self.texture = Some(texture);
         }
         let texture = self.texture.as_ref().unwrap();
-        if let Some(reason) = self.encoder.stats().over_budget {
+        let framebuffer_upload_bytes = if let Some(reason) = self.encoder.stats().over_budget {
             report_fallback_once(reason);
             let pixmap = painter.rasterize(batches, background)?;
             self.queue.write_texture(
@@ -499,6 +499,7 @@ impl GpuPresenter {
                     depth_or_array_layers: 1,
                 },
             );
+            w as usize * h as usize * 4
         } else {
             self.renderer
                 .render_to_texture(
@@ -514,7 +515,8 @@ impl GpuPresenter {
                     },
                 )
                 .map_err(|e| e.to_string())?;
-        }
+            0
+        };
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
@@ -558,7 +560,7 @@ impl GpuPresenter {
         }
         if std::env::var_os("VOLT_UI_TRACE").is_some() {
             let stats = self.encoder.stats();
-            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.over_budget,stats.resource_bytes,stats.framebuffer_upload_bytes);
+            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.over_budget,stats.resource_bytes,framebuffer_upload_bytes);
         }
         Ok(PresentStatus::Presented)
     }

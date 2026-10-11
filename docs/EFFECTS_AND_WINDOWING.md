@@ -202,12 +202,14 @@ Corners retain the existing numeric radius 0..256 limit. Invalid views follow
 existing atomic installation rules; callback-mutated application state is not
 rolled back.
 
-Native raster limits: framebuffer 16,777,216px; individual shadow mask 4,194,304px;
+Native raster limits: framebuffer 67,108,864px; individual shadow mask 4,194,304px;
 cumulative processed shadow-mask pixels 16,777,216/frame; alpha mask cache
 32 entries / 8MiB plus a separate 32MiB RGB tint cache; offscreen group depth 24
 and aggregate RGBA buffers 64MiB including root.
-Group buffers are cleared/reused and discarded on framebuffer resize. Raster
-budgets fail explicitly with `Err`, rather than silently removing an effect.
+Group buffers are cleared/reused and discarded on framebuffer resize. Malformed geometry, clipping and opacity budgets fail explicitly with `Err`.
+Valid shadows over the per-effect/frame blur-work budget are skipped and counted
+in `RasterPainter::effects_skipped`; decorative shadow failure does not discard
+the whole frame.
 At most 4096 detached nodes are retained; repeated removals exceeding that cap
 settle the oldest exit group early. Motion tracks are pruned after exits expire.
 
@@ -242,3 +244,16 @@ captures, cache reuse and budgets. **Native acceptance still required:** traffic
 lights/fullscreen clearance, dragging header versus controls, actual timer pacing,
 OS keyboard/mouse/resize/focus/occlusion, other-platform window behavior. No mobile,
 accessibility adapter, IME or full framework completion claim.
+
+### Public macOS material (0.3.0)
+
+`WindowBackground::Blur` uses public AppKit `NSVisualEffectView` in decorated
+macOS GPU windows (10.14+). It is a behind-window sibling below the unchanged
+winit content view; no custom native buttons, replacement delegates or raw
+pointer dereferences. `Opaque`/`Transparent` never install a material. AppKit
+chooses the active/inactive look and responds to system material preferences.
+The current semantic material is UnderWindowBackground; the developer controls
+where it is exposed through their own surface alpha and opaque UI fills.
+Unavailable or borderless requests warn and use transparency without blur;
+software fallback removes the material and stays opaque. No claim of App Store
+certification, comprehensive fullscreen acceptance or content-backdrop blur.

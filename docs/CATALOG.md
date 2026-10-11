@@ -28,8 +28,9 @@ Volt source/vendor synchronization or old showcase redesign is part of this batc
 cargo run --release --locked --features native --example catalog
 cargo run --release --locked --features native --example catalog -- \
     --page accessibility --theme dark --accent blue
+cargo run --release --locked --features native-gpu --example catalog
 cargo run --release --locked --features native-gpu --example catalog -- \
-    --page theming --theme dark --background blur --window-opacity 0.86
+    --page theming --theme dark --background opaque
 ```
 
 `native` is software drawing. `native-gpu` adds feature-pruned Vello/wgpu.
@@ -38,15 +39,19 @@ cargo run --release --locked --features native-gpu --example catalog -- \
 - `--page <slug>` opens a page; `--code` shows its first source panel, independently
   of argument order. `--theme` accepts only `light`, `dark`, `system`.
 - `--accent` accepts `zinc`, `blue`, `violet`, `rose`, `green`, `orange`.
-- `--background` accepts `opaque` (default), `transparent`, `blur`.
-- `--window-opacity` is finite and in 0..=1, default 0.86 for translucent modes.
-  It affects the window's **root clear**, not text/control opacity.
+- `--background` accepts `opaque`, `transparent`, `blur`. The default is `blur`
+  with `native-gpu` (frosted sidebar) and `opaque` with software drawing, which
+  cannot present a translucent window.
+- `--window-opacity` is finite and in 0..=1, default 0.72 for translucent modes.
+  The window clears transparently; the view paints a tint (minimum 10%),
+  adjustable with the sidebar slider. It does not fade text/control opacity.
 - `--palette`, `--dialog`, `--native-chrome` remain available; `--compact-chrome`
   selects the earlier compact overlay for comparison.
 - Shared `--snapshot`, `--size`, `--scale`, `--bench`, `--bench-target` remain available.
 
-On macOS, Catalog's default overlay uses public AppKit unified chrome (macOS 11+)
-and a 60-point header with 100-point leading clearance. Native traffic lights
+On macOS, Catalog's default overlay uses public AppKit unified chrome (macOS 11+).
+The traffic lights sit over a 48-point drag strip at the top of the full-height
+sidebar, so the content header needs no leading inset. Native traffic lights
 retain their system-drawn size and shape in light/dark modes; no custom buttons
 or per-button frame transforms are used. `--native-chrome` retains the standard
 system titlebar. Toolkit applications with short headers can choose
@@ -56,11 +61,15 @@ Large-display GPU animated-zoom acceptance is not complete: see the recorded
 surface reconfiguration timeout in
 [Application development](APPLICATION_DEVELOPMENT.md#macos-chrome-follow-up).
 
-A translucent root must not be covered by an opaque full-window container. Catalog
-removes only its root fill in translucent mode; cards/menus remain readable.
-Software/native fallback stays opaque. OS blur is a platform request, not a promise
-that every compositor supports it. Pinned winit's macOS blur uses a private API;
-public-material integration still gates App Store-safe distribution claims.
+A translucent root must not be covered by an opaque full-window container. In
+translucent mode the sidebar sits directly on the window material and the header
+and page live on a solid sheet with rounded leading corners, so body text never
+reads over blur. Opaque mode keeps the same layout with a tinted sidebar.
+Software/native fallback stays opaque. Decorated macOS GPU windows use public
+AppKit `NSVisualEffectView`; unsupported/borderless requests log transparency
+without material. Other compositors may ignore blur. Application packaging,
+permission and dependency review still gate App Store distribution claims.
+See [the current review receipt](CLAUDE_REVIEW_2026_10_11.md).
 The in-app landscape demo illustrates surface alpha, **not desktop blur**.
 
 ## Screen structure and design

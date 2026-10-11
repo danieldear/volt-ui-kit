@@ -2,7 +2,7 @@
 
 The cards, buttons, forms, palettes and vector icons behind Volt — extracted into a small, renderer-independent Rust library.
 
-**Status:** working extraction, version 0.2.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
+**Status:** working extraction, version 0.3.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
 
 ## Polished component testing: Volt Catalog
 
@@ -15,6 +15,18 @@ It provides live previews, selectable Rust source, API tables, SF/SF Mono type,
 six accents and light/dark/system themes. New work extends Catalog only; Atelier,
 Desk and UI Lab remain existing regression fixtures. See [Catalog](docs/CATALOG.md)
 for accessibility, GPU and opt-in glass launch options and acceptance boundaries.
+
+## Coding-agent client: Relay
+
+```sh
+cargo run --release --locked --features native-gpu --example relay
+```
+
+A desktop agent client in the style of current coding-agent apps: frosted thread
+sidebar, streaming transcript with collapsible work steps and file changes, a
+composer with permission, model and effort menus, and an inspector card. Replies
+come from a local scripted worker, so it runs offline. `--theme light`, `--new`,
+`--thread N`, `--background opaque` and the shared `--snapshot` flags apply.
 
 ```sh
 cargo run --features native --example ui_lab -- --section scrolling --theme light

@@ -63,6 +63,8 @@ pub(super) struct GpuSceneEncoder {
     tiles: [usize; 2],
     depth: Vec<u8>,
     peak: Vec<u8>,
+    /// Estimated command words per tile, including draws and clip scopes.
+    commands: Vec<u32>,
     open_tiles: Vec<[usize; 4]>,
     /// Zero-copy handles to loaded faces; stable ids keep Vello's outline cache warm.
     fonts: HashMap<cosmic_text::fontdb::ID, Option<FontData>>,
@@ -73,7 +75,6 @@ pub(super) struct GpuSceneEncoder {
 #[derive(Default)]
 struct Budget {
     tiles: u64,
-    ptcl: u64,
     binning: u64,
     glyph_lines: u64,
     atlas_area: u64,
@@ -82,6 +83,13 @@ struct Budget {
 /// Vello 0.6 fixed buffer sizes (vello_encoding `BufferSizes::new`), in elements.
 const TILE_CAPACITY: u64 = 1 << 21;
 const PTCL_CAPACITY: u64 = 1 << 23;
+// Pinned Vello 0.6 shared/ptcl.wgsl and coarse.wgsl: the initial allocation
+// exists even for empty viewport tiles; spill allocations are 256-word chunks.
+const PTCL_INITIAL_ALLOC: u64 = 64;
+const PTCL_INCREMENT: u64 = 256;
+// Leave room for the blend offset, END/JUMP and command-boundary headroom.
+const PTCL_INITIAL_USABLE: u32 = 48;
+const PTCL_INCREMENT_USABLE: u32 = 240;
 const BIN_CAPACITY: u64 = 1 << 18;
 const LINE_CAPACITY: u64 = 1 << 21;
 const ATLAS_SIDE: u64 = 8192;
@@ -247,8 +255,18 @@ impl GpuSceneEncoder {
             |a: f64, b: f64, size: f64| ((b / size).ceil() - (a / size).floor()).max(1.) as u64;
         let tiles = span(r.x0, r.x1, 16.) * span(r.y0, r.y1, 16.);
         self.budget.tiles += tiles;
-        // A few command words per covered tile, generous for clips/images.
-        self.budget.ptcl += tiles * 8 + 4;
+        // Fill + brush use at most eight words in pinned coarse.wgsl. Count
+        // per tile: a dense tile spills in 256-word chunks, not by exact usage.
+        let [tw, th] = self.tiles;
+        let x0 = ((r.x0 / 16.).floor() as usize).min(tw);
+        let x1 = ((r.x1 / 16.).ceil() as usize).min(tw);
+        let y0 = ((r.y0 / 16.).floor() as usize).min(th);
+        let y1 = ((r.y1 / 16.).ceil() as usize).min(th);
+        for y in y0..y1 {
+            for words in &mut self.commands[y * tw + x0..y * tw + x1] {
+                *words = words.saturating_add(8);
+            }
+        }
         self.budget.binning += span(r.x0, r.x1, 256.) * span(r.y0, r.y1, 256.);
     }
     fn finish_budget(&mut self) {
@@ -262,7 +280,18 @@ impl GpuSceneEncoder {
         let vello = self.scene.bump_estimate(None);
         let lines = u64::from(vello.lines.len()) + self.budget.glyph_lines;
         let segments = u64::from(vello.segments.len()) + self.budget.glyph_lines * 3 / 2;
-        let base_ptcl = (self.tiles[0] * self.tiles[1]) as u64 * 2;
+        let ptcl = self.commands.len() as u64 * PTCL_INITIAL_ALLOC
+            + self
+                .commands
+                .iter()
+                .map(|words| {
+                    u64::from(
+                        words
+                            .saturating_sub(PTCL_INITIAL_USABLE)
+                            .div_ceil(PTCL_INCREMENT_USABLE),
+                    ) * PTCL_INCREMENT
+                })
+                .sum::<u64>();
         let b = &self.budget;
         self.stats.over_budget = if self.stats.spill_slots > SPILL_SLOT_LIMIT {
             Some("blend spill")
@@ -272,7 +301,7 @@ impl GpuSceneEncoder {
             Some("segments")
         } else if over(b.tiles, TILE_CAPACITY) {
             Some("tiles")
-        } else if over(b.ptcl + base_ptcl, PTCL_CAPACITY) {
+        } else if over(ptcl, PTCL_CAPACITY) {
             Some("tile commands")
         } else if over(b.binning, BIN_CAPACITY) {
             Some("binning")
@@ -344,8 +373,11 @@ impl GpuSceneEncoder {
         self.frame_images.clear();
         self.clock += 1;
         let vp = painter.gpu_viewport();
-        if vp.width <= 0. || vp.height <= 0. || vp.width as f64 * vp.height as f64 > 16_777_216. {
-            return Err("GPU framebuffer exceeds 16 megapixel limit".into());
+        if vp.width <= 0.
+            || vp.height <= 0.
+            || vp.width as f64 * vp.height as f64 > raster::MAX_FRAMEBUFFER_PIXELS as f64
+        {
+            return Err("GPU framebuffer exceeds 64 megapixel limit".into());
         }
         let viewport = Rect::new(0., 0., vp.width as f64, vp.height as f64);
         self.tiles = [
@@ -357,6 +389,8 @@ impl GpuSceneEncoder {
         self.depth.resize(count, 0);
         self.peak.clear();
         self.peak.resize(count, 0);
+        self.commands.clear();
+        self.commands.resize(count, 0);
         self.open_tiles.clear();
         let mut stack = Vec::<bool>::new();
         // Pixel bounds of the innermost structural clip. Opacity layers and
@@ -567,6 +601,20 @@ impl GpuSceneEncoder {
                 }
                 b.close_path();
                 scene.fill(Fill::NonZero, Affine::IDENTITY, color(*c), None, &b);
+            }
+            // Axis-aligned butt-capped lines (borders, dividers) are exact
+            // rectangles. Stroked on Vello 0.6, a long horizontal line lying
+            // on the surface's top edge filled its whole first tile row.
+            Shape::Line(a, b, w, c) if a[0] == b[0] || a[1] == b[1] => {
+                let half = w * 0.5;
+                let r = if a[1] == b[1] {
+                    [a[0].min(b[0]), a[1] - half, (a[0] - b[0]).abs(), *w]
+                } else {
+                    [a[0] - half, a[1].min(b[1]), *w, (a[1] - b[1]).abs()]
+                };
+                if r[2] > 0. && r[3] > 0. {
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, color(*c), None, &rect(r));
+                }
             }
             Shape::Line(a, b, w, c) => scene.stroke(
                 &Stroke::new(*w as f64),

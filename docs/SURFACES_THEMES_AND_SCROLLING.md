@@ -217,7 +217,7 @@ It never labels an opaque tint/shadow as backdrop blur.
 winit blur is an OS request: macOS and KDE Wayland support vary; Windows/X11 and
 other unsupported platforms do not gain native blur from this API. There is no
 portable backdrop blur-radius control. Pixel tests verify premultiplied rendering;
-desktop-through transparency, blur, OS appearance changes and trackpad feel require device/platform acceptance testing. The current pinned winit 0.30.13 macOS blur uses private `CGSSetWindowBackgroundBlurRadius`; this is not an App Store-safe `NSVisualEffectView` material integration. Winit 0.31 beta provides public materials, but is not adopted in this stable/MSRV-preserving milestone.
+desktop-through transparency, blur, OS appearance changes and trackpad feel require device/platform acceptance testing. Since 0.3.0 decorated macOS GPU windows request a public `NSVisualEffectView` behind-window material, without invoking winit's private blur API. Borderless/unsupported requests warn and retain transparency. Packaging/dependency review, fullscreen and live accessibility preference acceptance still gate release claims.
 
 Primary references: [semantic colors](https://daisyui.com/docs/colors/),
 [winit window capabilities](https://docs.rs/winit/0.30.13/winit/window/struct.Window.html),

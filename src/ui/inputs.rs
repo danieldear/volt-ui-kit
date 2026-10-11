@@ -52,6 +52,12 @@ impl<C> TextInput<C> {
         self.0.node.editor.as_mut().unwrap().soft_wrap = value;
         self
     }
+    /// Multiline only: Enter submits and Shift+Enter inserts a newline, as
+    /// chat composers do. Cmd/Ctrl+Enter submits either way.
+    pub fn submit_on_enter(mut self, value: bool) -> Self {
+        self.0.node.editor.as_mut().unwrap().enter_submits = value;
+        self
+    }
     pub fn password(mut self, value: bool) -> Self {
         self.0.node.editor.as_mut().unwrap().password = value;
         self

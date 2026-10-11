@@ -115,8 +115,9 @@ expandable trees, captured/keyboard split resizing; opt-in wrapped editing.
 Showcase Activity/Explorer own new acceptance and GPU Showcase requests
 translucent smoke/blur by default. Default embedded/Volt behavior stays opaque.
 
-Explicit release gate: replace the pinned winit macOS private blur API with a
-stable public-material integration before App Store-safe distribution claims.
+0.3.0 supplies a public AppKit material bridge for decorated macOS GPU windows.
+Borderless/fullscreen/preference-change acceptance and application/dependency
+review still gate App Store-safe distribution claims.
 Physical IME, VoiceOver, cross-platform runtime, pointer/device acceptance and
 GPU energy/utilization remain distinct from automated toolkit checks.
 See [the plan and measured receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).

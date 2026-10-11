@@ -278,7 +278,7 @@ pub fn doc(page: Page, app: &App) -> Doc {
         Spinner => spinner_doc(),
         Toast => toast_doc(),
         Card => card_doc(),
-        ScrollArea => scroll_doc(),
+        ScrollArea => scroll_doc(app),
         Table => table_doc(app),
         TreeView => tree_doc(app),
         VirtualList => virtual_doc(app),
@@ -496,7 +496,7 @@ native::run_ui_with_theme(options, app, view, theme)?;"#),
     --page theming --theme dark --background blur --window-opacity 0.86
 # --background transparent: alpha without a blur request
 # --background opaque: solid window; default and software fallback
-# OS blur is platform-dependent; pinned macOS winit uses a private blur API."#),
+# Decorated macOS GPU windows use public AppKit material; other platforms vary."#),
         ],
         api: vec![
             ("ColorToken::alpha(percent)", "A role at 0..=100% opacity, e.g. \"@primary/15\"."),
@@ -1120,7 +1120,7 @@ fn text_field_doc(app: &App) -> Doc {
             .placeholder("Password")
             .password(true)
             .on_change(|app: &mut App, v| app.password = v),
-        text_field("volt-ui-kit 0.2.0")
+        text_field(concat!("volt-ui-kit ", env!("CARGO_PKG_VERSION")))
             .key("tf-ro")
             .read_only(true)
             .on_change(|_: &mut App, _| {}),
@@ -1773,7 +1773,7 @@ fn card_doc() -> Doc {
     }
 }
 
-fn scroll_doc() -> Doc {
+fn scroll_doc(app: &App) -> Doc {
     let tags = vstack(
         (1..=40)
             .map(|i| -> El<App> {
@@ -1813,6 +1813,49 @@ fn scroll_doc() -> Doc {
     .gap(12., Axis::Horizontal)
     .scroll(Scroll::Horizontal)
     .scrollbars(Scrollbars::Hidden);
+    let log = vstack![
+        vstack(
+            app.log_entries
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| -> El<App> {
+                    text(entry.clone())
+                        .key(format!("log-line-{i}"))
+                        .font_family("SF Mono")
+                        .font_size(12.)
+                        .height(32.)
+                        .into()
+                })
+        )
+        .key("follow-log")
+        .height(160.)
+        .scroll(Scroll::Vertical)
+        .anchor_end(true)
+        .padding(8., Edge::Horizontal)
+        .background(ColorToken::Base200)
+        .rounded(8.)
+        .clip(Clip::Rounded),
+        text_area(&app.log_draft)
+            .key("log-composer")
+            .accessible_label("Log message")
+            .placeholder("Enter to append; Shift+Enter for a new line")
+            .soft_wrap(true)
+            .submit_on_enter(true)
+            .height(64.)
+            .on_change(|app: &mut App, value| app.log_draft = value)
+            .on_submit(App::append_log),
+        button("Append event")
+            .key("log-append")
+            .on_click(|app: &mut App| {
+                if app.log_draft.trim().is_empty() {
+                    app.log_draft =
+                        format!("Event {} · callback delivered", app.log_entries.len() + 1);
+                }
+                app.append_log();
+            }),
+    ]
+    .gap(12., Axis::Vertical)
+    .width(420.);
     Doc {
         sections: vec![
             section(
@@ -1829,12 +1872,19 @@ fn scroll_doc() -> Doc {
                 gallery,
                 r#"hstack(items).scroll(Scroll::Horizontal).scrollbars(Scrollbars::Hidden)"#,
             ),
+            section("scroll-follow", "Follow the newest event", "A bounded live log. Scroll up to read history; return to the end to follow new events. The multiline composer uses Rust submission callbacks.", log,
+                r#"vstack(lines).scroll(Scroll::Vertical).anchor_end(true)
+text_area(&app.draft).submit_on_enter(true)
+    .on_change(|app: &mut App, value| app.draft = value)
+    .on_submit(App::append_log)"#),
         ],
         api: vec![
             (
                 ".scroll(Scroll::Vertical | Horizontal | Both | Auto)",
                 "Opt-in overflow scrolling.",
             ),
+            (".anchor_end(true)", "Follow growth only while the reader is at the end; scroll up to release."),
+            ("text_area(...).submit_on_enter(true)", "Enter submits; Shift+Enter inserts a newline; Cmd/Ctrl+Enter still submits."),
             (
                 ".scrollbars(Scrollbars::Hidden)",
                 "Hide indicators, keep scrolling.",

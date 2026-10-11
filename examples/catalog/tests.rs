@@ -23,6 +23,58 @@ fn mount(app: &App, size: [f32; 2]) -> Runtime {
 }
 
 #[test]
+fn catalog_live_log_follows_new_events_but_preserves_a_readers_scroll_position() {
+    for scale in [1., 2.] {
+        let mut app = App::new();
+        let demo = |app: &App| {
+            pages::doc(Page::ScrollArea, app)
+                .sections
+                .into_iter()
+                .find(|s| s.id == "scroll-follow")
+                .unwrap()
+                .demo
+        };
+        let (doc, mut handlers) = demo(&app).build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        let viewport = Viewport::new(640. * scale, 500. * scale, scale).unwrap();
+        let mut painter = RasterPainter::new(viewport);
+        runtime
+            .layout(viewport, &Bindings::default(), &mut painter)
+            .unwrap();
+        assert_eq!(runtime.scroll_offset("follow-log")[1], 224.);
+        assert!(
+            runtime
+                .accessibility_activate("log-append", &mut handlers, &mut app)
+                .unwrap()
+                .activated
+        );
+        let (doc, next) = demo(&app).build().unwrap().into_parts();
+        runtime
+            .replace_document(doc, &next, &Bindings::default())
+            .unwrap();
+        runtime
+            .layout(viewport, &Bindings::default(), &mut painter)
+            .unwrap();
+        assert_eq!(runtime.scroll_offset("follow-log")[1], 256.);
+        assert!(runtime.scroll_at(20. * scale, 20. * scale, [0., -80.]));
+        runtime
+            .layout(viewport, &Bindings::default(), &mut painter)
+            .unwrap();
+        let before = runtime.scroll_offset("follow-log");
+        app.log_draft = "Reader stays in place".into();
+        app.append_log();
+        let (doc, next) = demo(&app).build().unwrap().into_parts();
+        runtime
+            .replace_document(doc, &next, &Bindings::default())
+            .unwrap();
+        runtime
+            .layout(viewport, &Bindings::default(), &mut painter)
+            .unwrap();
+        assert_eq!(runtime.scroll_offset("follow-log"), before);
+    }
+}
+
+#[test]
 fn every_page_builds_in_both_modes_with_code_and_overlays() {
     let mut app = App::new();
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
@@ -119,10 +171,22 @@ fn navigation_clears_page_overlays_and_notifications_wrap_safely() {
 }
 
 #[test]
-fn launch_options_are_order_independent_and_glass_is_opt_in() {
+fn launch_options_are_order_independent_and_glass_follows_the_renderer() {
     let args = |items: &[&str]| crate::parse_args(items.iter().map(|s| s.to_string()));
     let (app, options) = args(&["--code", "--page", "button", "--theme", "dark"]).unwrap();
     assert!(app.code.contains(first_section_id(&app).unwrap()));
+    // Frosted by default only where the window can actually be translucent.
+    assert_eq!(app.glass, cfg!(feature = "native-gpu"));
+    assert_eq!(
+        options.background,
+        if cfg!(feature = "native-gpu") {
+            // Transparent clear; the view paints the adjustable tint.
+            volt_ui_kit::native::WindowBackground::Blur { opacity: 0. }
+        } else {
+            volt_ui_kit::native::WindowBackground::Opaque
+        }
+    );
+    let (app, options) = args(&["--background", "opaque"]).unwrap();
     assert!(!app.glass);
     assert_eq!(
         options.background,
@@ -147,10 +211,12 @@ fn launch_options_are_order_independent_and_glass_is_opt_in() {
     }
     let (app, options) = args(&["--background", "blur", "--window-opacity", "0.82"]).unwrap();
     assert!(app.glass);
+    assert_eq!(app.tint, 82);
     assert_eq!(
         options.background,
-        volt_ui_kit::native::WindowBackground::Blur { opacity: 0.82 }
+        volt_ui_kit::native::WindowBackground::Blur { opacity: 0. }
     );
+    assert_eq!(args(&["--window-opacity", "0"]).unwrap().0.tint, TINT_MIN);
     for bad in [
         vec!["--theme", "oops"],
         vec!["--background", "oops"],
@@ -280,9 +346,15 @@ fn catalog_pages_and_glass_remain_on_gpu_at_both_scales() {
         let ui = theme(&app, ThemeMode::Dark);
         let batches = runtime.paint_ui(&mut painter, &ui);
         let mut clear = ui.palette.base[0];
-        clear[3] = 0.86;
+        clear[3] = 0.;
+        app.tint = 72;
         let pixels = gpu.render(&mut painter, &batches, clear).unwrap();
-        assert!((218..=221).contains(&pixels.pixel(0, 0).unwrap().alpha()));
+        // The sidebar shows the translucent material; the content sheet is solid.
+        assert!((182..=185).contains(&pixels.pixel(0, 0).unwrap().alpha()));
+        let content = pixels
+            .pixel((1000. * scale) as u32, (600. * scale) as u32)
+            .unwrap();
+        assert_eq!(content.alpha(), 255);
         assert_eq!(gpu.last_over_budget(), None);
         app.glass = false;
     }

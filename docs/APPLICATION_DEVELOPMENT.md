@@ -1,6 +1,6 @@
 # Application development: delivery plan and first slice
 
-Date: 2026-10-10. Scope: application-first, macOS-first. Theme editor is deferred.
+Updated: 2026-10-11. Scope: application-first, macOS-first. Theme editor is deferred.
 **This milestone is not complete.** The current slice is explicitly separated
 from remaining desktop services, application lifecycle and tooling below.
 
@@ -39,8 +39,11 @@ wait-for-idle validation error and queue-drop timeout. Normal windowed light/dar
 rendering and a smaller-screen zoom round trip worked. A completion-gated resize
 experiment avoided blocking but produced a redraw busy-loop; it was reverted,
 not shipped. The GPU resize regression needs separate remediation and full
-large-display/fullscreen acceptance. The existing 16-megapixel frame limit is
-also retained. Evidence is in `work/window-chrome-2026-10-10/` (local, ignored).
+large-display/fullscreen acceptance. The framebuffer cap is now 64 MP, with corrected Vello viewport/spill
+admission. Repeated 6K snapshots passed and an 8K scene took explicit software
+fallback. Current native zoom/restore passed at 4112x2430; the original larger
+display/driver failure is not certified eliminated. Surface retries now back off
+with event-loop deadlines rather than immediate redraw loops. Evidence is in `work/window-chrome-2026-10-10/` (local, ignored).
 
 ```text
 Developer-owned state + Rust view + callbacks
@@ -67,7 +70,7 @@ No required shell, background material, layout or AI provider.
 | A | Local project scaffolding + dev rebuild/restart | Implemented; minimal/navigation/mail/settings/agent UI starters; no state-preserving hot reload |
 | B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback accepted on macOS; tray-click acceptance pending; static definitions, one standalone host/process |
 | B | Modern notifications and permission/action lifecycle | Pending; suitable safe UserNotifications bridge compatible with Rust 1.87 required |
-| B | Public macOS window materials, reduced-transparency discovery | Pending; current pinned winit blur path is not the final public-material bridge |
+| B | Public macOS window materials | Implemented for decorated GPU windows on macOS 10.14+; native light/dark, tint and zoom/restore checked. Borderless material, live preference-change acceptance and broader fullscreen/platform acceptance remain |
 | C | Command registry/shortcuts/palette, close veto, dirty documents, persistence, multi-window | Pending; existing single-window run loop is not a complete application lifecycle |
 | C | Shipping application bundles, icons, permission declarations, signing/notarization | Pending application tooling; generated Cargo projects are not distributable signed app bundles |
 | C | Deeper nav, document tabs, inspector/output/status compositions | Pending beyond basic reusable navigation |
@@ -104,10 +107,11 @@ The new renderer preference is authoritative; existing `run_ui` still honors
 `VOLT_UI_RENDERER`. Renderer-required behavior also holds during GPU recovery.
 
 Window alpha changes the root clear, not text/control opacity. Desktop background
-blur, panel-backdrop blur and content blur are separate capabilities. Current
-window Blur is only an OS request; unsupported platforms may ignore it. The new
-system capability flags do not promise blur support or automatic accessibility
-preference discovery. Do not distribute it as a universally supported material.
+blur, panel-backdrop blur and content blur are separate capabilities. Decorated macOS GPU
+windows now request public AppKit behind-window material; other compositors may
+ignore blur. Borderless macOS requests explicitly fall back to transparency. The material bridge logs the reduced-transparency preference at install time;
+AppKit owns the material response. Live preference-toggle acceptance remains
+separate. System capability flags do not promise universal blur support. Do not distribute it as a universally supported material.
 
 ## Scaffolding and development runner (implemented)
 
@@ -175,7 +179,7 @@ or AppleScript: checked modern mac-usernotifications releases require Rust 1.90.
 
 | Module | Public API / requirements |
 |---|---|
-| Window material | NSVisualEffectView; public AppKit integration, compositing/resize/contrast/reduced-transparency acceptance |
+| Window material | Public NSVisualEffectView bridge implemented for decorated macOS GPU windows; borderless and comprehensive fullscreen/reduced-transparency acceptance remain |
 | Notifications | UserNotifications: explicit authorization, stable request IDs, async delivery/action callbacks; denied/unsupported errors; packaged bundle acceptance |
 | Embedded web | WKWebView/native-view placement and lifecycle, URL/scheme/navigation policies, isolated optional JS bridge, permission/storage controls, clipping/focus |
 | Maps | MapKit/native-view integration; developer-selected provider; explicit location permission only when location is requested; attribution/provider rules |

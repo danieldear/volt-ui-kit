@@ -71,13 +71,12 @@ CLI flags override the demo defaults. Lower opacity exposes more desktop but can
 reduce contrast. `.background_opacity` affects surfaces only; text/controls are
 not faded as a group. New cards use 0.88 surface tint; title/footer use 0.72.
 
-The host requests real OS window blur, not a wallpaper screenshot or a panel
-shadow. Support is platform-dependent: the pinned winit 0.30.13 implements macOS
-blur through **private `CGSSetWindowBackgroundBlurRadius`**, not public AppKit
-materials. It is a desktop test path, not an App Store-safe material API or a
-promise to match ChatGPT/Codex internals. A stable/public-material migration remains
-an explicit release gate. See [winit 0.31 beta release notes](https://github.com/rust-windowing/winit/releases)
-and [Apple behind-window blending](https://developer.apple.com/documentation/appkit/nsvisualeffectview/blendingmode-swift.enum/behindwindow).
+The host requests real OS window material, not a wallpaper screenshot or a panel
+shadow. Since 0.3.0, decorated macOS GPU windows use public AppKit
+`NSVisualEffectView`; unavailable/borderless requests retain transparency without
+blur. AppKit owns material appearance. This does not certify App Store packaging
+or guarantee ChatGPT/Codex appearance parity. See
+[the bridge and review receipt](CLAUDE_REVIEW_2026_10_11.md).
 Windows/X11 do not gain blur from this winit API; Wayland needs a supporting KDE
 blur protocol. GPU auto initialization failure logs opaque software fallback;
 `VOLT_UI_RENDERER=gpu` fails rather than pretending GPU succeeded.
