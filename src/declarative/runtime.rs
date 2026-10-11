@@ -295,6 +295,11 @@ pub struct Runtime {
     overlays: overlays::OverlayState,
 }
 impl Runtime {
+    /// Native application shortcuts must not bypass modal/menu scope or IME.
+    #[cfg(feature = "native")]
+    pub(crate) fn application_commands_allowed(&self) -> bool {
+        !self.overlay_active() && !self.ime_active()
+    }
     pub fn new<C>(
         document: Document,
         handlers: &Handlers<'_, C>,

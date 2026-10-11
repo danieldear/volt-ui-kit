@@ -68,10 +68,10 @@ No required shell, background material, layout or AI provider.
 | A | Additive Application entry point, explicit renderer/theme/background, typed background messages | Implemented; tests and generated-project checks |
 | A | Controlled standalone navigation: sidebar, centered rail, bottom placement | Implemented basic label destinations; Catalog light/dark and callbacks; icons, nested groups, collapse/resizing and roving keyboard navigation remain |
 | A | Local project scaffolding + dev rebuild/restart | Implemented; minimal/navigation/mail/settings/agent UI starters; no state-preserving hot reload |
-| B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback accepted on macOS; tray-click acceptance pending; static definitions, one standalone host/process |
+| B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback accepted on macOS; tray-click acceptance pending; static menu layout, dynamic command enabled state, one standalone host/process |
 | B | Modern notifications and permission/action lifecycle | Pending; suitable safe UserNotifications bridge compatible with Rust 1.87 required |
 | B | Public macOS window materials | Implemented for decorated GPU windows on macOS 10.14+; native light/dark, tint and zoom/restore checked. Borderless material, live preference-change acceptance and broader fullscreen/platform acceptance remain |
-| C | Command registry/shortcuts/palette, close veto, dirty documents, persistence, multi-window | Pending; existing single-window run loop is not a complete application lifecycle |
+| C | Command registry/shortcuts/palette, close veto and dirty-document UI | Implemented single-window slice after v0.3.0; Catalog in-memory draft, dynamic commands and owned guarded Quit. OS termination, persistence and multi-window remain pending; see [command policies](APPLICATION_COMMANDS.md) |
 | C | Shipping application bundles, icons, permission declarations, signing/notarization | Pending application tooling; generated Cargo projects are not distributable signed app bundles |
 | C | Deeper nav, document tabs, inspector/output/status compositions | Pending beyond basic reusable navigation |
 | D | UI inspector, debug overlay, code-change development-loop improvements | Pending; existing trace timings remain available |
@@ -168,8 +168,9 @@ of macOS's system Apple-logo menu. Predefined edit actions are intentionally not
 added: custom text input is not automatically an AppKit responder.
 
 Limitations: one process-global muda handler, single standalone host, static
-menu definitions, no tray-click callback/hide-to-tray lifecycle, accelerator
-mapping or dirty-document close veto. Existing embedders can own their adapters;
+menu layout and no tray-click callback/hide-to-tray lifecycle. Registered command
+accelerators and close veto are now implemented; full OS quit protection and
+multi-window/persistence remain pending. See [command policies](APPLICATION_COMMANDS.md). Existing embedders can own their adapters;
 this host must not share a process-global menu handler with another framework.
 Capability booleans for notifications/web/maps/AI/intents are false until real
 adapters ship. Notifications were not replaced by deprecated NSUserNotification
@@ -226,3 +227,29 @@ renderer-independent core. Windows/Linux adapters and runtime acceptance follow.
   Linux native acceptance, new performance benchmark or Volt vendored integration
   acceptance is claimed. Logs/temporary generated fixtures are ignored under
   `work/application-foundation-2026-10-10/`.
+
+## Command/lifecycle follow-up verification (2026-10-11, Unreleased)
+
+- All-features/all-targets suite: 473 passed, 13 explicitly ignored. Separate
+  doctests: 28 passed, 1 ignored. Default suite: 40 passed, 1 ignored.
+- Strict all-features/all-targets, native-only library/test and rust-ui-only
+  Clippy passed. Rust 1.87 all-feature/all-target compilation passed; Linux
+  x86_64 all-feature/all-target cross-compilation checks passed (not native QA).
+- Catalog's ignored hardware test explicitly ran all 38 pages at 1x/2x on
+  Metal. Release Catalog built with `native-gpu,native-desktop`. Default package
+  verification passed locally; no registry publication or new version is claimed.
+- Validation includes dynamic enablement, exact shortcut modifiers, modal/IME
+  suppression, legacy callback precedence, static disabled-menu gates, queue
+  capacity/closure and close-policy re-evaluation. Definition validation is
+  cached; native enabled-state writes occur only when that state changes.
+- **Native interaction acceptance is pending:** the Mac was locked when the
+  disposable Catalog QA app was requested. Native close/Cancel/Save/Discard,
+  one-execution-per-shortcut and live native-menu enabled states have not been
+  accepted through this new runtime path. Offscreen GPU rendering and unit tests
+  do not replace those checks. The user was asked to unlock the Mac.
+- Sample Save is in-memory only. OS/Dock termination, persistent documents,
+  multi-window lifecycle, notifications, signed packaging and the original
+  larger-display GPU resize regression remain separate pending work. No new
+  CPU/GPU utilization profile or Volt synchronization is claimed.
+- Local logs and the disposable QA bundle are ignored under
+  `work/lifecycle-2026-10-11/`.

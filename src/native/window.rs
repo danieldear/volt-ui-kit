@@ -1,6 +1,6 @@
 use super::{
     messages::{Messages, UiSender},
-    Damage, RasterPainter,
+    ApplicationRequest, CloseDecision, CloseReason, CommandDispatch, Damage, RasterPainter,
 };
 use crate::{
     declarative::{Bindings, Document, DocumentError, Handlers, InputOutcome, Runtime},
@@ -406,7 +406,7 @@ fn run_host<C: 'static>(
     content: Content<C>,
     theme_fn: Option<ThemeFn<C>>,
     mut messages: Option<Box<dyn Messages<C>>>,
-    extensions: super::application::HostExtensions<C>,
+    mut extensions: super::application::HostExtensions<C>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     validate_options(&options)?;
     let renderer = if let Some(preference) = extensions.renderer {
@@ -429,12 +429,19 @@ fn run_host<C: 'static>(
             proxy.send_event(HostEvent::Messages).is_ok()
         }));
     }
+    if let Some(requests) = extensions.requests.as_mut() {
+        let proxy = event_loop.create_proxy();
+        requests.connect(Arc::new(move || {
+            proxy.send_event(HostEvent::Requests).is_ok()
+        }));
+    }
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
     let mut app = App {
         options,
         renderer,
         extensions,
+        requests: vec![],
         #[cfg(all(feature = "native-desktop", target_os = "macos"))]
         desktop_host: None,
         proxy,
@@ -519,6 +526,9 @@ impl<C: 'static> Content<C> {
 #[derive(Debug)]
 enum HostEvent {
     Messages,
+    Requests,
+    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    Close(CloseReason),
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
     Command(String),
     /// Screen-reader activation and action requests from AccessKit.
@@ -534,6 +544,7 @@ struct App<C> {
     renderer: (bool, bool),
     #[allow(dead_code)]
     extensions: super::application::HostExtensions<C>,
+    requests: Vec<ApplicationRequest>,
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
     desktop_host: Option<super::system::macos::DesktopHost>,
     /// Delivers AccessKit events into the event loop.
@@ -606,6 +617,9 @@ impl<C: 'static> App<C> {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl ToString) {
         if let Some(messages) = self.messages.as_mut() {
             messages.close();
+        }
+        if let Some(requests) = self.extensions.requests.as_mut() {
+            requests.close();
         }
         self.error = Some(error.to_string());
         event_loop.exit();
@@ -712,6 +726,13 @@ impl<C: 'static> App<C> {
             }
             Ok(()) => {}
         }
+        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        if let Some(host) = &self.desktop_host {
+            host.sync_commands(
+                &self.extensions.commands.entries(&self.context),
+                self.runtime.application_commands_allowed(),
+            );
+        }
         if outcome.activated || outcome.changed {
             self.layout()?;
             self.redraw();
@@ -778,6 +799,65 @@ impl<C: 'static> App<C> {
         } else {
             self.ime_allowed = false;
         }
+    }
+    fn dispatch_command(&mut self, id: &str) -> CommandDispatch {
+        self.extensions.dispatch(&mut self.context, id)
+    }
+    /// Return true only when closing was accepted; veto keeps both queues alive.
+    fn request_close(&mut self, event_loop: &ActiveEventLoop, reason: CloseReason) -> bool {
+        self.runtime.cancel_input();
+        self.activation_key = None;
+        if self.extensions.decide_close(&mut self.context, reason) == CloseDecision::KeepOpen {
+            return false;
+        }
+        if let Some(messages) = self.messages.as_mut() {
+            messages.close();
+        }
+        if let Some(requests) = self.extensions.requests.as_mut() {
+            requests.close();
+        }
+        eprintln!(
+            "Closed after {} frames; {} shaped-text cache misses",
+            self.frames, self.painter.text_cache_misses
+        );
+        event_loop.exit();
+        true
+    }
+    fn command_keyboard(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: &winit::event::KeyEvent,
+    ) -> Result<bool, String> {
+        if !self.runtime.application_commands_allowed() {
+            return Ok(false);
+        }
+        let Key::Character(key) = &event.logical_key else {
+            return Ok(false);
+        };
+        let mut chars = key.chars();
+        let Some(key) = chars.next().filter(|_| chars.next().is_none()) else {
+            return Ok(false);
+        };
+        let Some(id) = self
+            .extensions
+            .commands
+            .shortcut_id(key, self.modifiers)
+            .map(str::to_owned)
+        else {
+            return Ok(false);
+        };
+        // Repeats and disabled commands are consumed, never accidentally typed.
+        if !event.repeat {
+            if let CommandDispatch::Handled(close) = self.dispatch_command(&id) {
+                if !close.is_some_and(|reason| self.request_close(event_loop, reason)) {
+                    self.after_input(InputOutcome {
+                        changed: true,
+                        activated: true,
+                    })?;
+                }
+            }
+        }
+        Ok(true)
     }
     /// Route a key press to the focused text editor. Returns true when consumed.
     /// Tab and Escape stay with focus traversal and overlay dismissal.
@@ -1278,21 +1358,68 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             return;
         }
+        if matches!(event, HostEvent::Requests) {
+            if let Some(pump) = self.extensions.requests.as_mut() {
+                pump.drain(&mut self.requests);
+            }
+            let mut changed = false;
+            for request in std::mem::take(&mut self.requests) {
+                let close = match request {
+                    ApplicationRequest::Command(id) => match self.dispatch_command(&id) {
+                        CommandDispatch::Handled(close) => {
+                            changed = true;
+                            close
+                        }
+                        _ => continue,
+                    },
+                    ApplicationRequest::Close(reason) => {
+                        changed = true;
+                        Some(reason)
+                    }
+                };
+                if close.is_some_and(|reason| self.request_close(event_loop, reason)) {
+                    break;
+                }
+            }
+            if changed && !event_loop.exiting() {
+                if let Err(error) = self.after_input(InputOutcome {
+                    changed: true,
+                    activated: true,
+                }) {
+                    self.fail(event_loop, error);
+                }
+            }
+            return;
+        }
+        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        if let HostEvent::Close(reason) = event {
+            if !self.request_close(event_loop, reason) {
+                if let Err(error) = self.after_input(InputOutcome {
+                    changed: true,
+                    activated: true,
+                }) {
+                    self.fail(event_loop, error);
+                }
+            }
+            return;
+        }
         #[cfg(all(feature = "native-desktop", target_os = "macos"))]
         if let HostEvent::Command(id) = event {
-            if self
-                .extensions
-                .desktop
-                .as_ref()
-                .is_some_and(|c| c.accepts(&id))
+            if self.runtime.application_commands_allowed()
+                && self
+                    .extensions
+                    .desktop
+                    .as_ref()
+                    .is_some_and(|c| c.accepts(&id))
             {
-                if let Some(callback) = self.extensions.command.as_mut() {
-                    callback(&mut self.context, &id);
-                    if let Err(error) = self.after_input(InputOutcome {
-                        changed: true,
-                        activated: true,
-                    }) {
-                        self.fail(event_loop, error);
+                if let CommandDispatch::Handled(close) = self.dispatch_command(&id) {
+                    if !close.is_some_and(|reason| self.request_close(event_loop, reason)) {
+                        if let Err(error) = self.after_input(InputOutcome {
+                            changed: true,
+                            activated: true,
+                        }) {
+                            self.fail(event_loop, error);
+                        }
                     }
                 }
             }
@@ -1342,9 +1469,15 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 let proxy = self.proxy.clone();
                 self.desktop_host = Some(super::system::macos::DesktopHost::install(
                     config,
-                    move |id| {
-                        let _ = proxy.send_event(HostEvent::Command(id));
+                    move |event| {
+                        use super::system::macos::DesktopEvent;
+                        let _ = proxy.send_event(match event {
+                            DesktopEvent::Command(id) => HostEvent::Command(id),
+                            DesktopEvent::Quit => HostEvent::Close(CloseReason::Quit),
+                        });
                     },
+                    self.extensions.close.is_some(),
+                    &self.extensions.commands.entries(&self.context),
                 )?);
             }
             let (try_gpu, require_gpu) = self.renderer;
@@ -1436,14 +1569,12 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         let result = (|| -> Result<(), String> {
             match event {
                 WindowEvent::CloseRequested => {
-                    if let Some(messages) = self.messages.as_mut() {
-                        messages.close();
+                    if !self.request_close(event_loop, CloseReason::Window) {
+                        self.after_input(InputOutcome {
+                            changed: true,
+                            activated: true,
+                        })?;
                     }
-                    eprintln!(
-                        "Closed after {} frames; {} shaped-text cache misses",
-                        self.frames, self.painter.text_cache_misses
-                    );
-                    event_loop.exit();
                 }
                 WindowEvent::RedrawRequested => self.render()?,
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
@@ -1636,6 +1767,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 },
                 WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
                 WindowEvent::KeyboardInput { event, .. } => {
+                    if event.state == ElementState::Pressed
+                        && self.command_keyboard(event_loop, &event)?
+                    {
+                        return Ok(());
+                    }
                     if event.state == ElementState::Pressed && self.editor_keyboard(&event)? {
                         return Ok(());
                     }
@@ -1727,6 +1863,9 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         }
         if let Some(messages) = self.messages.as_mut() {
             messages.finish_turn();
+        }
+        if let Some(requests) = self.extensions.requests.as_mut() {
+            requests.finish_turn();
         }
         let now = Instant::now();
         let changed = self.advance_animations(now);
@@ -2551,5 +2690,42 @@ mod surface_option_tests {
                 .abs()
                 < 0.001
         );
+    }
+}
+
+#[cfg(test)]
+mod command_scope_tests {
+    use super::*;
+    use crate::ui::prelude::*;
+    #[test]
+    fn application_shortcuts_do_not_escape_modal_scope_or_ime_composition() {
+        for open in [false, true] {
+            let ui: Element<()> = zstack![
+                text_area("draft").key("edit").on_change(|_: &mut (), _| {}),
+                dialog(text("Modal"))
+                    .key("modal")
+                    .open(open)
+                    .on_dismiss(|_: &mut ()| {}),
+            ]
+            .into();
+            let (doc, handlers) = ui.build().unwrap().into_parts();
+            let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let viewport = Viewport::new(640., 480., 1.).unwrap();
+            runtime
+                .layout(
+                    viewport,
+                    &Bindings::default(),
+                    &mut RasterPainter::new(viewport),
+                )
+                .unwrap();
+            assert_eq!(runtime.application_commands_allowed(), !open);
+            if !open {
+                assert!(runtime.accessibility_focus("edit"));
+                assert!(runtime.ime_preedit("x", Some((0, 1))));
+                assert!(!runtime.application_commands_allowed());
+                runtime.ime_cancel();
+                assert!(runtime.application_commands_allowed());
+            }
+        }
     }
 }

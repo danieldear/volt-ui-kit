@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Add bounded state-aware `CommandRegistry`, logical Cmd/Ctrl shortcuts and
+  metadata for developer-owned palettes/buttons; unknown/disabled IDs are inert.
+- Add `Application::on_close_request` and a separate bounded application-request
+  queue. Dirty documents can remain open for Save/Discard/Cancel; confirmed
+  requests recheck the guard. No forced OS/Dock quit protection or persistence
+  is claimed; the standalone host is still single-window.
+- Owned macOS menus/tray reflect registered command enablement; native logical
+  accelerators and guarded Quit/Cmd+Q use the same dispatcher/close policy.
+- Catalog adds an Application lifecycle page and in-memory draft/command palette.
+  UI Lab/older Showcase and Volt's vendored copy are unchanged.
+- See `docs/APPLICATION_COMMANDS.md` for APIs, limits and platform boundaries.
+
 ## 0.3.0 (2026-10-11; not published to crates.io)
 
 - Application foundation: opt-in `Application`, independent sidebar/rail/bottom

@@ -298,3 +298,9 @@ cargo run --locked --features native-gpu --example catalog -- --page navigation
 
 See [application development and remaining phases](docs/APPLICATION_DEVELOPMENT.md)
 for APIs, optional desktop templates, rebuild/restart tooling and honest limits.
+
+
+Unreleased application-policy continuation: [state-aware commands, shortcuts and
+guarded closing](docs/APPLICATION_COMMANDS.md), demonstrated in Catalog's
+`--page application-lifecycle`. The host remains single-window; persistence and
+complete OS termination handling are not implied.

@@ -148,22 +148,37 @@ impl DesktopConfig {
         }
         Ok(())
     }
-    #[cfg(any(test, all(feature = "native-desktop", target_os = "macos")))]
     pub(super) fn accepts(&self, id: &str) -> bool {
+        self.command_enabled(id) == Some(true)
+    }
+    pub(super) fn command_enabled(&self, id: &str) -> Option<bool> {
         self.menus
             .iter()
             .flat_map(|m| &m.commands)
             .chain(self.tray.iter().flat_map(|t| &t.commands))
-            .any(|c| c.id == id && c.enabled)
+            .find(|c| c.id == id)
+            .map(|c| c.enabled)
     }
 }
 #[cfg(all(feature = "native-desktop", target_os = "macos"))]
 pub(super) mod macos {
     use super::*;
     use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+    use std::cell::Cell;
+    pub enum DesktopEvent {
+        Command(String),
+        Quit,
+    }
     pub struct DesktopHost {
         menu: Menu,
         _tray: Option<tray_icon::TrayIcon>,
+        command_items: Vec<CommandItem>,
+    }
+    struct CommandItem {
+        id: String,
+        item: MenuItem,
+        declared_enabled: bool,
+        current_enabled: Cell<bool>,
     }
     impl Drop for DesktopHost {
         fn drop(&mut self) {
@@ -173,10 +188,13 @@ pub(super) mod macos {
     impl DesktopHost {
         pub fn install(
             config: &DesktopConfig,
-            send: impl Fn(String) + Send + Sync + 'static,
+            send: impl Fn(DesktopEvent) + Send + Sync + 'static,
+            guarded_quit: bool,
+            commands: &[crate::native::CommandInfo<'_>],
         ) -> Result<Self, String> {
             config.validate()?;
             let menu = Menu::new();
+            let mut command_items = vec![];
             let apple = Submenu::new(&config.app_name, true);
             apple
                 .append_items(&[
@@ -188,34 +206,72 @@ pub(super) mod macos {
                     &PredefinedMenuItem::hide_others(None),
                     &PredefinedMenuItem::show_all(None),
                     &PredefinedMenuItem::separator(),
-                    &PredefinedMenuItem::quit(None),
                 ])
                 .map_err(|e| e.to_string())?;
+            if guarded_quit {
+                let quit = MenuItem::with_id(
+                    "volt-host-quit",
+                    format!("Quit {}", config.app_name),
+                    true,
+                    None,
+                );
+                quit.set_key_accelerator(Some(muda::accelerator::KeyAccelerator::new(
+                    Some(muda::accelerator::Modifiers::SUPER),
+                    muda::accelerator::Key::Character("q".into()),
+                )))
+                .map_err(|e| e.to_string())?;
+                apple.append(&quit).map_err(|e| e.to_string())?;
+            } else {
+                apple
+                    .append(&PredefinedMenuItem::quit(None))
+                    .map_err(|e| e.to_string())?;
+            }
             menu.append(&apple).map_err(|e| e.to_string())?;
             for group in &config.menus {
                 let sub = Submenu::new(&group.label, true);
                 for command in &group.commands {
-                    sub.append(&MenuItem::with_id(
+                    let item = MenuItem::with_id(
                         format!("volt-command-{}", command.id),
                         &command.label,
                         command.enabled,
                         None,
-                    ))
-                    .map_err(|e| e.to_string())?;
+                    );
+                    if let Some(shortcut) = commands
+                        .iter()
+                        .find(|c| c.id == command.id)
+                        .and_then(|c| c.shortcut)
+                    {
+                        item.set_key_accelerator(Some(shortcut.menu_accelerator()))
+                            .map_err(|e| e.to_string())?;
+                    }
+                    sub.append(&item).map_err(|e| e.to_string())?;
+                    command_items.push(CommandItem {
+                        id: command.id.clone(),
+                        item,
+                        declared_enabled: command.enabled,
+                        current_enabled: Cell::new(command.enabled),
+                    });
                 }
                 menu.append(&sub).map_err(|e| e.to_string())?;
             }
             let tray = if let Some(tray) = &config.tray {
                 let tray_menu = Menu::new();
                 for command in &tray.commands {
-                    tray_menu
-                        .append(&MenuItem::with_id(
-                            format!("volt-command-{}", command.id),
-                            &command.label,
-                            command.enabled,
-                            None,
-                        ))
-                        .map_err(|e| e.to_string())?;
+                    let item = MenuItem::with_id(
+                        format!("volt-command-{}", command.id),
+                        &command.label,
+                        command.enabled,
+                        None,
+                    );
+                    // Tray menus are another source of the same IDs, not a
+                    // second registration of application keyboard accelerators.
+                    tray_menu.append(&item).map_err(|e| e.to_string())?;
+                    command_items.push(CommandItem {
+                        id: command.id.clone(),
+                        item,
+                        declared_enabled: command.enabled,
+                        current_enabled: Cell::new(command.enabled),
+                    });
                 }
                 let icon = tray_icon::Icon::from_rgba(tray.rgba.clone(), tray.width, tray.height)
                     .map_err(|e| e.to_string())?;
@@ -233,12 +289,34 @@ pub(super) mod macos {
             };
             // muda's handler is process-global and one-shot: standalone single-host only.
             muda::MenuEvent::set_event_handler(Some(move |event: muda::MenuEvent| {
-                if let Some(id) = event.id.0.strip_prefix("volt-command-") {
-                    send(id.to_owned());
+                if guarded_quit && event.id.0 == "volt-host-quit" {
+                    send(DesktopEvent::Quit);
+                } else if let Some(id) = event.id.0.strip_prefix("volt-command-") {
+                    send(DesktopEvent::Command(id.to_owned()));
                 }
             }));
             menu.init_for_nsapp();
-            Ok(Self { menu, _tray: tray })
+            let host = Self {
+                menu,
+                _tray: tray,
+                command_items,
+            };
+            host.sync_commands(commands, true);
+            Ok(host)
+        }
+        pub fn sync_commands(&self, commands: &[crate::native::CommandInfo<'_>], allowed: bool) {
+            for item in &self.command_items {
+                let enabled = allowed
+                    && item.declared_enabled
+                    && commands
+                        .iter()
+                        .find(|c| c.id == item.id)
+                        .is_none_or(|c| c.enabled);
+                // No repeated AppKit writes for ordinary unchanged input/scroll.
+                if item.current_enabled.replace(enabled) != enabled {
+                    item.item.set_enabled(enabled);
+                }
+            }
         }
     }
 }

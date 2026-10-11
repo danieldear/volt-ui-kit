@@ -123,13 +123,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              --features native-gpu (software drawing is always opaque)"
         );
     }
-    support::launch_themed_with_messages(
+    let renderer = match std::env::var("VOLT_UI_RENDERER").ok().as_deref() {
+        None | Some("auto") => volt_ui_kit::native::RendererPreference::Auto,
+        Some("gpu") => volt_ui_kit::native::RendererPreference::GpuRequired,
+        Some("software") => volt_ui_kit::native::RendererPreference::Software,
+        Some(_) => return Err("VOLT_UI_RENDERER must be auto, gpu or software".into()),
+    };
+    support::launch_themed_with_application(
         "Volt UI",
         app,
         catalog::view,
         catalog::theme,
         options,
-        |app, sender| app.sender = Some(sender),
-        catalog::update,
+        move |application| {
+            let application = application
+                .renderer(renderer)
+                .commands(catalog::lifecycle::commands())
+                .requests(|app, sender| app.requests = Some(sender))
+                .on_close_request(catalog::lifecycle::close_request)
+                .messages(|app, sender| app.sender = Some(sender), catalog::update);
+            #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+            let application = application.desktop(catalog::lifecycle::desktop(), |_, _| {});
+            application
+        },
     )
 }

@@ -1,0 +1,202 @@
+//! Application policies are Rust-owned; the sample saves only an in-memory draft.
+use super::{
+    pages::{Doc, Section},
+    App,
+};
+use volt_ui_kit::{
+    native::{ApplicationRequest, CloseDecision, CloseReason, Command, CommandRegistry, Shortcut},
+    ui::{prelude::*, Element as El},
+};
+
+pub fn dirty(app: &App) -> bool {
+    app.document_text != app.saved_document
+}
+pub fn save(app: &mut App) {
+    app.saved_document.clone_from(&app.document_text);
+    app.notify("Draft saved in memory only; no files were written");
+}
+pub fn commands() -> CommandRegistry<App> {
+    CommandRegistry::new()
+        .command(
+            Command::new("save-draft", "Save example draft", save)
+                .shortcut(Shortcut::primary('s'))
+                .enabled_when(dirty),
+        )
+        .command(
+            Command::new(
+                "command-palette",
+                "Open command palette",
+                |app: &mut App| {
+                    app.command_palette_open = true;
+                    app.command_query.clear();
+                },
+            )
+            .shortcut(Shortcut::primary('k')),
+        )
+        .command(
+            Command::new("close-window", "Close window", |_: &mut App| {})
+                .shortcut(Shortcut::primary('w'))
+                .request_close(CloseReason::Window),
+        )
+}
+pub fn request(app: &mut App, request: ApplicationRequest) {
+    let result = app.requests.as_ref().map(|sender| sender.send(request));
+    match result {
+        Some(Ok(())) => {}
+        Some(Err(error)) => app.notify(format!("Application request not queued: {error}")),
+        None => app.notify("Application requests run in the native Catalog window only"),
+    }
+}
+pub fn close_request(app: &mut App, reason: CloseReason) -> CloseDecision {
+    if dirty(app) {
+        app.command_palette_open = false;
+        app.palette_open = false;
+        app.close_prompt = Some(reason);
+        CloseDecision::KeepOpen
+    } else {
+        CloseDecision::Close
+    }
+}
+fn confirm(app: &mut App, save_first: bool) {
+    let Some(reason) = app.close_prompt else {
+        return;
+    };
+    if save_first {
+        save(app);
+    } else {
+        app.document_text.clone_from(&app.saved_document);
+    }
+    app.close_prompt = None;
+    request(app, ApplicationRequest::Close(reason));
+}
+pub fn doc(app: &App) -> Doc {
+    let registry = commands();
+    let mut rows: Vec<El<App>> = vec![];
+    for command in registry.entries(app) {
+        let id = command.id.to_owned();
+        rows.push(
+            hstack![
+                text(command.label).font_size(13.).flex(1.),
+                text(command.shortcut.map(Shortcut::label).unwrap_or_default())
+                    .font_family("SF Mono")
+                    .font_size(12.)
+                    .color(ColorToken::Muted),
+                button("Run")
+                    .key(format!("command-{id}"))
+                    .enabled(command.enabled)
+                    .variant(ButtonVariant::Outline)
+                    .size(ControlSize::Small)
+                    .on_click(move |app: &mut App| request(
+                        app,
+                        ApplicationRequest::Command(id.clone())
+                    )),
+            ]
+            .gap(12., Axis::Horizontal)
+            .align(Align::Center)
+            .into(),
+        );
+    }
+    Doc {
+        sections: vec![Section {
+            id: "application-document", title: "A guarded document",
+            note: "Edit the draft, use Save or Cmd/Ctrl+S, then request closing. Dirty work opens Save / Discard / Cancel. Saving here is in memory, not disk persistence.",
+            demo: vstack![
+                hstack![text("notes.volt").font_family("SF Mono").font_size(13.), spacer(),
+                    badge(if dirty(app) { "Unsaved" } else { "Saved in memory" }).background(if dirty(app) { ColorToken::Warning.alpha(15) } else { ColorToken::Success.alpha(15) }).color(if dirty(app) { ColorToken::Warning } else { ColorToken::Success })],
+                text_area(&app.document_text).key("application-draft").accessible_label("Example document draft")
+                    .height(150.).soft_wrap(true).font_family("SF Mono").font_size(13.)
+                    .on_change(|app: &mut App, value| app.document_text = value),
+                vstack(rows).gap(12., Axis::Vertical),
+                text(if cfg!(all(target_os = "macos", feature = "native-desktop")) {
+                    "Native close and the owned Quit menu are guarded. Forced OS/Dock termination is not intercepted."
+                } else if cfg!(target_os = "macos") {
+                    "Window close is guarded. Enable native-desktop for the owned guarded Quit menu; default system Quit is not intercepted."
+                } else {
+                    "Window close and explicit quit requests are guarded; forced OS termination is not intercepted."
+                })
+                    .font_size(12.).color(ColorToken::Muted),
+            ].width(600.).gap(16., Axis::Vertical).into(),
+            code: r#"Application::new("Documents", app, view)
+    .commands(commands())
+    .requests(|app, sender| app.requests = Some(sender))
+    .on_close_request(|app, reason| {
+        if app.dirty() {
+            app.close_prompt = Some(reason);
+            CloseDecision::KeepOpen
+        } else { CloseDecision::Close }
+    })
+    .run()?;
+// Save / Discard: update app state, then enqueue Close(reason).
+// Cancel: dismiss the dialog without closing or clearing the draft."#,
+        }],
+        api: vec![
+            ("CommandRegistry::new().command(...)", "Up to 256 validated, uniquely named Rust commands."),
+            ("Command::enabled_when(predicate)", "Rechecked against current state before every execution."),
+            ("Shortcut::primary('s')", "Exact Cmd/Ctrl logical letter/digit chord; optional shift/alt."),
+            ("registry.entries(&app)", "Metadata for your own palette, buttons or other UI."),
+            ("Application::on_close_request(callback)", "Close or KeepOpen; the developer owns dirty state and dialogs."),
+            ("Application::requests(initialize)", "Bounded, event-driven commands and close requests; no idle polling."),
+        ],
+    }
+}
+pub fn overlays(app: &App) -> Vec<El<App>> {
+    let query = app.command_query.trim().to_lowercase();
+    let registry = commands();
+    let rows = registry
+        .entries(app)
+        .into_iter()
+        .filter(|c| c.label.to_lowercase().contains(&query))
+        .map(|c| {
+            let id = c.id.to_owned();
+            button(format!(
+                "{}   {}",
+                c.label,
+                c.shortcut.map(Shortcut::label).unwrap_or_default()
+            ))
+            .key(format!("palette-command-{id}"))
+            .enabled(c.enabled)
+            .width(400.)
+            .variant(ButtonVariant::Ghost)
+            .on_click(move |app: &mut App| {
+                app.command_palette_open = false;
+                request(app, ApplicationRequest::Command(id.clone()));
+            })
+            .into()
+        })
+        .collect::<Vec<El<App>>>();
+    vec![
+        dialog(vstack![
+            text_field(&app.command_query).key("application-command-query")
+                .accessible_label("Find application command").placeholder("Find a command…")
+                .on_change(|app: &mut App, value| app.command_query = value),
+            vstack(rows).gap(6., Axis::Vertical),
+        ].gap(12., Axis::Vertical)).key("application-palette").title("Application commands")
+            .open(app.command_palette_open).width(460.).rounded(12.).background(ColorToken::Base100)
+            .on_dismiss(|app: &mut App| app.command_palette_open = false).into(),
+        dialog(vstack![
+            text("The example draft has unsaved changes. Saving keeps them in memory only; quitting does not persist them to disk.").font_size(14.),
+            hstack![spacer(),
+                button("Cancel").key("application-close-cancel").variant(ButtonVariant::Outline)
+                    .on_click(|app: &mut App| app.close_prompt = None),
+                button("Discard & close").key("application-close-discard").variant(ButtonVariant::Danger)
+                    .on_click(|app: &mut App| confirm(app, false)),
+                button("Save & close").key("application-close-save").variant(ButtonVariant::Primary)
+                    .on_click(|app: &mut App| confirm(app, true)),
+            ].gap(8., Axis::Horizontal),
+        ].gap(20., Axis::Vertical)).key("application-close-dialog").title("Save your changes?")
+            .open(app.close_prompt.is_some()).width(520.).rounded(12.).background(ColorToken::Base100)
+            .backdrop_dismiss(false).on_dismiss(|app: &mut App| app.close_prompt = None).into(),
+    ]
+}
+#[cfg(all(feature = "native-desktop", target_os = "macos"))]
+pub fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
+    use volt_ui_kit::native::system::{DesktopCommand, DesktopConfig, DesktopMenu};
+    DesktopConfig::new("Volt UI").menu(DesktopMenu::new(
+        "File",
+        [
+            DesktopCommand::new("save-draft", "Save example draft"),
+            DesktopCommand::new("command-palette", "Open command palette"),
+            DesktopCommand::new("close-window", "Close window"),
+        ],
+    ))
+}
