@@ -242,14 +242,55 @@ renderer-independent core. Windows/Linux adapters and runtime acceptance follow.
   suppression, legacy callback precedence, static disabled-menu gates, queue
   capacity/closure and close-policy re-evaluation. Definition validation is
   cached; native enabled-state writes occur only when that state changes.
-- **Native interaction acceptance is pending:** the Mac was locked when the
-  disposable Catalog QA app was requested. Native close/Cancel/Save/Discard,
-  one-execution-per-shortcut and live native-menu enabled states have not been
-  accepted through this new runtime path. Offscreen GPU rendering and unit tests
-  do not replace those checks. The user was asked to unlock the Mac.
+- After the user unlocked the Mac, native Catalog command/close interaction
+  checks passed in light/dark mode; see the acceptance receipt below. Callback
+  multiplicity and native-menu held-key repeat still need a counted witness;
+  idempotent Save/palette UI transitions do not prove exactly-once execution.
 - Sample Save is in-memory only. OS/Dock termination, persistent documents,
   multi-window lifecycle, notifications, signed packaging and the original
   larger-display GPU resize regression remain separate pending work. No new
   CPU/GPU utilization profile or Volt synchronization is claimed.
 - Local logs and the disposable QA bundle are ignored under
   `work/lifecycle-2026-10-11/`.
+
+### Native command/close acceptance after unlock (2026-10-11)
+
+Tested the release `native-gpu,native-desktop` Catalog at code commit `5877194`,
+in a disposable `.app` with an independent bundle ID. All input/menu interactions
+used native UI automation, with accessibility state checked after transitions.
+Only test-owned in-memory text was edited; no user documents were opened/saved.
+
+| Native check | Observed result |
+|---|---|
+| Edit draft, Cmd+S and File > Save | Dirty badge changed to Saved in memory; exact draft text remained; Save became disabled |
+| Cmd+K palette and Escape | Palette opened with disabled Save when clean; Escape restored the document view |
+| Cmd+W inside palette | Window stayed open; palette retained focus (modal scope) |
+| Native close button while dirty | Save / Discard / Cancel dialog appeared rather than terminating |
+| Cancel | Dialog dismissed; edited text and Unsaved badge remained; editor still accepted input |
+| Cmd+W and native File > Close | Both opened the same dirty-document confirmation |
+| Cmd+S / Cmd+K inside confirmation | Neither saved behind the dialog nor opened a nested palette |
+| Native File menu during confirmation | Save, palette and Close commands all reported disabled |
+| Owned Cmd+Q and application-menu Quit | Dirty window remained open for confirmation; Cancel preserved the draft |
+| Save & close | Test app exited; native log recorded accepted closing |
+| Discard & close in light mode | Test app exited, wrapper recorded exit status 0 |
+| Clean native close | Immediate exit without dirty confirmation |
+| Light/dark dialog appearance | Rounded dialog, readable labels and all three actions rendered in both modes |
+
+GPU logs report Vello on Apple M4 Pro / Metal at 2880x1840, with
+`framebuffer_upload_bytes=0`. Retained save/clean/discard runs contain 56/2/19
+rendered-frame trace records and accepted-close markers. No panic, validation
+error or timeout was found in those retained logs. This is functional runtime
+evidence, **not** a CPU/GPU utilization benchmark, idle-power certification or
+resolution of the original larger-display resize issue.
+
+Receipts are in local ignored `work/lifecycle-2026-10-11/`:
+`native-save-close.log`, `native-clean-close.log`, `native-remaining.log`.
+The first Discard attempt was followed by an automation observation that reopened
+the app; its overwritten log is not counted as an exit receipt. The light-mode
+Discard test was repeated with an append-only wrapper recording status 0.
+
+Remaining native gates include counted single-dispatch/held-key-repeat tests,
+real IME/VoiceOver sessions and broader keyboard-layout/platform coverage. OS/Dock
+termination, persistence, multi-window, tray-click acceptance and notification
+delivery are still outside this receipt. No new toolkit defect was established
+by these interaction checks; this follow-up changes documentation only.
