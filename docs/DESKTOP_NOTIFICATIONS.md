@@ -155,17 +155,41 @@ send and removal: all returned `MissingAppBundle` before center initialization,
 with no permission callback, prompt or notification. Receipt:
 `work/desktop-services-2026-10-11/preflight.log` (local, ignored).
 
-The disposable QA bundle was built with a locally verified ad-hoc signature.
-At this writing, native permission/banner/tray-click acceptance is **pending**:
-the Mac was locked when launch was attempted. The user authorized the disposable
-app's notification permission; no permission prompt was operated while locked.
-No OS settings were changed or native delivery claimed.
+### Native receipt after unlocking the test Mac
 
-Still required: native permission decision, background display observation,
-removal and tray count/enablement acceptance; denied/revoked policy on additional
-identities/OS versions; broader signing/distribution acceptance. Settings/action
-delegates, Windows/Linux adapters and native multi-window lifecycle are separate
-work, not completed by this slice.
+Tested 2026-10-11 on macOS 27.0.1 (26A434), code commit `b5f49d0`.
+Disposable `Volt Desktop QA.app`, ID `dev.volt.catalog.desktopqa20261011`,
+built with `native-gpu,native-desktop,native-notifications`; its local ad-hoc
+signature verified. No Developer ID/notarization or older-OS acceptance implied.
+
+| Check | Result / evidence tier |
+|---|---|
+| No automatic permission on launch | CUA observed Permission not requested and disabled Send |
+| Explicit alert authorization | CUA observed the native prompt naming the QA app; used the human-approved Allow action; Catalog changed to granted and enabled Send |
+| OS submission completion | CUA observed accepted-not-delivered status with unchanged generic title/body |
+| Actual native display | Human supplied Notification Center screenshot containing the exact generic test title/body; **accepted**, not an automated transient-banner capture |
+| Tray command delivery | Human clicked the V-shaped tray item's Count command; CUA observed the shared counter change 0 → 1 |
+| Delivered removal | CUA invoked own-ID Remove; human reopened Notification Center without manually clearing it and confirmed the test entry was gone; **accepted** |
+| Owned Cmd+Q cleanup | CUA requested Quit; subsequent fresh app inventory reported the QA app not running |
+| Pending removal / native tray dynamic enablement | Not separately runtime-accepted |
+
+The initial launch attempt was blocked by the locked Mac; the later authorized
+test proceeded after unlock. CUA could operate the native permission prompt but
+its NotificationCenter/ControlCenter/SystemUIServer bindings timed out for the
+history/tray surfaces. CUA also rejected `fn+n` as an unsupported key name;
+`ctrl+F8` did not expose a status menu. These were automation limitations, not
+established toolkit defects. Notification Center was opened by the human;
+permission/display and tray evidence tiers are separated above.
+
+The only permission change was the human-approved QA app's notification Allow.
+No Focus preferences, security controls, unrelated notifications or other apps'
+permissions were changed. The screenshot and notes remain local/ignored under
+`work/desktop-services-2026-10-11/`, not bundled or uploaded.
+
+Still required: pending-only cancellation, native tray
+enablement/modal behavior, denied/revoked policy on additional identities and OS
+versions, broader signing/distribution acceptance. Settings/action delegates,
+Windows/Linux adapters and native multi-window lifecycle remain separate work.
 
 Primary API references:
 [Apple authorization](https://developer.apple.com/documentation/usernotifications/asking-permission-to-use-notifications),

@@ -8,7 +8,10 @@
   and accepted-not-displayed semantics are explicit; no automatic permission.
   Settings/action/foreground delegates and other OS adapters remain unsupported.
 - Catalog Desktop services adds notification/status/error witnesses and guarded
-  shared tray commands. Native QA pending (locked Mac), not a delivery claim.
+  shared tray commands. Native permission, actual display (human screenshot)
+  counted tray delivery (human click + CUA witness) and delivered removal (human
+  disappearance confirmation) accepted on the test Mac; pending-only cancellation
+  and native tray enablement/modal acceptance remain separate.
   One new pinned optional framework crate; Rust 1.87/default/Volt contracts
   retained. See `docs/DESKTOP_NOTIFICATIONS.md`.
 
