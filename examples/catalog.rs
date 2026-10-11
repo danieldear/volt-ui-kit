@@ -3,6 +3,8 @@
 //!
 //! cargo run --release --features native --example catalog
 //! cargo run --release --features native --example catalog -- --page table --theme dark --accent violet
+//! cargo run --release --features native-gpu --example catalog   # frosted sidebar
+//! cargo run --release --features native-gpu --example catalog -- --background opaque
 #[path = "catalog/mod.rs"]
 mod catalog;
 #[path = "support/rust_ui.rs"]
@@ -22,8 +24,14 @@ fn parse_args(
     } else {
         WindowChrome::Native
     };
-    let mut background = "opaque";
-    let mut opacity = 0.86f32;
+    // Frosted sidebar by default where the window can be translucent (GPU);
+    // the software renderer always presents an opaque window.
+    let mut background = if cfg!(feature = "native-gpu") {
+        "blur"
+    } else {
+        "opaque"
+    };
+    let mut opacity = 0.72f32;
     let mut show_code = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -89,9 +97,12 @@ fn parse_args(
         }
     }
     app.glass = background != "opaque";
+    // The window clears fully transparent; the view paints the tint, so the
+    // sidebar slider can change it live. `--window-opacity` sets its start.
+    app.tint = ((opacity * 100.).round() as u8).max(catalog::TINT_MIN);
     let background = match background {
-        "transparent" => WindowBackground::Transparent { opacity },
-        "blur" => WindowBackground::Blur { opacity },
+        "transparent" => WindowBackground::Transparent { opacity: 0. },
+        "blur" => WindowBackground::Blur { opacity: 0. },
         _ => WindowBackground::Opaque,
     };
     Ok((
@@ -106,6 +117,12 @@ fn parse_args(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (app, options) = parse_args(std::env::args().skip(1))?;
+    if !cfg!(feature = "native-gpu") {
+        eprintln!(
+            "Volt UI: the frosted sidebar needs a translucent window; run with \
+             --features native-gpu (software drawing is always opaque)"
+        );
+    }
     support::launch_themed_with_messages(
         "Volt UI",
         app,

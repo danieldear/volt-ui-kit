@@ -33,7 +33,7 @@ worker thread -- UiSender<Message> --> bounded queue
 - Fixed-row virtualization mounts a controlled visible range plus overscan, not the entire dataset. Variable-height rows, arbitrary jump-to-unmounted focus and database fetching remain future API work.
 - Tables/trees are declarative compositions, not OS-native controls or a full spreadsheet. Their data sorting/filtering is application-owned.
 - Soft wrap is opt-in. Actual foreign-language input-method acceptance, bidi selection semantics and OS accessibility bridges are separate gates, not implied by unit tests.
-- GPU/software share declarations. Native GPU utilization/energy, Linux/Windows/device runtime and VoiceOver cannot be certified by local compilation or screenshots. Showcase requests OS alpha/blur; the pinned winit macOS implementation uses a private API, not public AppKit materials. App Store-safe/public-material migration and comprehensive backdrop quality remain release gates.
+- GPU/software share declarations. Native GPU utilization/energy, Linux/Windows/device runtime and VoiceOver cannot be certified by local compilation or screenshots. Showcase requests OS alpha/blur; since 0.3.0 decorated macOS windows request public AppKit material. App Store-safe packaging/dependency review, borderless/fullscreen and comprehensive backdrop acceptance remain release gates.
 - Mobile and a desktop-shell/compositor prototype remain deferred. This milestone is the application toolkit foundation.
 - Preserve existing dirty work and Northbound. No commit, push, memory changes or OS preference changes are part of this request.
 

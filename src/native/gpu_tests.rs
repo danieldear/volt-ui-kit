@@ -536,6 +536,33 @@ fn actual_gpu_fake_italic_leans_like_software() {
 }
 
 #[test]
+fn viewport_command_reservation_counts_all_64_words_per_vello_tile() {
+    // Vello 0.6 coarse.wgsl reserves 64 words for EVERY viewport tile,
+    // even an empty one. At 8K these alone consume its entire PTCL buffer.
+    // The old 2-word estimate admitted such frames to the GPU.
+    let mut encoder = GpuSceneEncoder::default();
+    for (w, h, expected) in [
+        (3840., 2160., None),
+        (6016., 3384., None),
+        (7680., 4320., Some("tile commands")),
+    ] {
+        let mut painter = RasterPainter::new(Viewport::new(w, h, 1.).unwrap());
+        encoder.encode(&[], &mut painter).unwrap();
+        assert_eq!(encoder.stats().over_budget, expected, "{w}x{h}");
+    }
+    // Scene commands need headroom in addition to that viewport reservation.
+    let (w, h) = (6016., 3384.);
+    let mut painter = RasterPainter::new(Viewport::new(w, h, 1.).unwrap());
+    let batches = [PaintBatch {
+        clip: Rect::new(0., 0., w, h).unwrap(),
+        shapes: vec![Shape::Rectangle([0., 0., w, h], [1.; 4]); 12],
+        glyphs: vec![],
+    }];
+    encoder.encode(&batches, &mut painter).unwrap();
+    assert_eq!(encoder.stats().over_budget, Some("tile commands"));
+}
+
+#[test]
 fn over_budget_frames_name_the_vello_buffer_they_would_overflow() {
     use crate::graphics::Image;
     let (w, h) = (2640_f32, 1800_f32);
@@ -574,4 +601,35 @@ fn over_budget_frames_name_the_vello_buffer_they_would_overflow() {
         )
         .unwrap();
     assert_eq!(encoder.stats().over_budget, Some("image atlas"));
+}
+
+#[test]
+#[ignore = "requires an actual GPU; explicit border acceptance"]
+fn bordered_sheet_flush_with_the_top_edge_keeps_its_interior() {
+    // A 1px frame flush with the surface top, as a bordered sheet draws.
+    let mut gpu = super::GpuOffscreenRenderer::new().unwrap();
+    let mut p = RasterPainter::new(Viewport::new(1200., 900., 1.).unwrap());
+    let (green, white) = ([0., 1., 0., 1.], [1.; 4]);
+    // Exactly what paint_border emits for [100, 0, 1100, 900] at 1px.
+    let (x, y, r, bottom) = (100.5, 0.5, 1199.5, 899.5);
+    let mut b = batch(vec![
+        Shape::Rectangle([100., 0., 1100., 900.], white),
+        Shape::Line([x, y], [r, y], 1., green),
+        Shape::Line([r, y], [r, bottom], 1., green),
+        Shape::Line([r, bottom], [x, bottom], 1., green),
+        Shape::Line([x, bottom], [x, y], 1., green),
+    ]);
+    b.clip = Rect::new(0., 0., 1200., 900.).unwrap();
+    let pix = gpu.render(&mut p, &[b], [0., 0., 1., 1.]).unwrap();
+    let rgb = |x, y| {
+        let c = pix.pixel(x, y).unwrap();
+        [c.red(), c.green(), c.blue()]
+    };
+    assert_eq!(rgb(500, 0), [0, 255, 0]);
+    assert_eq!(rgb(100, 30), [0, 255, 0]);
+    for x in [150, 500, 1100] {
+        for y in [1, 8, 15] {
+            assert_eq!(rgb(x, y), [255; 3], "interior ({x}, {y}) overpainted");
+        }
+    }
 }

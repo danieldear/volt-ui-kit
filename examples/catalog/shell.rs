@@ -6,6 +6,10 @@ use super::{
 };
 use volt_ui_kit::ui::{prelude::*, Element as El};
 
+/// Fully transparent pixels let clicks fall through to the window behind on
+/// macOS, so the tint never goes below this.
+pub const TINT_MIN: u8 = 10;
+
 const SIDEBAR: f32 = 248.;
 
 pub fn view(app: &App) -> El<App> {
@@ -14,20 +18,59 @@ pub fn view(app: &App) -> El<App> {
     } else {
         article(app)
     };
-    let body = hstack![
-        sidebar(app),
-        vstack![page]
-            .key(format!("page-{}", app.page.slug()))
-            .transition(Transition::fade().duration_ms(160))
-            .flex(1.)
-            .padding(responsive(24.).at(Breakpoint::Xl, 56.), Edge::Horizontal)
-            .padding(32., Edge::Top)
-            .padding(64., Edge::Bottom)
-            .scroll(Scroll::Vertical),
+    // Desktop-app layout: the sidebar sits on the (optionally frosted) window
+    // material; the content is a solid sheet so text never reads over blur.
+    let content = vstack![
+        header(app),
+        divider().background(ColorToken::Border),
+        // Vertical breathing room lives inside the scrolled content: scroll
+        // padding would also shrink the clip, cutting content off early.
+        vstack![
+            spacer().height(32.).flex(0.),
+            page,
+            spacer().height(64.).flex(0.),
+        ]
+        .key(format!("page-{}", app.page.slug()))
+        .transition(Transition::fade().duration_ms(160))
+        .flex(1.)
+        .padding(responsive(24.).at(Breakpoint::Xl, 56.), Edge::Horizontal)
+        .scroll(Scroll::Vertical),
     ]
+    .key("content")
     .flex(1.)
-    .align(Align::Stretch);
-    let mut layers: Vec<El<App>> = vec![vstack![header(app), body].align(Align::Stretch).into()];
+    .align(Align::Stretch)
+    .background(ColorToken::Base100)
+    .border_color(if app.glass {
+        ColorToken::BaseContent.alpha(9)
+    } else {
+        ColorToken::Border.into()
+    })
+    .border_width(1.);
+    let content: El<App> = if app.glass {
+        // A sheet floating inside the material. Inset on every free edge, it
+        // never meets the window's own rounded corners, whatever their radius.
+        // No rounded clip: the page is padded clear of the corners, and a
+        // full-window clip layer would push page fades past the GPU's layer
+        // budget into software frames.
+        vstack![
+            vstack![].key("sheet-drag").height(8.).drag_region(true),
+            content
+                .rounded(12.)
+                .shadow(Shadow::new().color("#0000002E").blur(18.).offset(0., 2.)),
+        ]
+        .key("sheet-frame")
+        .flex(1.)
+        .align(Align::Stretch)
+        .padding(8., Edge::Right)
+        .padding(8., Edge::Bottom)
+        .into()
+    } else {
+        content.into()
+    };
+    let body = hstack![sidebar(app), content]
+        .flex(1.)
+        .align(Align::Stretch);
+    let mut layers: Vec<El<App>> = vec![body.into()];
     layers.extend(dialogs(app));
     layers.push(palette(app));
     layers.push(toast(app));
@@ -37,10 +80,12 @@ pub fn view(app: &App) -> El<App> {
         .font_family("SF")
         .font_size(14.)
         .color(ColorToken::BaseContent)
+        // In glass mode the window clears fully transparent and this fill is
+        // the sidebar's tint, so its strength can change live.
         .background(if app.glass {
-            "#00000000".to_owned()
+            ColorToken::Base100.alpha(app.tint)
         } else {
-            ColorToken::Base100.into()
+            ColorToken::Base200.into()
         })
         .into()
 }
@@ -106,7 +151,9 @@ fn header(app: &App) -> El<App> {
             .width(240.)
             .height(36.)
             .on_click(|app: &mut App| app.palette_open = true),
-        hstack![spacer(), icon(Icon::Search, 16., ColorToken::Muted)].padding(12., Edge::Right),
+        hstack![spacer(), icon(Icon::Search, 16., ColorToken::Muted)]
+            .align(Align::Center)
+            .padding(12., Edge::Right),
     ]
     .width(240.)
     .height(36.)
@@ -128,39 +175,30 @@ fn header(app: &App) -> El<App> {
     .border_width(1.)
     .on_action(|app: &mut App, i| app.theme = i)
     .on_open_change(|app: &mut App, open| app.theme_menu_open = open);
-    let mac = cfg!(target_os = "macos");
-    vstack![
-        toolbar![
-            mark(26.),
-            text("Volt UI").width(64.).font_size(16.).font_weight(700),
-            spacer().width(12.).flex(0.),
-            hstack![
-                nav("Docs", Page::Introduction),
-                nav("Components", Page::Button),
-                nav("Themes", Page::Theming),
-                nav("Patterns", Page::SignIn),
-            ]
-            .key("header-navigation")
-            .accessible_label("Documentation navigation")
-            .height(36.)
-            .gap(6., Axis::Horizontal)
-            .align(Align::Center)
-            .scroll(Scroll::Horizontal)
-            .scrollbars(Scrollbars::Hidden)
-            .flex(1.),
-            search,
-            themes,
-            mode_button(app),
+    toolbar![
+        hstack![
+            nav("Docs", Page::Introduction),
+            nav("Components", Page::Button),
+            nav("Themes", Page::Theming),
+            nav("Patterns", Page::SignIn),
         ]
-        .key("site-header")
-        .height(60.)
+        .key("header-navigation")
+        .accessible_label("Documentation navigation")
+        .height(36.)
         .gap(6., Axis::Horizontal)
-        // Leave room for the macOS traffic lights in the integrated title bar.
-        .padding(if mac { 100. } else { 20. }, Edge::Left)
-        .padding(20., Edge::Right)
-        .drag_region(true),
-        divider().background(ColorToken::Border),
+        .align(Align::Center)
+        .scroll(Scroll::Horizontal)
+        .scrollbars(Scrollbars::Hidden)
+        .flex(1.),
+        search,
+        themes,
+        mode_button(app),
     ]
+    .key("site-header")
+    .height(56.)
+    .gap(6., Axis::Horizontal)
+    .padding(16., Edge::Horizontal)
+    .drag_region(true)
     .into()
 }
 
@@ -170,8 +208,10 @@ fn sidebar(app: &App) -> El<App> {
         .key("sidebar-filter")
         .accessible_label("Filter component pages")
         .placeholder("Filter…")
-        .height(34.)
+        .height(32.)
         .font_size(13.)
+        .background(ColorToken::BaseContent.alpha(5))
+        .border_color(ColorToken::BaseContent.alpha(10))
         .on_change(|app: &mut App, v| app.sidebar_query = v)
         .into()];
     let mut group = "";
@@ -205,7 +245,8 @@ fn sidebar(app: &App) -> El<App> {
             .flex(1.)
             .on_click(move |app: &mut App| app.go(page));
         link = if active {
-            link.background(ColorToken::Base200).font_weight(600)
+            link.background(ColorToken::BaseContent.alpha(if app.glass { 10 } else { 7 }))
+                .font_weight(600)
         } else {
             link.color(ColorToken::Muted)
         };
@@ -234,15 +275,81 @@ fn sidebar(app: &App) -> El<App> {
                 .into(),
         );
     }
-    vstack(items)
-        .key("sidebar")
-        .accessible_label("Component navigation")
-        .width(SIDEBAR)
-        .padding(16., Edge::All)
-        .padding(20., Edge::Top)
-        .gap(4., Axis::Vertical)
-        .scroll(Scroll::Vertical)
-        .into()
+    // The traffic lights sit over the sidebar on macOS; elsewhere the brand
+    // row starts at the top.
+    let mac = cfg!(target_os = "macos");
+    let brand = hstack![
+        mark(24.),
+        text("Volt UI").font_size(15.).font_weight(700),
+        badge(concat!(
+            env!("CARGO_PKG_VERSION_MAJOR"),
+            ".",
+            env!("CARGO_PKG_VERSION_MINOR")
+        ))
+        .font_size(10.)
+        .rounded(Rounding::Full)
+        .background(ColorToken::BaseContent.alpha(8))
+        .color(ColorToken::Muted),
+    ]
+    .key("brand")
+    .height(40.)
+    .gap(8., Axis::Horizontal)
+    .align(Align::Center)
+    .padding(18., Edge::Horizontal);
+    vstack![
+        vstack![]
+            .key("titlebar-space")
+            .height(if mac { 48. } else { 8. })
+            .drag_region(true),
+        brand,
+        vstack(items)
+            .key("sidebar")
+            .accessible_label("Component navigation")
+            .flex(1.)
+            .padding(12., Edge::Horizontal)
+            .padding(8., Edge::Top)
+            .padding(16., Edge::Bottom)
+            .gap(2., Axis::Vertical)
+            .scroll(Scroll::Vertical)
+            .scrollbars(Scrollbars::Hidden),
+        tint_control(app),
+    ]
+    .key("sidebar-column")
+    .width(SIDEBAR)
+    .align(Align::Stretch)
+    .into()
+}
+
+/// Sidebar material strength, shown only for translucent windows.
+fn tint_control(app: &App) -> El<App> {
+    if !app.glass {
+        return spacer().height(0.).flex(0.).into();
+    }
+    vstack![
+        hstack![
+            text("Sidebar tint")
+                .font_size(12.)
+                .font_weight(600)
+                .color(ColorToken::Muted),
+            spacer(),
+            text(format!("{}%", app.tint))
+                .font_size(12.)
+                .color(ColorToken::Muted),
+        ]
+        .align(Align::Center),
+        slider(app.tint as f32)
+            .key("sidebar-tint")
+            .accessible_label("Sidebar tint")
+            .range(TINT_MIN as f32..=100.)
+            .step(1.)
+            .height(24.)
+            .on_change(|app: &mut App, v| app.tint = v.round() as u8),
+    ]
+    .key("tint")
+    .gap(6., Axis::Vertical)
+    .padding(18., Edge::Horizontal)
+    .padding(12., Edge::Vertical)
+    .into()
 }
 
 fn landing(app: &App) -> El<App> {

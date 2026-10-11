@@ -13,7 +13,7 @@ pub use pages::{Page, PAGES};
 pub fn first_section_id(app: &App) -> Option<&'static str> {
     pages::doc(app.page, app).sections.first().map(|s| s.id)
 }
-pub use shell::view;
+pub use shell::{view, TINT_MIN};
 use std::{
     collections::BTreeSet,
     ops::Range,
@@ -48,6 +48,8 @@ pub struct App {
     pub mode: ThemeMode,
     pub theme: usize,
     pub glass: bool,
+    /// Sidebar tint percentage in glass mode.
+    pub tint: u8,
     pub sidebar_query: String,
     pub palette_open: bool,
     pub palette_query: String,
@@ -68,6 +70,8 @@ pub struct App {
     pub email: String,
     pub password: String,
     pub bio: String,
+    pub log_draft: String,
+    pub log_entries: Vec<String>,
     pub volume: f32,
     pub price: f32,
     pub fruit: u8,
@@ -105,10 +109,15 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
+            log_draft: String::new(),
+            log_entries: (1..=12)
+                .map(|i| format!("Event {i:02} · UI thread ready"))
+                .collect(),
             page: Page::Introduction,
             mode: ThemeMode::Light,
             theme: 0,
             glass: false,
+            tint: 72,
             sidebar_query: String::new(),
             palette_open: false,
             palette_query: String::new(),
@@ -175,6 +184,17 @@ impl App {
         self.theme_menu_open = false;
         self.dialog_open = false;
         self.delete_open = false;
+    }
+    pub fn append_log(&mut self) {
+        let value = self.log_draft.trim();
+        if value.is_empty() {
+            return;
+        }
+        self.log_entries.push(value.to_owned());
+        self.log_draft.clear();
+        if self.log_entries.len() > 32 {
+            self.log_entries.remove(0);
+        }
     }
     pub fn notify(&mut self, message: impl Into<String>) {
         self.next_toast = self.next_toast.wrapping_add(1);

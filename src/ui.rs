@@ -817,6 +817,13 @@ macro_rules! container_modifiers {
                 self.0.node.surface.scroll = Some(mode);
                 self
             }
+            /// Keep a vertical scroll view at its end while the reader is there,
+            /// as chat transcripts and logs do. Scrolling up releases it;
+            /// returning to the end re-engages it. New views start at the end.
+            pub fn anchor_end(mut self, value: bool) -> Self {
+                self.0.node.surface.anchor_end = value;
+                self
+            }
             /// Hide/show position indicators without changing overflow or input.
             pub fn scrollbars(mut self, policy: Scrollbars) -> Self {
                 self.0.node.surface.scrollbars = policy;

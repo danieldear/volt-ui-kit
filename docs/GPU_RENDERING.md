@@ -100,13 +100,14 @@ reduction is claimed without equivalent measurements. Reproduce with `cargo tree
 - Vello's straight-alpha target is adapted to the surface alpha mode on GPU.
   Explicit snapshots convert readback pixels to premultiplied RGBA for tiny-skia.
 - Adapter-side image cache: **64 MiB**; glyph cache: **16 MiB / 4096 entries**;
-  shared Swash cache: **16 MiB / 4096 entries**. Framebuffer: **16 megapixels**;
+  shared Swash cache: **16 MiB / 4096 entries**. Framebuffer: **64 megapixels**;
   explicit opacity depth: **24**, clip depth: **48**. Invalid streams return errors.
 - These are adapter limits, **not a bound on total GPU memory**. Vello's atlas,
   intermediate surfaces, command buffers and OS compositor memory are additional.
 
 `VOLT_UI_GPU` diagnostics report newly constructed cached resource bytes and
-`framebuffer_upload_bytes=0`. Neither is an instrumented GPU bandwidth counter:
+`framebuffer_upload_bytes=0` for admitted GPU scenes; native software fallback
+reports its actual RGBA upload payload. Neither is an instrumented GPU bandwidth counter:
 Vello still transfers commands/assets. `VOLT_UI_TRACE` reports CPU-side
 `gpu_encode_submit_present_ms`, not GPU completion time or display scanout.
 
@@ -158,7 +159,20 @@ row selection on Metal. The 20-second idle sample added zero frames, CPU+.02s;
 see [the complete receipt and external gates](APP_RUNTIME_VERIFICATION.md).
 
 GPU Showcase defaults to `--background blur --window-opacity 0.82`; `--background
-opaque` restores a solid window. Pinned winit 0.30.13 macOS blur uses a private
-CGS API, not public AppKit materials. This is not an App Store-safe release path.
-Future public-material migration is deliberately separate from renderer alpha
-correctness and from claimed ChatGPT/Codex appearance parity.
+opaque` restores a solid window. As of 2026-10-11 decorated macOS GPU windows request public AppKit material,
+not winit's private CGS blur call. Borderless requests retain transparency only.
+Shipping/signing and dependency review still gate distribution; no App Store
+certification or ChatGPT/Codex appearance parity is claimed.
+
+## 0.3.0 large-frame safety follow-up (2026-10-11)
+
+The pinned Vello coarse shader reserves 64 command words for every 16x16
+viewport tile, even empty ones. The old estimate counted two; at 8K, the base
+reservation alone nearly fills its 2^23-word buffer. Admission now counts that
+reservation and rounded-up 256-word spill allocations per tile, with headroom.
+This is conservative: complex large scenes can fall back to software earlier.
+The 64 MP cap allows large framebuffers, not all GPU scenes or opacity layers.
+CPU group opacity still has a separate 64 MiB aggregate buffer budget and may
+reject a large animated scene. Tiled GPU rendering and large-display driver
+acceptance remain follow-ups, not delivered guarantees. See
+[the review receipt](CLAUDE_REVIEW_2026_10_11.md).

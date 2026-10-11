@@ -147,6 +147,6 @@ cargo run --locked --features native-gpu --example showcase -- --background opaq
 ```
 
 Only GPU Showcase defaults to a 0.82-tinted native blur request. Text remains
-opaque. Pinned macOS winit blur currently uses a private API; public AppKit
-materials/App Store-safe distribution remain a release gate.
+opaque. Decorated macOS GPU windows now request public AppKit material. Borderless
+requests retain transparency; packaging/dependency acceptance still gates release.
 See [Showcase guide](../docs/SHOWCASE_APPS.md) and [verification receipt](../docs/APP_RUNTIME_VERIFICATION.md).

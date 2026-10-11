@@ -1,10 +1,58 @@
 # Changelog
 
+## 0.3.0 (2026-10-11; not published to crates.io)
+
+- Application foundation: opt-in `Application`, independent sidebar/rail/bottom
+  navigation, local project templates and rebuild/restart tooling, plus optional
+  macOS application/tray menus. The full lifecycle and desktop-service roadmap
+  remains incomplete; see `docs/APPLICATION_DEVELOPMENT.md`.
+- macOS GPU blur now requests a public `NSVisualEffectView` behind the winit
+  content view, without changing native controls, the content view parent or
+  delegates. Decorated windows on macOS 10.14+ only; unavailable/borderless
+  requests explicitly retain transparency without blur. AppKit owns appearance
+  and material accessibility behavior. No App Store certification is claimed.
+- Correct Vello 0.6 GPU admission: reserve **64**, not 2, command words per
+  viewport tile and include 256-word spill allocation chunks. Oversized scenes
+  fall back before GPU submission. Native diagnostics now report framebuffer
+  uploads for software fallback instead of incorrectly reporting zero.
+- Surface retries use bounded event-loop backoff (16–256ms), not immediate
+  redraw loops. This does not claim to eliminate upstream driver deadlocks.
+- Relay retains at most 16 threads/16 messages per thread; prompts/replies,
+  steps/files and rich-text blocks are bounded. Oversized prompts keep their
+  draft, stale/cancelled runs cannot mutate newer runs, and file counts saturate.
+- Catalog adds a live follow-end log and Enter/Shift+Enter composer demo;
+  UI Lab and older showcase designs are unchanged.
+- New `relay` example: a coding-agent desktop client with a frosted thread
+  sidebar, streaming transcript (collapsible work steps, file-change cards,
+  code blocks), composer with permission/model/effort menus, inspector card,
+  thread actions popover and settings. A local scripted worker streams replies
+  through bounded messages, with stop, retry and stale-run rejection.
+- Catalog: frosted full-height sidebar with the content on a solid sheet that
+  floats inside the material (inset 8px, rounded 12px), so it never meets the
+  window's rounded corners. Blur is the default with `native-gpu`;
+  `--background opaque` restores a solid window and software drawing stays
+  opaque. The window clears fully transparent and the view paints the tint, so
+  a sidebar slider (Catalog) or Settings slider (Relay) adjusts it live, 10–100%.
+- Checked switch knobs and checkbox ticks contrast with the accent fill they
+  sit on; a white accent (zinc, dark) previously hid the knob.
+- Window framebuffers up to 64 MP are accepted (was 16 MP, below a 6K Retina
+  display's ~20 MP, which made maximised windows exit). Shadows over the
+  software blur budget are skipped (`effects_skipped`) instead of failing the
+  frame.
+- `.anchor_end(true)` keeps a vertical scroll view at its end while the reader
+  is there (chat transcripts, logs); scrolling up releases it.
+- `text_area(...).submit_on_enter(true)`: Enter submits and Shift+Enter inserts
+  a newline, as chat composers do. Cmd/Ctrl+Enter still submits either way.
+- GPU: axis-aligned lines (borders, dividers) are filled as exact rectangles.
+  Stroked, a long horizontal border on the surface's top edge filled its whole
+  first 16-pixel tile row, hiding a bordered sheet's background there.
+
+
 ## 0.2.0 (unreleased)
 
 - macOS overlay chrome uses public AppKit unified toolbar geometry, giving native
-  traffic lights more top/leading clearance. Catalog reserves a 60-point header
-  and 100-point leading inset. New `CompactOverlay` preserves the earlier short
+  traffic lights more top/leading clearance. Catalog keeps them over its sidebar's
+  drag strip. New `CompactOverlay` preserves the earlier short
   titlebar; standard Native/default chrome is unchanged. Native controls are not
   resized or repainted when switching appearance.
 

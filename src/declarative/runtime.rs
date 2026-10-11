@@ -273,6 +273,8 @@ pub struct Runtime {
     last_viewport: Option<[f32; 3]>,
     motion: RefCell<Motion>,
     scroll_offsets: BTreeMap<String, [f32; 2]>,
+    /// Last laid-out vertical extent of end-anchored scroll views.
+    scroll_ends: BTreeMap<String, f32>,
     #[cfg(feature = "rust-ui")]
     editors: RefCell<BTreeMap<String, editing::EditorState>>,
     #[cfg(feature = "rust-ui")]
@@ -314,6 +316,7 @@ impl Runtime {
             last_viewport: None,
             motion: RefCell::new(Motion::default()),
             scroll_offsets: BTreeMap::new(),
+            scroll_ends: BTreeMap::new(),
             #[cfg(feature = "rust-ui")]
             editors: RefCell::new(BTreeMap::new()),
             #[cfg(feature = "rust-ui")]
@@ -478,6 +481,7 @@ impl Runtime {
         let mut ids = BTreeSet::new();
         keys(next.root(), &mut ids);
         self.scroll_offsets.retain(|id, _| ids.contains(id));
+        self.scroll_ends.retain(|id, _| ids.contains(id));
         self.motion.get_mut().remove(&self.boxes, &ids);
         #[cfg(feature = "rust-ui")]
         let slider_capture = self.slider_capture.clone();
@@ -566,6 +570,7 @@ impl Runtime {
         self.scale = viewport.scale;
         #[cfg(feature = "rust-ui")]
         self.prepare_overlay_layout(viewport);
+        let anchored = self.follow_scroll_ends();
         let mut boxes = vec![];
         let mut memo = BTreeMap::new();
         let mut styles = BTreeMap::new();
@@ -619,6 +624,9 @@ impl Runtime {
             for b in &mut boxes[first..] {
                 b.depth = b.depth.saturating_sub(styles[&node.id].depth);
             }
+        }
+        for b in boxes.iter().filter(|b| anchored.contains(&b.id)) {
+            self.scroll_ends.insert(b.id.clone(), b.scroll_max[1]);
         }
         self.layout_boxes = boxes;
         self.boxes = self
@@ -816,6 +824,32 @@ impl Runtime {
         Ok(InputOutcome { changed, activated })
     }
 
+    /// End-anchored scroll views that were at (or within a pixel of) their end
+    /// in the previous layout, or are new, stay at the end as content grows.
+    /// Scrolling away releases the anchor until the reader returns to the end.
+    fn follow_scroll_ends(&mut self) -> BTreeSet<String> {
+        fn anchored(n: &Node, out: &mut BTreeSet<String>) {
+            if n.surface.anchor_end && n.surface.scroll.is_some_and(|m| m.axes()[1]) {
+                out.insert(n.id.clone());
+            }
+            for child in &n.children {
+                anchored(child, out);
+            }
+        }
+        let mut ids = BTreeSet::new();
+        anchored(self.document.root(), &mut ids);
+        for id in &ids {
+            let offset = self.scroll_offsets.get(id).copied();
+            let pinned = match (offset, self.scroll_ends.get(id)) {
+                (Some(offset), Some(end)) => offset[1] >= end - 1.,
+                _ => true,
+            };
+            if pinned {
+                self.scroll_offsets.entry(id.clone()).or_insert([0.; 2])[1] = f32::MAX;
+            }
+        }
+        ids
+    }
     /// Logical scroll offsets survive keyed recomposition and clamp on layout.
     pub fn scroll_offset(&self, id: &str) -> [f32; 2] {
         self.scroll_offsets.get(id).copied().unwrap_or([0.; 2])
@@ -1764,16 +1798,12 @@ impl Runtime {
                         if state.hovered { accent } else { border },
                     );
                     if b.checked {
-                        let check = if state.disabled {
-                            [
-                                theme.background[0],
-                                theme.background[1],
-                                theme.background[2],
-                                0.45,
-                            ]
-                        } else {
-                            theme.background
-                        };
+                        // Contrast with the fill actually drawn, not the page:
+                        // a white accent (zinc, dark) needs a dark tick.
+                        let mut check = crate::theme::contrast(accent);
+                        if state.disabled {
+                            check[3] = 0.45;
+                        }
                         p.card_line(
                             &mut shapes,
                             [left + 5. * self.scale, top + 11. * self.scale],
@@ -1807,7 +1837,13 @@ impl Runtime {
                         } else {
                             3. * self.scale
                         };
-                    let mut knob = text_color;
+                    // On the filled track the knob contrasts with the accent;
+                    // a text-coloured knob vanished on a white accent.
+                    let mut knob = if b.checked {
+                        crate::theme::contrast(accent)
+                    } else {
+                        text_color
+                    };
                     if state.disabled {
                         knob[3] *= 0.45;
                     }

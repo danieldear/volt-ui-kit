@@ -451,6 +451,10 @@ fn run_host<C: 'static>(
         system_theme: ThemeMode::Dark,
         #[cfg(feature = "native-gpu")]
         gpu: None,
+        #[cfg(feature = "native-gpu")]
+        gpu_retry: GpuRetry::default(),
+        #[cfg(all(feature = "native-gpu", target_os = "macos"))]
+        material: None,
         window: None,
         surface: None,
         surface_size: None,
@@ -548,6 +552,10 @@ struct App<C> {
     system_theme: ThemeMode,
     #[cfg(feature = "native-gpu")]
     gpu: Option<super::gpu::GpuPresenter>,
+    #[cfg(feature = "native-gpu")]
+    gpu_retry: GpuRetry,
+    #[cfg(all(feature = "native-gpu", target_os = "macos"))]
+    material: Option<super::macos_material::WindowMaterial>,
     window: Option<Arc<Window>>,
     surface: Option<Surface<Arc<Window>, Arc<Window>>>,
     surface_size: Option<[u32; 2]>,
@@ -565,6 +573,34 @@ struct App<C> {
     focused: bool,
     occluded: bool,
     reduced_motion: bool,
+}
+/// Surface timeout/outdating is temporary. Never immediately request another
+/// redraw from a failed present: a persistently unavailable surface otherwise
+/// spins the UI thread. Deadlines are event-loop waits, not sleeps/polling.
+#[cfg(feature = "native-gpu")]
+#[derive(Default)]
+struct GpuRetry {
+    deadline: Option<Instant>,
+    attempts: u8,
+}
+#[cfg(feature = "native-gpu")]
+impl GpuRetry {
+    fn schedule(&mut self, now: Instant) {
+        let delay = 16u64 << self.attempts.min(4);
+        self.attempts = self.attempts.saturating_add(1);
+        self.deadline = Some(now + std::time::Duration::from_millis(delay));
+    }
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+    fn due(&mut self, now: Instant) -> bool {
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            self.deadline = None;
+            true
+        } else {
+            false
+        }
+    }
 }
 impl<C: 'static> App<C> {
     fn fail(&mut self, event_loop: &ActiveEventLoop, error: impl ToString) {
@@ -1002,6 +1038,14 @@ impl<C: 'static> App<C> {
         Ok(())
     }
     fn render(&mut self) -> Result<(), String> {
+        #[cfg(feature = "native-gpu")]
+        if self
+            .gpu_retry
+            .deadline
+            .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return Ok(());
+        }
         // The host clock also advances here so a delayed OS redraw never paints
         // an obsolete animation frame. This never rebuilds Rust application UI.
         self.advance_animations(Instant::now());
@@ -1050,9 +1094,12 @@ impl<C: 'static> App<C> {
             .as_mut()
             .map(|gpu| gpu.present(&batches, &mut self.painter, background))
         {
-            Some(Ok(super::gpu::PresentStatus::Presented)) => true,
+            Some(Ok(super::gpu::PresentStatus::Presented)) => {
+                self.gpu_retry.reset();
+                true
+            }
             Some(Ok(super::gpu::PresentStatus::Retry)) => {
-                w.request_redraw();
+                self.gpu_retry.schedule(Instant::now());
                 return Ok(());
             }
             Some(Ok(super::gpu::PresentStatus::Lost)) => {
@@ -1073,6 +1120,11 @@ impl<C: 'static> App<C> {
                     }
                     Err(error) => {
                         eprintln!("Volt UI: GPU renderer could not be recreated ({error}); switching to opaque software fallback");
+                        #[cfg(target_os = "macos")]
+                        {
+                            self.material = None;
+                        }
+                        #[cfg(not(target_os = "macos"))]
                         w.set_blur(false);
                         let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                         self.surface =
@@ -1090,6 +1142,11 @@ impl<C: 'static> App<C> {
                     "Volt UI: GPU drawing failed ({error}); switching to opaque software fallback"
                 );
                 self.gpu = None;
+                #[cfg(target_os = "macos")]
+                {
+                    self.material = None;
+                }
+                #[cfg(not(target_os = "macos"))]
                 w.set_blur(false);
                 let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                 self.surface = Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
@@ -1294,7 +1351,17 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             #[cfg(feature = "native-gpu")]
             if try_gpu {
                 match super::gpu::GpuPresenter::new(w.clone(), self.options.background != WindowBackground::Opaque) {
-                    Ok(gpu)=>{eprintln!("Volt UI: Vello GPU drawing active ({}) — no CPU framebuffer raster; native blur remains an OS request",gpu.adapter_name);self.gpu=Some(gpu);return Ok((w,None));},
+                    Ok(gpu)=>{
+                        #[cfg(target_os = "macos")]
+                        if matches!(self.options.background, WindowBackground::Blur { .. }) {
+                            match super::macos_material::WindowMaterial::install(&w) {
+                                Ok(material) => self.material = Some(material),
+                                Err(error) => eprintln!("Volt UI: public window material unavailable ({error}); using transparency without blur"),
+                            }
+                        }
+                        eprintln!("Volt UI: Vello GPU drawing active ({}) — admitted scenes use no CPU framebuffer raster",gpu.adapter_name);
+                        self.gpu=Some(gpu);return Ok((w,None));
+                    },
                     Err(error) if require_gpu => return Err(format!("required GPU renderer unavailable: {error}")),
                     Err(error)=>eprintln!("Volt UI: GPU renderer unavailable ({error}); using opaque software fallback"),
                 }
@@ -1305,6 +1372,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if self.options.background != WindowBackground::Opaque {
                 eprintln!("Volt UI: enable native-gpu for real window alpha; using opaque software fallback");
             }
+            #[cfg(not(target_os = "macos"))]
             w.set_blur(false);
             eprintln!("Volt UI: software renderer active");
             let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
@@ -1334,6 +1402,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         #[cfg(feature = "native-gpu")]
         {
             self.gpu = None;
+            self.gpu_retry.reset();
+        }
+        #[cfg(all(feature = "native-gpu", target_os = "macos"))]
+        {
+            self.material = None;
         }
         self.surface = None;
         self.surface_size = None;
@@ -1531,6 +1604,8 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 WindowEvent::Occluded(occluded) => {
                     self.occluded = occluded;
                     if occluded {
+                        #[cfg(feature = "native-gpu")]
+                        self.gpu_retry.reset();
                         self.runtime.cancel_input();
                         self.activation_key = None;
                         self.settle_animations();
@@ -1664,7 +1739,19 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         } else if changed && !active {
             self.redraw();
         }
-        event_loop.set_control_flow(match self.animation_clock.deadline(now, active) {
+        let mut deadline = self.animation_clock.deadline(now, active);
+        #[cfg(feature = "native-gpu")]
+        {
+            if self.gpu_retry.due(now) {
+                self.redraw();
+            }
+            if let Some(retry) = self.gpu_retry.deadline {
+                deadline = Some(deadline.map_or(retry, |animation| animation.min(retry)));
+            }
+        }
+        #[cfg(not(feature = "native-gpu"))]
+        let _ = &mut deadline;
+        event_loop.set_control_flow(match deadline {
             Some(deadline) => ControlFlow::WaitUntil(deadline),
             None => ControlFlow::Wait,
         });
@@ -1715,7 +1802,8 @@ fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
             cfg!(feature = "native-gpu") && options.background != WindowBackground::Opaque,
         )
         .with_blur(
-            cfg!(feature = "native-gpu")
+            !cfg!(target_os = "macos")
+                && cfg!(feature = "native-gpu")
                 && matches!(options.background, WindowBackground::Blur { .. }),
         )
 }
@@ -2382,6 +2470,50 @@ mod rust_view_tests {
 #[cfg(test)]
 mod surface_option_tests {
     use super::*;
+    #[cfg(feature = "native-gpu")]
+    #[test]
+    fn gpu_surface_retries_back_off_and_return_to_event_driven_idle() {
+        let start = Instant::now();
+        let mut retry = GpuRetry::default();
+        assert!(retry.deadline.is_none());
+        for attempt in 0..10 {
+            retry.schedule(start);
+            let delay = std::time::Duration::from_millis(16 << attempt.min(4));
+            assert_eq!(retry.deadline, Some(start + delay));
+            assert!(!retry.due(start));
+            assert!(retry.due(start + delay));
+            assert!(!retry.due(start + delay), "only one wake per deadline");
+        }
+        retry.reset();
+        assert!(retry.deadline.is_none());
+        retry.schedule(start);
+        assert_eq!(
+            retry.deadline,
+            Some(start + std::time::Duration::from_millis(16))
+        );
+    }
+    #[test]
+    fn macos_blur_never_requests_winits_private_blur_api() {
+        for background in [
+            WindowBackground::Opaque,
+            WindowBackground::Transparent { opacity: 0.5 },
+            WindowBackground::Blur { opacity: 0.5 },
+        ] {
+            let options =
+                SurfaceOptions::from(NativeOptions::default()).with_background(background);
+            let attrs = surface_window_attributes(&options);
+            assert_eq!(
+                attrs.transparent,
+                cfg!(feature = "native-gpu") && background != WindowBackground::Opaque
+            );
+            assert_eq!(
+                attrs.blur,
+                !cfg!(target_os = "macos")
+                    && cfg!(feature = "native-gpu")
+                    && matches!(background, WindowBackground::Blur { .. })
+            );
+        }
+    }
     #[test]
     fn mode_and_accent_resolve_without_altering_legacy_option_fields() {
         let native = NativeOptions::default();

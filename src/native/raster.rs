@@ -32,6 +32,10 @@ const EFFECT_CACHE_ENTRIES: usize = 32;
 const EFFECT_TINT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EFFECT_PIXELS: u64 = 4_194_304;
 const MAX_FRAME_EFFECT_PIXELS: u64 = 16_777_216;
+/// Largest window framebuffer either renderer accepts: a 6K display at 2×
+/// is ~20 MP and 8K at 1× ~33 MP. The GPU's own texture-dimension limit and
+/// the runtime's 16,384-pixel side limit are enforced separately.
+pub(super) const MAX_FRAMEBUFFER_PIXELS: u64 = 64 * 1024 * 1024;
 const MAX_LAYER_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LAYER_DEPTH: usize = 24;
 
@@ -102,6 +106,9 @@ pub struct RasterPainter {
     pub shape_draw_calls: u64,
     /// Alpha-mask cache misses. Keys exclude effect color and integer position.
     pub effect_cache_misses: u64,
+    /// Shadows skipped because they exceeded the per-effect or per-frame blur
+    /// budget; the frame still renders.
+    pub effects_skipped: u64,
     /// RGB tint rebuilds; alpha-only animation frames reuse premultiplied pixels.
     pub effect_tint_misses: u64,
     /// Transparent offscreen buffers are reused on subsequent animation frames.
@@ -471,6 +478,7 @@ impl RasterPainter {
             text_cache_misses: 0,
             shape_draw_calls: 0,
             effect_cache_misses: 0,
+            effects_skipped: 0,
             effect_tint_misses: 0,
             layer_allocations: 0,
             clip_masks: BTreeMap::new(),
@@ -915,7 +923,11 @@ impl RasterPainter {
         }
         let area = u64::from(mw) * u64::from(mh);
         if area > MAX_EFFECT_PIXELS || frame_pixels.saturating_add(area) > MAX_FRAME_EFFECT_PIXELS {
-            return Err("shadow mask/frame work budget exceeded".into());
+            // Shadows are decoration: past the blur-work budget (a window-sized
+            // shadow on a 6K Retina display) skip this one rather than fail
+            // the whole frame.
+            self.effects_skipped += 1;
+            return Ok(());
         }
         *frame_pixels += area;
         let local = [x - left, y - top, ew, eh];
@@ -1100,8 +1112,8 @@ impl RasterPainter {
     ) -> Result<Pixmap, String> {
         let w = self.viewport.width as u32;
         let h = self.viewport.height as u32;
-        if u64::from(w) * u64::from(h) > 16_777_216 {
-            return Err("framebuffer exceeds 16 megapixel limit".into());
+        if u64::from(w) * u64::from(h) > MAX_FRAMEBUFFER_PIXELS {
+            return Err("framebuffer exceeds 64 megapixel limit".into());
         }
         let clear =
             tiny_skia::Color::from_rgba(background[0], background[1], background[2], background[3])
@@ -2392,6 +2404,35 @@ mod tests {
         assert_eq!(p.effect_cache_misses, misses);
     }
     #[test]
+    fn window_sized_shadows_on_huge_displays_are_skipped_not_fatal() {
+        // A 6K display at 2x: one sheet shadow alone exceeds the blur budget.
+        let (w, h) = (6016., 3384.);
+        let mut p = RasterPainter::new(Viewport::new(w, h, 2.).unwrap());
+        let mut shapes = vec![];
+        p.card_shadow(
+            &mut shapes,
+            [400., 0., w - 400., h],
+            [24.; 4],
+            32.,
+            0.,
+            [0., 0.],
+            [0., 0., 0., 0.2],
+        );
+        p.card_round(&mut shapes, [400., 0., w - 400., h], 24., [1.; 4]);
+        let frame = p
+            .rasterize(
+                &[PaintBatch {
+                    clip: Rect::new(0., 0., w, h).unwrap(),
+                    shapes,
+                    glyphs: vec![],
+                }],
+                [0., 0., 0., 1.],
+            )
+            .unwrap();
+        assert_eq!(p.effects_skipped, 1);
+        assert_eq!(frame.pixels()[1000 * w as usize + 3000].red(), 255);
+    }
+    #[test]
     fn nested_layer_opacity_is_grouped_and_budget_is_explicit() {
         let mut p = RasterPainter::new(Viewport::new(40., 40., 1.).unwrap());
         let batch = |shapes| PaintBatch {
@@ -2606,8 +2647,23 @@ mod tests {
             0,
             "ancestor clip still limits effects"
         );
+        // Valid but oversized work is skipped and reported, not fatal.
+        let skipped = p.effects_skipped;
+        p.rasterize(
+            &[batch(Shape::Shadow(
+                [0., 0., 3000., 3000.],
+                [0.; 4],
+                1.,
+                0.,
+                [0., 0.],
+                [1.; 4],
+            ))],
+            [0., 0., 0., 1.],
+        )
+        .unwrap();
+        assert_eq!(p.effects_skipped, skipped + 1);
+        // Malformed geometry is still rejected.
         for shape in [
-            Shape::Shadow([0., 0., 3000., 3000.], [0.; 4], 1., 0., [0., 0.], [1.; 4]),
             Shape::Shadow([0., 0., f32::MAX, 30.], [0.; 4], 1., 0., [0., 0.], [1.; 4]),
             Shape::Shadow([0., 0., 30., 30.], [0.; 4], f32::NAN, 0., [0., 0.], [1.; 4]),
         ] {

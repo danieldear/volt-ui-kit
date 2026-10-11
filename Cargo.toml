@@ -1,6 +1,6 @@
 [package]
 name = "volt-ui-kit"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.87"
 license = "MIT"
@@ -44,7 +44,7 @@ cosmic-text = { version = "0.14.2", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "=0.6.5", default-features = false, features = ["std"], optional = true }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSGeometry"], optional = true }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSWindow", "NSView", "NSResponder", "NSToolbar", "NSButton", "NSControl"], optional = true }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSWindow", "NSView", "NSResponder", "NSToolbar", "NSButton", "NSControl", "NSVisualEffectView", "NSGraphics", "NSWorkspace", "NSAccessibility"], optional = true }
 muda = { version = "=0.19.3", default-features = false, optional = true }
 tray-icon = { version = "=0.24.2", default-features = false, optional = true }
 wgpu = { version = "=26.0.1", optional = true, default-features = false, features = ["std", "wgsl", "metal"] }
@@ -138,6 +138,10 @@ required-features = ["native"]
 
 [[example]]
 name = "catalog"
+required-features = ["native"]
+
+[[example]]
+name = "relay"
 required-features = ["native"]
 
 [[bin]]

@@ -314,6 +314,8 @@ pub(crate) struct EditorOptions {
     pub password: bool,
     pub placeholder: String,
     pub soft_wrap: bool,
+    /// Multiline only: Enter submits and Shift+Enter inserts a newline.
+    pub enter_submits: bool,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct SliderProps {
@@ -379,6 +381,8 @@ pub(crate) struct SurfaceContent {
     pub clip: Option<crate::graphics::Clip>,
     pub scroll: Option<Scroll>,
     pub scrollbars: Scrollbars,
+    /// Vertical scroll views that follow their end while the reader is there.
+    pub anchor_end: bool,
 }
 /// Indicator policy only; Hidden retains wheel/trackpad scrolling and clipping.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

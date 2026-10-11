@@ -714,3 +714,32 @@ fn native_shaped_soft_wrap_round_trips_grapheme_caret_and_raster_clipping() {
         }
     }
 }
+#[test]
+fn chat_composer_submits_on_enter_and_breaks_lines_on_shift_enter() {
+    for enter_submits in [false, true] {
+        let mut a = App::default();
+        let e: Element<App> = text_area(&a.value)
+            .key("composer")
+            .submit_on_enter(enter_submits)
+            .on_change(|a: &mut App, v| a.value = v)
+            .on_submit(|a: &mut App| a.submitted += 1)
+            .into();
+        let (doc, mut h) = e.build().unwrap().into_parts();
+        let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+        r.layout(
+            Viewport::new(400., 200., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+        r.focus_next(false);
+        r.editor_key(EditKey::Enter, true, &mut h, &mut a).unwrap();
+        assert_eq!(a.value, "\n", "Shift+Enter always inserts a newline");
+        r.editor_key(EditKey::Enter, false, &mut h, &mut a).unwrap();
+        assert_eq!(a.submitted, usize::from(enter_submits));
+        assert_eq!(a.value.len(), if enter_submits { 1 } else { 2 });
+        r.editor_key(EditKey::Submit, false, &mut h, &mut a)
+            .unwrap();
+        assert_eq!(a.submitted, usize::from(enter_submits) + 1);
+    }
+}

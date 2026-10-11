@@ -282,3 +282,43 @@ fn typing_into_a_mounted_offscreen_focused_editor_reveals_it_and_dispatches() {
         assert_eq!(r.scroll_offset("scroller")[1], 0.);
     }
 }
+
+fn transcript(lines: usize) -> Element<App> {
+    vstack((0..lines).map(|i| {
+        Element::from(
+            text(format!("Line {i}"))
+                .key(format!("line-{i}"))
+                .height(20.),
+        )
+    }))
+    .key("log")
+    .height(100.)
+    .width(240.)
+    .scroll(Scroll::Vertical)
+    .anchor_end(true)
+    .into()
+}
+fn grow(r: &mut Runtime, lines: usize) {
+    let (d, h) = transcript(lines).build().unwrap().into_parts();
+    r.replace_document(d, &h, &Bindings::default()).unwrap();
+    layout(r, 1.);
+}
+#[test]
+fn end_anchored_scroll_follows_growth_until_the_reader_scrolls_away() {
+    let (mut r, _) = mount(transcript(10), 1.);
+    // New views start at the end: 10 × 20 − 100.
+    assert_eq!(r.scroll_offset("log")[1], 100.);
+    grow(&mut r, 12);
+    assert_eq!(r.scroll_offset("log")[1], 140.);
+    // Scrolling up releases the anchor; growth no longer moves the view.
+    assert!(r.scroll_at(20., 20., [0., -60.]));
+    layout(&mut r, 1.);
+    grow(&mut r, 15);
+    assert_eq!(r.scroll_offset("log")[1], 80.);
+    // Returning to the end re-engages it.
+    assert!(r.scroll_at(20., 20., [0., 1000.]));
+    layout(&mut r, 1.);
+    assert_eq!(r.scroll_offset("log")[1], 200.);
+    grow(&mut r, 20);
+    assert_eq!(r.scroll_offset("log")[1], 300.);
+}
