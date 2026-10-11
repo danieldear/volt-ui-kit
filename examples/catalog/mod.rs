@@ -2,6 +2,7 @@
 //! spirit of shadcn/ui and daisyUI docs. Each page shows live previews, the
 //! Rust that produced them, variations and an API reference.
 pub mod art;
+pub mod documents;
 pub mod lifecycle;
 mod pages;
 mod shell;
@@ -41,7 +42,14 @@ pub const THEMES: [(&str, u32, u32); 6] = [
 
 #[derive(Debug)]
 pub enum Message {
-    Progress { generation: u64, step: u32 },
+    Progress {
+        generation: u64,
+        step: u32,
+    },
+    File {
+        generation: u64,
+        result: Arc<Result<documents::Completion, String>>,
+    },
 }
 
 pub struct App {
@@ -72,6 +80,8 @@ pub struct App {
     pub password: String,
     pub bio: String,
     pub requests: Option<UiSender<volt_ui_kit::native::ApplicationRequest>>,
+    pub documents: documents::State,
+    pub command_probe: u64,
     pub document_text: String,
     pub saved_document: String,
     pub close_prompt: Option<volt_ui_kit::native::CloseReason>,
@@ -117,6 +127,8 @@ impl App {
     pub fn new() -> Self {
         Self {
             requests: None,
+            documents: documents::State::default(),
+            command_probe: 0,
             document_text: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
             saved_document: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
             close_prompt: None,
@@ -276,7 +288,13 @@ impl Drop for App {
 
 /// Worker messages arrive here, on the UI thread, in batches.
 pub fn update(app: &mut App, message: Message) {
-    let Message::Progress { generation, step } = message;
+    let (generation, step) = match message {
+        Message::File { generation, result } => {
+            documents::finish(app, generation, &result);
+            return;
+        }
+        Message::Progress { generation, step } => (generation, step),
+    };
     // Results from a cancelled or restarted task are ignored.
     if generation != app.job_generation || !app.job_running {
         return;

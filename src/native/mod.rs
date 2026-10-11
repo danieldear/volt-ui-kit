@@ -9,6 +9,8 @@ pub use commands::{
     CommandRegistry, Shortcut,
 };
 mod assets;
+pub mod file_dialog;
+pub mod files;
 #[cfg(target_os = "macos")]
 mod macos_chrome;
 #[cfg(all(target_os = "macos", feature = "native-gpu"))]

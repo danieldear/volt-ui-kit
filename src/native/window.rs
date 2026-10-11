@@ -838,23 +838,18 @@ impl<C: 'static> App<C> {
         let Some(key) = chars.next().filter(|_| chars.next().is_none()) else {
             return Ok(false);
         };
-        let Some(id) = self
-            .extensions
-            .commands
-            .shortcut_id(key, self.modifiers)
-            .map(str::to_owned)
+        let Some(dispatch) =
+            self.extensions
+                .shortcut_dispatch(&mut self.context, key, self.modifiers, event.repeat)
         else {
             return Ok(false);
         };
-        // Repeats and disabled commands are consumed, never accidentally typed.
-        if !event.repeat {
-            if let CommandDispatch::Handled(close) = self.dispatch_command(&id) {
-                if !close.is_some_and(|reason| self.request_close(event_loop, reason)) {
-                    self.after_input(InputOutcome {
-                        changed: true,
-                        activated: true,
-                    })?;
-                }
+        if let CommandDispatch::Handled(close) = dispatch {
+            if !close.is_some_and(|reason| self.request_close(event_loop, reason)) {
+                self.after_input(InputOutcome {
+                    changed: true,
+                    activated: true,
+                })?;
             }
         }
         Ok(true)

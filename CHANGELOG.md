@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add optional public macOS Open/Save panels and explicit unsupported/main-thread
+  errors, using existing native-desktop AppKit features (no new registry crate).
+- Add bounded UTF-8 file helpers: private sibling saves, no-clobber new targets,
+  explicit replacement and ordinary external-edit checks. This is not a file
+  sandbox, cross-process transaction or full power-loss durability guarantee.
+- Catalog Documents adds real async Open/Save/Save As, failed/cancelled-operation
+  draft retention and save-before-close. Current lightweight editor limit is
+  8 KiB; no silent truncation. The memory-only lifecycle demo stays separate.
+- Catalog adds a counted command witness; host repeat events are tested as inert.
+  Discrete native shortcut/menu/button executions and modal suppression were
+  accepted; real held-key AppKit repeat/IME/VoiceOver remain separate gates.
+
 - Add bounded state-aware `CommandRegistry`, logical Cmd/Ctrl shortcuts and
   metadata for developer-owned palettes/buttons; unknown/disabled IDs are inert.
 - Add `Application::on_close_request` and a separate bounded application-request

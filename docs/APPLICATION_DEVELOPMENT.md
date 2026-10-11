@@ -71,7 +71,7 @@ No required shell, background material, layout or AI provider.
 | B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback accepted on macOS; tray-click acceptance pending; static menu layout, dynamic command enabled state, one standalone host/process |
 | B | Modern notifications and permission/action lifecycle | Pending; suitable safe UserNotifications bridge compatible with Rust 1.87 required |
 | B | Public macOS window materials | Implemented for decorated GPU windows on macOS 10.14+; native light/dark, tint and zoom/restore checked. Borderless material, live preference-change acceptance and broader fullscreen/platform acceptance remain |
-| C | Command registry/shortcuts/palette, close veto and dirty-document UI | Implemented single-window slice after v0.3.0; Catalog in-memory draft, dynamic commands and owned guarded Quit. OS termination, persistence and multi-window remain pending; see [command policies](APPLICATION_COMMANDS.md) |
+| C | Command registry/shortcuts/palette, close veto and dirty-document UI | Implemented single-window slice after v0.3.0; Catalog in-memory draft, dynamic commands and owned guarded Quit. Bounded notes-file workflow now implemented; OS termination, state restoration and multi-window remain pending; see [command policies](APPLICATION_COMMANDS.md) and [document files](DOCUMENT_FILES.md) |
 | C | Shipping application bundles, icons, permission declarations, signing/notarization | Pending application tooling; generated Cargo projects are not distributable signed app bundles |
 | C | Deeper nav, document tabs, inspector/output/status compositions | Pending beyond basic reusable navigation |
 | D | UI inspector, debug overlay, code-change development-loop improvements | Pending; existing trace timings remain available |
@@ -243,9 +243,10 @@ renderer-independent core. Windows/Linux adapters and runtime acceptance follow.
   capacity/closure and close-policy re-evaluation. Definition validation is
   cached; native enabled-state writes occur only when that state changes.
 - After the user unlocked the Mac, native Catalog command/close interaction
-  checks passed in light/dark mode; see the acceptance receipt below. Callback
-  multiplicity and native-menu held-key repeat still need a counted witness;
-  idempotent Save/palette UI transitions do not prove exactly-once execution.
+  checks passed in light/dark mode; see the acceptance receipt below.
+  Discrete callback multiplicity now has a counted native witness in the
+  [document follow-up](DOCUMENT_FILES.md). Native-menu physical held-key repeat
+  still needs separate acceptance; old idempotent transitions were not proof.
 - Sample Save is in-memory only. OS/Dock termination, persistent documents,
   multi-window lifecycle, notifications, signed packaging and the original
   larger-display GPU resize regression remain separate pending work. No new
@@ -289,8 +290,17 @@ The first Discard attempt was followed by an automation observation that reopene
 the app; its overwritten log is not counted as an exit receipt. The light-mode
 Discard test was repeated with an append-only wrapper recording status 0.
 
-Remaining native gates include counted single-dispatch/held-key-repeat tests,
-real IME/VoiceOver sessions and broader keyboard-layout/platform coverage. OS/Dock
-termination, persistence, multi-window, tray-click acceptance and notification
-delivery are still outside this receipt. No new toolkit defect was established
+At this receipt, counted dispatch, held-key repeat, real IME/VoiceOver and broader
+keyboard-layout/platform coverage were still pending. The document follow-up
+below addresses discrete counted dispatch and bounded notes persistence; physical
+held-key repeat and the other native gates remain. OS/Dock termination,
+multi-window, tray-click acceptance and notifications are outside both receipts. No new toolkit defect was established
 by these interaction checks; this follow-up changes documentation only.
+
+## Document follow-up (Unreleased, 2026-10-11)
+
+Catalog now includes a real bounded Open/Edit/Save/Save As notes workflow with
+public macOS file panels, background I/O, external-edit conflict errors and
+async save-before-close. The earlier memory example is unchanged. No claim of
+large-file editing, generic state persistence, OS quit protection or finished
+application packaging is made. See [exact APIs and native receipt](DOCUMENT_FILES.md).
