@@ -9,10 +9,7 @@
 mod catalog;
 #[path = "support/rust_ui.rs"]
 mod support;
-use volt_ui_kit::{
-    native::{WindowBackground, WindowChrome},
-    ThemeMode,
-};
+use volt_ui_kit::{native::WindowChrome, ThemeMode};
 
 fn parse_args(
     args: impl IntoIterator<Item = String>,
@@ -32,6 +29,7 @@ fn parse_args(
         "opaque"
     };
     let mut opacity = 0.72f32;
+    let mut tint = 0u8;
     let mut show_code = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -72,12 +70,23 @@ fn parse_args(
             "--native-chrome" => chrome = WindowChrome::Native,
             "--compact-chrome" => chrome = WindowChrome::CompactOverlay,
             "--background" => {
-                background = match args.next().ok_or("missing --background mode")?.as_str() {
-                    "opaque" => "opaque",
-                    "transparent" => "transparent",
-                    "blur" => "blur",
-                    _ => return Err("--background must be opaque, transparent or blur".into()),
-                };
+                background =
+                    match args.next().ok_or("missing --background mode")?.as_str() {
+                        "opaque" => "opaque",
+                        "transparent" => "transparent",
+                        "blur" | "material" => "blur",
+                        "compositor" => "compositor",
+                        _ => return Err(
+                            "--background must be opaque, transparent, blur/material or compositor"
+                                .into(),
+                        ),
+                    };
+            }
+            "--tint" => {
+                tint = args.next().ok_or("missing --tint value")?.parse()?;
+                if tint > 100 {
+                    return Err("--tint must be between 0 and 100".into());
+                }
             }
             "--window-opacity" => {
                 opacity = args
@@ -97,14 +106,11 @@ fn parse_args(
         }
     }
     app.glass = background != "opaque";
-    // The window clears fully transparent; the view paints the tint, so the
-    // sidebar slider can change it live. `--window-opacity` sets its start.
-    app.tint = ((opacity * 100.).round() as u8).max(catalog::TINT_MIN);
-    let background = match background {
-        "transparent" => WindowBackground::Transparent { opacity: 0. },
-        "blur" => WindowBackground::Blur { opacity: 0. },
-        _ => WindowBackground::Opaque,
-    };
+    app.opacity = ((opacity * 100.).round() as u8).max(catalog::OPACITY_MIN);
+    app.tint = tint;
+    app.blur = matches!(background, "blur" | "compositor");
+    app.compositor_blur = background == "compositor";
+    let background = catalog::window_background(&app);
     Ok((
         app,
         support::RustLaunchOptions {
@@ -137,6 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         options,
         move |application| {
             let application = application
+                .background_from_state(catalog::window_background)
                 .renderer(renderer)
                 .commands(catalog::lifecycle::commands())
                 .requests(|app, sender| app.requests = Some(sender))

@@ -360,3 +360,13 @@ delay in its completion witness, and regression-tests disabled/replayed controls
 and modal background scope. No new crates or public host API. See the precise
 evidence tiers
 in [API, bounds and native receipt](DESKTOP_NOTIFICATIONS.md).
+
+## Independent glass controls (2026-10-11)
+
+`Application::background_from_state` updates native root opacity/blur from Rust
+state. `UiTheme::with_background_color` changes the root clear RGB independently
+of semantic component colors. See [Glass controls](GLASS_CONTROLS_2026_10_11.md).
+Defaults remain unchanged; raw compositor blur is an explicit option using a
+private macOS API. The requested in-app GPU backdrop renderer remains pending:
+blur/saturation/tint/opacity with clipped panels, cached GPU targets and no
+per-frame CPU readback, validated against actual application content—not wallpaper.

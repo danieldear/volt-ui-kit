@@ -63,3 +63,8 @@ impl Drop for WindowMaterial {
         self.view.removeFromSuperview();
     }
 }
+
+/// Read on the UI thread; raw compositor blur does not honor this automatically.
+pub(super) fn reduced_transparency() -> bool {
+    NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceTransparency()
+}

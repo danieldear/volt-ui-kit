@@ -8,7 +8,7 @@ use volt_ui_kit::ui::{prelude::*, Element as El};
 
 /// Fully transparent pixels let clicks fall through to the window behind on
 /// macOS, so the tint never goes below this.
-pub const TINT_MIN: u8 = 10;
+pub const OPACITY_MIN: u8 = 10;
 
 const SIDEBAR: f32 = 248.;
 
@@ -82,10 +82,10 @@ pub fn view(app: &App) -> El<App> {
         .font_family("SF")
         .font_size(14.)
         .color(ColorToken::BaseContent)
-        // In glass mode the window clears fully transparent and this fill is
-        // the sidebar's tint, so its strength can change live.
+        // Background RGB/tint and opacity are owned by the native root clear.
+        // Do not paint a second alpha overlay or fade the foreground subtree.
         .background(if app.glass {
-            ColorToken::Base100.alpha(app.tint)
+            String::from("#00000000")
         } else {
             ColorToken::Base200.into()
         })
@@ -314,7 +314,7 @@ fn sidebar(app: &App) -> El<App> {
             .gap(2., Axis::Vertical)
             .scroll(Scroll::Vertical)
             .scrollbars(Scrollbars::Hidden),
-        tint_control(app),
+        glass_controls(app),
     ]
     .key("sidebar-column")
     .width(SIDEBAR)
@@ -322,33 +322,79 @@ fn sidebar(app: &App) -> El<App> {
     .into()
 }
 
-/// Sidebar material strength, shown only for translucent windows.
-fn tint_control(app: &App) -> El<App> {
+/// Separate background opacity, tint and native blur source.
+fn glass_controls(app: &App) -> El<App> {
     if !app.glass {
         return spacer().height(0.).flex(0.).into();
     }
-    vstack![
-        hstack![
-            text("Sidebar tint")
-                .font_size(12.)
-                .font_weight(600)
-                .color(ColorToken::Muted),
-            spacer(),
-            text(format!("{}%", app.tint))
-                .font_size(12.)
-                .color(ColorToken::Muted),
+    let control = |label: &'static str,
+                   key: &'static str,
+                   value: u8,
+                   min: u8,
+                   change: fn(&mut App, f32)|
+     -> El<App> {
+        vstack![
+            hstack![
+                text(label)
+                    .font_size(12.)
+                    .font_weight(600)
+                    .color(ColorToken::Muted),
+                spacer(),
+                text(format!("{value}%"))
+                    .font_size(12.)
+                    .color(ColorToken::Muted)
+            ]
+            .align(Align::Center),
+            slider(value as f32)
+                .key(key)
+                .accessible_label(label)
+                .range(min as f32..=100.)
+                .step(1.)
+                .height(20.)
+                .on_change(change),
         ]
-        .align(Align::Center),
-        slider(app.tint as f32)
-            .key("sidebar-tint")
-            .accessible_label("Sidebar tint")
-            .range(TINT_MIN as f32..=100.)
-            .step(1.)
-            .height(24.)
-            .on_change(|app: &mut App, v| app.tint = v.round() as u8),
+        .gap(4., Axis::Vertical)
+        .into()
+    };
+    let source: El<App> = if cfg!(target_os = "macos") {
+        segmented_control([(0u8, "Material"), (1, "Compositor")])
+            .selected(if app.compositor_blur { 1 } else { 0 })
+            .key("glass-source")
+            .accessible_label("Blur source")
+            .on_select(|app: &mut App, value| app.compositor_blur = value == 1)
+            .into()
+    } else {
+        spacer().height(0.).flex(0.).into()
+    };
+    vstack![
+        control(
+            "Background opacity",
+            "background-opacity",
+            app.opacity,
+            OPACITY_MIN,
+            |app, value| app.opacity = value.round() as u8
+        ),
+        control(
+            "Tint strength",
+            "sidebar-tint",
+            app.tint,
+            0,
+            |app, value| app.tint = value.round() as u8
+        ),
+        toggle("Backdrop blur", app.blur)
+            .key("window-blur")
+            .on_change(|app: &mut App, value| app.blur = value),
+        source,
+        text(if app.compositor_blur {
+            "Compositor: private macOS API"
+        } else {
+            "Material adds its own system tint"
+        })
+        .font_size(10.)
+        .color(ColorToken::Muted),
     ]
-    .key("tint")
-    .gap(6., Axis::Vertical)
+    .key("glass-controls")
+    .gap(8., Axis::Vertical)
     .padding(18., Edge::Horizontal)
     .padding(12., Edge::Vertical)
     .into()

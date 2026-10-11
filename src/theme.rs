@@ -230,6 +230,7 @@ pub struct UiTheme {
     pub palette: Palette,
     legacy: Option<Theme>,
     legacy_palette: Option<Palette>,
+    background: Option<[f32; 4]>,
 }
 impl UiTheme {
     pub fn dark() -> Self {
@@ -243,6 +244,7 @@ impl UiTheme {
             palette,
             legacy: None,
             legacy_palette: None,
+            background: None,
         }
     }
     /// Preserves exact legacy default drawing, including its primary foreground.
@@ -280,6 +282,7 @@ impl UiTheme {
         Self {
             legacy: Some(theme.clone()),
             legacy_palette: Some(palette.clone()),
+            background: None,
             palette,
         }
     }
@@ -291,12 +294,22 @@ impl UiTheme {
         self.legacy = None;
         self
     }
+    /// Root window clear color, independent of semantic component surfaces.
+    /// Native hosts validate its finite 0..=1 components before rendering.
+    pub fn with_background_color(mut self, color: [f32; 4]) -> Self {
+        self.background = Some(color);
+        self
+    }
     pub fn legacy_theme(&self) -> Theme {
         if self.is_legacy() {
-            return self.legacy.as_ref().unwrap().clone();
+            let mut theme = self.legacy.as_ref().unwrap().clone();
+            if let Some(background) = self.background {
+                theme.background = background;
+            }
+            return theme;
         };
         let mut t = Theme::dark();
-        t.background = self.palette.base[0];
+        t.background = self.background.unwrap_or(self.palette.base[0]);
         t.foreground = self.palette.content;
         t.ansi[3] = self.palette.primary;
         t.ansi[11] = self.palette.accent;
@@ -336,6 +349,19 @@ impl UiTheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn root_background_override_never_changes_semantic_surfaces() {
+        let ui = UiTheme::light();
+        let updated = ui.clone().with_background_color([0.2, 0.3, 0.4, 1.]);
+        assert_eq!(updated.palette, ui.palette);
+        assert_eq!(updated.resolve("@base-100"), ui.resolve("@base-100"));
+        assert_eq!(updated.legacy_theme().background, [0.2, 0.3, 0.4, 1.]);
+        let legacy = Theme::dark();
+        let updated = UiTheme::from_legacy(&legacy).with_background_color([0.2, 0.3, 0.4, 1.]);
+        let mut expected = legacy.clone();
+        expected.background = [0.2, 0.3, 0.4, 1.];
+        assert_eq!(updated.legacy_theme(), expected);
+    }
     #[test]
     fn legacy_colors_are_exact_but_mutating_palette_uses_semantic_recipe() {
         let legacy = Theme::dark();

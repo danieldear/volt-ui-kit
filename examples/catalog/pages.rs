@@ -514,15 +514,15 @@ native::run_ui_with_theme(options, app, view, theme)?;"#),
                 r#"cargo run --release --features native-gpu --example catalog -- \
     --page theming --theme dark --background blur --window-opacity 0.86
 # --background transparent: alpha without a blur request
-# --background opaque: solid window; default and software fallback
-# Decorated macOS GPU windows use public AppKit material; other platforms vary."#),
+# --background opaque: solid window; software fallback
+# blur/material: public AppKit material; compositor: opt-in private macOS blur."#),
         ],
         api: vec![
             ("ColorToken::alpha(percent)", "A role at 0..=100% opacity, e.g. \"@primary/15\"."),
             ("Palette::with_accent(rgba)", "Set primary/accent and pick contrasting foregrounds."),
             ("UiTheme::from_palette(palette)", "Build a theme from a fully custom palette."),
             ("run_ui_with_theme(options, state, view, theme)", "Derive the theme from application state."),
-            ("Catalog: --background / --window-opacity", "Opt-in root clear alpha; does not fade text. Desktop blur is an OS request."),
+            ("Catalog: --background / --window-opacity", "Independent background opacity and tint; foreground stays opaque. Select Material or Compositor in the sidebar."),
         ],
     }
 }

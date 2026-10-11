@@ -27,6 +27,7 @@ impl RendererPreference {
 }
 pub(super) type CommandCallback<C> = Box<dyn FnMut(&mut C, &str)>;
 pub(super) type CloseCallback<C> = Box<dyn FnMut(&mut C, CloseReason) -> CloseDecision>;
+pub(super) type BackgroundFn<C> = Box<dyn Fn(&C) -> WindowBackground>;
 pub(super) type RequestPump = Box<dyn Messages<Vec<ApplicationRequest>>>;
 pub(super) struct HostExtensions<C> {
     pub renderer: Option<RendererPreference>,
@@ -35,6 +36,7 @@ pub(super) struct HostExtensions<C> {
     pub commands: CommandRegistry<C>,
     pub close: Option<CloseCallback<C>>,
     pub requests: Option<RequestPump>,
+    pub background: Option<BackgroundFn<C>>,
 }
 impl<C> Default for HostExtensions<C> {
     fn default() -> Self {
@@ -45,6 +47,7 @@ impl<C> Default for HostExtensions<C> {
             commands: CommandRegistry::new(),
             close: None,
             requests: None,
+            background: None,
         }
     }
 }
@@ -169,6 +172,19 @@ impl<C: 'static> Application<C> {
     }
     pub fn background(mut self, background: WindowBackground) -> Self {
         self.options.background = background;
+        self.extensions.background = None;
+        self
+    }
+    /// Derive the window background from application state after UI updates.
+    /// This changes the root clear only, never text/control opacity. Invalid
+    /// updates are rejected; the previous surface configuration remains active.
+    /// Switching between opaque and translucent modes recreates the GPU surface.
+    pub fn background_from_state(
+        mut self,
+        background: impl Fn(&C) -> WindowBackground + 'static,
+    ) -> Self {
+        self.options.background = background(&self.context);
+        self.extensions.background = Some(Box::new(background));
         self
     }
     pub fn chrome(mut self, chrome: WindowChrome) -> Self {
@@ -244,7 +260,11 @@ impl<C: 'static> Application<C> {
         }
         Ok(())
     }
-    pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Message/request initializers may have changed state after the builder.
+        if let Some(background) = &self.extensions.background {
+            self.options.background = background(&self.context);
+        }
         self.validate()?;
         window::run_ui_extended(
             self.options,
@@ -266,6 +286,37 @@ mod lifecycle_tests {
         dirty: bool,
         prompts: usize,
         saves: usize,
+    }
+    #[test]
+    fn state_background_callback_is_additive_and_keeps_public_defaults() {
+        use crate::ui::spacer;
+        let app =
+            Application::new("Glass", 72u8, |_| spacer().into()).background_from_state(|opacity| {
+                WindowBackground::CompositorBlur {
+                    opacity: *opacity as f32 / 100.,
+                }
+            });
+        assert_eq!(
+            app.options().background,
+            WindowBackground::CompositorBlur { opacity: 0.72 }
+        );
+        let callback = app.extensions.background.as_ref().unwrap();
+        assert_eq!(
+            callback(&100),
+            WindowBackground::CompositorBlur { opacity: 1. }
+        );
+        assert_eq!(
+            callback(&10),
+            WindowBackground::CompositorBlur { opacity: 0.1 }
+        );
+        let fixed = app.background(WindowBackground::Opaque);
+        assert!(fixed.extensions.background.is_none());
+        assert_eq!(
+            Application::new("Default", (), |_| spacer().into())
+                .options()
+                .background,
+            WindowBackground::Opaque
+        );
     }
     #[test]
     fn close_veto_is_rechecked_after_save_and_default_legacy_close_is_unchanged() {

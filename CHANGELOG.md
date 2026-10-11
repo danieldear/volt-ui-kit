@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Separate Catalog background opacity from accent tint; add live blur toggle and
+  public-material/explicit compositor selection. Add state-derived native
+  backgrounds and root-only theme color overrides. Raw compositor blur uses a
+  private macOS API, remains opt-in and checks Reduce Transparency on redraw.
+  No dependency or legacy default changes; in-app GPU backdrop blur is pending.
+
 - Fix native Metal window presentation with pinned wgpu 26: compensate for its
   misadvertised straight-alpha mode, restoring translucent sidebar fills,
   badge/selection backgrounds and antialiased text/borders. No tint, material,

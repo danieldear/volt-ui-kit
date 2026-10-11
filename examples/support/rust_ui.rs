@@ -296,12 +296,12 @@ fn launch_configured<C: 'static>(
     };
     let theme = resolve_theme(&state);
     let clear = |theme: &UiTheme| {
-        let mut color = theme.palette.base[0];
+        let mut color = theme.legacy_theme().background;
         color[3] = match background {
             WindowBackground::Opaque => 1.,
-            WindowBackground::Transparent { opacity } | WindowBackground::Blur { opacity } => {
-                opacity
-            }
+            WindowBackground::Transparent { opacity }
+            | WindowBackground::Blur { opacity }
+            | WindowBackground::CompositorBlur { opacity } => opacity,
         };
         color
     };
