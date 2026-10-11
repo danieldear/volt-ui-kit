@@ -327,3 +327,13 @@ destinations and light/dark rendering were accepted on macOS Vello/Metal.
 No new visual demos were added to UI Lab or the old showcases. Optional application
 scaffolding and desktop adapters are a separate additive batch; see
 [application development](APPLICATION_DEVELOPMENT.md) for dependencies and limits.
+
+
+## Application lifecycle (unreleased continuation)
+
+`--page application-lifecycle` adds an editable in-memory draft, dirty badge,
+state-aware command rows, a custom command palette and Save/Discard/Cancel.
+Cmd/Ctrl+S/W/K and the native close button use real Application policies. Enable
+`native-desktop` on macOS for the owned guarded Quit menu/Cmd+Q; default system
+Quit, Dock/forced termination and disk persistence are not implemented by this
+example. See [application commands](APPLICATION_COMMANDS.md).

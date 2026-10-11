@@ -115,6 +115,36 @@ pub fn launch_themed_with_messages<C: 'static, M: Send + 'static>(
         Some(launch),
     )
 }
+/// Add application policies without changing snapshot/benchmark behavior.
+#[allow(dead_code)]
+pub fn launch_themed_with_application<C: 'static>(
+    title: &str,
+    state: C,
+    view: impl Fn(&C) -> Element<C> + 'static,
+    theme: fn(&C, ThemeMode) -> UiTheme,
+    options: RustLaunchOptions,
+    configure: impl FnOnce(volt_ui_kit::native::Application<C>) -> volt_ui_kit::native::Application<C>
+        + 'static,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let launch: NativeLaunch<C> = Box::new(move |options, state, view, theme| {
+        configure(
+            volt_ui_kit::native::Application::new(options.native.title.clone(), state, view)
+                .with_options(options)
+                .theme_with(theme),
+        )
+        .run()
+    });
+    launch_configured(
+        title,
+        state,
+        view,
+        options.chrome,
+        Some(theme),
+        options.background,
+        options.args,
+        Some(launch),
+    )
+}
 #[allow(clippy::too_many_arguments)]
 fn launch_configured<C: 'static>(
     title: &str,

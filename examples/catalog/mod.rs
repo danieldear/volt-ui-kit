@@ -2,6 +2,7 @@
 //! spirit of shadcn/ui and daisyUI docs. Each page shows live previews, the
 //! Rust that produced them, variations and an API reference.
 pub mod art;
+pub mod lifecycle;
 mod pages;
 mod shell;
 #[cfg(test)]
@@ -70,6 +71,12 @@ pub struct App {
     pub email: String,
     pub password: String,
     pub bio: String,
+    pub requests: Option<UiSender<volt_ui_kit::native::ApplicationRequest>>,
+    pub document_text: String,
+    pub saved_document: String,
+    pub close_prompt: Option<volt_ui_kit::native::CloseReason>,
+    pub command_palette_open: bool,
+    pub command_query: String,
     pub log_draft: String,
     pub log_entries: Vec<String>,
     pub volume: f32,
@@ -109,6 +116,12 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
+            requests: None,
+            document_text: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
+            saved_document: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
+            close_prompt: None,
+            command_palette_open: false,
+            command_query: String::new(),
             log_draft: String::new(),
             log_entries: (1..=12)
                 .map(|i| format!("Event {i:02} · UI thread ready"))
@@ -172,6 +185,8 @@ impl App {
     }
     pub fn go(&mut self, page: Page) {
         self.page = page;
+        self.command_palette_open = false;
+        self.command_query.clear();
         self.palette_open = false;
         self.palette_query.clear();
         // Close every open overlay that belonged to the previous page.

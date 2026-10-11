@@ -3,6 +3,11 @@
 mod accessibility;
 mod application;
 pub use application::{Application, RendererPreference};
+mod commands;
+pub use commands::{
+    ApplicationRequest, CloseDecision, CloseReason, Command, CommandDispatch, CommandInfo,
+    CommandRegistry, Shortcut,
+};
 mod assets;
 #[cfg(target_os = "macos")]
 mod macos_chrome;

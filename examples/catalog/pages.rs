@@ -41,12 +41,13 @@ pub enum Page {
     Image,
     Effects,
     BackgroundTasks,
+    ApplicationLifecycle,
     SignIn,
     Settings,
     Navigation,
 }
 use Page::*;
-pub const PAGES: [Page; 37] = [
+pub const PAGES: [Page; 38] = [
     Introduction,
     Theming,
     Accessibility,
@@ -82,6 +83,7 @@ pub const PAGES: [Page; 37] = [
     Image,
     Effects,
     BackgroundTasks,
+    ApplicationLifecycle,
     SignIn,
     Settings,
 ];
@@ -122,6 +124,7 @@ impl Page {
             Image => "Image",
             Effects => "Effects & motion",
             BackgroundTasks => "Background tasks",
+            ApplicationLifecycle => "Application lifecycle",
             SignIn => "Sign-in form",
             Settings => "Settings panel",
             Navigation => "Navigation",
@@ -136,7 +139,7 @@ impl Page {
     pub fn group(self) -> &'static str {
         match self {
             Introduction | Theming | Accessibility | Layout => "Getting started",
-            BackgroundTasks | SignIn | Settings => "Patterns",
+            BackgroundTasks | ApplicationLifecycle | SignIn | Settings => "Patterns",
             _ => "Components",
         }
     }
@@ -156,6 +159,7 @@ impl Page {
                 | VirtualList
                 | SplitPane
                 | BackgroundTasks
+                | ApplicationLifecycle
         )
     }
     pub fn summary(self) -> &'static str {
@@ -198,6 +202,7 @@ impl Page {
             Image => "Image backgrounds with fit, position, opacity and clipping.",
             Effects => "Shadows, glows, state styles, keyed animation and transitions.",
             BackgroundTasks => "Worker threads report progress through a bounded message queue.",
+            ApplicationLifecycle => "State-aware commands and guarded closing for unsaved work.",
             SignIn => "Inputs, validation and actions composed into a form.",
             Settings => "Grouped preferences with switches, selects and sliders.",
             Navigation => {
@@ -287,6 +292,7 @@ pub fn doc(page: Page, app: &App) -> Doc {
         Image => image_doc(app),
         Effects => effects_doc(app),
         BackgroundTasks => tasks_doc(app),
+        ApplicationLifecycle => super::lifecycle::doc(app),
         SignIn => sign_in(app),
         Settings => settings_doc(app),
         Navigation => navigation_doc(app),

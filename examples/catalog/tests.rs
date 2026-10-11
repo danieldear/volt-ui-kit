@@ -760,3 +760,81 @@ fn catalog_rounded_table_clips_header_and_last_focus_without_changing_cells() {
         }
     }
 }
+
+#[test]
+fn application_draft_cancel_save_discard_and_palette_preserve_the_data_contract() {
+    use volt_ui_kit::native::{CloseDecision, CloseReason, CommandDispatch};
+    let mut app = App::new();
+    app.go(Page::ApplicationLifecycle);
+    let original = app.saved_document.clone();
+    assert!(!lifecycle::dirty(&app));
+    app.document_text.push_str("\nEdited");
+    assert!(lifecycle::dirty(&app));
+    assert_eq!(
+        lifecycle::close_request(&mut app, CloseReason::Window),
+        CloseDecision::KeepOpen
+    );
+    let before = app.document_text.clone();
+    let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let viewport = Viewport::new(1440., 920., 1.).unwrap();
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(
+        runtime
+            .accessibility_activate("application-close-cancel", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.document_text, before);
+    assert_eq!(app.saved_document, original);
+    assert_eq!(app.close_prompt, None);
+    let mut registry = lifecycle::commands();
+    assert_eq!(
+        registry.dispatch("save-draft", &mut app),
+        CommandDispatch::Handled(None)
+    );
+    assert!(!lifecycle::dirty(&app));
+    assert_eq!(
+        lifecycle::close_request(&mut app, CloseReason::Window),
+        CloseDecision::Close
+    );
+    app.document_text.push_str("\nTemporary");
+    assert_eq!(
+        lifecycle::close_request(&mut app, CloseReason::Quit),
+        CloseDecision::KeepOpen
+    );
+    let (doc, next) = view(&app).build().unwrap().into_parts();
+    runtime
+        .replace_document(doc, &next, &Bindings::default())
+        .unwrap();
+    handlers = next;
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(
+        runtime
+            .accessibility_activate("application-close-discard", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.document_text, app.saved_document);
+    assert_eq!(app.close_prompt, None);
+    // No request sender in this headless fixture: it must not pretend an OS window closed.
+    assert!(app.toast.as_ref().unwrap().1.contains("native Catalog"));
+    registry.dispatch("command-palette", &mut app);
+    assert!(app.command_palette_open);
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        app.mode = mode;
+        mount(&app, [900., 920.]);
+    }
+}
