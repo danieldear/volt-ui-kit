@@ -145,8 +145,8 @@ command witness in Catalog only. See [scope, safety limits and receipt](docs/DOC
 - No new crates or default/vendored Volt changes. Developer ID/notarization,
   installers, nested code, universal assembly and other OS packaging remain
   separate release work. See [macOS packaging](docs/MACOS_PACKAGING.md).
-- Next runtime services remain notifications/tray acceptance, richer navigation
-  and multi-window; existing large-display GPU and IME/VoiceOver gates remain.
+- The bounded local-notification/tray follow-up is recorded below; richer
+  navigation and multi-window remain, as do large-display GPU and IME/VoiceOver gates.
 
 
 ### Bounded notifications/tray follow-up (2026-10-11; Unreleased)
@@ -155,6 +155,8 @@ command witness in Catalog only. See [scope, safety limits and receipt](docs/DOC
   stable-ID requests and removal; precise unsupported settings/action/foreground
   capabilities. Rust 1.87 and default/Volt compatibility retained.
 - Catalog only: Desktop services, bounded completion witness and shared guarded
-  tray commands. Native acceptance currently pending because the QA Mac was locked.
+  tray commands. After unlock, explicit permission, actual notification display
+  counted tray delivery and delivered-notification removal were accepted on the
+  test Mac; pending-only cancellation/native tray enablement/modal acceptance remains. Evidence tiers are recorded in the receipt.
 - Other OS adapters, delegates, multi-window and the original GPU/IME/VoiceOver
   gates remain separate. See [notifications](docs/DESKTOP_NOTIFICATIONS.md).

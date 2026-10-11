@@ -68,8 +68,8 @@ No required shell, background material, layout or AI provider.
 | A | Additive Application entry point, explicit renderer/theme/background, typed background messages | Implemented; tests and generated-project checks |
 | A | Controlled standalone navigation: sidebar, centered rail, bottom placement | Implemented basic label destinations; Catalog light/dark and callbacks; icons, nested groups, collapse/resizing and roving keyboard navigation remain |
 | A | Local project scaffolding + dev rebuild/restart | Implemented; minimal/navigation/mail/settings/agent UI starters; no state-preserving hot reload |
-| B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback accepted on macOS; tray-click acceptance pending; static menu layout, dynamic command enabled state, one standalone host/process |
-| B | Modern notifications and permission/action lifecycle | Partial: independent `native-notifications` safe Rust 1.87-compatible macOS adapter; explicit alert decision, silent local requests/removal and Catalog witness. Settings/action/foreground delegates unsupported; native QA pending. See [notifications](DESKTOP_NOTIFICATIONS.md) |
+| B | macOS application menu + tray menu and command delivery | Implemented optional adapter; menu callback and one native tray command accepted on macOS (human tray click + CUA counter); native tray enablement/modal acceptance remains; static menu layout, dynamic command enabled state, one standalone host/process |
+| B | Modern notifications and permission/action lifecycle | Partial: independent `native-notifications` safe Rust 1.87-compatible macOS adapter; explicit alert decision, silent local requests/removal and Catalog witness. Settings/action/foreground delegates unsupported; explicit permission and actual native display accepted on the test Mac; delivered removal also accepted; pending-only cancellation and native tray enablement acceptance remain. See [notifications](DESKTOP_NOTIFICATIONS.md) |
 | B | Public macOS window materials | Implemented for decorated GPU windows on macOS 10.14+; native light/dark, tint and zoom/restore checked. Borderless material, live preference-change acceptance and broader fullscreen/platform acceptance remain |
 | C | Command registry/shortcuts/palette, close veto and dirty-document UI | Implemented single-window slice after v0.3.0; Catalog in-memory draft, dynamic commands and owned guarded Quit. Bounded notes-file workflow now implemented; OS termination, state restoration and multi-window remain pending; see [command policies](APPLICATION_COMMANDS.md) and [document files](DOCUMENT_FILES.md) |
 | C | macOS local bundles, icons, resources, privacy declarations | Implemented `cargo volt bundle` for prebuilt executables, dependency/deployment checks and local ad-hoc signing; Developer ID, hardened-runtime shipping, notarization and installers remain separate owner-controlled release work; see [packaging](MACOS_PACKAGING.md) |
@@ -317,6 +317,10 @@ validation/main-thread/bundle errors. Catalog's Desktop services page and tray
 share guarded registry IDs and a count witness. Only one additional pinned
 framework crate; core/default footprint unchanged. OS acceptance is not visible
 delivery. Settings queries/actions/foreground delegates remain unavailable.
-The approved disposable native QA was blocked at launch by the locked Mac;
-permission/banner/removal/tray-click acceptance remains pending, not passed.
-See [exact API, bounds and evidence](DESKTOP_NOTIFICATIONS.md).
+The first disposable native QA launch was blocked by the locked Mac; after
+unlock, the approved alert permission flowed correctly, the human supplied an
+actual native notification screenshot, and a human-operated tray command changed
+the CUA-observed counter from 0 to 1. After the CUA removal action, the human
+confirmed the test entry disappeared without manual clearing. Pending-only
+cancellation and native tray enablement/modal acceptance remain separate gates. See the precise evidence tiers
+in [API, bounds and native receipt](DESKTOP_NOTIFICATIONS.md).
