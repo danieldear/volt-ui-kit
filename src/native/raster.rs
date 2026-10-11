@@ -39,6 +39,88 @@ pub(super) const MAX_FRAMEBUFFER_PIXELS: u64 = 64 * 1024 * 1024;
 const MAX_LAYER_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LAYER_DEPTH: usize = 24;
 
+/// Validate the group stream before allocating its framebuffers. Large valid
+/// groups use small tiles; malformed streams still fail rather than silently
+/// losing group opacity or clipping.
+fn tiled_opacity_needed(
+    batches: &[PaintBatch<Shape, Glyph>],
+    width: u32,
+    height: u32,
+) -> Result<bool, String> {
+    let (mut depth, mut peak) = (0usize, 0usize);
+    for shape in batches.iter().flat_map(|batch| &batch.shapes) {
+        match shape {
+            Shape::LayerBegin(opacity) => {
+                if !opacity.is_finite() || !(0. ..=1.).contains(opacity) {
+                    return Err("invalid layer opacity".into());
+                }
+                depth += 1;
+                if depth > MAX_LAYER_DEPTH {
+                    return Err("opacity layer depth exceeds limit".into());
+                }
+                peak = peak.max(depth);
+            }
+            Shape::LayerEnd => {
+                depth = depth.checked_sub(1).ok_or("unbalanced opacity layer end")?;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return Err("unbalanced opacity layer begin".into());
+    }
+    Ok(peak > 0 && u64::from(width) * u64::from(height) * 4 * (peak as u64 + 1) > MAX_LAYER_BYTES)
+}
+
+fn translated_batch(
+    batch: &PaintBatch<Shape, Glyph>,
+    dx: f32,
+    dy: f32,
+) -> PaintBatch<Shape, Glyph> {
+    let bounds = |b: &mut [f32; 4]| {
+        b[0] += dx;
+        b[1] += dy;
+    };
+    let point = |p: &mut [f32; 2]| {
+        p[0] += dx;
+        p[1] += dy;
+    };
+    let mut result = batch.clone();
+    let [x, y, w, h] = batch.clip.bounds();
+    result.clip = crate::Rect::new(x + dx, y + dy, w, h).expect("translation preserves dimensions");
+    for shape in &mut result.shapes {
+        match shape {
+            Shape::Rectangle(b, _)
+            | Shape::Rounded(b, _, _)
+            | Shape::Corners(b, _, _)
+            | Shape::Outline(b, _, _, _)
+            | Shape::Shadow(b, _, _, _, _, _)
+            | Shape::Image(b, _, _) => bounds(b),
+            Shape::Triangle(points, _) => points.iter_mut().for_each(point),
+            Shape::Line(a, b, _, _) => {
+                point(a);
+                point(b);
+            }
+            Shape::Path(path, _, _) | Shape::ClipBegin(ClipRegion::Path(path)) => {
+                *path = std::mem::take(path).transformed([1., 0., 0., 1., dx, dy]);
+            }
+            Shape::ClipBegin(ClipRegion::Rounded { bounds: b, .. })
+            | Shape::ClipBegin(ClipRegion::Circle { bounds: b }) => bounds(b),
+            Shape::LayerBegin(_) | Shape::LayerEnd | Shape::ClipEnd => {}
+        }
+    }
+    for glyph in &mut result.glyphs {
+        bounds(&mut glyph.bounds);
+    }
+    result
+}
+
+// Half-pixels round away from zero. Round in frame coordinates first so a
+// negative tile-local origin cannot shift text/images by a pixel.
+fn pixel_round(value: f32, origin: i32) -> f32 {
+    (value + origin as f32).round() - origin as f32
+}
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct EffectKey([u32; 9]);
 struct ClipMask {
@@ -123,6 +205,7 @@ pub struct RasterPainter {
     /// Pixel region [x0, y0, x1, y1] being repainted by an incremental frame;
     /// every write is confined to it through the clip masks.
     damage: Option<[usize; 4]>,
+    raster_origin: [i32; 2],
     /// The previous incremental frame, diffed against the next one.
     last: Option<LastFrame>,
     scaled_images: BTreeMap<(usize, u32, u32), ScaledImage>,
@@ -492,6 +575,7 @@ impl RasterPainter {
             effect_tint_bytes: 0,
             layer_pool: Vec::new(),
             damage: None,
+            raster_origin: [0; 2],
             last: None,
             scaled_images: BTreeMap::new(),
             scaled_bytes: 0,
@@ -749,8 +833,9 @@ impl RasterPainter {
             return draw_image(pixmap, mask, [x, y, w, h], image, scale);
         }
         let pos = image.position.fractions();
-        let ix = (x + (w - dw) * pos[0]).round() as i64;
-        let iy = (y + (h - dh) * pos[1]).round() as i64;
+        let [ox, oy] = self.raster_origin;
+        let ix = pixel_round(x + (w - dw) * pos[0], ox) as i64;
+        let iy = pixel_round(y + (h - dh) * pos[1], oy) as i64;
         let key = (image.image.pixels().as_ptr() as usize, sw, sh);
         self.clock += 1;
         if !self.scaled_images.contains_key(&key) {
@@ -809,12 +894,12 @@ impl RasterPainter {
             [x, y, w, h]
         };
         let (pw, ph) = (i64::from(pixmap.width()), i64::from(pixmap.height()));
-        let l = (area[0].round() as i64).max(ix).max(0);
-        let t = (area[1].round() as i64).max(iy).max(0);
-        let r = ((area[0] + area[2]).round() as i64)
+        let l = (pixel_round(area[0], ox) as i64).max(ix).max(0);
+        let t = (pixel_round(area[1], oy) as i64).max(iy).max(0);
+        let r = (pixel_round(area[0] + area[2], ox) as i64)
             .min(ix + i64::from(sw))
             .min(pw);
-        let b = ((area[1] + area[3]).round() as i64)
+        let b = (pixel_round(area[1] + area[3], oy) as i64)
             .min(iy + i64::from(sh))
             .min(ph);
         if l >= r || t >= b {
@@ -1118,6 +1203,13 @@ impl RasterPainter {
         if u64::from(w) * u64::from(h) > MAX_FRAMEBUFFER_PIXELS {
             return Err("framebuffer exceeds 64 megapixel limit".into());
         }
+        if tiled_opacity_needed(batches, w, h)? {
+            // Repaint the complete valid scene if an incremental region needs
+            // tiled groups. Discard the old buffer before allocating the new
+            // one; the caller's damage region remains valid for presentation.
+            drop(base);
+            return self.rasterize_tiled(batches, background);
+        }
         let clear =
             tiny_skia::Color::from_rgba(background[0], background[1], background[2], background[3])
                 .ok_or("invalid background color")?;
@@ -1420,6 +1512,8 @@ impl RasterPainter {
                 let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
                 let buffer = &self.text[&key].0;
                 let [gx, gy, gw, gh] = glyph.bounds;
+                let [ox, oy] = self.raster_origin;
+                let (gx_pixel, gy_pixel) = (pixel_round(gx, ox) as i32, pixel_round(gy, oy) as i32);
                 let [cx, cy, cw, ch] = batch.clip.bounds();
                 let c = glyph.color;
                 for run in buffer.layout_runs() {
@@ -1450,8 +1544,8 @@ impl RasterPainter {
                             physical.cache_key,
                             Color::rgba(byte(c[0]), byte(c[1]), byte(c[2]), 255),
                             |x, y, color| {
-                                let px = x + physical.x + gx.round() as i32;
-                                let py = y + physical.y + run.line_y as i32 + gy.round() as i32;
+                                let px = x + physical.x + gx_pixel;
+                                let py = y + physical.y + run.line_y as i32 + gy_pixel;
                                 if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
                                     return;
                                 }
@@ -1489,6 +1583,61 @@ impl RasterPainter {
             return Err("unbalanced opacity layer begin".into());
         }
         Ok(pixmap)
+    }
+
+    /// Overflow fallback only: replay the same scene in integer-aligned tiles.
+    /// Each tile has at most 26 MiB of group buffers (24 nested groups + root),
+    /// independent of window size. Keep the full output and all alpha semantics;
+    /// never flatten opacity into per-object alpha or drop a group to fit.
+    fn rasterize_tiled(
+        &mut self,
+        batches: &[PaintBatch<Shape, Glyph>],
+        background: [f32; 4],
+    ) -> Result<Pixmap, String> {
+        const SIDE: u32 = 512;
+        // Rasterizer stroke/AA coverage must not be truncated at tile edges.
+        // Discard the overlap after compositing the same full group stream.
+        const HALO: u32 = 4;
+        let viewport = self.viewport;
+        let origin = self.raster_origin;
+        let (w, h) = (viewport.width as u32, viewport.height as u32);
+        self.layer_pool.clear();
+        let result = (|| {
+            let mut output = Pixmap::new(w, h).ok_or("invalid framebuffer")?;
+            for y in (0..h).step_by(SIDE as usize) {
+                for x in (0..w).step_by(SIDE as usize) {
+                    let (tw, th) = (SIDE.min(w - x), SIDE.min(h - y));
+                    let (left, top) = (x.saturating_sub(HALO), y.saturating_sub(HALO));
+                    let (rw, rh) = ((x + tw + HALO).min(w) - left, (y + th + HALO).min(h) - top);
+                    // Direct assignment is deliberate: commands are already in
+                    // physical pixels; shaping/asset caches stay reusable.
+                    self.viewport.width = rw as f32;
+                    self.viewport.height = rh as f32;
+                    self.raster_origin = [left as i32, top as i32];
+                    // Edge tiles have different sizes; pooled layers must match.
+                    self.layer_pool
+                        .retain(|p| p.width() == rw && p.height() == rh);
+                    let translated = batches
+                        .iter()
+                        .map(|b| translated_batch(b, -(left as f32), -(top as f32)))
+                        .collect::<Vec<_>>();
+                    let tile = self.rasterize_into(&translated, background, None)?;
+                    for row in 0..th as usize {
+                        let start = ((y as usize + row) * w as usize + x as usize) * 4;
+                        let source =
+                            ((row + (y - top) as usize) * rw as usize + (x - left) as usize) * 4;
+                        output.data_mut()[start..start + tw as usize * 4]
+                            .copy_from_slice(&tile.data()[source..source + tw as usize * 4]);
+                    }
+                }
+            }
+            Ok(output)
+        })();
+        self.viewport = viewport;
+        self.raster_origin = origin;
+        self.damage = None;
+        self.layer_pool.clear();
+        result
     }
 }
 // cosmic-text's default generic families may not be installed (e.g. DejaVu
@@ -2681,8 +2830,164 @@ mod tests {
         assert!(p
             .rasterize(&[layer_batch], [0., 0., 0., 1.])
             .unwrap_err()
-            .contains("memory budget"));
+            .contains("unbalanced"));
     }
+    #[test]
+    fn retina_nested_opacity_fallback_is_bounded_and_preserves_alpha() {
+        let make_batches = |w: f32, h: f32| {
+            vec![PaintBatch {
+                clip: crate::Rect::new(0., 0., w, h).unwrap(),
+                shapes: vec![
+                    Shape::LayerBegin(0.5),
+                    Shape::Rectangle([0., 0., w, h], [1.; 4]),
+                    Shape::LayerBegin(0.5),
+                    Shape::Rectangle([0., 0., w, h], [0., 0., 1., 1.]),
+                    Shape::LayerEnd,
+                    Shape::LayerEnd,
+                ],
+                glyphs: vec![],
+            }]
+        };
+        let background = [0.1, 0.2, 0.3, 0.42];
+        let mut small = RasterPainter::new(Viewport::new(16., 16., 1.).unwrap());
+        let expected = small
+            .rasterize(&make_batches(16., 16.), background)
+            .unwrap();
+        let viewport = Viewport::new(3028., 2074., 2.).unwrap();
+        let mut painter = RasterPainter::new(viewport);
+        let actual = painter
+            .rasterize(&make_batches(3028., 2074.), background)
+            .expect("valid opacity groups must render at Retina window sizes");
+        assert_eq!(painter.viewport(), viewport, "restore the native viewport");
+        for (x, y) in [(0, 0), (511, 511), (512, 512), (3027, 2073)] {
+            assert_eq!(
+                actual.pixel(x, y),
+                expected.pixel(8, 8),
+                "tile seam at {x},{y}"
+            );
+        }
+    }
+
+    #[test]
+    fn tiled_opacity_matches_clips_paths_images_shadows_and_text_without_seams() {
+        let viewport = Viewport::new(770., 641., 1.).unwrap();
+        let mut p = RasterPainter::new(viewport);
+        let mut glyphs = vec![];
+        p.ui_text_styled(
+            &mut glyphs,
+            "Text spanning the tile boundary",
+            [460.25, 502.5, 300., 80.],
+            &TextStyle::default(),
+            [0.2, 0.4, 0.8, 0.8],
+        );
+        let image = crate::graphics::Image::from_rgba(8, 8, [40, 150, 90, 180].repeat(64)).unwrap();
+        let clip = crate::Rect::new(0., 0., 770., 641.).unwrap();
+        let batches = vec![
+            PaintBatch {
+                clip,
+                shapes: vec![
+                    Shape::ClipBegin(ClipRegion::Rounded {
+                        bounds: [10.25, 11.5, 750., 610.],
+                        radii: [20.; 4],
+                    }),
+                    Shape::LayerBegin(0.65),
+                    Shape::Shadow(
+                        [490.25, 480.5, 180., 100.],
+                        [12.; 4],
+                        8.,
+                        2.,
+                        [2., 3.],
+                        [0., 0., 0., 0.4],
+                    ),
+                    Shape::Rounded([490.25, 480.5, 180., 100.], 12., [1., 0.5, 0.2, 0.8]),
+                    Shape::LayerBegin(0.55),
+                    Shape::Path(
+                        VectorPath::ellipse(511.25, 510.5, 150., 90.),
+                        [0.1, 0.2, 0.7, 0.9],
+                        Some(3.),
+                    ),
+                    Shape::Image([500.25, 488.5, 40., 90.], image.background(), 1.),
+                ],
+                glyphs,
+            },
+            PaintBatch {
+                clip,
+                shapes: vec![Shape::LayerEnd, Shape::LayerEnd, Shape::ClipEnd],
+                glyphs: vec![],
+            },
+        ];
+        let background = [0.3, 0.2, 0.5, 0.42];
+        let expected = p.rasterize(&batches, background).unwrap();
+        let actual = p.rasterize_tiled(&batches, background).unwrap();
+        let max_delta = expected
+            .data()
+            .iter()
+            .zip(actual.data())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        let (index, _) = expected
+            .data()
+            .iter()
+            .zip(actual.data())
+            .enumerate()
+            .max_by_key(|(_, (a, b))| a.abs_diff(**b))
+            .unwrap();
+        // tiny-skia may tessellate a clipped curved stroke slightly differently;
+        // permit bounded edge coverage variation, not shifted text/images.
+        assert!(
+            max_delta <= 8,
+            "tile translation changed pixels by {max_delta} at {},{} expected {:?} actual {:?}",
+            index / 4 % 770,
+            index / 4 / 770,
+            expected.pixel((index / 4 % 770) as u32, (index / 4 / 770) as u32),
+            actual.pixel((index / 4 % 770) as u32, (index / 4 / 770) as u32)
+        );
+        // Isolate the curved-stroke AA tolerance from image/text positioning:
+        // those must still match to one byte, including negative half-pixels.
+        let mut without_stroke = batches.clone();
+        without_stroke[0]
+            .shapes
+            .retain(|s| !matches!(s, Shape::Path(..)));
+        let expected = p.rasterize(&without_stroke, background).unwrap();
+        let actual = p.rasterize_tiled(&without_stroke, background).unwrap();
+        let delta = expected
+            .data()
+            .iter()
+            .zip(actual.data())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(
+            delta <= 1,
+            "text/image translation changed pixels by {delta}"
+        );
+        assert_eq!(p.viewport(), viewport);
+        assert!(
+            p.layer_pool.is_empty(),
+            "do not retain tile buffers at native size"
+        );
+        for shapes in [
+            vec![Shape::LayerBegin(f32::NAN), Shape::LayerEnd],
+            vec![Shape::LayerEnd],
+            vec![Shape::LayerBegin(0.5); MAX_LAYER_DEPTH + 1],
+        ] {
+            let invalid = [PaintBatch {
+                clip,
+                shapes,
+                glyphs: vec![],
+            }];
+            assert!(p.rasterize(&invalid, background).is_err());
+            assert!(p.rasterize_tiled(&invalid, background).is_err());
+        }
+        assert_eq!(
+            p.viewport(),
+            viewport,
+            "error must not leave a tile viewport"
+        );
+        assert_eq!(p.raster_origin, [0; 2]);
+    }
+
     #[test]
     fn layer_opacity_applies_to_glyphs_without_opaque_pixel_artifacts() {
         let mut p = RasterPainter::new(Viewport::new(100., 60., 1.).unwrap());

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep Retina opacity-group overflow fallback bounded with tiled replay; preserve alpha instead of failing again in software. Reuse a hidden native material underlay on blur-backend switches, refresh native frame/shadow, and prepare backdrops before window visibility. Desktop-level Material-to-Compositor corner validation remains pending.
+
 - Separate Catalog background opacity from accent tint; add live blur toggle and
   public-material/explicit compositor selection. Add state-derived native
   backgrounds and root-only theme color overrides. Raw compositor blur uses a

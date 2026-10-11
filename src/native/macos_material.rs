@@ -54,13 +54,40 @@ impl WindowMaterial {
         eprintln!("Volt UI: public AppKit window material active (reduced_transparency={reduced}); AppKit owns material appearance");
         Ok(Self { view })
     }
+
+    /// Keep the frame-view hierarchy stable when switching blur backends.
+    /// A hidden effect view contributes no material tint/blur; it remains
+    /// attached so returning to Material does not tear down/rebuild the
+    /// native window underlay (and its associated frame geometry).
+    pub fn set_enabled(&self, enabled: bool) {
+        if self.view.isHidden() != enabled {
+            return;
+        }
+        self.view.setHidden(!enabled);
+        if let Some(window) = self.view.window() {
+            window.setViewsNeedDisplay(true);
+            window.invalidateShadow();
+        }
+        if std::env::var_os("VOLT_UI_TRACE").is_some() {
+            eprintln!("VOLT_UI_BACKDROP material_attached=true material_visible={enabled}");
+        }
+    }
 }
 
 impl Drop for WindowMaterial {
     fn drop(&mut self) {
         // The standalone host and this main-thread-only retained view are
         // destroyed on the UI thread, before dropping the window.
+        let window = self.view.window();
         self.view.removeFromSuperview();
+        if let Some(window) = window {
+            // The window's backdrop hierarchy changed. Do not reuse cached
+            // frame/shadow geometry from the material surface when a raw
+            // compositor blur is enabled next. Schedule native refresh rather
+            // than calling displayIfNeeded inside a winit event callback.
+            window.setViewsNeedDisplay(true);
+            window.invalidateShadow();
+        }
     }
 }
 

@@ -713,8 +713,15 @@ impl<C: 'static> App<C> {
         #[cfg(target_os = "macos")]
         {
             let public = matches!(self.options.background, WindowBackground::Blur { .. });
-            if !public {
-                self.material = None;
+            let raw = matches!(
+                self.options.background,
+                WindowBackground::CompositorBlur { .. }
+            ) && !super::macos_material::reduced_transparency();
+            let was_raw = self.compositor_blur_active;
+            // Disable the private path before restoring a public material.
+            if was_raw && !raw {
+                window.set_blur(false);
+                self.compositor_blur_active = false;
             }
             if public && self.material.is_none() {
                 match super::macos_material::WindowMaterial::install(window) {
@@ -722,13 +729,17 @@ impl<C: 'static> App<C> {
                     Err(error) => eprintln!("Volt UI: public window material unavailable ({error}); using transparency without blur"),
                 }
             }
-            let raw = matches!(
-                self.options.background,
-                WindowBackground::CompositorBlur { .. }
-            ) && !super::macos_material::reduced_transparency();
+            if let Some(material) = &self.material {
+                // Hide/reuse instead of removing the native underlay on every
+                // Material -> Compositor -> Material switch. No second tint
+                // is painted in the raw path; window hierarchy stays stable.
+                material.set_enabled(public);
+            }
             if raw != self.compositor_blur_active {
                 window.set_blur(raw);
                 self.compositor_blur_active = raw;
+            }
+            if raw != was_raw {
                 eprintln!(
                     "Volt UI: opt-in compositor blur {raw} (macOS private API; not App Store-safe)"
                 );
@@ -1312,6 +1323,7 @@ impl<C: 'static> App<C> {
                         let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                         self.surface =
                             Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
+                        w.set_transparent(false);
                         self.surface_size = None;
                         false
                     }
@@ -1337,6 +1349,7 @@ impl<C: 'static> App<C> {
                 w.set_blur(false);
                 let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                 self.surface = Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
+                w.set_transparent(false);
                 self.surface_size = None;
                 false
             }
@@ -1565,7 +1578,6 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 &w,
                 self.proxy.clone(),
             ));
-            w.set_visible(true);
             self.system_theme = if w.theme() == Some(winit::window::Theme::Light) {
                 ThemeMode::Light
             } else {
@@ -1592,9 +1604,15 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if try_gpu {
                 match super::gpu::GpuPresenter::new(w.clone(), self.options.background != WindowBackground::Opaque) {
                     Ok(gpu)=>{
+                        // Match winit's native startup ordering (and Volt
+                        // Terminal): prepare blur/material before first show.
+                        // GPU admission stays first so a software fallback
+                        // never opts into the private compositor API.
                         self.sync_native_backdrop(&w);
                         eprintln!("Volt UI: Vello GPU drawing active ({}) — admitted scenes use no CPU framebuffer raster",gpu.adapter_name);
-                        self.gpu=Some(gpu);return Ok((w,None));
+                        self.gpu=Some(gpu);
+                        w.set_visible(true);
+                        return Ok((w,None));
                     },
                     Err(error) if require_gpu => return Err(format!("required GPU renderer unavailable: {error}")),
                     Err(error)=>eprintln!("Volt UI: GPU renderer unavailable ({error}); using opaque software fallback"),
@@ -1611,6 +1629,8 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             eprintln!("Volt UI: software renderer active");
             let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
             let surface = Surface::new(&context, w.clone()).map_err(|e| e.to_string())?;
+            w.set_transparent(false);
+            w.set_visible(true);
             Ok((w, Some(surface)))
         })();
         match result {
