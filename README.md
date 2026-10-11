@@ -286,7 +286,10 @@ See [runtime](docs/APP_RUNTIME.md), [declarations and limits](docs/EXTENDED_COMP
 The additive `native::Application` builder supports app-owned views/state,
 explicit renderer/window configuration and bounded worker messages. New local
 project templates prefer GPU without renderer flags; existing embedded/default
-contracts remain unchanged. Independent typed navigation is demonstrated in
+contracts remain unchanged. New templates use Catalog-style unified macOS chrome
+with native traffic lights and an editable, safely inset draggable header;
+other platforms keep their native decorations. Blur remains developer-controlled.
+Independent typed navigation is demonstrated in
 Catalog's Navigation page. Optional `native-desktop` adds macOS application
 menus and tray menus. Independent optional `native-notifications` adds explicit
 macOS alert authorization, silent local requests and removal, with bounded input

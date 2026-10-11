@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Generated apps now use Catalog-style unified macOS chrome instead of a separate
+  native title strip. All five templates retain native traffic lights, include an
+  editable 60pt drag header with safe button clearance, SF and semantic colors.
+  Other platforms keep native chrome. Existing application defaults/projects,
+  blur policy and dependencies are unchanged.
+
 - Add independent optional `native-notifications` with feature-pruned safe
   macOS UserNotifications bindings: explicit alert-only permission, bounded silent
   local requests, one-shot delay, stable IDs and removal. Main-thread/.app checks
