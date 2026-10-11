@@ -155,8 +155,10 @@ command witness in Catalog only. See [scope, safety limits and receipt](docs/DOC
   stable-ID requests and removal; precise unsupported settings/action/foreground
   capabilities. Rust 1.87 and default/Volt compatibility retained.
 - Catalog only: Desktop services, bounded completion witness and shared guarded
-  tray commands. After unlock, explicit permission, actual notification display
+  tray commands. After unlock, explicit permission, actual notification display,
   counted tray delivery and delivered-notification removal were accepted on the
-  test Mac; pending-only cancellation/native tray enablement/modal acceptance remains. Evidence tiers are recorded in the receipt.
+  test Mac. Pending-only cancellation and native tray enablement/modal acceptance
+  remain. Catalog now supplies a default-off 60-second cancellation plan and
+  control/serialization/modal regression checks. Evidence tiers are in the receipt.
 - Other OS adapters, delegates, multi-window and the original GPU/IME/VoiceOver
   gates remain separate. See [notifications](docs/DESKTOP_NOTIFICATIONS.md).

@@ -23,6 +23,49 @@ fn mount(app: &App, size: [f32; 2]) -> Runtime {
 }
 
 #[test]
+fn desktop_services_cancellation_controls_and_modal_scope_are_guarded() {
+    let mut app = App::new();
+    app.page = Page::DesktopServices;
+    for busy in [false, true] {
+        app.services.busy = busy;
+        app.services.cancellation_test = false;
+        let (document, mut handlers) = view(&app).build().unwrap().into_parts();
+        let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+        let viewport = Viewport::new(1440., 920., 1.).unwrap();
+        runtime
+            .layout(
+                viewport,
+                &Bindings::default(),
+                &mut RasterPainter::new(viewport),
+            )
+            .unwrap();
+        let outcome = runtime
+            .accessibility_activate("notification-cancellation-test", &mut handlers, &mut app)
+            .unwrap();
+        assert_eq!(outcome.activated, !busy);
+        assert_eq!(app.services.cancellation_test, !busy);
+    }
+    app.services.authorization = Some(volt_ui_kit::native::notifications::Authorization::Granted);
+    let mut registry = lifecycle::commands();
+    for id in ["notification-send", "notification-remove"] {
+        assert_eq!(
+            registry.dispatch(id, &mut app),
+            volt_ui_kit::native::CommandDispatch::Disabled
+        );
+    }
+    assert!(app.services.error.is_none()); // Disabled replay never reaches an OS adapter.
+    app.services.busy = false;
+    for modal in [false, true, false] {
+        app.command_palette_open = modal;
+        let mut runtime = mount(&app, [1440., 920.]);
+        assert_eq!(
+            runtime.accessibility_focus("notification-cancellation-test"),
+            !modal
+        );
+    }
+}
+
+#[test]
 fn catalog_live_log_follows_new_events_but_preserves_a_readers_scroll_position() {
     for scale in [1., 2.] {
         let mut app = App::new();

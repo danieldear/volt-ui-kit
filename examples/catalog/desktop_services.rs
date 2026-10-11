@@ -16,12 +16,13 @@ const ID: &str = "volt.catalog.test";
 #[derive(Debug)]
 enum Completion {
     Authorization(Result<Authorization, NotificationError>),
-    Submitted(Result<(), NotificationError>),
+    Submitted(Result<(), NotificationError>, Duration),
 }
 type Mailbox = Arc<Mutex<Option<(u64, Completion)>>>;
 pub struct State {
     pub authorization: Option<Authorization>,
     pub busy: bool,
+    pub cancellation_test: bool,
     pub title: String,
     pub body: String,
     pub status: String,
@@ -34,6 +35,7 @@ impl Default for State {
         Self {
             authorization: None,
             busy: false,
+            cancellation_test: false,
             title: "Volt desktop test".into(),
             body: "A local notification from the Catalog. No network or personal content.".into(),
             status:
@@ -87,6 +89,17 @@ pub fn request_authorization(app: &mut App) {
     });
     failed(app, result);
 }
+fn notification_plan(app: &App) -> (LocalNotification, Duration) {
+    let delay = Duration::from_secs(if app.services.cancellation_test {
+        60
+    } else {
+        8
+    });
+    (
+        LocalNotification::new(ID, &app.services.title, &app.services.body).after(delay),
+        delay,
+    )
+}
 pub fn send(app: &mut App) {
     if app.services.authorization != Some(Authorization::Granted) {
         app.services.error =
@@ -96,11 +109,13 @@ pub fn send(app: &mut App) {
     let Some((generation, mailbox, sender)) = begin(app) else {
         return;
     };
-    let notification = LocalNotification::new(ID, &app.services.title, &app.services.body)
-        .after(Duration::from_secs(8));
-    app.services.status = "Submitting a silent notification for 8 seconds from now…".into();
+    let (notification, delay) = notification_plan(app);
+    app.services.status = format!(
+        "Submitting a silent notification for {} seconds from now…",
+        delay.as_secs()
+    );
     let result = notifications::send(&notification, move |r| {
-        complete(generation, mailbox, sender, Completion::Submitted(r))
+        complete(generation, mailbox, sender, Completion::Submitted(r, delay))
     });
     failed(app, result);
 }
@@ -157,10 +172,10 @@ pub fn drain(app: &mut App) {
                     "Alert authorization denied. Change it yourself in System Settings if desired; nothing was sent.",
             }.into();
         }
-        Completion::Submitted(Ok(())) => {
-            app.services.status = "OS accepted the request. This is NOT a delivery receipt. Switch apps or hide Catalog before 8 seconds; foreground banners/actions are not implemented.".into();
+        Completion::Submitted(Ok(()), delay) => {
+            app.services.status = format!("OS accepted the request ({} seconds requested delay). This is NOT a delivery receipt. For pending cancellation, remove now, then hide Catalog and check Notification Center after the delay. Foreground banners/actions are not implemented.", delay.as_secs());
         }
-        Completion::Authorization(Err(e)) | Completion::Submitted(Err(e)) => {
+        Completion::Authorization(Err(e)) | Completion::Submitted(Err(e), _) => {
             app.services.status = "OS operation failed; see the error below.".into();
             app.services.error = Some(e.to_string());
         }
@@ -184,9 +199,12 @@ pub fn doc(app: &App) -> Doc {
                 .on_change(|app:&mut App,v|app.services.title=v),
             text_area(&app.services.body).key("notification-body").accessible_label("Local notification body").height(90.).read_only(app.services.busy)
                 .on_change(|app:&mut App,v|app.services.body=v),
+            checkbox("Cancellation test: use a 60-second delay", app.services.cancellation_test)
+                .key("notification-cancellation-test").enabled(!app.services.busy)
+                .on_change(|app:&mut App,v|app.services.cancellation_test=v),
             hstack![
                 button("Request alert permission").key("notification-authorize").enabled(caps.authorization&&!app.services.busy).on_click(request_authorization),
-                button("Send in 8 seconds").key("notification-send").enabled(caps.local_requests&&!app.services.busy&&app.services.authorization==Some(Authorization::Granted)).on_click(send),
+                button(if app.services.cancellation_test { "Send in 60 seconds" } else { "Send in 8 seconds" }).key("notification-send").enabled(caps.local_requests&&!app.services.busy&&app.services.authorization==Some(Authorization::Granted)).on_click(send),
             ].gap(8.,Axis::Horizontal),
             hstack![button("Remove test notification").key("notification-remove").variant(ButtonVariant::Outline).enabled(caps.removal&&!app.services.busy).on_click(remove),
                 button("Reset witness").key("notification-reset").variant(ButtonVariant::Ghost).enabled(!app.services.busy).on_click(reset)].gap(8.,Axis::Horizontal),
@@ -226,6 +244,33 @@ notifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancellation_plan_is_explicit_and_keeps_the_same_removable_id() {
+        let mut app = App::new();
+        assert!(!app.services.cancellation_test);
+        let (normal, delay) = notification_plan(&app);
+        assert_eq!(delay, Duration::from_secs(8));
+        assert_eq!(normal.id(), ID);
+        assert!(normal.validate().is_ok());
+        app.services.cancellation_test = true;
+        let (pending, delay) = notification_plan(&app);
+        assert_eq!(delay, Duration::from_secs(60));
+        assert_eq!(pending.id(), ID);
+        assert!(pending.validate().is_ok());
+        app.services.title.clear();
+        assert!(notification_plan(&app).0.validate().is_err());
+    }
+    #[test]
+    fn submission_receipt_retains_its_delay_even_if_controls_change() {
+        let mut app = App::new();
+        app.services.busy = true;
+        *app.services.mailbox.lock().unwrap() =
+            Some((0, Completion::Submitted(Ok(()), Duration::from_secs(60))));
+        drain(&mut app);
+        assert!(app.services.status.contains("60 seconds"));
+        assert!(app.services.status.contains("NOT a delivery receipt"));
+        assert!(!app.services.busy);
+    }
     #[test]
     fn late_results_and_reset_never_change_newer_permission_witness() {
         let mut app = App::new();
@@ -279,13 +324,17 @@ mod tests {
         app.services.busy = true;
         *app.services.mailbox.lock().unwrap() = Some((
             0,
-            Completion::Submitted(Err(NotificationError::NativeFailure)),
+            Completion::Submitted(
+                Err(NotificationError::NativeFailure),
+                Duration::from_secs(8),
+            ),
         ));
         drain(&mut app);
         assert!(app.services.error.is_some());
         assert!(!app.services.busy);
         app.services.busy = true;
-        *app.services.mailbox.lock().unwrap() = Some((0, Completion::Submitted(Ok(()))));
+        *app.services.mailbox.lock().unwrap() =
+            Some((0, Completion::Submitted(Ok(()), Duration::from_secs(8))));
         drain(&mut app);
         assert!(app.services.status.contains("NOT a delivery receipt"));
         let mut headless = App::new();

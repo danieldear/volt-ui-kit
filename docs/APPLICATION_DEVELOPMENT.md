@@ -322,5 +322,9 @@ unlock, the approved alert permission flowed correctly, the human supplied an
 actual native notification screenshot, and a human-operated tray command changed
 the CUA-observed counter from 0 to 1. After the CUA removal action, the human
 confirmed the test entry disappeared without manual clearing. Pending-only
-cancellation and native tray enablement/modal acceptance remain separate gates. See the precise evidence tiers
+cancellation and native tray enablement/modal acceptance remain separate gates.
+Catalog adds an explicit 60-second cancellation-test plan, preserves the original
+delay in its completion witness, and regression-tests disabled/replayed controls
+and modal background scope. No new crates or public host API. See the precise
+evidence tiers
 in [API, bounds and native receipt](DESKTOP_NOTIFICATIONS.md).
