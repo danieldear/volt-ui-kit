@@ -25,6 +25,14 @@ pub(super) fn alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::Com
     .into_iter()
     .find(|m| modes.contains(m))
 }
+// Separate surface configuration from pixel encoding: wgpu 26 advertises
+// PostMultiplied for Metal, although Core Animation consumes premultiplied RGB.
+// Keep the advertised/supported SurfaceConfiguration, but compensate in the
+// presentation shader. Do not apply this quirk to genuine straight-alpha
+// compositors. Revisit on a wgpu pin change: gfx-rs/wgpu#9896, #9922.
+fn present_straight_alpha(backend: wgpu::Backend, alpha: wgpu::CompositeAlphaMode) -> bool {
+    alpha == wgpu::CompositeAlphaMode::PostMultiplied && backend != wgpu::Backend::Metal
+}
 fn shader_source(post: bool) -> String {
     format!(
         r#"
@@ -35,7 +43,7 @@ fn shader_source(post: bool) -> String {
 @fragment fn fs(@builtin(position) pos:vec4<f32>)->@location(0) vec4<f32> {{
     let c=textureLoad(pixels,vec2<i32>(pos.xy),0);
     // Vello's output texture is straight alpha. Adapt on the GPU for the
-    // compositor's declared mode; opaque output naturally has alpha=1.
+    // compositor's effective encoding; opaque output naturally has alpha=1.
     if ({post}) {{ return c; }}
     return vec4(c.rgb*c.a,c.a);
 }}
@@ -353,7 +361,13 @@ impl GpuPresenter {
                 count: None,
             }],
         });
-        let post = alpha == wgpu::CompositeAlphaMode::PostMultiplied;
+        let post = present_straight_alpha(info.backend, alpha);
+        if std::env::var_os("VOLT_UI_TRACE").is_some() {
+            eprintln!(
+                "VOLT_UI_SURFACE alpha_mode={alpha:?} pixel_encoding={}",
+                if post { "straight" } else { "premultiplied" }
+            );
+        }
         let shader = shader_source(post);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
@@ -852,6 +866,185 @@ mod tests {
             )
             .validate(&module)
             .unwrap();
+        }
+    }
+    #[test]
+    fn metal_surface_encoding_compensates_for_pinned_wgpu_alpha_advertisement() {
+        use wgpu::{Backend, CompositeAlphaMode::*};
+        // Our pinned Metal HAL only calls setOpaque(false) for PostMultiplied:
+        // it does not turn CAMetalLayer into a straight-alpha compositor.
+        assert!(!present_straight_alpha(Backend::Metal, PostMultiplied));
+        assert!(!present_straight_alpha(Backend::Metal, PreMultiplied));
+        assert!(!present_straight_alpha(Backend::Metal, Opaque));
+        for backend in [
+            Backend::Vulkan,
+            Backend::Dx12,
+            Backend::Gl,
+            Backend::BrowserWebGpu,
+        ] {
+            assert!(present_straight_alpha(backend, PostMultiplied));
+            assert!(!present_straight_alpha(backend, PreMultiplied));
+            assert!(!present_straight_alpha(backend, Opaque));
+        }
+    }
+    #[test]
+    #[ignore = "requires real GPU; checks presentation shader pixels, not the OS compositor"]
+    fn actual_gpu_present_shader_encodes_metal_and_straight_compositors() {
+        let gpu = GpuOffscreenRenderer::new().expect("GPU required");
+        let device = &gpu.device;
+        let extent = wgpu::Extent3d {
+            width: 3,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+        let make_texture = |usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("presentation alpha regression"),
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let input =
+            make_texture(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+        let straight = [255, 255, 255, 26, 0, 128, 255, 128, 12, 34, 56, 255];
+        gpu.queue.write_texture(
+            input.as_image_copy(),
+            &straight,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(12),
+                rows_per_image: Some(1),
+            },
+            extent,
+        );
+        let output =
+            make_texture(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        for (backend, alpha, expected) in [
+            (
+                wgpu::Backend::Metal,
+                wgpu::CompositeAlphaMode::PostMultiplied,
+                [26, 26, 26, 26, 0, 64, 128, 128, 12, 34, 56, 255],
+            ),
+            (
+                wgpu::Backend::Metal,
+                wgpu::CompositeAlphaMode::PreMultiplied,
+                [26, 26, 26, 26, 0, 64, 128, 128, 12, 34, 56, 255],
+            ),
+            (
+                wgpu::Backend::Vulkan,
+                wgpu::CompositeAlphaMode::PostMultiplied,
+                straight,
+            ),
+        ] {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(
+                    shader_source(present_straight_alpha(backend, alpha)).into(),
+                ),
+            });
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            });
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &input.create_view(&Default::default()),
+                    ),
+                }],
+            });
+            let mut commands = device.create_command_encoder(&Default::default());
+            {
+                let view = output.create_view(&Default::default());
+                let mut pass = commands.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            commands.copy_texture_to_buffer(
+                output.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(256),
+                        rows_per_image: Some(1),
+                    },
+                },
+                extent,
+            );
+            gpu.queue.submit([commands.finish()]);
+            let (send, receive) = std::sync::mpsc::channel();
+            readback
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let _ = send.send(result);
+                });
+            device.poll(wgpu::PollType::Wait).unwrap();
+            receive
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .unwrap()
+                .unwrap();
+            {
+                let pixels = readback.slice(..).get_mapped_range();
+                for (a, b) in pixels[..12].iter().zip(expected) {
+                    assert!(
+                        a.abs_diff(b) <= 1,
+                        "{backend:?}/{alpha:?}: {:?} != {expected:?}",
+                        &pixels[..12]
+                    );
+                }
+            }
+            readback.unmap();
         }
     }
     #[test]

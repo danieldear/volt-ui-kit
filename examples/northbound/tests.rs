@@ -331,7 +331,7 @@ fn incremental_hover_cost_at_retina() {
         .bounds
         .bounds();
     let (inside, outside) = ([b[0] + 40., b[1] + 40.], [10., 1790.]);
-    let mut frame = |at: [f32; 2], p: &mut RasterPainter, runtime: &mut Runtime| {
+    let frame = |at: [f32; 2], p: &mut RasterPainter, runtime: &mut Runtime| {
         runtime.pointer_move(at[0], at[1]);
         runtime.paint_ui(p, &ui);
         runtime.settle_animations();
