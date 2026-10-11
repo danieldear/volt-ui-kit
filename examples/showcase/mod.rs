@@ -114,7 +114,8 @@ pub fn view(app: &App) -> Element<App> {
             label(match app.background {
                 WindowBackground::Opaque => "OPAQUE / RUST UI",
                 WindowBackground::Transparent { .. } => "TRANSLUCENT / RUST UI",
-                WindowBackground::Blur { .. } => "BLUR REQUEST / RUST UI",
+                WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. } =>
+                    "BLUR REQUEST / RUST UI",
             })
         ]
         .height(30.)

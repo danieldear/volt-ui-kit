@@ -257,3 +257,15 @@ where it is exposed through their own surface alpha and opaque UI fills.
 Unavailable or borderless requests warn and use transparency without blur;
 software fallback removes the material and stays opaque. No claim of App Store
 certification, comprehensive fullscreen acceptance or content-backdrop blur.
+
+
+### Independent window opacity and tint
+
+`Application::background_from_state` derives the root opacity/blur from Rust
+state without fading foreground components. `UiTheme::with_background_color`
+keeps root RGB separate from semantic surface colors. Catalog demonstrates both.
+The new explicitly opted-in `WindowBackground::CompositorBlur` uses winit's raw
+blur request (private macOS API), not public AppKit material; it is not an App
+Store-safe promise. Existing `Blur` and all toolkit defaults retain public material.
+See [glass controls and native limits](GLASS_CONTROLS_2026_10_11.md); the requested
+in-app GPU backdrop renderer remains pending.

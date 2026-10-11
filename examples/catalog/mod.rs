@@ -16,7 +16,7 @@ pub use pages::{Page, PAGES};
 pub fn first_section_id(app: &App) -> Option<&'static str> {
     pages::doc(app.page, app).sections.first().map(|s| s.id)
 }
-pub use shell::{view, TINT_MIN};
+pub use shell::{view, OPACITY_MIN};
 use std::{
     collections::BTreeSet,
     ops::Range,
@@ -59,8 +59,12 @@ pub struct App {
     pub mode: ThemeMode,
     pub theme: usize,
     pub glass: bool,
-    /// Sidebar tint percentage in glass mode.
+    /// Accent tint strength, independent of background opacity.
     pub tint: u8,
+    pub opacity: u8,
+    /// Explicit opt-in to winit compositor blur (private API on macOS).
+    pub compositor_blur: bool,
+    pub blur: bool,
     pub sidebar_query: String,
     pub palette_open: bool,
     pub palette_query: String,
@@ -146,7 +150,10 @@ impl App {
             mode: ThemeMode::Light,
             theme: 0,
             glass: false,
-            tint: 72,
+            tint: 0,
+            opacity: 72,
+            compositor_blur: false,
+            blur: true,
             sidebar_query: String::new(),
             palette_open: false,
             palette_query: String::new(),
@@ -370,5 +377,28 @@ pub fn theme(app: &App, system: ThemeMode) -> UiTheme {
     } else {
         p.with_accent(rgba(if dark { dark_primary } else { light_primary }))
     };
-    UiTheme::from_palette(p)
+    let mut background = p.base[0];
+    if app.glass {
+        let tint = app.tint as f32 / 100.;
+        // Neutral tint must not invert the sidebar's light/dark text contrast.
+        let tint_color = if app.theme == 0 { p.base[1] } else { p.primary };
+        for (i, component) in background.iter_mut().enumerate().take(3) {
+            *component = p.base[0][i] * (1. - tint) + tint_color[i] * tint;
+        }
+    }
+    UiTheme::from_palette(p).with_background_color(background)
+}
+
+pub fn window_background(app: &App) -> volt_ui_kit::native::WindowBackground {
+    use volt_ui_kit::native::WindowBackground;
+    let opacity = app.opacity as f32 / 100.;
+    if !app.glass {
+        WindowBackground::Opaque
+    } else if !app.blur {
+        WindowBackground::Transparent { opacity }
+    } else if app.compositor_blur {
+        WindowBackground::CompositorBlur { opacity }
+    } else {
+        WindowBackground::Blur { opacity }
+    }
 }

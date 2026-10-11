@@ -223,8 +223,8 @@ fn launch_options_are_order_independent_and_glass_follows_the_renderer() {
     assert_eq!(
         options.background,
         if cfg!(feature = "native-gpu") {
-            // Transparent clear; the view paints the adjustable tint.
-            volt_ui_kit::native::WindowBackground::Blur { opacity: 0. }
+            // Root clear owns background opacity; semantic component surfaces stay opaque.
+            volt_ui_kit::native::WindowBackground::Blur { opacity: 0.72 }
         } else {
             volt_ui_kit::native::WindowBackground::Opaque
         }
@@ -254,12 +254,16 @@ fn launch_options_are_order_independent_and_glass_follows_the_renderer() {
     }
     let (app, options) = args(&["--background", "blur", "--window-opacity", "0.82"]).unwrap();
     assert!(app.glass);
-    assert_eq!(app.tint, 82);
+    assert_eq!(app.opacity, 82);
+    assert_eq!(app.tint, 0);
     assert_eq!(
         options.background,
-        volt_ui_kit::native::WindowBackground::Blur { opacity: 0. }
+        volt_ui_kit::native::WindowBackground::Blur { opacity: 0.82 }
     );
-    assert_eq!(args(&["--window-opacity", "0"]).unwrap().0.tint, TINT_MIN);
+    assert_eq!(
+        args(&["--window-opacity", "0"]).unwrap().0.opacity,
+        OPACITY_MIN
+    );
     for bad in [
         vec!["--theme", "oops"],
         vec!["--background", "oops"],
@@ -880,4 +884,123 @@ fn application_draft_cancel_save_discard_and_palette_preserve_the_data_contract(
         app.mode = mode;
         mount(&app, [900., 920.]);
     }
+}
+
+#[test]
+fn opacity_tint_and_blur_source_are_independent_and_live() {
+    use volt_ui_kit::native::WindowBackground;
+    let mut app = App::new();
+    app.glass = true;
+    app.compositor_blur = true;
+    let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let viewport = Viewport::new(1440., 920., 1.).unwrap();
+    let mut painter = RasterPainter::new(viewport);
+    runtime
+        .layout(viewport, &Bindings::default(), &mut painter)
+        .unwrap();
+    for opacity in [10., 72., 100., 10.] {
+        runtime
+            .accessibility_set_value(
+                "background-opacity",
+                volt_ui_kit::declarative::AccessValue::Number(opacity),
+                &mut handlers,
+                &mut app,
+            )
+            .unwrap();
+        assert_eq!(app.opacity, opacity as u8);
+        assert_eq!(app.tint, 0);
+        assert_eq!(
+            window_background(&app),
+            WindowBackground::CompositorBlur {
+                opacity: opacity as f32 / 100.
+            }
+        );
+        let (doc, next) = view(&app).build().unwrap().into_parts();
+        runtime
+            .replace_document(doc, &next, &Bindings::default())
+            .unwrap();
+        handlers = next;
+        runtime
+            .layout(viewport, &Bindings::default(), &mut painter)
+            .unwrap();
+        runtime.settle_animations();
+        let ui = theme(&app, ThemeMode::Light);
+        assert_eq!(ui.palette.base[0][3], 1.);
+        let mut clear = ui.legacy_theme().background;
+        clear[3] = opacity as f32 / 100.;
+        let batches = runtime.paint_ui(&mut painter, &ui);
+        let pixels = painter.rasterize(&batches, clear).unwrap();
+        assert!(
+            pixels
+                .pixel(0, 0)
+                .unwrap()
+                .alpha()
+                .abs_diff((opacity * 2.55).round() as u8)
+                <= 1
+        );
+        assert_eq!(
+            pixels.pixel(1000, 500).unwrap().alpha(),
+            255,
+            "content must not fade"
+        );
+    }
+    runtime
+        .accessibility_set_value(
+            "sidebar-tint",
+            volt_ui_kit::declarative::AccessValue::Number(30.),
+            &mut handlers,
+            &mut app,
+        )
+        .unwrap();
+    assert_eq!(app.tint, 30);
+    assert_eq!(app.opacity, 10);
+    let untinted = {
+        let mut state = App::new();
+        state.glass = true;
+        theme(&state, ThemeMode::Light)
+    };
+    let tinted = theme(&app, ThemeMode::Light);
+    assert_eq!(tinted.palette, untinted.palette);
+    assert_ne!(
+        tinted.legacy_theme().background,
+        untinted.legacy_theme().background
+    );
+    app.blur = false;
+    assert_eq!(
+        window_background(&app),
+        WindowBackground::Transparent { opacity: 0.1 }
+    );
+    app.blur = true;
+    app.compositor_blur = false;
+    assert_eq!(
+        window_background(&app),
+        WindowBackground::Blur { opacity: 0.1 }
+    );
+}
+
+#[test]
+fn compositor_launch_is_explicit_and_defaults_remain_public() {
+    use volt_ui_kit::native::WindowBackground;
+    let (app, options) = crate::parse_args(
+        [
+            "--background",
+            "compositor",
+            "--window-opacity",
+            "0.3",
+            "--tint",
+            "12",
+        ]
+        .map(str::to_owned),
+    )
+    .unwrap();
+    assert_eq!(
+        options.background,
+        WindowBackground::CompositorBlur { opacity: 0.3 }
+    );
+    assert_eq!((app.opacity, app.tint), (30, 12));
+    assert!(app.compositor_blur && app.blur);
+    let (app, _) = crate::parse_args(Vec::<String>::new()).unwrap();
+    assert!(!app.compositor_blur);
+    assert!(crate::parse_args(["--tint", "101"].map(str::to_owned)).is_err());
 }

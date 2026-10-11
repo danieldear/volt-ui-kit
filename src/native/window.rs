@@ -141,7 +141,14 @@ pub enum WindowBackground {
     Transparent {
         opacity: f32,
     },
+    /// Public AppKit material on macOS; its system tint is independent of opacity.
     Blur {
+        opacity: f32,
+    },
+    /// Opt-in raw compositor blur, independent of root background opacity.
+    /// On macOS winit uses a private Apple API: not an App Store-safe promise.
+    /// Blur radius is OS/backend controlled; software fallback is opaque.
+    CompositorBlur {
         opacity: f32,
     },
 }
@@ -149,7 +156,9 @@ impl WindowBackground {
     fn opacity(self) -> f32 {
         match self {
             Self::Opaque => 1.,
-            Self::Transparent { opacity } | Self::Blur { opacity } => opacity,
+            Self::Transparent { opacity }
+            | Self::Blur { opacity }
+            | Self::CompositorBlur { opacity } => opacity,
         }
     }
 }
@@ -462,6 +471,8 @@ fn run_host<C: 'static>(
         gpu_retry: GpuRetry::default(),
         #[cfg(all(feature = "native-gpu", target_os = "macos"))]
         material: None,
+        #[cfg(all(feature = "native-gpu", target_os = "macos"))]
+        compositor_blur_active: false,
         window: None,
         surface: None,
         surface_size: None,
@@ -567,6 +578,8 @@ struct App<C> {
     gpu_retry: GpuRetry,
     #[cfg(all(feature = "native-gpu", target_os = "macos"))]
     material: Option<super::macos_material::WindowMaterial>,
+    #[cfg(all(feature = "native-gpu", target_os = "macos"))]
+    compositor_blur_active: bool,
     window: Option<Arc<Window>>,
     surface: Option<Surface<Arc<Window>, Arc<Window>>>,
     surface_size: Option<[u32; 2]>,
@@ -695,6 +708,74 @@ impl<C: 'static> App<C> {
         }
         Ok(())
     }
+    #[cfg(feature = "native-gpu")]
+    fn sync_native_backdrop(&mut self, window: &Window) {
+        #[cfg(target_os = "macos")]
+        {
+            let public = matches!(self.options.background, WindowBackground::Blur { .. });
+            if !public {
+                self.material = None;
+            }
+            if public && self.material.is_none() {
+                match super::macos_material::WindowMaterial::install(window) {
+                    Ok(material) => self.material = Some(material),
+                    Err(error) => eprintln!("Volt UI: public window material unavailable ({error}); using transparency without blur"),
+                }
+            }
+            let raw = matches!(
+                self.options.background,
+                WindowBackground::CompositorBlur { .. }
+            ) && !super::macos_material::reduced_transparency();
+            if raw != self.compositor_blur_active {
+                window.set_blur(raw);
+                self.compositor_blur_active = raw;
+                eprintln!(
+                    "Volt UI: opt-in compositor blur {raw} (macOS private API; not App Store-safe)"
+                );
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        window.set_blur(matches!(
+            self.options.background,
+            WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+        ));
+    }
+    fn sync_state_background(&mut self) -> Result<(), String> {
+        let Some(callback) = &self.extensions.background else {
+            return Ok(());
+        };
+        let background = callback(&self.context);
+        if background == self.options.background {
+            return Ok(());
+        }
+        if !background.opacity().is_finite() || !(0. ..=1.).contains(&background.opacity()) {
+            eprintln!(
+                "Volt UI: rejected invalid state-derived background; retaining previous surface"
+            );
+            return Ok(());
+        }
+        let previous = self.options.background;
+        self.options.background = background;
+        #[cfg(feature = "native-gpu")]
+        if self.gpu.is_some() {
+            if let Some(window) = self.window.clone() {
+                if (previous == WindowBackground::Opaque)
+                    != (background == WindowBackground::Opaque)
+                {
+                    self.gpu = None;
+                    window.set_transparent(background != WindowBackground::Opaque);
+                    self.gpu = Some(super::gpu::GpuPresenter::new(
+                        window.clone(),
+                        background != WindowBackground::Opaque,
+                    )?);
+                }
+                self.sync_native_backdrop(&window);
+            }
+        }
+        #[cfg(not(feature = "native-gpu"))]
+        let _ = previous;
+        Ok(())
+    }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
         let result = self.content.after_input(
             outcome,
@@ -734,6 +815,7 @@ impl<C: 'static> App<C> {
             );
         }
         if outcome.activated || outcome.changed {
+            self.sync_state_background()?;
             self.layout()?;
             self.redraw();
         } else {
@@ -1150,6 +1232,13 @@ impl<C: 'static> App<C> {
             }));
         }
         let theme = ui.legacy_theme();
+        if !theme
+            .background
+            .iter()
+            .all(|v| v.is_finite() && (0. ..=1.).contains(v))
+        {
+            return Err("theme callback returned invalid background color".into());
+        }
         let shape_calls_before = self.painter.shape_draw_calls;
         let text_misses_before = self.painter.text_cache_misses;
         let batches = self.runtime.paint_ui(&mut self.painter, &ui);
@@ -1158,6 +1247,21 @@ impl<C: 'static> App<C> {
         let alpha_active = self.gpu.is_some();
         #[cfg(not(feature = "native-gpu"))]
         let alpha_active = false;
+        #[cfg(all(feature = "native-gpu", target_os = "macos"))]
+        let alpha_active = if matches!(
+            self.options.background,
+            WindowBackground::CompositorBlur { .. }
+        ) {
+            let reduced = super::macos_material::reduced_transparency();
+            let active = alpha_active && !reduced;
+            if self.compositor_blur_active != active {
+                w.set_blur(active);
+                self.compositor_blur_active = active;
+            }
+            active
+        } else {
+            alpha_active
+        };
         #[cfg(feature = "native-gpu")]
         let background = root_clear(&theme, self.options.background, alpha_active);
         #[cfg(not(feature = "native-gpu"))]
@@ -1198,6 +1302,10 @@ impl<C: 'static> App<C> {
                         #[cfg(target_os = "macos")]
                         {
                             self.material = None;
+                            if self.compositor_blur_active {
+                                w.set_blur(false);
+                                self.compositor_blur_active = false;
+                            }
                         }
                         #[cfg(not(target_os = "macos"))]
                         w.set_blur(false);
@@ -1220,6 +1328,10 @@ impl<C: 'static> App<C> {
                 #[cfg(target_os = "macos")]
                 {
                     self.material = None;
+                    if self.compositor_blur_active {
+                        w.set_blur(false);
+                        self.compositor_blur_active = false;
+                    }
                 }
                 #[cfg(not(target_os = "macos"))]
                 w.set_blur(false);
@@ -1480,13 +1592,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if try_gpu {
                 match super::gpu::GpuPresenter::new(w.clone(), self.options.background != WindowBackground::Opaque) {
                     Ok(gpu)=>{
-                        #[cfg(target_os = "macos")]
-                        if matches!(self.options.background, WindowBackground::Blur { .. }) {
-                            match super::macos_material::WindowMaterial::install(&w) {
-                                Ok(material) => self.material = Some(material),
-                                Err(error) => eprintln!("Volt UI: public window material unavailable ({error}); using transparency without blur"),
-                            }
-                        }
+                        self.sync_native_backdrop(&w);
                         eprintln!("Volt UI: Vello GPU drawing active ({}) — admitted scenes use no CPU framebuffer raster",gpu.adapter_name);
                         self.gpu=Some(gpu);return Ok((w,None));
                     },
@@ -1938,7 +2044,10 @@ fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
         .with_blur(
             !cfg!(target_os = "macos")
                 && cfg!(feature = "native-gpu")
-                && matches!(options.background, WindowBackground::Blur { .. }),
+                && matches!(
+                    options.background,
+                    WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ),
         )
 }
 fn window_attributes(options: &WindowOptions) -> WindowAttributes {

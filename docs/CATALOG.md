@@ -39,12 +39,18 @@ cargo run --release --locked --features native-gpu --example catalog -- \
 - `--page <slug>` opens a page; `--code` shows its first source panel, independently
   of argument order. `--theme` accepts only `light`, `dark`, `system`.
 - `--accent` accepts `zinc`, `blue`, `violet`, `rose`, `green`, `orange`.
-- `--background` accepts `opaque`, `transparent`, `blur`. The default is `blur`
+- `--background` accepts `opaque`, `transparent`, `blur`/`material`, `compositor`.
+  `compositor` explicitly opts into winit's raw blur (private macOS API).
+  The default remains public `blur`
   with `native-gpu` (frosted sidebar) and `opaque` with software drawing, which
   cannot present a translucent window.
 - `--window-opacity` is finite and in 0..=1, default 0.72 for translucent modes.
-  The window clears transparently; the view paints a tint (minimum 10%),
-  adjustable with the sidebar slider. It does not fade text/control opacity.
+  The **Background opacity** slider changes the root clear directly (10–100%).
+  **Tint strength** independently mixes the selected accent into that background
+  (0–100%, default 0; `--tint` sets its starting percentage). Neither changes
+  text/control opacity. The blur switch and Material/Compositor selector are live.
+  Public material contributes its own system tint; select Compositor for the
+  Terminal-style opacity behavior. Its radius is backend-controlled, not a slider.
 - `--palette`, `--dialog`, `--native-chrome` remain available; `--compact-chrome`
   selects the earlier compact overlay for comparison.
 - Shared `--snapshot`, `--size`, `--scale`, `--bench`, `--bench-target` remain available.
@@ -66,11 +72,16 @@ translucent mode the sidebar sits directly on the window material and the header
 and page live on a solid sheet with rounded leading corners, so body text never
 reads over blur. Opaque mode keeps the same layout with a tinted sidebar.
 Software/native fallback stays opaque. Decorated macOS GPU windows use public
-AppKit `NSVisualEffectView`; unsupported/borderless requests log transparency
-without material. Other compositors may ignore blur. Application packaging,
+AppKit `NSVisualEffectView` by default; unsupported/borderless material requests
+log transparency without material. Explicit Compositor mode uses winit blur,
+checks Reduce Transparency on redraw, and returns to an opaque clear when that
+accessibility preference is enabled. It is not an App Store-safe claim. Other compositors may ignore blur. Application packaging,
 permission and dependency review still gate App Store distribution claims.
 See [the current review receipt](CLAUDE_REVIEW_2026_10_11.md).
 The in-app landscape demo illustrates surface alpha, **not desktop blur**.
+Glass Browser-style in-app GPU backdrop blur is still pending; native window blur
+must not be represented as blur of application content.
+See [the independent-control receipt](GLASS_CONTROLS_2026_10_11.md).
 
 The pinned wgpu 26 Metal backend advertises `PostMultiplied`, but macOS consumes
 premultiplied surface pixels. Volt compensates only in the Metal presentation
