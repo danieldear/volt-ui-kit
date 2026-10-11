@@ -304,3 +304,7 @@ Unreleased application-policy continuation: [state-aware commands, shortcuts and
 guarded closing](docs/APPLICATION_COMMANDS.md), demonstrated in Catalog's
 `--page application-lifecycle`. The host remains single-window; persistence and
 complete OS termination handling are not implied.
+
+Unreleased: [native file panels and bounded notes workflow](docs/DOCUMENT_FILES.md)
+are demonstrated in Catalog Documents; full OS termination, state restoration
+and shipping bundles remain separate work.

@@ -13,7 +13,7 @@ default = []
 declarative = ["dep:serde", "dep:serde_json"]
 rust-ui = ["declarative", "dep:unicode-segmentation"]
 native = ["rust-ui", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:cosmic-text", "dep:image", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
-native-desktop = ["native", "dep:muda", "dep:tray-icon"]
+native-desktop = ["native", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL"]
 dev-tools = ["dep:serde_json"]
 native-gpu = ["native", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
 

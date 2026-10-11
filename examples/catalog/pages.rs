@@ -42,12 +42,13 @@ pub enum Page {
     Effects,
     BackgroundTasks,
     ApplicationLifecycle,
+    Documents,
     SignIn,
     Settings,
     Navigation,
 }
 use Page::*;
-pub const PAGES: [Page; 38] = [
+pub const PAGES: [Page; 39] = [
     Introduction,
     Theming,
     Accessibility,
@@ -84,6 +85,7 @@ pub const PAGES: [Page; 38] = [
     Effects,
     BackgroundTasks,
     ApplicationLifecycle,
+    Documents,
     SignIn,
     Settings,
 ];
@@ -125,6 +127,7 @@ impl Page {
             Effects => "Effects & motion",
             BackgroundTasks => "Background tasks",
             ApplicationLifecycle => "Application lifecycle",
+            Documents => "Documents",
             SignIn => "Sign-in form",
             Settings => "Settings panel",
             Navigation => "Navigation",
@@ -139,7 +142,7 @@ impl Page {
     pub fn group(self) -> &'static str {
         match self {
             Introduction | Theming | Accessibility | Layout => "Getting started",
-            BackgroundTasks | ApplicationLifecycle | SignIn | Settings => "Patterns",
+            BackgroundTasks | ApplicationLifecycle | Documents | SignIn | Settings => "Patterns",
             _ => "Components",
         }
     }
@@ -160,6 +163,7 @@ impl Page {
                 | SplitPane
                 | BackgroundTasks
                 | ApplicationLifecycle
+                | Documents
         )
     }
     pub fn summary(self) -> &'static str {
@@ -203,6 +207,7 @@ impl Page {
             Effects => "Shadows, glows, state styles, keyed animation and transitions.",
             BackgroundTasks => "Worker threads report progress through a bounded message queue.",
             ApplicationLifecycle => "State-aware commands and guarded closing for unsaved work.",
+            Documents => "Native file panels and asynchronous document saving.",
             SignIn => "Inputs, validation and actions composed into a form.",
             Settings => "Grouped preferences with switches, selects and sliders.",
             Navigation => {
@@ -293,6 +298,7 @@ pub fn doc(page: Page, app: &App) -> Doc {
         Effects => effects_doc(app),
         BackgroundTasks => tasks_doc(app),
         ApplicationLifecycle => super::lifecycle::doc(app),
+        Documents => super::documents::doc(app),
         SignIn => sign_in(app),
         Settings => settings_doc(app),
         Navigation => navigation_doc(app),

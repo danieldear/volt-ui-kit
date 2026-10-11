@@ -337,3 +337,12 @@ Cmd/Ctrl+S/W/K and the native close button use real Application policies. Enable
 `native-desktop` on macOS for the owned guarded Quit menu/Cmd+Q; default system
 Quit, Dock/forced termination and disk persistence are not implemented by this
 example. See [application commands](APPLICATION_COMMANDS.md).
+
+## Documents and counted commands (Unreleased)
+
+Catalog now has **39 pages**. `--page documents` adds native macOS Open/Save panels
+and a real 8 KiB UTF-8 notes workflow with asynchronous I/O, conflicts/errors,
+Save As and guarded closing. Use `native-gpu,native-desktop` for GPU/native panels.
+The Application lifecycle page retains its memory-only draft and adds a counted
+Cmd+Shift+P execution witness. See [document files](DOCUMENT_FILES.md) for limits,
+APIs and verified native outcomes. UI Lab and older showcases are unchanged.

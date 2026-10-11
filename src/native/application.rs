@@ -49,6 +49,21 @@ impl<C> Default for HostExtensions<C> {
     }
 }
 impl<C> HostExtensions<C> {
+    pub fn shortcut_dispatch(
+        &mut self,
+        context: &mut C,
+        key: char,
+        modifiers: winit::keyboard::ModifiersState,
+        repeat: bool,
+    ) -> Option<super::CommandDispatch> {
+        let id = self.commands.shortcut_id(key, modifiers)?;
+        if repeat {
+            // A matching repeat is consumed without invoking either callback path.
+            return Some(super::CommandDispatch::Disabled);
+        }
+        let id = id.to_owned();
+        Some(self.dispatch(context, &id))
+    }
     pub fn dispatch(&mut self, context: &mut C, id: &str) -> super::CommandDispatch {
         if self
             .desktop
@@ -345,6 +360,42 @@ mod lifecycle_tests {
             CommandDispatch::Disabled
         );
         assert_eq!(state.saves, 0);
+    }
+    #[test]
+    fn counted_shortcut_dispatch_consumes_repeat_and_exact_modifiers() {
+        use crate::native::Shortcut;
+        use winit::keyboard::ModifiersState;
+        let mut extensions = HostExtensions::<State> {
+            commands: CommandRegistry::new().command(
+                Command::new("probe", "Probe", |s: &mut State| s.saves += 1)
+                    .shortcut(Shortcut::primary('p').shift(true)),
+            ),
+            ..HostExtensions::default()
+        };
+        let primary = if cfg!(target_os = "macos") {
+            ModifiersState::SUPER
+        } else {
+            ModifiersState::CONTROL
+        };
+        let modifiers = primary | ModifiersState::SHIFT;
+        let mut state = State::default();
+        assert_eq!(
+            extensions.shortcut_dispatch(&mut state, 'p', modifiers, false),
+            Some(CommandDispatch::Handled(None))
+        );
+        for _ in 0..50 {
+            assert_eq!(
+                extensions.shortcut_dispatch(&mut state, 'p', modifiers, true),
+                Some(CommandDispatch::Disabled)
+            );
+        }
+        assert_eq!(
+            extensions.shortcut_dispatch(&mut state, 'p', primary, false),
+            None
+        );
+        assert_eq!(state.saves, 1);
+        extensions.shortcut_dispatch(&mut state, 'p', modifiers, false);
+        assert_eq!(state.saves, 2);
     }
     #[test]
     fn requests_use_the_bounded_queue_and_veto_does_not_close_it() {

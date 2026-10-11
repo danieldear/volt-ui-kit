@@ -126,8 +126,13 @@ See [the plan and measured receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).
 
 First slice: additive Application configuration, standalone controlled navigation,
 GPU-first local templates/dev runner, optional macOS application-menu/tray adapters.
-Remaining: modern notifications/public window materials, command/shortcut registry,
-close veto/persistence/multi-window, deeper navigation, debugging and richer motion.
+Follow-up: public decorated macOS GPU window materials, state-aware commands/
+shortcuts, close veto and bounded native notes-file workflow are implemented.
+Remaining: modern notifications, full OS termination, state restoration/multi-window,
+shipping bundles, deeper navigation, debugging and richer motion.
 WebKit/maps/Foundation Models/App Intents follow desktop service acceptance.
 Theme editor is explicitly deferred; templates never prescribe the developer's UI.
 See [status, APIs and gates](docs/APPLICATION_DEVELOPMENT.md).
+
+Unreleased 2026-10-11: native panels + async 8 KiB UTF-8 file workflow and counted
+command witness in Catalog only. See [scope, safety limits and receipt](docs/DOCUMENT_FILES.md).

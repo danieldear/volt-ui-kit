@@ -18,9 +18,50 @@ pub fn save(app: &mut App) {
 pub fn commands() -> CommandRegistry<App> {
     CommandRegistry::new()
         .command(
-            Command::new("save-draft", "Save example draft", save)
-                .shortcut(Shortcut::primary('s'))
-                .enabled_when(dirty),
+            Command::new("save-draft", "Save active draft", |app: &mut App| {
+                if app.page == super::Page::Documents {
+                    super::documents::save(app);
+                } else {
+                    save(app);
+                }
+            })
+            .shortcut(Shortcut::primary('s'))
+            .enabled_when(|app| {
+                if app.page == super::Page::Documents {
+                    !app.documents.busy && (app.documents.dirty() || app.documents.path.is_none())
+                } else {
+                    dirty(app)
+                }
+            }),
+        )
+        .command(
+            Command::new("open-file", "Open notes file…", super::documents::open)
+                .shortcut(Shortcut::primary('o'))
+                .enabled_when(|app| !app.documents.busy),
+        )
+        .command(
+            Command::new("save-file", "Save notes file", super::documents::save).enabled_when(
+                |app| {
+                    !app.documents.busy && (app.documents.dirty() || app.documents.path.is_none())
+                },
+            ),
+        )
+        .command(
+            Command::new(
+                "save-as-file",
+                "Save notes file as…",
+                super::documents::save_as,
+            )
+            .shortcut(Shortcut::primary('s').shift(true))
+            .enabled_when(|app| !app.documents.busy),
+        )
+        .command(
+            Command::new(
+                "command-probe",
+                "Count command execution",
+                |app: &mut App| app.command_probe = app.command_probe.saturating_add(1),
+            )
+            .shortcut(Shortcut::primary('p').shift(true)),
         )
         .command(
             Command::new(
@@ -48,6 +89,9 @@ pub fn request(app: &mut App, request: ApplicationRequest) {
     }
 }
 pub fn close_request(app: &mut App, reason: CloseReason) -> CloseDecision {
+    if super::documents::close_guard(app, reason) {
+        return CloseDecision::KeepOpen;
+    }
     if dirty(app) {
         app.command_palette_open = false;
         app.palette_open = false;
@@ -107,6 +151,7 @@ pub fn doc(app: &App) -> Doc {
                     .height(150.).soft_wrap(true).font_family("SF Mono").font_size(13.)
                     .on_change(|app: &mut App, value| app.document_text = value),
                 vstack(rows).gap(12., Axis::Vertical),
+                text(format!("Command executions: {}", app.command_probe)).font_family("SF Mono").font_size(12.),
                 text(if cfg!(all(target_os = "macos", feature = "native-desktop")) {
                     "Native close and the owned Quit menu are guarded. Forced OS/Dock termination is not intercepted."
                 } else if cfg!(target_os = "macos") {
@@ -194,7 +239,11 @@ pub fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
     DesktopConfig::new("Volt UI").menu(DesktopMenu::new(
         "File",
         [
-            DesktopCommand::new("save-draft", "Save example draft"),
+            DesktopCommand::new("save-draft", "Save active draft"),
+            DesktopCommand::new("open-file", "Open notes file…"),
+            DesktopCommand::new("save-file", "Save notes file"),
+            DesktopCommand::new("save-as-file", "Save notes file as…"),
+            DesktopCommand::new("command-probe", "Count command execution"),
             DesktopCommand::new("command-palette", "Open command palette"),
             DesktopCommand::new("close-window", "Close window"),
         ],

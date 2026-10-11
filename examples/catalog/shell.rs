@@ -75,6 +75,7 @@ pub fn view(app: &App) -> El<App> {
     layers.push(palette(app));
     layers.push(toast(app));
     layers.extend(super::lifecycle::overlays(app));
+    layers.push(super::documents::overlay(app));
     zstack(layers)
         .key("catalog")
         .align(Align::Stretch)
