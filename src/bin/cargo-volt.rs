@@ -22,7 +22,22 @@ fn template(kind: &str) -> io::Result<String> {
         ));
     }
     if kind == "minimal" {
-        return Ok("use volt_ui_kit::{native::Application, ui::prelude::*};\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    Application::new(\"My app\", (), |_| vstack![text(\"Hello, Volt\").font_size(28.)].padding(24., Edge::All).into()).run()\n}\n".into());
+        return Ok(String::from(
+            r#"use volt_ui_kit::{native::{Application, WindowChrome}, ui::prelude::*};
+fn view(_: &()) -> Element<()> {
+    vstack![
+        window_header("My app"),
+        divider().background(ColorToken::Border),
+        vstack![text("Hello, Volt").font_size(28.)]
+            .key("app-content").flex(1.).padding(24., Edge::All),
+    ].align(Align::Stretch).font_family("SF")
+        .background(ColorToken::Base100).color(ColorToken::BaseContent).into()
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Application::new("My app", (), view).chrome(window_chrome()).run()
+}
+"#,
+        ) + WINDOW_SHELL);
     }
     let (title,items,body)=match kind {
         "mail"=>("Mailbox","Inbox|Sent|Drafts", "text(\"Your mail interface\").font_size(24.).into()"),
@@ -42,27 +57,48 @@ fn template(kind: &str) -> io::Result<String> {
         .collect::<Vec<_>>()
         .join(",\n            ");
     Ok(format!(
-        r#"use volt_ui_kit::{{native::Application, ui::prelude::*}};
+        r#"use volt_ui_kit::{{native::{{Application, WindowChrome}}, ui::prelude::*}};
 #[derive(Default)]
 struct App {{ page: u8{extra_state} }}
 fn view(app: &App) -> Element<App> {{
     let content: Element<App> = {body};
-    hstack![
+    let body = hstack![
         navigation([
             {items}
         ]).key("navigation").selected(app.page).width(200.)
             .on_select(|app: &mut App, page| app.page = page),
-        vstack![text("{title}").font_size(30.).font_weight(700), content]
-            .flex(1.).padding(24., Edge::All).gap(16., Axis::Vertical),
-    ].gap(16., Axis::Horizontal).padding(16., Edge::All).into()
+        vstack![content].flex(1.).padding(24., Edge::All),
+    ].key("app-content").flex(1.).align(Align::Stretch)
+        .gap(16., Axis::Horizontal).padding(16., Edge::All);
+    vstack![window_header("{title}"), divider().background(ColorToken::Border), body]
+        .align(Align::Stretch).font_family("SF")
+        .background(ColorToken::Base100).color(ColorToken::BaseContent).into()
 }}
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
-    // No prescribed shell, opacity or provider. Choose appearance in Rust.
-    Application::new("{title}", App::default(), view).size(1100, 760).run()
+    // Catalog-style macOS chrome; native controls remain. Blur is your choice.
+    Application::new("{title}", App::default(), view)
+        .size(1100, 760).chrome(window_chrome()).run()
 }}
 "#
-    ))
+    ) + WINDOW_SHELL)
 }
+// Kept in the generated source so developers can edit the header/chrome directly.
+const WINDOW_SHELL: &str = r#"
+fn window_chrome() -> WindowChrome {
+    if cfg!(target_os = "macos") {
+        WindowChrome::Overlay
+    } else {
+        WindowChrome::Native
+    }
+}
+fn window_header<C: 'static>(title: &str) -> Element<C> {
+    // 60pt unified header, with a clear lane for native macOS traffic lights.
+    hstack![text(title).key("window-title").font_size(15.).font_weight(600), spacer()]
+        .key("window-header").height(60.).align(Align::Center)
+        .padding(if cfg!(target_os = "macos") { 96. } else { 20. }, Edge::Left)
+        .padding(20., Edge::Right).drag_region(true).into()
+}
+"#;
 fn desktop_template(source: String, kind: &str) -> String {
     let callback = if kind == "minimal" {
         "|_: &mut (), id| println!(\"Native command: {id}\")"
@@ -138,7 +174,7 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
         fs::write(destination.join("Cargo.toml"),format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nresolver = \"3\"\nrust-version = \"1.87\"\n\n[dependencies]\nvolt-ui-kit = {{ path = {path}, features = [{features}] }}\n"))?;
         fs::write(destination.join("src/main.rs"), source)?;
         fs::write(destination.join(".gitignore"), "/target\n")?;
-        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
+        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable 60pt header with reserved control space. Other platforms retain native window decorations.\nChange window_chrome() to WindowChrome::Native for a standard title bar. Background blur/transparency is not forced.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
         Ok(())
     })();
     if result.is_err() {
@@ -297,6 +333,34 @@ mod tests {
         assert!(template("unknown").is_err());
     }
     #[test]
+    fn every_template_defaults_to_catalog_chrome_with_a_safe_drag_header() {
+        for kind in ["minimal", "navigation", "mail", "settings", "agent"] {
+            for desktop in [false, true] {
+                let source = template(kind).unwrap();
+                let source = if desktop {
+                    desktop_template(source, kind)
+                } else {
+                    source
+                };
+                assert!(
+                    source.contains(".chrome(window_chrome())"),
+                    "{kind}, desktop={desktop}"
+                );
+                assert!(source.contains("WindowChrome::Overlay"));
+                assert!(source.contains("WindowChrome::Native"));
+                assert!(source.contains("cfg!(target_os = \"macos\")"));
+                assert!(source.contains("fn window_header"));
+                assert!(source.contains(".height(60.)"));
+                assert!(source.contains(".drag_region(true)"));
+                assert!(source.contains("{ 96. } else { 20. }"));
+                assert!(!source.contains("WindowChrome::Borderless"));
+                assert!(!source.contains("WindowBackground::Blur"));
+                assert_eq!(source.matches(".run()").count(), 1);
+                assert_eq!(source.contains(".desktop(desktop(),"), desktop);
+            }
+        }
+    }
+    #[test]
     fn scaffold_never_overwrites_and_preserves_custom_paths() {
         let dir = std::env::temp_dir().join(format!("volt-scaffold-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -305,6 +369,12 @@ mod tests {
         scaffold(&dest, "mail", Path::new(env!("CARGO_MANIFEST_DIR")), false).unwrap();
         let original = fs::read(dest.join("Cargo.toml")).unwrap();
         assert!(String::from_utf8_lossy(&original).contains("resolver = \"3\""));
+        let source = fs::read_to_string(dest.join("src/main.rs")).unwrap();
+        assert!(source.contains(".chrome(window_chrome())"));
+        assert!(source.contains("window_header(\"Mailbox\")"));
+        let readme = fs::read_to_string(dest.join("README.md")).unwrap();
+        assert!(readme.contains("native traffic lights"));
+        assert!(readme.contains("Background blur/transparency is not forced"));
         assert!(scaffold(
             &dest,
             "settings",

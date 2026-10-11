@@ -134,6 +134,38 @@ the generated resolver policy now selects a compatible version. Keep application
 lockfiles in version control. External workspaces own their resolver configuration.
 See [Cargo resolver versions](https://doc.rust-lang.org/cargo/reference/resolver.html#resolver-versions).
 
+All five templates now use **Catalog-style unified window chrome on macOS**:
+no separate native title strip, native close/minimize/fullscreen traffic lights
+retained, and an editable 60pt Rust header marked `.drag_region(true)`. Its title
+starts at 96pt on macOS to keep content clear of the native buttons. The header
+uses SF and semantic theme colors; background blur/transparency is still the
+developer's choice, not silently enabled. Other platforms retain native decorated
+chrome rather than losing their window controls.
+
+Generated `src/main.rs` contains `window_header()` and `window_chrome()` so you can
+customize them directly. `Application`/`NativeOptions` defaults and existing
+projects are unchanged. For a standard title bar use `.chrome(WindowChrome::Native)`;
+adjust/remove your custom header as appropriate. Existing apps can opt in with
+`.chrome(WindowChrome::Overlay)` **and a reserved draggable header**, not just
+the option alone. Unified geometry requires macOS 11+; older macOS retains
+compact native control geometry.
+
+After updating the toolkit, reinstall `cargo-volt` (add `--force` when replacing
+an installed copy). Re-running `new` never overwrites an existing project;
+regenerate into a new directory or update your existing Rust source deliberately.
+
+Scaffold chrome verification (2026-10-11): all five templates with/without desktop
+integration compiled; ten isolated generated-app tests checked header height,
+button clearance and content bounds at 1x/2x and 480/1100pt widths. The toolkit
+all-feature/all-target suite passed 503 tests (13 ignored), strict Clippy, Rust
+1.87 and Linux cross-check passed. A locally ad-hoc packaged generated navigation
+app showed its in-content header without a separate title strip; CUA observed
+native close/minimize/fullscreen accessibility controls and a Projects click
+changed destination 0 to 1. Close exited the test app. Native drag motion,
+fullscreen/multi-display behavior and other-OS visual acceptance are not implied
+by these layout checks. Local receipts remain ignored under
+`work/scaffold-chrome-2026-10-11/`.
+
 To make `cargo volt` available locally:
 
 ```sh
