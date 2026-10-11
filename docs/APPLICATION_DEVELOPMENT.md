@@ -72,7 +72,7 @@ No required shell, background material, layout or AI provider.
 | B | Modern notifications and permission/action lifecycle | Pending; suitable safe UserNotifications bridge compatible with Rust 1.87 required |
 | B | Public macOS window materials | Implemented for decorated GPU windows on macOS 10.14+; native light/dark, tint and zoom/restore checked. Borderless material, live preference-change acceptance and broader fullscreen/platform acceptance remain |
 | C | Command registry/shortcuts/palette, close veto and dirty-document UI | Implemented single-window slice after v0.3.0; Catalog in-memory draft, dynamic commands and owned guarded Quit. Bounded notes-file workflow now implemented; OS termination, state restoration and multi-window remain pending; see [command policies](APPLICATION_COMMANDS.md) and [document files](DOCUMENT_FILES.md) |
-| C | Shipping application bundles, icons, permission declarations, signing/notarization | Pending application tooling; generated Cargo projects are not distributable signed app bundles |
+| C | macOS local bundles, icons, resources, privacy declarations | Implemented `cargo volt bundle` for prebuilt executables, dependency/deployment checks and local ad-hoc signing; Developer ID, hardened-runtime shipping, notarization and installers remain separate owner-controlled release work; see [packaging](MACOS_PACKAGING.md) |
 | C | Deeper nav, document tabs, inspector/output/status compositions | Pending beyond basic reusable navigation |
 | D | UI inspector, debug overlay, code-change development-loop improvements | Pending; existing trace timings remain available |
 | E | Translation/scale/layout/spring motion with correct clipping/hit testing | Pending; existing bounded appearance effects retained |

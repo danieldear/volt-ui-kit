@@ -296,6 +296,12 @@ cargo run --manifest-path /tmp/my-volt-app/Cargo.toml
 cargo run --locked --features native-gpu --example catalog -- --page navigation
 ```
 
+Package a prebuilt macOS executable with `cargo volt bundle`: explicit identity,
+selected resources/icon/privacy descriptions, dependency/deployment validation and
+local ad-hoc signing. Existing outputs are never overwritten; this is not notarization.
+See [macOS packaging](docs/MACOS_PACKAGING.md).
+
+
 See [application development and remaining phases](docs/APPLICATION_DEVELOPMENT.md)
 for APIs, optional desktop templates, rebuild/restart tooling and honest limits.
 

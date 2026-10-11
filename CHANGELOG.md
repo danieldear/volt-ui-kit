@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extend optional `cargo volt` tooling with macOS `.app` packaging for prebuilt
+  executables: explicit metadata, bounded flat resources/ICNS/privacy descriptions,
+  no overwrite, Mach-O/system-library/deployment checks and local ad-hoc signing.
+  No new crates; Developer ID/notarization, installers and nested code are not
+  supplied or claimed. See `docs/MACOS_PACKAGING.md`.
+
 - Add optional public macOS Open/Save panels and explicit unsupported/main-thread
   errors, using existing native-desktop AppKit features (no new registry crate).
 - Add bounded UTF-8 file helpers: private sibling saves, no-clobber new targets,

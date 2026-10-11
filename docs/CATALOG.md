@@ -346,3 +346,11 @@ Save As and guarded closing. Use `native-gpu,native-desktop` for GPU/native pane
 The Application lifecycle page retains its memory-only draft and adds a counted
 Cmd+Shift+P execution witness. See [document files](DOCUMENT_FILES.md) for limits,
 APIs and verified native outcomes. UI Lab and older showcases are unchanged.
+
+## Running Catalog as a macOS app
+
+The optional `cargo volt bundle` command packages a prebuilt Catalog executable
+with explicit identity, selected resources/icon and local ad-hoc signing. Launch
+Services and native file-panel resource reading were accepted on the test Mac;
+no new shell or theme is imposed. See [macOS packaging](MACOS_PACKAGING.md) for
+commands, limits and the separate Developer ID/notarization release process.

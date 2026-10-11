@@ -136,3 +136,14 @@ See [status, APIs and gates](docs/APPLICATION_DEVELOPMENT.md).
 
 Unreleased 2026-10-11: native panels + async 8 KiB UTF-8 file workflow and counted
 command witness in Catalog only. See [scope, safety limits and receipt](docs/DOCUMENT_FILES.md).
+
+### Local macOS packaging follow-up (2026-10-11; Unreleased)
+
+- `cargo volt bundle` packages a developer-selected prebuilt executable, identity,
+  flat resources/icon and privacy descriptions with native validation and local
+  ad-hoc signing. Catalog launch/native resource reading accepted on the test Mac.
+- No new crates or default/vendored Volt changes. Developer ID/notarization,
+  installers, nested code, universal assembly and other OS packaging remain
+  separate release work. See [macOS packaging](docs/MACOS_PACKAGING.md).
+- Next runtime services remain notifications/tray acceptance, richer navigation
+  and multi-window; existing large-display GPU and IME/VoiceOver gates remain.

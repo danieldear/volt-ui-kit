@@ -1,5 +1,10 @@
-//! Local-path scaffolding for the unpublished toolkit. No shell evaluation.
+//! Local scaffolding, rebuild/restart and macOS packaging. No shell evaluation.
 #![forbid(unsafe_code)]
+#[path = "volt/bundle.rs"]
+mod bundle;
+#[cfg(test)]
+#[path = "volt/bundle_tests.rs"]
+mod bundle_tests;
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -133,7 +138,7 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
         fs::write(destination.join("Cargo.toml"),format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nresolver = \"3\"\nrust-version = \"1.87\"\n\n[dependencies]\nvolt-ui-kit = {{ path = {path}, features = [{features}] }}\n"))?;
         fs::write(destination.join("src/main.rs"), source)?;
         fs::write(destination.join(".gitignore"), "/target\n")?;
-        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n"))?;
+        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
         Ok(())
     })();
     if result.is_err() {
@@ -273,8 +278,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             scaffold(Path::new(&args[1]),kind,kit.ok_or_else(||error("--kit-path required until published"))?, desktop)?;
             println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);
         }
+        Some("bundle") if args.get(1).is_some_and(|s| s == "--help") && args.len()==2 => println!("{}", bundle::HELP),
+        Some("bundle") => bundle::run(bundle::BundleOptions::parse(&args[1..])?)?,
         Some("dev") if args.len()<=2=>dev(Path::new(args.get(1).map_or(".",String::as_str)))?,
-        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--template minimal|navigation|mail|settings|agent] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart, not state-preserving hot reload)").into()),
+        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--template minimal|navigation|mail|settings|agent] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart, not state-preserving hot reload)\n       cargo volt bundle --help").into()),
     }
     Ok(())
 }
