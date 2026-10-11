@@ -15,6 +15,7 @@ pub mod files;
 mod macos_chrome;
 #[cfg(all(target_os = "macos", feature = "native-gpu"))]
 mod macos_material;
+pub mod notifications;
 mod raster;
 pub mod system;
 pub use assets::{decode_image, load_image};

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add independent optional `native-notifications` with feature-pruned safe
+  macOS UserNotifications bindings: explicit alert-only permission, bounded silent
+  local requests, one-shot delay, stable IDs and removal. Main-thread/.app checks
+  and accepted-not-displayed semantics are explicit; no automatic permission.
+  Settings/action/foreground delegates and other OS adapters remain unsupported.
+- Catalog Desktop services adds notification/status/error witnesses and guarded
+  shared tray commands. Native QA pending (locked Mac), not a delivery claim.
+  One new pinned optional framework crate; Rust 1.87/default/Volt contracts
+  retained. See `docs/DESKTOP_NOTIFICATIONS.md`.
+
 - Extend optional `cargo volt` tooling with macOS `.app` packaging for prebuilt
   executables: explicit metadata, bounded flat resources/ICNS/privacy descriptions,
   no overwrite, Mach-O/system-library/deployment checks and local ad-hoc signing.

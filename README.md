@@ -288,7 +288,10 @@ explicit renderer/window configuration and bounded worker messages. New local
 project templates prefer GPU without renderer flags; existing embedded/default
 contracts remain unchanged. Independent typed navigation is demonstrated in
 Catalog's Navigation page. Optional `native-desktop` adds macOS application
-menus and tray menus; notifications and other native bridges are pending.
+menus and tray menus. Independent optional `native-notifications` adds explicit
+macOS alert authorization, silent local requests and removal, with bounded input
+and honest accepted-not-displayed status. Settings/action/foreground delegates
+and other native bridges remain pending. See [desktop notifications](docs/DESKTOP_NOTIFICATIONS.md).
 
 ```sh
 cargo run --locked --features dev-tools --bin cargo-volt -- new /tmp/my-volt-app --kit-path . --template navigation

@@ -16,7 +16,7 @@ pub fn capabilities() -> SystemCapabilities {
     SystemCapabilities {
         native_menu: desktop,
         tray_icon: desktop,
-        notifications: false,
+        notifications: super::notifications::capabilities().local_requests,
         embedded_web: false,
         maps: false,
         on_device_ai: false,
@@ -347,8 +347,10 @@ mod tests {
     #[test]
     fn unimplemented_services_never_claim_support() {
         let c = capabilities();
-        assert!(
-            !c.notifications && !c.embedded_web && !c.maps && !c.app_intents && !c.on_device_ai
+        assert_eq!(
+            c.notifications,
+            super::super::notifications::capabilities().local_requests
         );
+        assert!(!c.embedded_web && !c.maps && !c.app_intents && !c.on_device_ai);
     }
 }

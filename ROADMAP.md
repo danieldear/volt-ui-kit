@@ -128,7 +128,7 @@ First slice: additive Application configuration, standalone controlled navigatio
 GPU-first local templates/dev runner, optional macOS application-menu/tray adapters.
 Follow-up: public decorated macOS GPU window materials, state-aware commands/
 shortcuts, close veto and bounded native notes-file workflow are implemented.
-Remaining: modern notifications, full OS termination, state restoration/multi-window,
+Remaining: full notification settings/action lifecycle, full OS termination, state restoration/multi-window,
 shipping bundles, deeper navigation, debugging and richer motion.
 WebKit/maps/Foundation Models/App Intents follow desktop service acceptance.
 Theme editor is explicitly deferred; templates never prescribe the developer's UI.
@@ -147,3 +147,14 @@ command witness in Catalog only. See [scope, safety limits and receipt](docs/DOC
   separate release work. See [macOS packaging](docs/MACOS_PACKAGING.md).
 - Next runtime services remain notifications/tray acceptance, richer navigation
   and multi-window; existing large-display GPU and IME/VoiceOver gates remain.
+
+
+### Bounded notifications/tray follow-up (2026-10-11; Unreleased)
+
+- Independent safe `native-notifications`: alert permission, silent local
+  stable-ID requests and removal; precise unsupported settings/action/foreground
+  capabilities. Rust 1.87 and default/Volt compatibility retained.
+- Catalog only: Desktop services, bounded completion witness and shared guarded
+  tray commands. Native acceptance currently pending because the QA Mac was locked.
+- Other OS adapters, delegates, multi-window and the original GPU/IME/VoiceOver
+  gates remain separate. See [notifications](docs/DESKTOP_NOTIFICATIONS.md).

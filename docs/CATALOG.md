@@ -340,7 +340,7 @@ example. See [application commands](APPLICATION_COMMANDS.md).
 
 ## Documents and counted commands (Unreleased)
 
-Catalog now has **39 pages**. `--page documents` adds native macOS Open/Save panels
+Catalog now has **40 pages**. `--page documents` adds native macOS Open/Save panels
 and a real 8 KiB UTF-8 notes workflow with asynchronous I/O, conflicts/errors,
 Save As and guarded closing. Use `native-gpu,native-desktop` for GPU/native panels.
 The Application lifecycle page retains its memory-only draft and adds a counted
@@ -354,3 +354,14 @@ with explicit identity, selected resources/icon and local ad-hoc signing. Launch
 Services and native file-panel resource reading were accepted on the test Mac;
 no new shell or theme is imposed. See [macOS packaging](MACOS_PACKAGING.md) for
 commands, limits and the separate Developer ID/notarization release process.
+
+
+## Desktop services (Unreleased)
+
+The new Desktop services page demonstrates explicit local-notification permission,
+bounded title/body input, delayed silent submission, visible errors and removal.
+Build with `native-notifications` and launch a packaged `.app`; an unbundled Cargo
+run reports a missing-bundle error rather than asking permission automatically.
+With `native-desktop`, a V-shaped status item shares the same command registry and
+count witness, with state-aware send/remove enablement. No UI Lab/old Showcase
+changes. See [API, safety limits and native acceptance](DESKTOP_NOTIFICATIONS.md).

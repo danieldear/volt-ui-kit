@@ -2,6 +2,7 @@
 //! spirit of shadcn/ui and daisyUI docs. Each page shows live previews, the
 //! Rust that produced them, variations and an API reference.
 pub mod art;
+pub mod desktop_services;
 pub mod documents;
 pub mod lifecycle;
 mod pages;
@@ -42,6 +43,7 @@ pub const THEMES: [(&str, u32, u32); 6] = [
 
 #[derive(Debug)]
 pub enum Message {
+    NotificationWake,
     Progress {
         generation: u64,
         step: u32,
@@ -81,6 +83,7 @@ pub struct App {
     pub bio: String,
     pub requests: Option<UiSender<volt_ui_kit::native::ApplicationRequest>>,
     pub documents: documents::State,
+    pub services: desktop_services::State,
     pub command_probe: u64,
     pub document_text: String,
     pub saved_document: String,
@@ -128,6 +131,7 @@ impl App {
         Self {
             requests: None,
             documents: documents::State::default(),
+            services: desktop_services::State::default(),
             command_probe: 0,
             document_text: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
             saved_document: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
@@ -288,7 +292,9 @@ impl Drop for App {
 
 /// Worker messages arrive here, on the UI thread, in batches.
 pub fn update(app: &mut App, message: Message) {
+    desktop_services::drain(app);
     let (generation, step) = match message {
+        Message::NotificationWake => return,
         Message::File { generation, result } => {
             documents::finish(app, generation, &result);
             return;
