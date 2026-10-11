@@ -72,6 +72,14 @@ permission and dependency review still gate App Store distribution claims.
 See [the current review receipt](CLAUDE_REVIEW_2026_10_11.md).
 The in-app landscape demo illustrates surface alpha, **not desktop blur**.
 
+The pinned wgpu 26 Metal backend advertises `PostMultiplied`, but macOS consumes
+premultiplied surface pixels. Volt compensates only in the Metal presentation
+shader; otherwise light-mode translucent fills wash to white and antialiased
+text/borders lose their intended appearance. This is not a tint or font change.
+`VOLT_UI_TRACE=1` now reports `VOLT_UI_SURFACE` pixel encoding and `VOLT_UI_FONTS`
+resolved SF Text/Display/Mono families. See the
+[regression receipt](METAL_ALPHA_REGRESSION_2026_10_11.md) for evidence and limits.
+
 ## Screen structure and design
 
 ```text

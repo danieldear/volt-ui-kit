@@ -464,6 +464,9 @@ impl RasterPainter {
             "sans-serif",
         );
         let sf_mono = apple_family(&fonts, &["SF Mono", ".SF NS Mono"], "monospace");
+        if std::env::var_os("VOLT_UI_TRACE").is_some() {
+            eprintln!("VOLT_UI_FONTS system={system_family:?} sf_text={sf_text:?} sf_display={sf_display:?} sf_mono={sf_mono:?}");
+        }
         Self {
             viewport,
             fonts,
@@ -3010,6 +3013,45 @@ mod generic_font_tests {
 #[cfg(test)]
 mod sf_alias_tests {
     use super::*;
+    #[test]
+    fn sf_requested_weights_shape_with_the_matching_installed_face() {
+        for scale in [1., 2.] {
+            let mut p =
+                RasterPainter::new(Viewport::new(600. * scale, 120. * scale, scale).unwrap());
+            for (alias, logical_size) in [("SF", 13.), ("SF", 44.), ("SF Mono", 13.)] {
+                for weight in [400, 500, 600, 700] {
+                    let size = logical_size * scale;
+                    let family = p.resolved_font_family(alias, size);
+                    if matches!(family.as_str(), "sans-serif" | "monospace") {
+                        continue;
+                    }
+                    let expected = p
+                        .fonts
+                        .db()
+                        .query(&cosmic_text::fontdb::Query {
+                            families: &[Family::Name(&family)],
+                            weight: Weight(weight),
+                            ..Default::default()
+                        })
+                        .expect("resolved family must be queryable");
+                    let style = TextStyle {
+                        family: alias.into(),
+                        size,
+                        weight,
+                        ..Default::default()
+                    };
+                    let key = p.key("Native Rust 012345", &style, 590. * scale);
+                    let buffer = &p.text[&key].0;
+                    let glyphs: Vec<_> = buffer.layout_runs().flat_map(|r| r.glyphs).collect();
+                    assert!(!glyphs.is_empty());
+                    assert!(
+                        glyphs.iter().all(|g| g.font_id == expected),
+                        "{alias}/{weight}/{scale}x selected a different face or fell back"
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn sf_aliases_resolve_installed_faces_without_changing_existing_defaults() {
         let mut p = RasterPainter::new(Viewport::new(400., 120., 1.).unwrap());

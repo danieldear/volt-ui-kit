@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fix native Metal window presentation with pinned wgpu 26: compensate for its
+  misadvertised straight-alpha mode, restoring translucent sidebar fills,
+  badge/selection backgrounds and antialiased text/borders. No tint, material,
+  font-family, public default or dependency changes. Add backend-policy and
+  real-GPU presentation-pixel regressions, SF face/weight checks and opt-in
+  surface/font diagnostics; see `docs/METAL_ALPHA_REGRESSION_2026_10_11.md`.
+
 - Generated apps now use Catalog-style unified macOS chrome instead of a separate
   native title strip. All five templates retain native traffic lights, include an
   editable 60pt drag header with safe button clearance, SF and semantic colors.
