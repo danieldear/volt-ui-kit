@@ -262,9 +262,21 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
     let news = cta(
         "hero-news",
         if tier == Tier::Compact {
-            "NEW IN 0.3  →"
+            concat!(
+                "NEW IN ",
+                env!("CARGO_PKG_VERSION_MAJOR"),
+                ".",
+                env!("CARGO_PKG_VERSION_MINOR"),
+                "  →"
+            )
         } else {
-            "NEW IN 0.3 — RELAY · FILE PANELS · NOTIFICATIONS  →"
+            concat!(
+                "NEW IN ",
+                env!("CARGO_PKG_VERSION_MAJOR"),
+                ".",
+                env!("CARGO_PKG_VERSION_MINOR"),
+                " — COMPONENTS · NATIVE APPS · GPU  →"
+            )
         },
         false,
     )
@@ -1064,10 +1076,15 @@ fn closing() -> El<App> {
         divider().background(ColorToken::Border),
         hstack![
             mark(20.),
-            text("VOLT UI 0.3")
-                .font_family(LABEL)
-                .font_size(11.)
-                .letter_spacing(0.18),
+            text(concat!(
+                "VOLT UI ",
+                env!("CARGO_PKG_VERSION_MAJOR"),
+                ".",
+                env!("CARGO_PKG_VERSION_MINOR")
+            ))
+            .font_family(LABEL)
+            .font_size(11.)
+            .letter_spacing(0.18),
             spacer(),
             text("MIT LICENSED · RENDERED BY VELLO · BUILT IN RUST")
                 .font_family(LABEL)

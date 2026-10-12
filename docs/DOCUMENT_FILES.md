@@ -146,10 +146,11 @@ protection. Full OS termination and state-preserving reload remain future work.
   larger-display resize/fullscreen driver issue.
 - Logs, disposable bundle and fixtures are local/ignored under
   `work/documents-2026-10-11/`; no user documents were used. New visual demos are
-  Catalog-only, and the release version remains 0.3.0 with changes Unreleased.
+  Catalog-only. This document workflow is included in v0.4.0.
 
-App bundles/signing tooling, notifications, deeper navigation and multi-window
-remain the next application-foundation batches, not completed by this slice.
+Local app bundles and notifications are implemented in separate slices; signed
+distribution, deeper navigation and multi-window remain application-foundation
+work, not completed by this document workflow.
 
 ### Automated gates
 
