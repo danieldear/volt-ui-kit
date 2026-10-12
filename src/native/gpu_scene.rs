@@ -43,6 +43,10 @@ pub(super) struct SceneStats {
     pub bands: usize,
     /// Always zero: scene resources are not a CPU-rendered window framebuffer.
     pub framebuffer_upload_bytes: usize,
+    /// Estimated flattened lines and segments (Vello's estimate plus glyph
+    /// outlines) against the fixed buffer capacity; for diagnostics.
+    pub lines_estimate: u64,
+    pub segments_estimate: u64,
 }
 struct CachedImage {
     source: Image,
@@ -77,6 +81,7 @@ pub(super) struct GpuSceneEncoder {
     /// Physical `[y, height]` strips for a banded frame; empty for one pass.
     pub bands: Vec<[u32; 2]>,
     viewport_height: u32,
+    viewport_width: u32,
 }
 /// Strips are whole 16px tile rows. A strip that cuts a 256px bin row counts
 /// that row's bins in full, which over-estimates binning (the safe side).
@@ -132,6 +137,22 @@ fn byte(v: f32) -> u8 {
 }
 pub(super) fn color(c: [f32; 4]) -> Color {
     Color::from_rgba8(byte(c[0]), byte(c[1]), byte(c[2]), byte(c[3]))
+}
+impl GpuSceneEncoder {
+    fn on_frame(&self, r: Rect) -> Rect {
+        let frame = Rect::new(
+            -2.,
+            -2.,
+            f64::from(self.viewport_width) + 2.,
+            f64::from(self.viewport_height) + 2.,
+        );
+        let clipped = r.intersect(frame);
+        if clipped.width() > 0. && clipped.height() > 0. {
+            clipped
+        } else {
+            Rect::ZERO
+        }
+    }
 }
 fn rect([x, y, w, h]: [f32; 4]) -> Rect {
     Rect::new(x as f64, y as f64, (x + w) as f64, (y + h) as f64)
@@ -337,6 +358,8 @@ impl GpuSceneEncoder {
         let vello = self.scene.bump_estimate(None);
         let lines = u64::from(vello.lines.len()) + self.budget.glyph_lines;
         let segments = u64::from(vello.segments.len()) + self.budget.glyph_lines * 3 / 2;
+        self.stats.lines_estimate = lines;
+        self.stats.segments_estimate = segments;
         let b = &self.budget;
         let global = if over(lines, LINE_CAPACITY) {
             Some("lines")
@@ -464,6 +487,7 @@ impl GpuSceneEncoder {
         self.budget.row_tiles = vec![0; self.tiles[1]];
         self.budget.bin_rows = vec![0; self.tiles[1].div_ceil(16)];
         self.viewport_height = vp.height as u32;
+        self.viewport_width = vp.width as u32;
         self.open_tiles.clear();
         let mut stack = Vec::<bool>::new();
         // Pixel bounds of the innermost structural clip. Opacity layers and
@@ -961,7 +985,9 @@ impl GpuSceneEncoder {
                 None => return self.text_bitmaps(glyph, painter),
             }
         }
-        let bounds = rect(glyph.bounds);
+        // Clip layers cost by area: an editor row's box is effectively
+        // unbounded (no wrapping), so clamp to the frame it can appear in.
+        let bounds = self.on_frame(rect(glyph.bounds));
         if overflow {
             self.layer(Mix::Normal, 1., &bounds);
         }
@@ -1084,7 +1110,9 @@ impl GpuSceneEncoder {
         }
         // Clip only text whose ink leaves its box (scrolled or truncated text):
         // a layer per label made ordinary screens exceed Vello's blend budget.
-        let bounds = rect(glyph.bounds);
+        // Clip layers cost by area: an editor row's box is effectively
+        // unbounded (no wrapping), so clamp to the frame it can appear in.
+        let bounds = self.on_frame(rect(glyph.bounds));
         let ink = drawn.iter().filter_map(|(id, o)| {
             let e = self.glyphs.get(id)?;
             let (x, y) = (o[0] + e.offset[0], o[1] + e.offset[1]);
