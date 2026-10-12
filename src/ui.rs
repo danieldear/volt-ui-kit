@@ -277,11 +277,16 @@ enum Callback<C> {
     Files(FilesCallback<C>),
 }
 mod bars;
+mod charts;
 mod data;
 mod dates;
 mod dialogs;
 mod disclosure;
 mod display;
+pub use charts::{
+    area_chart, candlestick_chart, donut_chart, nice_ticks, short_number, stacked_bar_chart,
+    AreaChart, Candle, CandlestickChart, DonutChart, StackedBarChart,
+};
 mod forms;
 pub use disclosure::{
     accordion, collapsible, command, command_palette, drawer, toaster, Accordion, Collapsible,
@@ -310,7 +315,7 @@ pub use forms::{
     tag_input, ColorPicker, Combobox, ComboboxState, DropZone, FormField, Hsl, NumberInput,
     OtpInput, RadioGroup, Rating, TagInput, TagInputState,
 };
-pub use icons::{icon, Icon, IconElement, ALL_ICONS};
+pub use icons::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon, ALL_ICONS};
 mod value_controls;
 pub use bars::{
     button_bar, segmented_control, tab, tab_bar, tab_item, tabs, toolbar, ButtonBar,
@@ -1066,6 +1071,7 @@ pub mod prelude {
         pagination, skeleton, skeleton_text, sparkline, stat, steps, timeline, toaster,
         CommandPaletteState, DrawerSide, Presence, Severity, TimelineItem, Toast, ToastPosition,
     };
+    pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
     pub use super::{
         badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
         divider, grid, hstack, loading, menu, menu_item, menu_separator, menu_submenu, navigation,
@@ -1092,5 +1098,5 @@ pub mod prelude {
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
-    pub use super::{icon, Icon, IconElement};
+    pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
 }
