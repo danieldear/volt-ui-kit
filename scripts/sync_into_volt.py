@@ -24,7 +24,7 @@ def main():
         parser.error("destination is not a Volt workspace")
     destination = volt / "vendor/volt-ui-kit"
     files = sources()
-    manifest = {"project": "volt-ui-kit", "version": "0.1.0", "files": {
+    manifest = {"project": "volt-ui-kit", "version": "0.4.0", "files": {
         name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files.items()}}
     marker = destination / "SOURCE.json"
     if destination.is_symlink() or marker.is_symlink():

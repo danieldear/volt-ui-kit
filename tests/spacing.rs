@@ -120,13 +120,18 @@ mod rust {
                         .into(),
                     scale,
                 );
-                close(bounds(&runtime, "a"), [0., 0., 40. * scale, 20. * scale]);
+                // Panels are padded surfaces (12px); gaps still add no outer space.
+                let inset = if kind == "panel" { 12. * scale } else { 0. };
+                close(
+                    bounds(&runtime, "a"),
+                    [inset, inset, 40. * scale, 20. * scale],
+                );
                 close(
                     bounds(&runtime, "b"),
                     if kind == "row" {
                         [52. * scale, 0., 40. * scale, 20. * scale]
                     } else {
-                        [0., 28. * scale, 40. * scale, 20. * scale]
+                        [inset, 28. * scale + inset, 40. * scale, 20. * scale]
                     },
                 );
             }

@@ -167,7 +167,7 @@ Fonts/text color inherit through containers; surface/accent/border/radius do not
 Text measurement and drawing use the same resolved font/style. Colors are
 `#RRGGBB` or `#RRGGBBAA`. Geometry is logical pixels, scaled by the shared runtime.
 Font size 8..=96; weight 100..=900 in steps of 100; border 0..=16; radius 0..=256;
-finite geometry 0..=16384; text/labels up to 8 KiB; tree <=512 nodes, depth <=24.
+finite geometry 0..=16384; text/labels up to 8 KiB; tree <=4096 nodes, depth <=48 (whole-tree rebuild per action: ~25ms at 4096 nodes).
 These constraints/styles are validated at build, not all at Rust compilation.
 See [styling semantics](STYLING.md). Font availability/fallback is host-dependent.
 

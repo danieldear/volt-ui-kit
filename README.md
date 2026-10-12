@@ -2,7 +2,69 @@
 
 The cards, buttons, forms, palettes and vector icons behind Volt — extracted into a small, renderer-independent Rust library.
 
-**Status:** working extraction, version 0.1.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
+**Status:** working extraction, version 0.4.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
+
+## Polished component testing: Volt Catalog
+
+```sh
+cargo run --release --locked --features native --example catalog
+```
+
+Catalog is the primary component demonstration/acceptance app as of 2026-10-10.
+It provides live previews, selectable Rust source, API tables, SF/SF Mono type,
+six accents and light/dark/system themes. New work extends Catalog only; Atelier,
+Desk and UI Lab remain existing regression fixtures. See [Catalog](docs/CATALOG.md)
+for accessibility, GPU and opt-in glass launch options and acceptance boundaries.
+
+## Coding-agent client: Relay
+
+```sh
+cargo run --release --locked --features native-gpu --example relay
+```
+
+A desktop agent client in the style of current coding-agent apps: frosted thread
+sidebar, streaming transcript with collapsible work steps and file changes, a
+composer with permission, model and effort menus, and an inspector card. Replies
+come from a local scripted worker, so it runs offline. `--theme light`, `--new`,
+`--thread N`, `--background opaque` and the shared `--snapshot` flags apply.
+
+```sh
+cargo run --features native --example ui_lab -- --section scrolling --theme light
+cargo run --features native-gpu --example ui_lab -- --section window --background blur --chrome overlay
+```
+
+See [the examples guide](examples/README.md) for fixture sections and CLI flags;
+use [Catalog](docs/CATALOG.md) for current component acceptance.
+The smaller examples remain focused regression/learning fixtures, not the main
+manual-testing workflow. Native window alpha/blur still requires platform acceptance.
+
+The Controls section also includes reusable toolbars, joined button bars, typed
+segmented controls and active-page-only tabs, controlled text fields/areas, bounded
+sliders, typed selection popups and modal dialogs. See [the component API](docs/COMPONENTS.md)
+for Rust declarations, keyboard behavior and honest platform limits.
+See [performance measurement](docs/PERFORMANCE.md) for reproducible workloads
+and the distinction between native timing, readback and utilization.
+See [GPU drawing and dependencies](docs/GPU_RENDERING.md) for the optional Vello
+renderer, feature-pruned backend policy and explicit software comparison.
+
+## Polished app-scale examples
+
+```sh
+# Original multi-screen product showcase; also accessible inside UI Lab
+cargo run --locked --features native --example showcase
+# Original Codex-style desktop workbench, with local sample conversations
+cargo run --locked --features native --example desk
+```
+
+**Volt Atelier** has Welcome, Workspace and Component Studio screens, paired
+midnight/paper themes, original vector art and real Rust callbacks. **Volt Desk**
+has conversation navigation, independently scrolling panes, an editable local composer
+and optional inspector. SF/SF Mono resolve to installed Apple faces on macOS with
+explicit sans/mono fallbacks elsewhere; no Apple fonts are bundled. Desk is not an
+AI client: Send uses your edited text but replies remain fixed local samples.
+
+See [showcase apps and verification](docs/SHOWCASE_APPS.md) for direct routes,
+compact mode, font resolution, design tokens and interaction checklists.
 
 ## What is here
 
@@ -146,11 +208,18 @@ Both frontends use the same validated tree/layout/input runtime, with no JSON
 round-trip for Rust composition. Panel/Row/Column/Text/Button/Checkbox/Toggle/Badge/
 Separator/Divider and Spacer support layout; visible components support font
 family/size/weight/italic and text/surface/border styles.
-The native host uses winit, softbuffer, tiny-skia and cosmic-text; one Solid-only
-software-rendered window, not GPU glass or a complete cross-platform framework.
+The optional native host uses winit and cosmic-text. `native` draws through
+tiny-skia/softbuffer; `native-gpu` draws through Vello/wgpu for opaque and alpha
+windows, with software fallback. Window blur is an OS request, not widget backdrop
+blur or a complete cross-platform framework.
+
+```sh
+VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example ui_lab
+VOLT_UI_RENDERER=software cargo run --locked --features native-gpu --example ui_lab
+```
 Rust source edits require rebuild. Current composition rebuilds the whole tree,
-not dependency-tracked signals/subtree diffing. Background state updates do not
-automatically notify the native runner yet.
+not dependency-tracked signals/subtree diffing. Background state updates use the bounded `UiSender` message API to wake the
+native runner without polling; see [worker messages](docs/APP_RUNTIME.md).
 
 Default builds keep existing widget/Painter APIs and depend only on unicode-width.
 `declarative` adds serde/serde_json; `rust-ui` currently shares that feature;
@@ -158,7 +227,7 @@ Default builds keep existing widget/Painter APIs and depend only on unicode-widt
 or snapshot synchronization are performed by building these examples.
 See [Rust UI design](docs/RUST_UI.md), [all examples](examples/README.md),
 [optional JSON format](docs/DECLARATIVE_UI.md), [styles](docs/STYLING.md) and
-[vertical-slice gates](docs/VERTICAL_SLICE.md). Local development profiles optimize
+[validation gates](docs/VALIDATION.md). Local development profiles optimize
 CPU rendering; consumer workspaces retain their own profiles. See
 [measured performance](docs/PERFORMANCE.md) for evidence and remaining limits.
 
@@ -174,8 +243,8 @@ space without painting/input. Try `rust_layout` for interactive placement preset
 accept typed responsive padding/gap as well as their existing scalar values.
 `zstack!` independently overlays children in back-to-front order. Resize resolves
 layout properties without rebuilding Rust callbacks. Try `rust_responsive` and see
-[responsive contracts](docs/RESPONSIVE_UI.md); container queries/grids/scrolling
-and free-coordinate placement remain future work.
+[responsive contracts](docs/RESPONSIVE_UI.md); container queries/adaptive grids and free-coordinate placement remain future work.
+Opt-in overflow scrolling is described below.
 
 ## Effects and custom window chrome
 
@@ -187,3 +256,91 @@ animation and fade transitions work in the native software renderer.
 provide Volt-style integrated macOS chrome without changing old option literals.
 See [effects/windowing contracts and limits](docs/EFFECTS_AND_WINDOWING.md).
 Native OS chrome/input/timer acceptance remains separate from headless tests.
+
+## Semantic surfaces and scrolling (Rust UI)
+
+Panels and stacks share image backgrounds, background-only opacity, explicit
+rounded/circle/path clipping and semantic `ColorToken` styling. `canvas` retains
+Rust vector commands. Opt into overflow with `.scroll(Scroll::Auto)` or a specific
+axis; native wheel/trackpad input bubbles through nested views.
+
+- `cargo run --features native --example rust_surfaces` — images, vectors, theme toggle
+- `cargo run --features native --example rust_scroll` — fixed headers and nested scrolling
+- `cargo run --features native-gpu --example rust_transparent` — optional real window alpha
+
+See [Themes, surfaces, clipping and scrolling](docs/SURFACES_THEMES_AND_SCROLLING.md)
+for APIs, limits, compatibility and native-blur platform caveats.
+
+### Application runtime and extended components
+
+Typed bounded worker messages wake the native event loop without idle polling. **Catalog is the current acceptance app.** Existing **Showcase Activity** (jobs, menus, tooltip/popover, wrapping), **Explorer** (10,000 virtual rows, tables, trees, split panes), and Lab routes remain regression fixtures; new demos are not added there. GPU Showcase defaults to a translucent blur-request window; `--background opaque` restores a solid window.
+
+```sh
+cargo run --locked --features native-gpu --example showcase -- --screen activity
+cargo run --locked --features native-gpu --example showcase -- --screen explorer
+```
+
+See [runtime](docs/APP_RUNTIME.md), [declarations and limits](docs/EXTENDED_COMPONENTS.md),
+and [validation gates](docs/VALIDATION.md).
+
+### Extended Rust components (Unreleased)
+
+Catalog now includes Utilities, Icons, Date & time, Form inputs, Overlays,
+Data display and Charts. The added APIs are Rust-only; schema-1 JSON and the
+legacy default renderer/dependencies are unchanged.
+
+- Layout/style: grids and spans, wrapping, justification, sizing constraints,
+  responsive visibility/width/font size, gradients, text alignment, borders,
+  cursors and paint-time motion.
+- Inputs: calendars/date ranges/time, radio groups, number inputs, searchable
+  comboboxes, tags, two-thumb ranges, colors, OTP, ratings, labelled fields and
+  native file drop zones.
+- Composition: drawers, disclosure, command palettes, toasts, avatars, alerts,
+  breadcrumbs, pagination, steps, timelines, empty states and static charts.
+- Assets: 65 vector icons, bounded SVG path import and registered bundled fonts
+  (64 files / 256 MiB total, shared between windows).
+
+Values and callbacks remain controlled by Rust application state. See the
+[component APIs and limits](docs/COMPONENTS.md) for examples and explicit limitations;
+component availability is not a claim of complete shadcn/Tailwind equivalence
+or full cross-platform runtime acceptance.
+
+## Application development (first slice)
+
+The additive `native::Application` builder supports app-owned views/state,
+explicit renderer/window configuration and bounded worker messages. New local
+project templates prefer GPU without renderer flags; existing embedded/default
+contracts remain unchanged. New templates use Catalog-style unified macOS chrome
+with native traffic lights and an editable, safely inset draggable header;
+other platforms keep their native decorations. Blur remains developer-controlled.
+Independent typed navigation is demonstrated in
+Catalog's Navigation page. Optional `native-desktop` adds macOS application
+menus and tray menus. Independent optional `native-notifications` adds explicit
+macOS alert authorization, silent local requests and removal, with bounded input
+and honest accepted-not-displayed status. Settings/action/foreground delegates
+and other native bridges remain pending. See [desktop notifications](docs/DESKTOP_NOTIFICATIONS.md).
+
+```sh
+cargo run --locked --features dev-tools --bin cargo-volt -- new /tmp/my-volt-app --kit-path . --template navigation
+cargo run --manifest-path /tmp/my-volt-app/Cargo.toml
+cargo run --locked --features native-gpu --example catalog -- --page navigation
+```
+
+Package a prebuilt macOS executable with `cargo volt bundle`: explicit identity,
+selected resources/icon/privacy descriptions, dependency/deployment validation and
+local ad-hoc signing. Existing outputs are never overwritten; this is not notarization.
+See [macOS packaging](docs/MACOS_PACKAGING.md).
+
+
+See [application development and remaining phases](docs/APPLICATION_DEVELOPMENT.md)
+for APIs, optional desktop templates, rebuild/restart tooling and honest limits.
+
+
+Unreleased application-policy continuation: [state-aware commands, shortcuts and
+guarded closing](docs/APPLICATION_COMMANDS.md), demonstrated in Catalog's
+`--page application-lifecycle`. The host remains single-window; persistence and
+complete OS termination handling are not implied.
+
+Unreleased: [native file panels and bounded notes workflow](docs/DOCUMENT_FILES.md)
+are demonstrated in Catalog Documents; full OS termination, state restoration
+and shipping bundles remain separate work.
