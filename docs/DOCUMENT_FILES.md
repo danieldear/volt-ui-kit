@@ -75,9 +75,11 @@ save_text_file(path, "Updated note", SavePolicy::MatchContents(&original))?;
   `ApprovedReplacement` explicitly permits replacement; Catalog uses it only
   after a Save As panel selection, including AppKit's overwrite confirmation.
 - Writes allocate a sibling using `create_new`, write/sync it, and then commit.
-  New targets use a hard link so a concurrent existing name is not overwritten;
-  replacement uses `std::fs::rename`. Filesystems/platforms that do not support
-  these operations return errors. Originals are not truncated in place, and
+  New targets use a hard link so a concurrent existing name is not overwritten.
+  Where hard links are unsupported (exFAT/FAT, many SMB/NFS shares) new targets
+  fall back to an exclusive `create_new` write: still never overwriting, but not
+  atomic if the process dies mid-write (a failed write removes its own file).
+  Replacement uses `std::fs::rename`. Originals are not truncated in place, and
   failed commits clean up the temporary file on normal error/drop paths.
 - Unix new temporary files use mode 0600. Existing permission bits are retained;
   read-only targets are rejected even with explicit replacement. Ownership,

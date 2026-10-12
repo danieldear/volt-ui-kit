@@ -10,11 +10,10 @@ use volt_ui_kit::ui::{prelude::*, Element as El};
 /// macOS, so the tint never goes below this.
 pub const OPACITY_MIN: u8 = 10;
 
-const SIDEBAR: f32 = 248.;
-
 pub fn view(app: &App) -> El<App> {
-    let page = if app.page == Page::Introduction {
-        landing(app)
+    let landing = app.page == Page::Introduction;
+    let page = if landing {
+        super::landing::landing(app)
     } else {
         article(app)
     };
@@ -25,16 +24,38 @@ pub fn view(app: &App) -> El<App> {
         divider().background(ColorToken::Border),
         // Vertical breathing room lives inside the scrolled content: scroll
         // padding would also shrink the clip, cutting content off early.
-        vstack![
-            spacer().height(32.).flex(0.),
-            page,
-            spacer().height(64.).flex(0.),
-        ]
-        .key(format!("page-{}", app.page.slug()))
-        .transition(Transition::fade().duration_ms(160))
-        .flex(1.)
-        .padding(responsive(24.).at(Breakpoint::Xl, 56.), Edge::Horizontal)
-        .scroll(Scroll::Vertical),
+        {
+            // A readable measure on wide windows: the page column stops
+            // growing and centres instead of stretching edge to edge.
+            let column = vstack![page]
+                .key("page-column")
+                .width_fraction(1.)
+                .max_width(if landing { 1200. } else { 1040. });
+            let padded = vstack![
+                spacer().height(if landing { 56. } else { 32. }).flex(0.),
+                column,
+                spacer().height(64.).flex(0.),
+            ]
+            .align(Align::Center)
+            .padding(
+                responsive(16.)
+                    .at(Breakpoint::Md, 24.)
+                    .at(Breakpoint::Xl, 56.),
+                Edge::Horizontal,
+            );
+            // The landing hero runs edge to edge, outside the page padding.
+            let mut scrolled: Vec<El<App>> = vec![];
+            if landing {
+                scrolled.push(super::landing::landing_hero(app));
+            }
+            scrolled.push(padded.into());
+            vstack(scrolled)
+                .key(format!("page-{}", app.page.slug()))
+                .transition(Transition::fade().duration_ms(160))
+                .flex(1.)
+                .align(Align::Stretch)
+                .scroll(Scroll::Vertical)
+        },
     ]
     .key("content")
     .flex(1.)
@@ -67,11 +88,31 @@ pub fn view(app: &App) -> El<App> {
     } else {
         content.into()
     };
-    let body = hstack![sidebar(app), content]
+    // A pixel-sized split: dragging the divider resizes the sidebar, which
+    // then keeps its width as the window resizes. Below Lg the sidebar is
+    // hidden and the split collapses to the content alone.
+    let body = split(sidebar(app), content)
+        .key("body-split")
+        .first_size(app.sidebar_width)
+        .min_first(200.)
+        .max_first(420.)
+        .min_second(480.)
+        // A wide invisible grab area; a pill appears on hover or drag.
+        .handle_size(10.)
+        .handle_color("#00000000")
+        .handle_style(SplitHandle::Reveal)
+        .fill_width()
+        .fill_height()
         .flex(1.)
-        .align(Align::Stretch);
+        .background(if app.glass {
+            String::from("#00000000")
+        } else {
+            ColorToken::Base200.into()
+        })
+        .on_resize(|app: &mut App, width| app.sidebar_width = width.round());
     let mut layers: Vec<El<App>> = vec![body.into()];
     layers.extend(dialogs(app));
+    layers.push(nav_drawer(app));
     layers.push(palette(app));
     layers.push(toast(app));
     layers.extend(super::lifecycle::overlays(app));
@@ -131,18 +172,26 @@ fn header(app: &App) -> El<App> {
             Page::SignIn => app.page.group() == "Patterns",
             _ => app.page.group() == "Components",
         };
-        button(label)
+        // Letter-spaced mono navigation; the active section is an inverted chip.
+        let b = button(label.to_uppercase())
             .key(format!("nav-{}", target.slug()))
+            .accessible_label(label)
             .variant(ButtonVariant::Ghost)
             .size(ControlSize::Small)
-            .color(if active {
-                ColorToken::BaseContent
-            } else {
-                ColorToken::Muted
-            })
+            .font_family("SF Mono")
+            .font_size(11.)
+            .letter_spacing(0.16)
+            .rounded(2.)
             .font_weight(if active { 600 } else { 500 })
-            .on_click(move |app: &mut App| app.go(target))
-            .into()
+            .on_click(move |app: &mut App| app.go(target));
+        if active {
+            b.background(ColorToken::BaseContent)
+                .color(ColorToken::Base100)
+                .hover_style(|s| s.background(ColorToken::BaseContent))
+                .into()
+        } else {
+            b.color(ColorToken::Muted).into()
+        }
     };
     let search = zstack![
         button("Search components…")
@@ -152,20 +201,66 @@ fn header(app: &App) -> El<App> {
             .color(ColorToken::Muted)
             .width(240.)
             .height(36.)
-            .on_click(|app: &mut App| app.palette_open = true),
-        hstack![spacer(), icon(Icon::Search, 16., ColorToken::Muted)]
-            .align(Align::Center)
-            .padding(12., Edge::Right),
+            .on_click(|app: &mut App| app.palette.open = true),
+        hstack![
+            spacer(),
+            icon(Icon::Search, 15., ColorToken::Muted),
+            kbd("⌘K"),
+        ]
+        .gap(8., Axis::Horizontal)
+        .align(Align::Center)
+        .padding(8., Edge::Right)
+        .scroll_passthrough(true),
     ]
     .width(240.)
     .height(36.)
     .align(Align::Stretch);
+    // Below Md the search box becomes an icon button.
+    let search_compact = zstack![
+        button("")
+            .key("open-palette-compact")
+            .accessible_label("Search components")
+            .variant(ButtonVariant::Ghost)
+            .width(36.)
+            .height(36.)
+            .on_click(|app: &mut App| app.palette.open = true),
+        icon(Icon::Search, 17., ColorToken::BaseContent),
+    ]
+    .key("search-compact")
+    .width(36.)
+    .height(36.)
+    .flow(Flow::Center)
+    .visible(responsive(true).at(Breakpoint::Md, false));
+    let search = search.visible(responsive(false).at(Breakpoint::Md, true));
+    // Below Lg the sidebar collapses; this opens it as a drawer. On macOS it
+    // clears the traffic lights, which then sit over the header.
+    let menu_button = hstack![
+        spacer()
+            .width(if cfg!(target_os = "macos") { 64. } else { 0. })
+            .flex(0.),
+        zstack![
+            button("")
+                .key("open-nav")
+                .accessible_label("Show pages")
+                .variant(ButtonVariant::Ghost)
+                .width(36.)
+                .height(36.)
+                .on_click(|app: &mut App| app.nav_open = true),
+            volt_ui_kit::ui::icon(volt_ui_kit::ui::Icon::Menu).size(18.),
+        ]
+        .width(36.)
+        .height(36.)
+        .flow(Flow::Center),
+    ]
+    .key("nav-toggle")
+    .align(Align::Center)
+    .visible(responsive(true).at(Breakpoint::Lg, false));
     let themes = menu(
         THEMES[app.theme].0,
         THEMES
             .iter()
             .enumerate()
-            .map(|(i, (name, ..))| menu_item(i, *name)),
+            .map(|(i, (name, ..))| menu_item(i, *name).checked(i == app.theme)),
     )
     .key("theme-menu")
     .accessible_label("Accent color")
@@ -178,6 +273,7 @@ fn header(app: &App) -> El<App> {
     .on_action(|app: &mut App, i| app.theme = i)
     .on_open_change(|app: &mut App, open| app.theme_menu_open = open);
     toolbar![
+        menu_button,
         hstack![
             nav("Docs", Page::Introduction),
             nav("Components", Page::Button),
@@ -193,6 +289,7 @@ fn header(app: &App) -> El<App> {
         .scrollbars(Scrollbars::Hidden)
         .flex(1.),
         search,
+        search_compact,
         themes,
         mode_button(app),
     ]
@@ -204,18 +301,35 @@ fn header(app: &App) -> El<App> {
     .into()
 }
 
-fn sidebar(app: &App) -> El<App> {
+/// The filter field and grouped page links. `prefix` keeps the sidebar's
+/// and the drawer's keys distinct ("side" / "drawer").
+fn page_links(app: &App, prefix: &str) -> Vec<El<App>> {
     let query = app.sidebar_query.trim().to_lowercase();
-    let mut items: Vec<El<App>> = vec![text_field(&app.sidebar_query)
-        .key("sidebar-filter")
+    let filter_key = if prefix == "side" {
+        "sidebar-filter".to_owned()
+    } else {
+        format!("{prefix}-filter")
+    };
+    let mut filter = text_field(&app.sidebar_query)
+        .key(filter_key)
         .accessible_label("Filter component pages")
         .placeholder("Filter…")
+        .leading_icon(volt_ui_kit::ui::Icon::Search)
         .height(32.)
         .font_size(13.)
         .background(ColorToken::BaseContent.alpha(5))
         .border_color(ColorToken::BaseContent.alpha(10))
-        .on_change(|app: &mut App, v| app.sidebar_query = v)
-        .into()];
+        .on_change(|app: &mut App, v| app.sidebar_query = v);
+    // The clear button appears only when there is something to clear.
+    if !app.sidebar_query.is_empty() {
+        filter = filter.trailing_action(
+            format!("{prefix}-filter-clear"),
+            volt_ui_kit::ui::Icon::Close,
+            "Clear filter",
+            |app: &mut App| app.sidebar_query.clear(),
+        );
+    }
+    let mut items: Vec<El<App>> = vec![filter.into()];
     let mut group = "";
     let mut shown = 0;
     for page in PAGES {
@@ -229,7 +343,15 @@ fn sidebar(app: &App) -> El<App> {
                     .font_size(12.)
                     .font_weight(600)
                     .color(ColorToken::BaseContent)]
-                .key(format!("group-{}", group.replace(' ', "-").to_lowercase()))
+                .key(format!(
+                    "{}group-{}",
+                    if prefix == "side" {
+                        String::new()
+                    } else {
+                        format!("{prefix}-")
+                    },
+                    group.replace(' ', "-").to_lowercase()
+                ))
                 .padding(16., Edge::Top)
                 .padding(4., Edge::Bottom)
                 .padding(10., Edge::Left)
@@ -239,7 +361,7 @@ fn sidebar(app: &App) -> El<App> {
         shown += 1;
         let active = app.page == page;
         let mut link = button(page.title())
-            .key(format!("side-{}", page.slug()))
+            .key(format!("{prefix}-{}", page.slug()))
             .variant(ButtonVariant::Ghost)
             .label_align(Align::Start)
             .height(30.)
@@ -277,6 +399,27 @@ fn sidebar(app: &App) -> El<App> {
                 .into(),
         );
     }
+    items
+}
+
+/// Narrow windows: the same page list in a left drawer.
+fn nav_drawer(app: &App) -> El<App> {
+    drawer(
+        vstack(page_links(app, "drawer"))
+            .gap(2., Axis::Vertical)
+            .align(Align::Stretch),
+    )
+    .key("nav-drawer")
+    .title("Volt UI")
+    .side(DrawerSide::Left)
+    .size(280.)
+    .open(app.nav_open)
+    .on_dismiss(|app: &mut App| app.nav_open = false)
+    .into()
+}
+
+fn sidebar(app: &App) -> El<App> {
+    let items = page_links(app, "side");
     // The traffic lights sit over the sidebar on macOS; elsewhere the brand
     // row starts at the top.
     let mac = cfg!(target_os = "macos");
@@ -317,7 +460,7 @@ fn sidebar(app: &App) -> El<App> {
         glass_controls(app),
     ]
     .key("sidebar-column")
-    .width(SIDEBAR)
+    .visible(responsive(false).at(Breakpoint::Lg, true))
     .align(Align::Stretch)
     .into()
 }
@@ -400,110 +543,30 @@ fn glass_controls(app: &App) -> El<App> {
     .into()
 }
 
-fn landing(app: &App) -> El<App> {
-    let pages: Vec<Page> = PAGES
-        .into_iter()
-        .filter(|p| *p != Page::Introduction)
-        .collect();
-    let card = |page: Page| -> El<App> {
-        let key = format!("card-{}", page.slug());
-        zstack![
-            button("")
-                .key(key.clone())
-                .accessible_label(format!("Open {}", page.title()))
-                .variant(ButtonVariant::Outline)
-                .rounded(12.)
-                .hover_style(|s| s
-                    .background(ColorToken::Base200)
-                    .border_color(ColorToken::Muted))
-                .animate_on(Interaction::Hover, Animation::ease_out().duration_ms(140))
-                .on_click(move |app: &mut App| app.go(page)),
-            vstack![
-                hstack![
-                    text(page.title()).font_size(15.).font_weight(600),
-                    spacer(),
-                    if page.is_new() {
-                        El::from(
-                            badge("New")
-                                .font_size(10.)
-                                .rounded(Rounding::Full)
-                                .background(ColorToken::Primary.alpha(14))
-                                .color(ColorToken::Primary),
-                        )
-                    } else {
-                        spacer().width(0.).flex(0.).into()
-                    },
-                ]
-                .align(Align::Center),
-                text(page.summary()).font_size(13.).color(ColorToken::Muted),
-            ]
-            .padding(16., Edge::All)
-            .gap(6., Axis::Vertical),
-        ]
-        .key(format!("{key}-layer"))
-        .flow(Flow::TopLeft)
-        .align(Align::Stretch)
-        .flex(1.)
-        .height(104.)
-        .into()
-    };
-    let rows: Vec<El<App>> = pages
-        .chunks(3)
-        .map(|chunk| {
-            let mut cells: Vec<El<App>> = chunk.iter().map(|p| card(*p)).collect();
-            while cells.len() < 3 {
-                cells.push(spacer().into());
-            }
-            stack(cells)
-                .direction(
-                    responsive(Direction::Vertical).at(Breakpoint::Lg, Direction::Horizontal),
-                )
-                .gap(12., Axis::Both)
-                .into()
-        })
-        .collect();
-    let _ = app;
-    vstack![
-        vstack![
-            badge("New: vector GPU text, screen readers and damage tracking")
-                .rounded(Rounding::Full)
-                .font_size(12.)
-                .background(ColorToken::Base200),
-            text("Beautiful native components for Rust.").font_size(44.).font_weight(700),
-            text("Declare your interface as ordinary functions of your state. Buttons, dialogs, tables and trees with real keyboard, screen-reader and GPU support. No webview.")
-                .font_size(18.)
-                .color(ColorToken::Muted),
-            hstack![
-                button("Browse components").key("hero-browse").variant(ButtonVariant::Primary).size(ControlSize::Large).on_click(|app: &mut App| app.go(Page::Button)),
-                button("Theming").key("hero-theming").variant(ButtonVariant::Outline).size(ControlSize::Large).on_click(|app: &mut App| app.go(Page::Theming)),
-            ]
-            .gap(10., Axis::Horizontal),
-        ]
-        .gap(16., Axis::Vertical)
-        .padding(24., Edge::Bottom),
-        text("Components").font_size(22.).font_weight(700),
-        vstack(rows).gap(12., Axis::Vertical),
-    ]
-    .gap(20., Axis::Vertical)
-    .into()
-}
-
 fn article(app: &App) -> El<App> {
     let page = app.page;
     let content = doc(page, app);
     let mut parts: Vec<El<App>> = vec![
+        {
+            // Docs → the group's first page → this page.
+            let first = PAGES
+                .into_iter()
+                .find(|p| p.group() == page.group())
+                .unwrap_or(page);
+            breadcrumb([
+                (Page::Introduction, "Docs"),
+                (first, page.group()),
+                (page, page.title()),
+            ])
+            .key("breadcrumb")
+            .on_select(|app: &mut App, target| app.go(target))
+            .into()
+        },
         hstack![
-            text("Docs").font_size(13.).color(ColorToken::Muted),
-            text("›").color(ColorToken::Muted),
-            text(page.group()).font_size(13.).color(ColorToken::Muted),
-            text("›").color(ColorToken::Muted),
-            text(page.title()).font_size(13.).font_weight(500),
-        ]
-        .gap(6., Axis::Horizontal)
-        .align(Align::Center)
-        .into(),
-        hstack![
-            text(page.title()).font_size(34.).font_weight(700),
+            text(page.title())
+                .font_family(super::landing::HEADING)
+                .font_size(44.)
+                .font_weight(500),
             if page.is_new() {
                 El::from(
                     badge("New")
@@ -621,97 +684,38 @@ fn article(app: &App) -> El<App> {
     vstack(parts).gap(14., Axis::Vertical).into()
 }
 
+/// Site search (⌘K): every page, grouped like the sidebar; summaries are
+/// searchable keywords. Enter opens the best match.
 fn palette(app: &App) -> El<App> {
-    let query = app.palette_query.trim().to_lowercase();
-    let matches: Vec<Page> = PAGES
-        .into_iter()
-        .filter(|p| {
-            query.is_empty()
-                || p.title().to_lowercase().contains(&query)
-                || p.summary().to_lowercase().contains(&query)
-        })
-        .take(8)
-        .collect();
-    let mut results: Vec<El<App>> = matches
-        .iter()
-        .map(|page| {
-            let page = *page;
-            button(page.title())
-                .key(format!("palette-{}", page.slug()))
-                .variant(ButtonVariant::Ghost)
-                .label_align(Align::Start)
-                .fill_width()
-                .height(34.)
-                .on_click(move |app: &mut App| app.go(page))
-                .into()
-        })
-        .collect();
-    if results.is_empty() {
-        results.push(text("No results found.").color(ColorToken::Muted).into());
-    }
-    let first = matches.first().copied();
-    dialog(
-        vstack![
-            text_field(&app.palette_query)
-                .key("palette-query")
-                .accessible_label("Find a component page")
-                .placeholder("Type a component name…")
-                .height(40.)
-                .on_change(|app: &mut App, v| app.palette_query = v)
-                .on_submit(move |app: &mut App| {
-                    if let Some(page) = first {
-                        app.go(page);
-                    }
-                }),
-            text(if query.is_empty() { "Pages" } else { "Results" })
-                .font_size(12.)
-                .font_weight(600)
-                .color(ColorToken::Muted),
-            vstack(results).gap(2., Axis::Vertical),
-        ]
-        .gap(10., Axis::Vertical),
-    )
-    .key("palette")
-    .open(app.palette_open)
-    .width(480.)
-    .rounded(12.)
-    .background(ColorToken::Base100)
-    .on_dismiss(|app: &mut App| {
-        app.palette_open = false;
-        app.palette_query.clear();
-    })
-    .into()
+    use volt_ui_kit::ui::Icon as Glyph;
+    let commands = PAGES.into_iter().map(|page| {
+        let glyph = match page.group() {
+            "Getting started" => Glyph::Home,
+            "Patterns" => Glyph::Grid,
+            _ => Glyph::File,
+        };
+        command(page, page.title())
+            .group(page.group())
+            .icon(glyph)
+            .keywords(page.summary().split_whitespace())
+    });
+    command_palette(commands, &app.palette)
+        .key("palette")
+        .placeholder("Search components and guides…")
+        .state(|app: &mut App| &mut app.palette)
+        .on_run(|app: &mut App, page| app.go(page))
+        .into()
 }
 
+/// Confirmations ("Copied", "Saved") through the toolkit's toaster.
 fn toast(app: &App) -> El<App> {
-    let content: El<App> = match &app.toast {
-        Some((id, message)) => hstack![
-            icon(Icon::Check, 18., ColorToken::Success),
-            text(message.clone()).font_weight(500).flex(1.),
-            button("Dismiss")
-                .key("toast-dismiss")
-                .variant(ButtonVariant::Ghost)
-                .size(ControlSize::Small)
-                .on_click(|app: &mut App| app.toast = None),
-        ]
-        .key(format!("toast-{id}"))
-        .transition(Transition::fade().duration_ms(220))
-        .width(360.)
-        .padding(14., Edge::All)
-        .gap(10., Axis::Horizontal)
-        .align(Align::Center)
-        .background(ColorToken::Base100)
-        .border_color(ColorToken::Border)
-        .border_width(1.)
-        .rounded(12.)
-        .shadow(Shadow::new().color("#0000001F").blur(20.).offset(0., 8.))
-        .into(),
-        None => spacer().width(0.).height(0.).into(),
-    };
-    vstack![content]
+    let toasts: Vec<Toast> = app
+        .toast
+        .iter()
+        .map(|(id, message)| Toast::new(u64::from(*id), message.clone()).tone(Severity::Success))
+        .collect();
+    toaster(&toasts)
         .key("toast-layer")
-        .flow(Flow::BottomRight)
-        .padding(24., Edge::All)
-        .scroll_passthrough(true)
+        .on_dismiss(|app: &mut App, _| app.toast = None)
         .into()
 }

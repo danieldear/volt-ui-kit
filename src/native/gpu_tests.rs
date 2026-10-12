@@ -505,6 +505,7 @@ fn actual_gpu_fake_italic_leans_like_software() {
             size: 96.,
             weight: 400,
             italic: true,
+            ..Default::default()
         };
         let mut glyphs = vec![];
         painter.ui_text_styled(
@@ -538,17 +539,16 @@ fn actual_gpu_fake_italic_leans_like_software() {
 #[test]
 fn viewport_command_reservation_counts_all_64_words_per_vello_tile() {
     // Vello 0.6 coarse.wgsl reserves 64 words for EVERY viewport tile,
-    // even an empty one. At 8K these alone consume its entire PTCL buffer.
-    // The old 2-word estimate admitted such frames to the GPU.
+    // even an empty one. At 8K these alone consume its entire PTCL buffer,
+    // so the frame is split into strips that each fit. (The old 2-word
+    // estimate admitted such frames to the GPU in one overflowing pass.)
     let mut encoder = GpuSceneEncoder::default();
-    for (w, h, expected) in [
-        (3840., 2160., None),
-        (6016., 3384., None),
-        (7680., 4320., Some("tile commands")),
-    ] {
+    for (w, h, bands) in [(3840., 2160., 1), (6016., 3384., 1), (7680., 4320., 2)] {
         let mut painter = RasterPainter::new(Viewport::new(w, h, 1.).unwrap());
         encoder.encode(&[], &mut painter).unwrap();
-        assert_eq!(encoder.stats().over_budget, expected, "{w}x{h}");
+        assert_eq!(encoder.stats().over_budget, None, "{w}x{h}");
+        assert_eq!(encoder.stats().bands, bands, "{w}x{h}");
+        assert_eq!(encoder.bands.len(), if bands > 1 { bands } else { 0 });
     }
     // Scene commands need headroom in addition to that viewport reservation.
     let (w, h) = (6016., 3384.);
@@ -559,7 +559,16 @@ fn viewport_command_reservation_counts_all_64_words_per_vello_tile() {
         glyphs: vec![],
     }];
     encoder.encode(&batches, &mut painter).unwrap();
-    assert_eq!(encoder.stats().over_budget, Some("tile commands"));
+    assert_eq!(encoder.stats().over_budget, None);
+    assert!(encoder.stats().bands > 1);
+    // Strips tile the frame exactly: contiguous, in order, covering it all.
+    let mut y = 0;
+    for &[top, height] in &encoder.bands {
+        assert_eq!(top, y);
+        assert!(height > 0 && height % 16 == 0 || top + height == h as u32);
+        y = top + height;
+    }
+    assert_eq!(y, h as u32);
 }
 
 #[test]
@@ -584,8 +593,14 @@ fn over_budget_frames_name_the_vello_buffer_they_would_overflow() {
         )
         .unwrap();
     assert_eq!(encoder.stats().over_budget, None);
-    // ~18.5k tiles per full-window fill: 150 of them exceed the tile buffer.
+    // ~18.5k tiles per full-window fill: 150 exceed the tile buffer in one
+    // pass, but fit in strips.
     let fills = vec![Shape::Rectangle([0., 0., w, h], [0.1, 0.1, 0.1, 1.]); 150];
+    encoder.encode(&[frame(fills)], &mut painter).unwrap();
+    assert_eq!(encoder.stats().over_budget, None);
+    assert!(encoder.stats().bands > 1);
+    // So many that even the thinnest allowed strips overflow: named, not hidden.
+    let fills = vec![Shape::Rectangle([0., 0., w, h], [0.1, 0.1, 0.1, 1.]); 1800];
     encoder.encode(&[frame(fills)], &mut painter).unwrap();
     assert_eq!(encoder.stats().over_budget, Some("tiles"));
     // A 9000px-wide image cannot fit Vello's 8192px atlas.
@@ -632,4 +647,67 @@ fn bordered_sheet_flush_with_the_top_edge_keeps_its_interior() {
             assert_eq!(rgb(x, y), [255; 3], "interior ({x}, {y}) overpainted");
         }
     }
+}
+
+#[test]
+#[ignore = "requires an actual GPU; explicit large-display acceptance"]
+fn six_k_frames_render_on_the_gpu_in_strips_matching_software() {
+    // A 6K Retina frame: Vello reserves 64 tile-command words per tile, so the
+    // overlapping full-window layers below cannot fit one pass.
+    let (w, h) = (6016., 3384.);
+    let mut gpu = super::GpuOffscreenRenderer::new().unwrap();
+    let mut p = RasterPainter::new(Viewport::new(w, h, 2.).unwrap());
+    let mut shapes = vec![];
+    for i in 0..8 {
+        let t = i as f32 / 8.;
+        shapes.push(Shape::Rectangle(
+            [
+                i as f32 * 8.,
+                i as f32 * 6.,
+                w - i as f32 * 16.,
+                h - i as f32 * 12.,
+            ],
+            [t, 0.4, 1. - t, 0.35],
+        ));
+    }
+    // Rounded cards crossing every plausible strip seam.
+    for row in 0..12 {
+        for col in 0..6 {
+            shapes.push(Shape::Rounded(
+                [
+                    200. + col as f32 * 960.,
+                    100. + row as f32 * 270.,
+                    700.,
+                    230.,
+                ],
+                28.,
+                [0.95, 0.95, 0.97, 1.],
+            ));
+        }
+    }
+    let mut b = batch(shapes);
+    b.clip = Rect::new(0., 0., w, h).unwrap();
+    let background = [0.07, 0.07, 0.08, 1.];
+    let pixels = gpu
+        .render(&mut p, std::slice::from_ref(&b), background)
+        .unwrap();
+    assert_eq!(gpu.last_over_budget(), None, "stays on the GPU");
+    assert!(gpu.last_bands() > 1, "rendered in strips");
+    let reference = p.rasterize(&[b], background).unwrap().clone();
+    let (mut total, mut worst) = (0_u64, 0_u8);
+    for (a, b) in pixels.pixels().iter().zip(reference.pixels()) {
+        for d in [
+            a.red().abs_diff(b.red()),
+            a.green().abs_diff(b.green()),
+            a.blue().abs_diff(b.blue()),
+        ] {
+            total += u64::from(d);
+            worst = worst.max(d);
+        }
+    }
+    let mean = total as f64 / (pixels.pixels().len() * 3) as f64;
+    // Antialiased edges differ slightly between rasterizers; a missing or
+    // shifted strip would differ by whole colours across millions of pixels.
+    assert!(mean < 0.5, "mean channel difference {mean}");
+    assert!(worst < 96, "worst channel difference {worst}");
 }

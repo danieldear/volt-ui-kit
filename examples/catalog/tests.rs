@@ -56,7 +56,7 @@ fn desktop_services_cancellation_controls_and_modal_scope_are_guarded() {
     assert!(app.services.error.is_none()); // Disabled replay never reaches an OS adapter.
     app.services.busy = false;
     for modal in [false, true, false] {
-        app.command_palette_open = modal;
+        app.app_commands.open = modal;
         let mut runtime = mount(&app, [1440., 920.]);
         assert_eq!(
             runtime.accessibility_focus("notification-cancellation-test"),
@@ -133,7 +133,7 @@ fn every_page_builds_in_both_modes_with_code_and_overlays() {
             mount(&app, [1440., 920.]);
         }
     }
-    app.palette_open = true;
+    app.palette.open = true;
     app.dialog_open = true;
     app.fruit_open = true;
     mount(&app, [1440., 920.]);
@@ -205,9 +205,9 @@ fn navigation_clears_page_overlays_and_notifications_wrap_safely() {
     let mut app = App::new();
     app.dialog_open = true;
     app.delete_open = true;
-    app.palette_open = true;
+    app.palette.open = true;
     app.go(Page::Button);
-    assert!(!app.dialog_open && !app.delete_open && !app.palette_open);
+    assert!(!app.dialog_open && !app.delete_open && !app.palette.open);
     app.next_toast = u32::MAX;
     app.notify("Saved");
     assert_eq!(app.toast, Some((0, "Saved".into())));
@@ -392,9 +392,11 @@ fn catalog_pages_and_glass_remain_on_gpu_at_both_scales() {
         runtime.settle_animations();
         let ui = theme(&app, ThemeMode::Dark);
         let batches = runtime.paint_ui(&mut painter, &ui);
-        let mut clear = ui.palette.base[0];
-        clear[3] = 0.;
-        app.tint = 72;
+        // As the native host does: the theme's root background at the window
+        // opacity (72% by default) is the clear; the view paints no overlay.
+        assert_eq!(app.opacity, 72);
+        let mut clear = ui.legacy_theme().background;
+        clear[3] = app.opacity as f32 / 100.;
         let pixels = gpu.render(&mut painter, &batches, clear).unwrap();
         // The sidebar shows the translucent material; the content sheet is solid.
         assert!((182..=185).contains(&pixels.pixel(0, 0).unwrap().alpha()));
@@ -879,7 +881,7 @@ fn application_draft_cancel_save_discard_and_palette_preserve_the_data_contract(
     // No request sender in this headless fixture: it must not pretend an OS window closed.
     assert!(app.toast.as_ref().unwrap().1.contains("native Catalog"));
     registry.dispatch("command-palette", &mut app);
-    assert!(app.command_palette_open);
+    assert!(app.app_commands.open);
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
         app.mode = mode;
         mount(&app, [900., 920.]);
@@ -1003,4 +1005,190 @@ fn compositor_launch_is_explicit_and_defaults_remain_public() {
     let (app, _) = crate::parse_args(Vec::<String>::new()).unwrap();
     assert!(!app.compositor_blur);
     assert!(crate::parse_args(["--tint", "101"].map(str::to_owned)).is_err());
+}
+
+#[test]
+fn scrolling_pages_by_shifting_matches_a_full_layout() {
+    for page in [Page::Introduction, Page::Table, Page::Settings] {
+        let mut app = App::new();
+        app.go(page);
+        app.glass = true;
+        let (doc, handlers) = view(&app).build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        let viewport = Viewport::new(2880., 1840., 2.).unwrap();
+        let mut painter = RasterPainter::new(viewport);
+        runtime
+            .layout(viewport, &Bindings::default(), &mut painter)
+            .unwrap();
+        runtime.settle_animations();
+        let summary = |r: &Runtime| -> Vec<String> {
+            r.boxes()
+                .iter()
+                .map(|b| {
+                    let round = |v: [f32; 4]| v.map(|x| (x * 100.).round() / 100.);
+                    format!(
+                        "{} {:?} {:?}",
+                        b.id,
+                        round(b.bounds.bounds()),
+                        round(b.clip.bounds())
+                    )
+                })
+                .collect()
+        };
+        for delta in [120., 480., 2000., -900., 33.] {
+            runtime.scroll_at(1800., 1200., [0., delta]);
+            // Fast path: no layout pass is needed before painting.
+            assert!(!runtime
+                .layout(viewport, &Bindings::default(), &mut painter)
+                .unwrap());
+            let shifted = summary(&runtime);
+            runtime.invalidate_layout();
+            runtime
+                .layout(viewport, &Bindings::default(), &mut painter)
+                .unwrap();
+            assert_eq!(shifted, summary(&runtime), "{page:?} after {delta}");
+        }
+    }
+}
+
+#[test]
+fn layout_adapts_to_window_width() {
+    let ids = |runtime: &Runtime| -> Vec<String> {
+        runtime.boxes().iter().map(|b| b.id.clone()).collect()
+    };
+    let has = |runtime: &Runtime, id: &str| ids(runtime).iter().any(|b| b == id);
+    let mut app = App::new();
+    // Wide: sidebar and full search; no menu button.
+    let wide = mount(&app, [1440., 900.]);
+    assert!(has(&wide, "side-button") && has(&wide, "open-palette"));
+    assert!(!has(&wide, "open-nav") && !has(&wide, "open-palette-compact"));
+    assert!(has(&wide, "hero-full") && !has(&wide, "hero-compact"));
+    // Narrow: sidebar collapses behind a menu button, search becomes an icon.
+    let narrow = mount(&app, [720., 900.]);
+    assert!(!has(&narrow, "side-button") && !has(&narrow, "open-palette"));
+    assert!(has(&narrow, "open-nav") && has(&narrow, "open-palette-compact"));
+    assert!(has(&narrow, "hero-compact") && !has(&narrow, "hero-full"));
+    // The drawer lists the same pages and navigation closes it.
+    app.nav_open = true;
+    let drawer = mount(&app, [720., 900.]);
+    assert!(has(&drawer, "drawer-button"));
+    app.go(Page::Button);
+    assert!(!app.nav_open);
+    // Very wide: the doc column stops growing and centres.
+    let huge = mount(&app, [2560., 1300.]);
+    let column = huge
+        .boxes()
+        .iter()
+        .find(|b| b.id == "page-column")
+        .unwrap()
+        .bounds
+        .bounds();
+    assert_eq!(column[2], 1040.);
+}
+
+#[test]
+fn dragging_the_divider_resizes_the_sidebar_in_pixels() {
+    let mut app = App::new();
+    app.go(Page::Button);
+    let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let layout = |runtime: &mut Runtime, width: f32| {
+        let viewport = Viewport::new(width, 800., 1.).unwrap();
+        runtime
+            .layout(
+                viewport,
+                &Bindings::default(),
+                &mut RasterPainter::new(viewport),
+            )
+            .unwrap();
+    };
+    layout(&mut runtime, 1300.);
+    let bounds = |runtime: &Runtime, id: &str| {
+        runtime
+            .boxes()
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap()
+            .bounds
+            .bounds()
+    };
+    assert_eq!(bounds(&runtime, "sidebar-column")[2], 248.);
+    let [x, y, w, h] = bounds(&runtime, "body-split-divider");
+    let (cx, cy) = (x + w * 0.5, y + h * 0.5);
+    runtime
+        .pointer_down_outcome(cx, cy, &mut handlers, &mut app)
+        .unwrap();
+    runtime
+        .pointer_move_outcome(cx + 60., cy, &mut handlers, &mut app)
+        .unwrap();
+    runtime
+        .pointer_up_outcome(cx + 60., cy, &mut handlers, &mut app)
+        .unwrap();
+    assert_eq!(app.sidebar_width, 308.);
+    // Past the maximum it clamps (recompose first, as the host does).
+    let (doc, next) = view(&app).build().unwrap().into_parts();
+    runtime
+        .replace_document(doc, &next, &Bindings::default())
+        .unwrap();
+    handlers = next;
+    layout(&mut runtime, 1300.);
+    let [x, y, w, h] = bounds(&runtime, "body-split-divider");
+    let (cx, cy) = (x + w * 0.5, y + h * 0.5);
+    runtime
+        .pointer_down_outcome(cx, cy, &mut handlers, &mut app)
+        .unwrap();
+    runtime
+        .pointer_move_outcome(cx + 600., cy, &mut handlers, &mut app)
+        .unwrap();
+    assert_eq!(app.sidebar_width, 420.);
+    // Recomposed, the width holds as the window resizes.
+    let (doc, next) = view(&app).build().unwrap().into_parts();
+    runtime
+        .replace_document(doc, &next, &Bindings::default())
+        .unwrap();
+    layout(&mut runtime, 1600.);
+    assert_eq!(bounds(&runtime, "sidebar-column")[2], 420.);
+}
+
+#[test]
+#[ignore = "timing probe"]
+fn divider_drag_cost_per_page() {
+    use std::time::Instant;
+    let viewport = Viewport::new(2880., 1840., 2.).unwrap();
+    let mut rows = vec![];
+    for page in PAGES {
+        let mut app = App::new();
+        app.go(page);
+        let mut painter = RasterPainter::new(viewport);
+        let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        runtime
+            .layout(viewport, &Bindings::default(), &mut painter)
+            .unwrap();
+        let d = runtime
+            .boxes()
+            .iter()
+            .find(|b| b.id == "body-split-divider")
+            .unwrap()
+            .bounds
+            .bounds();
+        let (cx, cy) = (d[0] + d[2] * 0.5, d[1] + d[3] * 0.5);
+        runtime
+            .pointer_down_outcome(cx, cy, &mut handlers, &mut app)
+            .unwrap();
+        let t = Instant::now();
+        for i in 1..=20 {
+            runtime
+                .pointer_move_outcome(cx + i as f32 * 4., cy, &mut handlers, &mut app)
+                .unwrap();
+            runtime
+                .layout(viewport, &Bindings::default(), &mut painter)
+                .unwrap();
+        }
+        rows.push((t.elapsed().as_secs_f64() * 1000. / 20., page.title()));
+    }
+    rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    for (ms, title) in rows.iter().take(12) {
+        eprintln!("PAGE {ms:7.2}ms {title}");
+    }
 }

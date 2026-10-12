@@ -173,6 +173,12 @@ impl VectorPath {
             .cubic_to([x + k * rx, y - ry], [x + rx, y - k * ry], [x + rx, y])
             .close()
     }
+    /// Parse SVG path data (the `d` attribute): M L H V C S Q T A Z, absolute
+    /// and relative, with implicit repeats. Arcs become cubic curves. Use it
+    /// to draw icons and logos exported from design tools.
+    pub fn from_svg(d: &str) -> Result<Self, String> {
+        svg::parse(d)
+    }
     /// Affine matrix `[a, b, c, d, tx, ty]`. Can translate/scale/rotate paths in Rust.
     pub fn transformed(mut self, m: [f32; 6]) -> Self {
         let point = |p: &mut [f32; 2]| {
@@ -366,5 +372,318 @@ mod tests {
         assert!(!VectorPath::new().move_to(0., 0.).is_valid());
         assert!(!VectorPath::circle(0., 0., f32::NAN).is_valid());
         assert!(VectorPath::circle(50., 50., 25.).contains(50., 50.));
+    }
+}
+
+mod svg {
+    use super::{PathCommand, VectorPath};
+    struct Lexer<'a> {
+        s: &'a [u8],
+        i: usize,
+    }
+    impl Lexer<'_> {
+        fn skip(&mut self) {
+            while self.i < self.s.len()
+                && matches!(self.s[self.i], b' ' | b',' | b'\t' | b'\n' | b'\r')
+            {
+                self.i += 1;
+            }
+        }
+        fn command(&mut self) -> Option<u8> {
+            self.skip();
+            let c = *self.s.get(self.i)?;
+            if c.is_ascii_alphabetic() {
+                self.i += 1;
+                Some(c)
+            } else {
+                None
+            }
+        }
+        fn at_number(&mut self) -> bool {
+            self.skip();
+            self.s
+                .get(self.i)
+                .is_some_and(|c| c.is_ascii_digit() || matches!(c, b'-' | b'+' | b'.'))
+        }
+        fn number(&mut self) -> Result<f32, String> {
+            self.skip();
+            let start = self.i;
+            let mut seen_dot = false;
+            let mut seen_exp = false;
+            if matches!(self.s.get(self.i), Some(b'-' | b'+')) {
+                self.i += 1;
+            }
+            while let Some(&c) = self.s.get(self.i) {
+                match c {
+                    b'0'..=b'9' => self.i += 1,
+                    b'.' if !seen_dot && !seen_exp => {
+                        seen_dot = true;
+                        self.i += 1
+                    }
+                    b'e' | b'E' if !seen_exp => {
+                        seen_exp = true;
+                        self.i += 1;
+                        if matches!(self.s.get(self.i), Some(b'-' | b'+')) {
+                            self.i += 1;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            std::str::from_utf8(&self.s[start..self.i])
+                .ok()
+                .and_then(|t| t.parse::<f32>().ok())
+                .filter(|v| v.is_finite())
+                .ok_or_else(|| format!("invalid number at byte {start}"))
+        }
+        /// Arc flags may be written without separators ("a1 1 0 01 5 5").
+        fn flag(&mut self) -> Result<bool, String> {
+            self.skip();
+            match self.s.get(self.i) {
+                Some(b'0') => {
+                    self.i += 1;
+                    Ok(false)
+                }
+                Some(b'1') => {
+                    self.i += 1;
+                    Ok(true)
+                }
+                _ => Err(format!("invalid arc flag at byte {}", self.i)),
+            }
+        }
+    }
+    /// SVG arc (endpoint form) to cubic segments of at most 90 degrees.
+    #[allow(clippy::too_many_arguments)]
+    fn arc(
+        out: &mut Vec<PathCommand>,
+        from: [f32; 2],
+        mut rx: f32,
+        mut ry: f32,
+        rotation: f32,
+        large: bool,
+        sweep: bool,
+        to: [f32; 2],
+    ) {
+        if from == to {
+            return;
+        }
+        rx = rx.abs();
+        ry = ry.abs();
+        if rx == 0. || ry == 0. {
+            out.push(PathCommand::Line(to));
+            return;
+        }
+        let (sin, cos) = rotation.to_radians().sin_cos();
+        let dx = (from[0] - to[0]) * 0.5;
+        let dy = (from[1] - to[1]) * 0.5;
+        let x1 = cos * dx + sin * dy;
+        let y1 = -sin * dx + cos * dy;
+        let lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry);
+        if lambda > 1. {
+            rx *= lambda.sqrt();
+            ry *= lambda.sqrt();
+        }
+        let num = rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1;
+        let den = rx * rx * y1 * y1 + ry * ry * x1 * x1;
+        let mut coef = (num / den).max(0.).sqrt();
+        if large == sweep {
+            coef = -coef;
+        }
+        let cx1 = coef * rx * y1 / ry;
+        let cy1 = -coef * ry * x1 / rx;
+        let cx = cos * cx1 - sin * cy1 + (from[0] + to[0]) * 0.5;
+        let cy = sin * cx1 + cos * cy1 + (from[1] + to[1]) * 0.5;
+        let angle =
+            |ux: f32, uy: f32, vx: f32, vy: f32| (ux * vy - uy * vx).atan2(ux * vx + uy * vy);
+        let start = angle(1., 0., (x1 - cx1) / rx, (y1 - cy1) / ry);
+        let mut delta = angle(
+            (x1 - cx1) / rx,
+            (y1 - cy1) / ry,
+            (-x1 - cx1) / rx,
+            (-y1 - cy1) / ry,
+        );
+        if !sweep && delta > 0. {
+            delta -= std::f32::consts::TAU;
+        } else if sweep && delta < 0. {
+            delta += std::f32::consts::TAU;
+        }
+        let segments = (delta.abs() / std::f32::consts::FRAC_PI_2).ceil().max(1.) as usize;
+        let step = delta / segments as f32;
+        let k = 4. / 3. * (step / 4.).tan();
+        let point = |t: f32| {
+            let (st, ct) = t.sin_cos();
+            [
+                cx + rx * ct * cos - ry * st * sin,
+                cy + rx * ct * sin + ry * st * cos,
+            ]
+        };
+        let derivative = |t: f32| {
+            let (st, ct) = t.sin_cos();
+            [
+                -rx * st * cos - ry * ct * sin,
+                -rx * st * sin + ry * ct * cos,
+            ]
+        };
+        for i in 0..segments {
+            let (t0, t1) = (start + step * i as f32, start + step * (i + 1) as f32);
+            let (p0, p1) = (point(t0), point(t1));
+            let (d0, d1) = (derivative(t0), derivative(t1));
+            let end = if i + 1 == segments { to } else { p1 };
+            out.push(PathCommand::Cubic(
+                [p0[0] + k * d0[0], p0[1] + k * d0[1]],
+                [p1[0] - k * d1[0], p1[1] - k * d1[1]],
+                end,
+            ));
+        }
+    }
+    pub(super) fn parse(d: &str) -> Result<VectorPath, String> {
+        if d.len() > 1 << 20 {
+            return Err("path data larger than 1 MiB".into());
+        }
+        let mut lx = Lexer {
+            s: d.as_bytes(),
+            i: 0,
+        };
+        let mut out = Vec::new();
+        let (mut cur, mut start) = ([0_f32; 2], [0_f32; 2]);
+        // Reflection points for S/s and T/t.
+        let (mut last_cubic, mut last_quad): (Option<[f32; 2]>, Option<[f32; 2]>) = (None, None);
+        let mut cmd = None;
+        loop {
+            lx.skip();
+            if lx.i >= lx.s.len() {
+                break;
+            }
+            if let Some(c) = lx.command() {
+                cmd = Some(c);
+            } else if cmd.is_none() {
+                return Err("path data must start with a command".into());
+            }
+            let c = cmd.unwrap();
+            let rel = c.is_ascii_lowercase();
+            let base = if rel { cur } else { [0.; 2] };
+            let pt = |lx: &mut Lexer| -> Result<[f32; 2], String> {
+                Ok([lx.number()? + base[0], lx.number()? + base[1]])
+            };
+            let (mut next_cubic, mut next_quad) = (None, None);
+            match c.to_ascii_uppercase() {
+                b'M' => {
+                    cur = pt(&mut lx)?;
+                    start = cur;
+                    out.push(PathCommand::Move(cur));
+                    // Extra pairs after a move are implicit line-tos.
+                    cmd = Some(if rel { b'l' } else { b'L' });
+                }
+                b'L' => {
+                    cur = pt(&mut lx)?;
+                    out.push(PathCommand::Line(cur));
+                }
+                b'H' => {
+                    cur[0] = lx.number()? + if rel { cur[0] } else { 0. };
+                    out.push(PathCommand::Line(cur));
+                }
+                b'V' => {
+                    cur[1] = lx.number()? + if rel { cur[1] } else { 0. };
+                    out.push(PathCommand::Line(cur));
+                }
+                b'C' => {
+                    let (a, b, e) = (pt(&mut lx)?, pt(&mut lx)?, pt(&mut lx)?);
+                    out.push(PathCommand::Cubic(a, b, e));
+                    next_cubic = Some(b);
+                    cur = e;
+                }
+                b'S' => {
+                    let a = last_cubic.map_or(cur, |p| [2. * cur[0] - p[0], 2. * cur[1] - p[1]]);
+                    let (b, e) = (pt(&mut lx)?, pt(&mut lx)?);
+                    out.push(PathCommand::Cubic(a, b, e));
+                    next_cubic = Some(b);
+                    cur = e;
+                }
+                b'Q' => {
+                    let (a, e) = (pt(&mut lx)?, pt(&mut lx)?);
+                    out.push(PathCommand::Quad(a, e));
+                    next_quad = Some(a);
+                    cur = e;
+                }
+                b'T' => {
+                    let a = last_quad.map_or(cur, |p| [2. * cur[0] - p[0], 2. * cur[1] - p[1]]);
+                    let e = pt(&mut lx)?;
+                    out.push(PathCommand::Quad(a, e));
+                    next_quad = Some(a);
+                    cur = e;
+                }
+                b'A' => {
+                    let (rx, ry, rot) = (lx.number()?, lx.number()?, lx.number()?);
+                    let (large, sweep) = (lx.flag()?, lx.flag()?);
+                    let e = pt(&mut lx)?;
+                    arc(&mut out, cur, rx, ry, rot, large, sweep, e);
+                    cur = e;
+                }
+                b'Z' => {
+                    out.push(PathCommand::Close);
+                    cur = start;
+                    // Z takes no arguments; a following number is an error.
+                    if lx.at_number() {
+                        return Err("unexpected number after Z".into());
+                    }
+                    cmd = None;
+                }
+                other => return Err(format!("unsupported path command '{}'", other as char)),
+            }
+            last_cubic = next_cubic;
+            last_quad = next_quad;
+            if out.len() > 100_000 {
+                return Err("path has too many segments".into());
+            }
+            // A command letter must follow unless numbers repeat the command.
+            if cmd.is_some() && !lx.at_number() {
+                lx.skip();
+                if lx.i < lx.s.len() && !lx.s[lx.i].is_ascii_alphabetic() {
+                    return Err(format!("unexpected input at byte {}", lx.i));
+                }
+            }
+        }
+        let path = VectorPath { commands: out };
+        if path.is_valid() {
+            Ok(path)
+        } else {
+            Err("path coordinates out of range".into())
+        }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn parses_commands_relative_forms_repeats_and_arcs() {
+            let p = parse("M10 10 h20 v20 H10 Z m5 5 l1 1 2 2").unwrap();
+            assert_eq!(p.commands[0], PathCommand::Move([10., 10.]));
+            assert_eq!(p.commands[1], PathCommand::Line([30., 10.]));
+            assert_eq!(p.commands[2], PathCommand::Line([30., 30.]));
+            assert_eq!(p.commands[4], PathCommand::Close);
+            // After Z the pen returns to the subpath start; m is relative to it.
+            assert_eq!(p.commands[5], PathCommand::Move([15., 15.]));
+            assert_eq!(p.commands[7], PathCommand::Line([18., 18.]));
+            // Smooth curves reflect the previous control point.
+            let s = parse("M0 0 C10 0 20 10 20 20 S30 40 40 40").unwrap();
+            assert_eq!(
+                s.commands[2],
+                PathCommand::Cubic([20., 30.], [30., 40.], [40., 40.])
+            );
+            // A half-circle arc ends exactly at its endpoint in two quarter cubics.
+            let a = parse("M0 10 A10 10 0 0 1 20 10").unwrap();
+            assert_eq!(a.commands.len(), 3);
+            let PathCommand::Cubic(_, _, end) = a.commands[2] else {
+                panic!()
+            };
+            assert_eq!(end, [20., 10.]);
+            // Compact flags and exponents, as minifiers write them.
+            assert!(parse("M0 0a5 5 0 1010 0l1e1,2e0z").is_ok());
+        }
+        #[test]
+        fn rejects_malformed_data() {
+            for bad in ["10 10", "M10", "M0 0 X1 2", "M0 0 Z 5", "M0 0 L1e999 0"] {
+                assert!(parse(bad).is_err(), "{bad}");
+            }
+        }
     }
 }

@@ -177,6 +177,24 @@ struct VisualRow {
     start: usize,
     end: usize,
     text: String,
+    x: f32,
+}
+fn editor_line_height(style: &TextStyle) -> f32 {
+    style.size
+        * if style.line_height > 0. {
+            style.line_height
+        } else {
+            1.2
+        }
+}
+fn editor_row_style(style: &TextStyle) -> TextStyle {
+    let mut row = style.clone();
+    // Rows are wrapped/aligned by the editor so ink, selection and caret
+    // share coordinates. Never center an unbounded shaping buffer.
+    row.align = super::super::extras::TextAlign::Start;
+    row.max_lines = 0;
+    row.no_wrap = true;
+    row
 }
 fn caret_position(positions: &[(usize, [f32; 2])], at: usize, upstream: bool) -> [f32; 2] {
     if upstream {
@@ -198,7 +216,8 @@ fn visual_rows(
     let mut rows = Vec::new();
     let mut positions = Vec::new();
     let mut base = 0;
-    let line_height = style.size * 1.2;
+    let line_height = editor_line_height(style);
+    let row_style = editor_row_style(style);
     for hard_line in text.split('\n') {
         let mut start = 0;
         loop {
@@ -210,7 +229,7 @@ fn visual_rows(
                 remainder.to_string()
             };
             let display_points = boundaries(&display);
-            let advances = metrics.line_advances(&display, style, &display_points);
+            let advances = metrics.line_advances(&display, &row_style, &display_points);
             let mut end = remainder.len();
             if options.soft_wrap && advances.last().copied().unwrap_or(0.) > width {
                 let fitting = advances
@@ -238,7 +257,7 @@ fn visual_rows(
                 segment.to_string()
             };
             let mut points = boundaries(segment);
-            let mut advances = metrics.line_advances(&display, style, &boundaries(&display));
+            let mut advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
             // Shaping a segment can differ from the original line's contextual width.
             while options.soft_wrap
                 && advances.last().copied().unwrap_or(0.) > width
@@ -252,19 +271,26 @@ fn visual_rows(
                     segment.to_string()
                 };
                 points = boundaries(segment);
-                advances = metrics.line_advances(&display, style, &boundaries(&display));
+                advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
             }
             let y = rows.len() as f32 * line_height;
+            let free = (width - advances.iter().copied().fold(0_f32, f32::max)).max(0.);
+            let x = match style.align {
+                super::super::extras::TextAlign::Center => free * 0.5,
+                super::super::extras::TextAlign::End => free,
+                _ => 0., // Editable rows do not expand inter-word spacing.
+            };
             for (i, at) in points.iter().enumerate() {
                 positions.push((
                     base + start + at,
-                    [advances.get(i).copied().unwrap_or(0.), y],
+                    [x + advances.get(i).copied().unwrap_or(0.), y],
                 ));
             }
             rows.push(VisualRow {
                 start: base + start,
                 end: base + start + end,
                 text: display,
+                x,
             });
             start += end;
             if start >= hard_line.len() {
@@ -385,7 +411,7 @@ impl Runtime {
                         }
                     }
                     e.layout_scale = self.scale;
-                    let line_height = b.text_style.size * 1.2;
+                    let line_height = editor_line_height(&b.text_style);
                     let [_, _, width, height] = inner_geometry(b, self.scale);
                     let width = width.max(self.scale);
                     let height = height.max(line_height);
@@ -795,7 +821,7 @@ impl Runtime {
             x + p[0] - e.offset[0],
             y + p[1] - e.offset[1],
             self.scale,
-            b.text_style.size * 1.2,
+            editor_line_height(&b.text_style),
         ])
     }
     pub fn editor_scroll_offset(&self, id: &str) -> Option<[f32; 2]> {
@@ -813,7 +839,7 @@ impl Runtime {
         };
         let multiline = b.editor.as_ref().is_some_and(|e| e.multiline);
         let [_, _, width, height] = self.editor_inner(b);
-        let line_height = b.text_style.size * 1.2;
+        let line_height = editor_line_height(&b.text_style);
         let Some(e) = self.editors.get_mut().get_mut(&id) else {
             return false;
         };
@@ -862,7 +888,7 @@ impl Runtime {
             return false;
         };
         let pos = [x - bx + e.offset[0], y - by + e.offset[1]];
-        let (at, upstream) = nearest(e, pos, b.text_style.size * 1.2);
+        let (at, upstream) = nearest(e, pos, editor_line_height(&b.text_style));
         e.move_to(at, shift);
         e.upstream = upstream;
         e.drag = true;
@@ -890,7 +916,7 @@ impl Runtime {
         let (at, upstream) = nearest(
             e,
             [x - bx + e.offset[0], y - by + e.offset[1]],
-            b.text_style.size * 1.2,
+            editor_line_height(&b.text_style),
         );
         if at == e.caret && upstream == e.upstream {
             return false;
@@ -913,7 +939,7 @@ fn b_line_height(boxes: &[LayoutBox], id: &str) -> f32 {
     boxes
         .iter()
         .find(|b| b.id == id)
-        .map_or(16., |b| b.text_style.size * 1.2)
+        .map_or(16., |b| editor_line_height(&b.text_style))
 }
 fn nearest(e: &EditorState, p: [f32; 2], height: f32) -> (usize, bool) {
     e.positions
@@ -934,16 +960,17 @@ fn nearest(e: &EditorState, p: [f32; 2], height: f32) -> (usize, bool) {
 }
 fn inner_geometry(b: &LayoutBox, scale: f32) -> [f32; 4] {
     let [x, y, w, h] = b.bounds.bounds();
-    let line = b.text_style.size * 1.2;
+    let line = editor_line_height(&b.text_style);
     let top = if b.editor.as_ref().is_some_and(|e| e.multiline) {
         7. * scale
     } else {
         ((h - line) * 0.5).max(7. * scale).min((h * 0.5).max(0.))
     };
+    let [lead, trail] = b.editor.as_ref().map_or([0.; 2], |e| e.inset);
     [
-        x + 10. * scale,
+        x + (10. + lead) * scale,
         y + top,
-        (w - 20. * scale).max(0.),
+        (w - (20. + lead + trail) * scale).max(0.),
         (h - 2. * top).max(0.),
     ]
 }
@@ -1006,7 +1033,7 @@ impl Runtime {
                 glyphs,
             };
         };
-        let line_height = b.text_style.size * 1.2;
+        let line_height = editor_line_height(&b.text_style);
         let selected = e.range();
         let clip = Rect::new(inner[0], inner[1], inner[2], inner[3]).unwrap();
         if focused {
@@ -1062,6 +1089,7 @@ impl Runtime {
                 tint(c.muted),
             );
         } else {
+            let row_style = editor_row_style(&b.text_style);
             for (row, line) in e.rows.iter().enumerate() {
                 let top = inner[1] + row as f32 * line_height - e.offset[1];
                 if top + line_height <= inner[1] || top >= inner[1] + inner[3] {
@@ -1071,8 +1099,13 @@ impl Runtime {
                 p.ui_text_styled(
                     &mut glyphs,
                     &line.text,
-                    [inner[0] - e.offset[0], top, 1_000_000., line_height],
-                    &b.text_style,
+                    [
+                        inner[0] + line.x - e.offset[0],
+                        top,
+                        1_000_000.,
+                        line_height,
+                    ],
+                    &row_style,
                     tint(b.style.color.unwrap_or(c.text)),
                 );
             }

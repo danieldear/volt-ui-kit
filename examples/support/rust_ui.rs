@@ -161,6 +161,7 @@ fn launch_configured<C: 'static>(
     let mut snapshot = None;
     let mut scale = 1_f32;
     let mut bench = None;
+    let mut scroll_step = None::<f32>;
     let mut target = None;
     let mut size = [960_u32, 760_u32];
     let mut args = args.into_iter();
@@ -200,6 +201,13 @@ fn launch_configured<C: 'static>(
                 )
             }
             "--bench-target" => target = Some(args.next().ok_or("missing --bench-target key")?),
+            "--bench-scroll" => {
+                scroll_step = Some(
+                    args.next()
+                        .ok_or("missing --bench-scroll pixels")?
+                        .parse::<f32>()?,
+                )
+            }
             "--help" => {
                 println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; settled warm render timings (GPU mode includes blocking readback)\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_RENDERER  auto / gpu / software (gpu requires native-gpu)\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / borderless\n--reduced-motion settle effects without animation\n--theme MODE     light / dark / system (headless system falls back to dark)\nRust source edits require rebuild; no JSON or F5 source reload.");
                 return Ok(());
@@ -367,6 +375,51 @@ fn launch_configured<C: 'static>(
         return Ok(());
     }
     let count = bench.unwrap();
+    if let Some(step) = scroll_step {
+        // Scroll frames: offset change, layout, paint and render, as the
+        // native host does per wheel/trackpad event. Reverses at either end.
+        let (x, y) = (viewport.width * 0.6, viewport.height * 0.6);
+        let mut direction = 1.;
+        let mut samples: Vec<[f64; 4]> = Vec::with_capacity(count);
+        for i in 0..count + 4 {
+            let start = Instant::now();
+            if !runtime.scroll_at(x, y, [0., step * direction]) {
+                direction = -direction;
+                runtime.scroll_at(x, y, [0., step * direction]);
+            }
+            runtime.layout(viewport, &values, &mut painter)?;
+            let layout = start.elapsed().as_secs_f64() * 1000.;
+            let stage = Instant::now();
+            let theme = resolve_theme(&state);
+            let batches = runtime.paint_ui(&mut painter, &theme);
+            let paint = stage.elapsed().as_secs_f64() * 1000.;
+            let stage = Instant::now();
+            std::hint::black_box(render(&mut painter, &batches, clear(&theme))?);
+            let raster = stage.elapsed().as_secs_f64() * 1000.;
+            if i >= 4 {
+                samples.push([layout, paint, raster, start.elapsed().as_secs_f64() * 1000.]);
+            }
+        }
+        println!(
+            "BENCH-SCROLL {title} {}x{} scale={scale} step={step}px samples={count}",
+            viewport.width, viewport.height
+        );
+        for (column, name) in ["layout", "paint", "render", "frame"].iter().enumerate() {
+            let mut values: Vec<_> = samples.iter().map(|s| s[column]).collect();
+            values.sort_by(f64::total_cmp);
+            println!(
+                "{name}: p50={:.3}ms p95={:.3}ms max={:.3}ms",
+                values[(values.len() - 1) / 2],
+                values[(values.len() as f64 * 0.95).ceil() as usize - 1],
+                values[values.len() - 1]
+            );
+        }
+        println!(
+            "text cache misses (all frames): {}",
+            painter.text_cache_misses
+        );
+        return Ok(());
+    }
     let target = runtime
         .boxes()
         .iter()

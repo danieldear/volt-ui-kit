@@ -47,13 +47,22 @@ pub enum Page {
     SignIn,
     Settings,
     Navigation,
+    Utilities,
+    Icons,
+    DateTime,
+    FormInputs,
+    Disclosure,
+    DataDisplay,
+    Charts,
 }
 use Page::*;
-pub const PAGES: [Page; 40] = [
+pub const PAGES: [Page; 47] = [
     Introduction,
     Theming,
     Accessibility,
     Layout,
+    Utilities,
+    Icons,
     Badge,
     Button,
     ButtonGroup,
@@ -67,11 +76,14 @@ pub const PAGES: [Page; 40] = [
     TextArea,
     Slider,
     Select,
+    DateTime,
+    FormInputs,
     Dialog,
     Menu,
     ContextMenu,
     Popover,
     Tooltip,
+    Disclosure,
     Progress,
     Spinner,
     Toast,
@@ -83,6 +95,8 @@ pub const PAGES: [Page; 40] = [
     SplitPane,
     Canvas,
     Image,
+    DataDisplay,
+    Charts,
     Effects,
     BackgroundTasks,
     ApplicationLifecycle,
@@ -134,6 +148,13 @@ impl Page {
             SignIn => "Sign-in form",
             Settings => "Settings panel",
             Navigation => "Navigation",
+            Utilities => "Utilities",
+            Icons => "Icons",
+            DateTime => "Date & time",
+            FormInputs => "Form inputs",
+            Disclosure => "Overlays",
+            DataDisplay => "Data display",
+            Charts => "Charts",
         }
     }
     pub fn slug(self) -> String {
@@ -144,7 +165,7 @@ impl Page {
     }
     pub fn group(self) -> &'static str {
         match self {
-            Introduction | Theming | Accessibility | Layout => "Getting started",
+            Introduction | Theming | Accessibility | Layout | Utilities => "Getting started",
             BackgroundTasks | ApplicationLifecycle | Documents | DesktopServices | SignIn
             | Settings => "Patterns",
             _ => "Components",
@@ -155,6 +176,13 @@ impl Page {
         matches!(
             self,
             Accessibility
+                | Utilities
+                | Icons
+                | DateTime
+                | FormInputs
+                | Disclosure
+                | DataDisplay
+                | Charts
                 | Menu
                 | ContextMenu
                 | Popover
@@ -219,6 +247,15 @@ impl Page {
             Navigation => {
                 "Independent controlled destination navigation: sidebar, rail and bottom placement."
             }
+            Utilities => "Grid, wrapping, justify, typography, gradients, borders and motion.",
+            Icons => "A built-in, theme-aware vector icon set.",
+            DateTime => "Calendars, date and range pickers, and a time picker.",
+            FormInputs => {
+                "Radio groups, steppers, comboboxes, tags, ranges, colours, codes, ratings and drops."
+            }
+            Disclosure => "Collapsibles, accordions, drawers, toasts, a command palette and rich menus.",
+            DataDisplay => "Avatars, alerts, skeletons, breadcrumbs, pagination, steps and more.",
+            Charts => "Sparklines, bar charts and line charts drawn with vector paths.",
         }
     }
 }
@@ -309,6 +346,13 @@ pub fn doc(page: Page, app: &App) -> Doc {
         SignIn => sign_in(app),
         Settings => settings_doc(app),
         Navigation => navigation_doc(app),
+        Utilities => super::kit::utilities_doc(),
+        Icons => super::kit::icons_doc(),
+        DateTime => super::kit::dates_doc(app),
+        FormInputs => super::kit::forms_doc(app),
+        Disclosure => super::kit::disclosure_doc(app),
+        DataDisplay => super::kit::display_doc(app),
+        Charts => super::kit::charts_doc(),
     }
 }
 
@@ -1336,6 +1380,50 @@ fn select_doc(app: &App) -> Doc {
                 "Disabled options are skipped by keyboard and pointer.",
                 tz,
                 r#"select_item(1, "Mountain (UTC−7)").enabled(false)"#,
+            ),            section(
+                "select-vs-combobox",
+                "Select or combobox?",
+                "Same field look, different jobs. Select: a short fixed list, picked by click or arrow keys. Combobox: a long list you search by typing.",
+                {
+                    let countries = [
+                        "Argentina", "Australia", "Austria", "Belgium", "Brazil", "Canada",
+                        "Chile", "Denmark", "Finland", "France", "Germany", "India",
+                        "Ireland", "Italy", "Japan", "Kenya", "Mexico", "Netherlands",
+                        "New Zealand", "Norway", "Portugal", "Singapore", "South Korea",
+                        "Spain", "Sweden", "Switzerland", "United Kingdom", "United States",
+                    ];
+                    hstack![
+                        vstack![
+                            muted("Select · 5 fruits"),
+                            text(fruits[app.fruit as usize]).font_size(14.).font_weight(500),
+                            muted("(the first example above)").font_size(12.),
+                        ]
+                        .gap(6., Axis::Vertical)
+                        .width(220.),
+                        vstack![
+                            muted("Combobox · 28 countries"),
+                            combobox(
+                                countries.iter().enumerate().map(|(i, c)| (i as u8, *c)),
+                                &app.kit.combo,
+                            )
+                            .key("select-country")
+                            .selected(app.kit.framework)
+                            .placeholder("Search countries…")
+                            .width(240.)
+                            .state(|app: &mut App| &mut app.kit.combo)
+                            .on_select(|app: &mut App, v| app.kit.framework = Some(v)),
+                        ]
+                        .gap(6., Axis::Vertical),
+                    ]
+                    .gap(40., Axis::Horizontal)
+                },
+                r#"// Few options, no typing:
+select(sizes).key("size").selected(app.size)
+// Many options, type to filter:
+combobox(countries, &app.country_search)
+    .key("country")
+    .state(|app: &mut App| &mut app.country_search)
+    .on_select(|app: &mut App, c| app.country = Some(c))"#,
             ),
         ],
         api: vec![
@@ -1708,27 +1796,22 @@ fn toast_doc() -> Doc {
         sections: vec![section(
             "toast",
             "Toast",
-            "A pattern, not a widget: a keyed layer that fades in at the corner.",
+            "These buttons use the catalog's own toaster: a non-modal stack in the corner; the page stays usable.",
             t,
             r#"zstack![
     page,
-    vstack![toast_card(&message)
-        .key(format!("toast-{id}"))
-        .transition(Transition::fade().duration_ms(220))]
-    .flow(Flow::BottomRight)
-    .padding(24., Edge::All)
-    .scroll_passthrough(true),
-]"#,
+    toaster(&app.toasts)
+        .on_dismiss(|app: &mut App, id| app.toasts.retain(|t| t.id != id)),
+]
+// elsewhere:
+app.toasts.push(Toast::new(id, "Changes saved").tone(Severity::Success));"#,
         )],
         api: vec![
-            (
-                ".transition(Transition::fade())",
-                "Fade an element in and out when its key appears or leaves.",
-            ),
-            (
-                ".scroll_passthrough(true)",
-                "Let a full-window layer pass wheel input through.",
-            ),
+            ("toaster(&toasts)", "A corner stack; layer it last in a zstack."),
+            ("Toast::new(id, title)", ".description / .tone(Severity::…) / .action(label)"),
+            (".position(ToastPosition::…)", "Top or bottom; left, centre or right."),
+            (".on_dismiss / .on_action", "Remove the toast or run its action."),
+            ("Timing", "Remove toasts from a worker via UiSender for auto-dismiss."),
         ],
     }
 }
@@ -2555,33 +2638,62 @@ fn sign_in(app: &App) -> Doc {
             muted("Enter your email below to sign in to your account.")
         ]
         .gap(4., Axis::Vertical),
-        vstack![
-            label("Email"),
+        // Errors appear once something has been typed, never on an empty form.
+        form_field(
+            "Email",
             text_field(&app.email)
                 .key("si-email")
                 .placeholder("m@example.com")
-                .on_change(|app: &mut App, v| app.email = v)
-        ]
-        .gap(6., Axis::Vertical),
+                .leading_icon(volt_ui_kit::ui::Icon::Mail)
+                .on_change(|app: &mut App, v| app.email = v),
+        )
+        .key("si-email-field")
+        .required(true)
+        .error(
+            (!app.email.is_empty() && !app.email.contains('@'))
+                .then(|| "Enter a full email address".to_owned())
+        ),
         vstack![
+            form_field(
+                "Password",
+                text_field(&app.password)
+                    .key("si-pass")
+                    .password(!app.show_password)
+                    .placeholder("8 characters or more")
+                    .leading_icon(volt_ui_kit::ui::Icon::Lock)
+                    .trailing_action(
+                        "si-pass-reveal",
+                        if app.show_password {
+                            volt_ui_kit::ui::Icon::EyeOff
+                        } else {
+                            volt_ui_kit::ui::Icon::Eye
+                        },
+                        if app.show_password {
+                            "Hide password"
+                        } else {
+                            "Show password"
+                        },
+                        |app: &mut App| app.show_password = !app.show_password,
+                    )
+                    .on_change(|app: &mut App, v| app.password = v)
+                    .on_submit(|app: &mut App| app.notify("Signed in")),
+            )
+            .key("si-pass-field")
+            .required(true)
+            .error(
+                (!app.password.is_empty() && app.password.chars().count() < 8)
+                    .then(|| "Use at least 8 characters".to_owned())
+            ),
             hstack![
-                label("Password"),
                 spacer(),
                 button("Forgot password?")
                     .key("si-forgot")
                     .variant(ButtonVariant::Ghost)
                     .size(ControlSize::Small)
-                    .on_click(|app: &mut App| app.notify("Reset link sent"))
-            ]
-            .align(Align::Center),
-            text_field(&app.password)
-                .key("si-pass")
-                .password(true)
-                .placeholder("8 characters or more")
-                .on_change(|app: &mut App, v| app.password = v)
-                .on_submit(|app: &mut App| app.notify("Signed in")),
+                    .on_click(|app: &mut App| app.notify("Reset link sent")),
+            ],
         ]
-        .gap(6., Axis::Vertical),
+        .gap(2., Axis::Vertical),
         checkbox("Remember me", app.checked)
             .key("si-remember")
             .on_change(|app: &mut App, v| app.checked = v),
@@ -2610,10 +2722,24 @@ fn sign_in(app: &App) -> Doc {
             "Sign-in card",
             "The submit button enables once the form is valid.",
             form,
-            r#"let ready = app.email.contains('@') && app.password.chars().count() >= 8;
-button("Sign in").variant(ButtonVariant::Primary).fill_width().enabled(ready).on_click(sign_in)"#,
+            r#"form_field("Password", text_field(&app.password)
+        .password(!app.show_password)
+        .leading_icon(Icon::Lock)
+        .trailing_action("reveal", Icon::Eye, "Show password", toggle_reveal))
+    .required(true)
+    .error(too_short.then(|| "Use at least 8 characters".into()))
+button("Sign in").variant(ButtonVariant::Primary).fill_width().enabled(ready)"#,
         )],
-        api: vec![],
+        api: vec![
+            (
+                "form_field(label, control)",
+                "Label, required mark, description or error.",
+            ),
+            (
+                ".leading_icon / .trailing_action",
+                "Icons and actions inside the field.",
+            ),
+        ],
     }
 }
 

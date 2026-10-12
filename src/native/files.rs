@@ -59,7 +59,8 @@ impl Drop for Temporary {
     }
 }
 /// Write a private sibling, sync its contents, then commit without truncating the
-/// original. New-file commits use a hard link so an existing path is never replaced.
+/// original. New-file commits use a hard link so an existing path is never replaced;
+/// where links are unsupported (exFAT, many network shares) an exclusive create is used.
 /// Existing-file rename replacement is platform dependent and may return an error.
 /// Unix permission bits are retained; ACLs/xattrs/hard-link identity are not copied.
 /// Parent directories are not fsynced: this is not a power-loss durability guarantee.
@@ -154,8 +155,76 @@ pub fn save_text_file(path: &Path, text: &str, policy: SavePolicy<'_>) -> io::Re
     if original.is_some() {
         regular(path)?;
         fs::rename(&temporary.0, path)?;
+        Ok(())
     } else {
-        fs::hard_link(&temporary.0, path)?;
+        commit_new(&temporary.0, path, text, |from, to| fs::hard_link(from, to))
     }
-    Ok(())
+}
+/// Commit a new file without ever replacing an existing path. A hard link is
+/// atomic; filesystems without hard links (exFAT/FAT, many SMB/NFS shares)
+/// fall back to an exclusive create-and-write, which still refuses an
+/// existing path but can leave a partial file if the process dies mid-write.
+fn commit_new(
+    temporary: &Path,
+    path: &Path,
+    text: &str,
+    link: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    match link(temporary, path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+        Err(_) => {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                // Match the private staged file even on a linkless volume.
+                options.mode(0o600);
+            }
+            let mut file = options.open(path)?;
+            let written = file
+                .write_all(text.as_bytes())
+                .and_then(|()| file.sync_all());
+            if written.is_err() {
+                // Never leave a partial file this call created.
+                drop(file);
+                let _ = fs::remove_file(path);
+            }
+            written
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn new_files_fall_back_when_hard_links_are_unsupported_and_never_clobber() {
+        let dir = std::env::temp_dir().join(format!(
+            "volt-commit-new-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&dir).unwrap();
+        let (temporary, path) = (dir.join("staged"), dir.join("note.txt"));
+        fs::write(&temporary, "draft").unwrap();
+        let unsupported = |_: &Path, _: &Path| -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::Unsupported, "no hard links"))
+        };
+        commit_new(&temporary, &path, "draft", unsupported).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "draft");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        // An existing path is refused by the fallback too.
+        let err = commit_new(&temporary, &path, "other", unsupported).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "draft");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

@@ -65,7 +65,7 @@ fn parse_args(
                 // Show the first section's code (handy for screenshots).
                 show_code = true;
             }
-            "--palette" => app.palette_open = true,
+            "--palette" => app.palette.open = true,
             "--dialog" => app.dialog_open = true,
             "--native-chrome" => chrome = WindowChrome::Native,
             "--compact-chrome" => chrome = WindowChrome::CompactOverlay,

@@ -6,6 +6,7 @@ struct PopoverOptions<C> {
     open: bool,
     anchor: Option<String>,
     dismiss: Option<Click<C>>,
+    keep_anchor: bool,
 }
 pub fn popover<C>(content: impl Into<Element<C>>) -> Popover<C> {
     let card = panel([content.into()])
@@ -23,12 +24,19 @@ pub fn popover<C>(content: impl Into<Element<C>>) -> Popover<C> {
             open: false,
             anchor: None,
             dismiss: None,
+            keep_anchor: false,
         },
     )
 }
 impl<C> Popover<C> {
     pub fn anchor(mut self, key: impl Into<String>) -> Self {
         self.1.anchor = Some(key.into());
+        self
+    }
+    /// Keep the anchor usable while open: focus stays on it and pointer
+    /// presses on it do not dismiss (searchable selects type into it).
+    pub fn keep_anchor_interactive(mut self, value: bool) -> Self {
+        self.1.keep_anchor = value;
         self
     }
     pub fn open(mut self, open: bool) -> Self {
@@ -64,7 +72,9 @@ impl<C> From<Popover<C>> for Element<C> {
         };
         p.0.node.id = format!("{key}-content");
         let mut root = super::dialogs::overlay_scope(p.0, key, OverlayKind::Popup, dismiss);
-        root.node.overlay.as_mut().unwrap().anchor = Some(anchor);
+        let overlay = root.node.overlay.as_mut().unwrap();
+        overlay.anchor = Some(anchor);
+        overlay.keep_anchor = p.1.keep_anchor;
         root
     }
 }
@@ -81,6 +91,20 @@ pub fn tooltip<C>(label: impl Into<String>, target: impl Into<Element<C>>) -> To
         .background(ColorToken::Base300)
         .border_color(ColorToken::Border)
         .border_width(1.);
+    Tooltip(card.into(), target.into())
+}
+/// A richer hover preview: any noninteractive content shown while the
+/// target is hovered or keyboard-focused (a tooltip with a card body).
+pub fn hover_card<C>(content: impl Into<Element<C>>, target: impl Into<Element<C>>) -> Tooltip<C> {
+    let card = panel([content.into()])
+        .width(300.)
+        .padding(14., Edge::All)
+        .gap(8., Axis::Vertical)
+        .rounded(12)
+        .background(ColorToken::Base200)
+        .border_color(ColorToken::Border)
+        .border_width(1.)
+        .shadow(super::tokens::shadow::lg());
     Tooltip(card.into(), target.into())
 }
 impl<C> From<Tooltip<C>> for Element<C> {
@@ -113,6 +137,7 @@ impl<C> From<Tooltip<C>> for Element<C> {
             escape_dismiss: false,
             anchor: Some(anchor),
             position: None,
+            keep_anchor: false,
         });
         portal.children.push(tooltip.0);
         let mut root = Element::new(Kind::ZStack).key(key);

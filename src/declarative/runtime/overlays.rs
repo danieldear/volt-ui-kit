@@ -54,6 +54,15 @@ fn scopes(root: &Node) -> Vec<Scope> {
             let content = node.children.first()?;
             let mut ids = BTreeSet::new();
             keys(content, &mut ids);
+            let options = node.overlay.as_ref()?;
+            if let Some(anchor) = options
+                .anchor
+                .as_deref()
+                .filter(|_| options.keep_anchor)
+                .and_then(|id| find_node(root, id))
+            {
+                keys(anchor, &mut ids);
+            }
             Some(Scope {
                 id: node.id.clone(),
                 content: content.id.clone(),
@@ -91,9 +100,24 @@ fn menu(root: &Node, scope: &Scope) -> Option<Menu> {
         return None;
     }
     let content = find_node(root, &scope.content)?;
-    if content.children.iter().any(|child| {
-        !matches!(child.kind, Kind::Button | Kind::Separator) || child.height.is_none()
-    }) {
+    // A decorated row is a fixed-height layer whose first child is its button.
+    let target = |child: &'_ Node| -> Option<(String, bool, bool)> {
+        match child.kind {
+            Kind::Button => Some((child.id.clone(), child.enabled, child.checked)),
+            Kind::Separator => Some((child.id.clone(), false, false)),
+            Kind::ZStack => child
+                .children
+                .first()
+                .filter(|b| b.kind == Kind::Button)
+                .map(|b| (b.id.clone(), b.enabled && child.enabled, b.checked)),
+            _ => None,
+        }
+    };
+    if content
+        .children
+        .iter()
+        .any(|child| target(child).is_none() || child.height.is_none())
+    {
         return None;
     }
     let mut start = 0.;
@@ -103,12 +127,13 @@ fn menu(root: &Node, scope: &Scope) -> Option<Menu> {
         .iter()
         .map(|child| {
             let height = child.height.unwrap();
+            let (id, enabled, checked) = target(child).unwrap();
             let item = MenuItem {
-                id: child.id.clone(),
+                id,
                 start,
                 height,
-                enabled: child.enabled && child.kind == Kind::Button,
-                checked: child.checked,
+                enabled: enabled && child.kind != Kind::Separator,
+                checked,
             };
             start += height + gap;
             item
@@ -453,10 +478,15 @@ impl Runtime {
         let Some(scope) = self.overlays.scopes.last() else {
             return false;
         };
+        let anchor = scope
+            .options
+            .anchor
+            .as_deref()
+            .filter(|_| scope.options.keep_anchor);
         self.boxes
             .iter()
-            .find(|b| b.id == scope.content)
-            .is_some_and(|b| {
+            .filter(|b| b.id == scope.content || Some(b.id.as_str()) == anchor)
+            .any(|b| {
                 b.clip.contains(x, y)
                     && b.clip_regions.iter().all(|r| r.contains(x, y))
                     && b.content_clip
@@ -617,6 +647,7 @@ impl Runtime {
         }
         self.cancel_input();
         self.focused = Some(ids[next].clone());
+        self.focus_visible = true;
         true
     }
 }

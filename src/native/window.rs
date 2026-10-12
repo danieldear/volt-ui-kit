@@ -482,11 +482,14 @@ fn run_host<C: 'static>(
         pointer: None,
         modifiers: ModifiersState::empty(),
         activation_key: None,
+        dropped: Vec::new(),
         clipboard: None,
         ime_allowed: false,
         error: None,
         frames: 0,
         animation_clock: AnimationClock::new(Instant::now()),
+        pacing_checked: None,
+        cursor: crate::declarative::Cursor::Default,
         focused: true,
         occluded: false,
         reduced_motion,
@@ -589,11 +592,15 @@ struct App<C> {
     pointer: Option<[f32; 2]>,
     modifiers: ModifiersState,
     activation_key: Option<NamedKey>,
+    /// Files from one system drop arrive as separate events; batched per turn.
+    dropped: Vec<std::path::PathBuf>,
     clipboard: Option<arboard::Clipboard>,
     ime_allowed: bool,
     error: Option<String>,
     frames: u64,
     animation_clock: AnimationClock,
+    pacing_checked: Option<Instant>,
+    cursor: crate::declarative::Cursor,
     focused: bool,
     occluded: bool,
     reduced_motion: bool,
@@ -641,6 +648,56 @@ impl<C: 'static> App<C> {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+    /// Show the cursor the element under the pointer asks for (pointer over
+    /// buttons, I-beam over text fields…). Only calls the OS on a change.
+    fn update_cursor(&mut self, x: f32, y: f32) {
+        use crate::declarative::Cursor;
+        use winit::window::CursorIcon;
+        let cursor = self.runtime.cursor_at(x, y);
+        if cursor == self.cursor {
+            return;
+        }
+        self.cursor = cursor;
+        let icon = match cursor {
+            Cursor::Default => CursorIcon::Default,
+            Cursor::Pointer => CursorIcon::Pointer,
+            Cursor::Text => CursorIcon::Text,
+            Cursor::Move => CursorIcon::Move,
+            Cursor::Grab => CursorIcon::Grab,
+            Cursor::Grabbing => CursorIcon::Grabbing,
+            Cursor::NotAllowed => CursorIcon::NotAllowed,
+            Cursor::Wait => CursorIcon::Wait,
+            Cursor::Crosshair => CursorIcon::Crosshair,
+            Cursor::ResizeColumn => CursorIcon::ColResize,
+            Cursor::ResizeRow => CursorIcon::RowResize,
+            Cursor::ZoomIn => CursorIcon::ZoomIn,
+            Cursor::Help => CursorIcon::Help,
+        };
+        if let Some(window) = &self.window {
+            window.set_cursor(icon);
+        }
+    }
+    /// Refresh the frame pacing at most once a second (the window may move
+    /// between a ProMotion panel and an external 60 Hz display).
+    fn update_pacing(&mut self, now: Instant) {
+        if self
+            .pacing_checked
+            .is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.pacing_checked = Some(now);
+        let refresh = self
+            .window
+            .as_ref()
+            .and_then(|w| w.current_monitor())
+            .and_then(|m| m.refresh_rate_millihertz());
+        #[cfg(feature = "native-gpu")]
+        let vsync = self.gpu.is_some();
+        #[cfg(not(feature = "native-gpu"))]
+        let vsync = false;
+        self.animation_clock.set_pacing(refresh, vsync);
     }
     fn animations_can_run(&self) -> bool {
         self.focused
@@ -1699,6 +1756,12 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 }
                 WindowEvent::RedrawRequested => self.render()?,
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                    #[cfg(target_os = "macos")]
+                    if unified_titlebar_policy(self.options.chrome, true) {
+                        if let Some(window) = self.window.as_ref() {
+                            super::macos_chrome::sync_fullscreen_toolbar(window);
+                        }
+                    }
                     self.runtime.cancel_input();
                     self.activation_key = None;
                     self.runtime.invalidate_layout();
@@ -1706,7 +1769,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.redraw();
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    self.layout()?;
+                    // A divider drag patches the document and only needs one
+                    // layout per frame (render lays out); trackpads deliver
+                    // several moves per frame.
+                    let dragging = self.runtime.split_dragging();
+                    if !dragging {
+                        self.layout()?;
+                    }
                     self.pointer = Some([position.x as f32, position.y as f32]);
                     // Outcome-aware moves keep slider drags and text selection live.
                     let outcome = self
@@ -1720,10 +1789,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         .map_err(|e| e.to_string())?;
                     if outcome.activated {
                         self.after_input(outcome)?;
+                    } else if outcome.changed && dragging {
+                        self.redraw();
                     } else if outcome.changed {
                         self.layout()?;
                         self.redraw();
                     }
+                    self.update_cursor(position.x as f32, position.y as f32);
                 }
                 WindowEvent::ThemeChanged(theme) => {
                     self.system_theme = if theme == winit::window::Theme::Light {
@@ -1758,6 +1830,18 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         }
                     }
                 }
+                WindowEvent::HoveredFile(_) => {
+                    self.layout()?;
+                    if self.runtime.file_hover(self.pointer) {
+                        self.redraw();
+                    }
+                }
+                WindowEvent::HoveredFileCancelled => {
+                    if self.runtime.file_hover_end() {
+                        self.redraw();
+                    }
+                }
+                WindowEvent::DroppedFile(path) => self.dropped.push(path),
                 WindowEvent::CursorLeft { .. } => {
                     self.pointer = None;
                     if self.runtime.pointer_leave() {
@@ -1988,9 +2072,26 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         if let Some(requests) = self.extensions.requests.as_mut() {
             requests.finish_turn();
         }
+        if !self.dropped.is_empty() {
+            let paths = std::mem::take(&mut self.dropped);
+            let result = self.layout().and_then(|()| {
+                let outcome = self
+                    .runtime
+                    .drop_files(self.pointer, paths, &mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?;
+                self.after_input(outcome)
+            });
+            if let Err(error) = result {
+                self.fail(event_loop, error);
+                return;
+            }
+        }
         let now = Instant::now();
         let changed = self.advance_animations(now);
         let active = self.animations_can_run() && self.runtime.is_animating();
+        if active {
+            self.update_pacing(now);
+        }
         if active && self.animation_clock.frame_due(now) {
             self.redraw();
             // Consume this deadline even if the platform coalesces the redraw;
@@ -2105,15 +2206,31 @@ fn reduced_motion_enabled(option: bool, environment: Option<&str>) -> bool {
 }
 
 const ANIMATION_FRAME: Duration = Duration::from_nanos(16_666_667);
+/// Paces animation frames. Under vsync (GPU, FIFO presentation) the display
+/// sets the rate: the next frame is requested right after each present and
+/// the swap chain waits for the next refresh — 120 Hz on ProMotion — with no
+/// timer phase drift to cause judder. Without vsync (software), a timer runs
+/// at the monitor's refresh interval on a fixed cadence that never drifts.
 struct AnimationClock {
     epoch: Instant,
     next_frame: Option<Instant>,
+    interval: Duration,
+    vsync: bool,
 }
 impl AnimationClock {
     fn new(now: Instant) -> Self {
         Self {
             epoch: now,
             next_frame: None,
+            interval: ANIMATION_FRAME,
+            vsync: false,
+        }
+    }
+    /// `refresh_millihertz` from the window's monitor; unknown keeps 60 Hz.
+    fn set_pacing(&mut self, refresh_millihertz: Option<u32>, vsync: bool) {
+        self.vsync = vsync;
+        if let Some(mhz) = refresh_millihertz.filter(|m| (24_000..=500_000).contains(m)) {
+            self.interval = Duration::from_nanos(1_000_000_000_000 / u64::from(mhz));
         }
     }
     // Runtime takes an absolute monotonic timestamp, not a per-frame delta.
@@ -2121,18 +2238,32 @@ impl AnimationClock {
         now.saturating_duration_since(self.epoch)
     }
     fn deadline(&mut self, now: Instant, active: bool) -> Option<Instant> {
-        if !active {
+        if !active || self.vsync {
+            // Vsync paces frames through presentation; no timer wake-ups.
             self.next_frame = None;
         } else if self.next_frame.is_none() {
-            self.next_frame = Some(now + ANIMATION_FRAME);
+            self.next_frame = Some(now + self.interval);
         }
         self.next_frame
     }
     fn frame_due(&self, now: Instant) -> bool {
-        self.next_frame.is_some_and(|deadline| now >= deadline)
+        self.vsync || self.next_frame.is_some_and(|deadline| now >= deadline)
     }
     fn presented(&mut self, now: Instant) {
-        self.next_frame = Some(now + ANIMATION_FRAME);
+        if self.vsync {
+            self.next_frame = None;
+            return;
+        }
+        // Advance on a fixed cadence from the previous deadline instead of
+        // `now + interval`, which drifts later every frame by however long the
+        // frame took. After a missed slot (a stall), rebase on `now` rather
+        // than catching up in a burst.
+        let next = self.next_frame.map_or(now, |d| d) + self.interval;
+        self.next_frame = Some(if next > now {
+            next
+        } else {
+            now + self.interval
+        });
     }
     fn reset(&mut self) {
         // Do not rewind Runtime's absolute clock across focus/suspend cycles.
@@ -2308,6 +2439,33 @@ mod tests {
         assert!(!reduced_motion_enabled(false, Some("0")));
         assert!(!reduced_motion_enabled(false, Some("true")));
         assert!(!reduced_motion_enabled(false, None));
+    }
+    #[test]
+    fn animation_clock_follows_vsync_or_a_drift_free_refresh_cadence() {
+        let start = Instant::now();
+        // Software at 120 Hz: fixed cadence from the previous deadline.
+        let mut clock = AnimationClock::new(start);
+        clock.set_pacing(Some(120_000), false);
+        let tick = Duration::from_nanos(8_333_333);
+        assert_eq!(clock.deadline(start, true), Some(start + tick));
+        // A frame that finished 3 ms late does not push later frames back.
+        clock.presented(start + tick + Duration::from_millis(3));
+        assert_eq!(clock.deadline(start, true), Some(start + tick * 2));
+        // A long stall rebases on now rather than bursting to catch up.
+        let stalled = start + tick * 5 + Duration::from_millis(1);
+        clock.presented(stalled);
+        assert_eq!(clock.deadline(start, true), Some(stalled + tick));
+        // Unknown or absurd refresh rates keep the previous interval.
+        clock.set_pacing(None, false);
+        clock.set_pacing(Some(1), false);
+        assert_eq!(clock.interval, tick);
+        // Vsync: every frame is due and no timer wake-up is scheduled.
+        clock.set_pacing(Some(120_000), true);
+        assert!(clock.frame_due(start));
+        assert_eq!(clock.deadline(start, true), None);
+        clock.presented(start);
+        assert_eq!(clock.deadline(start, true), None);
+        assert_eq!(clock.deadline(start, false), None);
     }
     #[test]
     fn animation_clock_waits_when_idle_and_bounds_active_frame_pacing() {

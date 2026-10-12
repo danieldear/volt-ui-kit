@@ -1,3 +1,4 @@
+use super::style::avatar;
 use super::{
     state::{radius_label, PALETTES, RADII},
     style::*,

@@ -20,7 +20,7 @@ Your Rust application
     Contents/
       Info.plist
       PkgInfo
-      MacOS/VoltApp
+      MacOS/MyApp            executable named after the app (ASCII-safe)
       Resources/             only files explicitly selected
       _CodeSignature/        when ad-hoc signing is requested
 ```

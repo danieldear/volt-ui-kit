@@ -15,6 +15,8 @@ pub fn slider<C>(value: f32) -> Slider<C> {
         max: 1.,
         step: 0.01,
         on_change: None,
+        lower: None,
+        on_lower_change: None,
     });
     Slider(element)
 }
@@ -36,6 +38,73 @@ impl<C> Slider<C> {
     pub fn on_change(mut self, callback: impl FnMut(&mut C, f32) + 'static) -> Self {
         self.0.callback = Some(Callback::Number(Box::new(callback)));
         self
+    }
+}
+type Pair<C> = Rc<RefCell<dyn FnMut(&mut C, f32, f32)>>;
+/// Controlled two-thumb slider selecting `low..=high`. Pointer presses grab
+/// the nearer thumb; arrow keys move the last-grabbed one. Thumbs never cross.
+pub struct RangeSlider<C> {
+    element: Element<C>,
+    on_change: Option<Pair<C>>,
+}
+pub fn range_slider<C>(low: f32, high: f32) -> RangeSlider<C> {
+    let mut element = slider(high).0;
+    element.node.slider.as_mut().unwrap().lower = Some(low);
+    RangeSlider {
+        element,
+        on_change: None,
+    }
+}
+impl<C> RangeSlider<C> {
+    pub fn key(mut self, key: impl Into<String>) -> Self {
+        self.element = self.element.key(key);
+        self
+    }
+    pub fn accessible_label(mut self, label: impl Into<String>) -> Self {
+        self.element.node.accessible_label = Some(label.into());
+        self
+    }
+    pub fn width(mut self, value: f32) -> Self {
+        self.element.node.width = Some(value);
+        self
+    }
+    pub fn flex(mut self, value: f32) -> Self {
+        self.element.node.flex = value;
+        self
+    }
+    pub fn range(mut self, range: RangeInclusive<f32>) -> Self {
+        self.element = Slider(self.element).range(range).0;
+        self
+    }
+    pub fn step(mut self, value: f32) -> Self {
+        self.element = Slider(self.element).step(value).0;
+        self
+    }
+    pub fn enabled(mut self, value: bool) -> Self {
+        self.element.node.enabled = value;
+        self
+    }
+    /// Called with the new `(low, high)`.
+    pub fn on_change(mut self, f: impl FnMut(&mut C, f32, f32) + 'static) -> Self {
+        self.on_change = Some(Rc::new(RefCell::new(f)));
+        self
+    }
+}
+impl<C: 'static> From<RangeSlider<C>> for Element<C> {
+    fn from(r: RangeSlider<C>) -> Self {
+        let mut e = r.element;
+        let props = e.node.slider.as_ref().unwrap();
+        let (low, high) = (props.lower.unwrap_or(props.min), props.value);
+        let Some(f) = r.on_change else {
+            e.validation_error = Some("range_slider requires on_change".into());
+            return e;
+        };
+        let g = f.clone();
+        e.callback = Some(Callback::Range {
+            lower: Box::new(move |app: &mut C, v| (f.borrow_mut())(app, v, high)),
+            upper: Box::new(move |app: &mut C, v| (g.borrow_mut())(app, low, v)),
+        });
+        e
     }
 }
 impl<C> From<Slider<C>> for Element<C> {
@@ -165,8 +234,11 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
         let popup_key = format!("{}-popup", select.0.node.id);
         let open = select.1.open;
         let callback = on_open.clone();
+        // Styled as a field (like text fields and comboboxes), not a button:
+        // it shows a value. The chevron sits inside at the trailing edge.
         let mut trigger: Element<C> = button(select.1.items[index].label.clone())
             .disclosure(open)
+            .label_align(Align::Start)
             .key(trigger_key.clone())
             .enabled(select.1.enabled)
             .height(select.0.node.height.unwrap_or(36.))
@@ -178,9 +250,19 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
         // outer layout node keeps typography and clipping, but must not paint
         // a second translucent background or border underneath that trigger.
         let mut style = select.0.node.style.clone();
-        style.radius = style.radius.or(trigger.node.style.radius);
+        style.radius = style.radius.or(Some(Rounding::Radius(8.)));
+        style.background = style.background.or(Some(ColorToken::Base200.into()));
+        style.border_color = style.border_color.or(Some(ColorToken::Border.into()));
+        style.border_width = style.border_width.or(Some(1.));
+        style.color = style.color.or(Some(ColorToken::BaseContent.into()));
         trigger.node.style = style;
-        trigger.node.effects.states = std::mem::take(&mut select.0.node.effects.states);
+        let mut states = std::mem::take(&mut select.0.node.effects.states);
+        let hover = &mut states[0];
+        if hover.background.is_none() && hover.border_color.is_none() && hover.color.is_none() {
+            // Default hover: the outline darkens, as fields do.
+            hover.border_color = Some(ColorToken::BaseContent.alpha(30));
+        }
+        trigger.node.effects.states = states;
         trigger.node.effects.animations = std::mem::take(&mut select.0.node.effects.animations);
         select.0.node.style.background = None;
         select.0.node.style.background_opacity = None;
@@ -191,45 +273,80 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
         if !open || !select.1.enabled {
             return select.0;
         }
+        // The same card as combobox popovers: quiet rows, a check on the
+        // chosen one. Rows stay button-first so arrow keys still navigate.
+        const ROW: f32 = 34.;
+        let width = select.0.node.width.unwrap_or(220.);
+        let inner = (width - 12.).max(0.);
         let mut items = Element::new(Kind::Panel);
         items.node.access_role = Some(AccessRole::ListBox);
         items.node.access_set_size = Some(select.1.items.len());
-        items.node.padding = 8.;
-        items.node.style.radius = Some(Rounding::Radius(8.));
+        items.node.padding = 6.;
+        items.node.style.radius = Some(Rounding::Radius(10.));
         items.node.style.background = Some(ColorToken::Base200.into());
         items.node.style.border_color = Some(ColorToken::Border.into());
         items.node.style.border_width = Some(1.);
-        items.node.width = select.0.node.width;
+        items.node.effects.base.shadow = Some(super::tokens::shadow::lg());
+        items.node.width = Some(width);
         items.node.gap = 2.;
         items.node.surface.scroll = Some(Scroll::Vertical);
-        items.node.height = Some((select.1.items.len() as f32 * 36. + 16.).min(320.));
+        let count = select.1.items.len() as f32;
+        items.node.height = Some((count * ROW + (count - 1.).max(0.) * 2. + 12.).min(320.));
+        let base_key = select.0.node.id.clone();
         for (position, item) in select.1.items.into_iter().enumerate() {
             let active = item.value == selected;
             let on_select = on_select.clone();
             let on_open = on_open.clone();
             let value = item.value;
             let mut option = button(item.label)
-                .height(34.)
-                .width(select.0.node.width.unwrap_or(220.))
-                .primary(active)
+                .height(ROW)
+                .width(inner)
+                .rounded(6)
+                .background("#00000000")
+                .border_width(0.)
+                .label_align(Align::Start)
+                .label_inset(30.)
+                .font_weight(if active { 600 } else { 400 })
                 .enabled(item.enabled)
+                .hover_style(|s| s.background(ColorToken::BaseContent.alpha(7)))
                 .on_click(move |app: &mut C| {
                     if !active {
                         (on_select.borrow_mut())(app, value.clone());
                     }
                     (on_open.borrow_mut())(app, false);
                 });
-            if active {
-                option = option.color(ColorToken::PrimaryContent);
-            }
             option.0.node.checked = active;
             option.0.node.access_role = Some(AccessRole::ListBoxOption);
             option.0.node.access_selected = Some(active);
             option.0.node.access_position = Some(position);
-            if let Some(key) = item.key {
-                option = option.key(key);
-            }
-            items.children.push(option.into());
+            let option_key = item
+                .key
+                .unwrap_or_else(|| format!("{base_key}-option-{position}"));
+            option = option.key(option_key.clone());
+            let mark: Element<C> = if active {
+                super::icon(super::Icon::Check)
+                    .size(14.)
+                    .color(ColorToken::BaseContent)
+                    .into()
+            } else {
+                spacer().width(14.).flex(0.).into()
+            };
+            items.children.push(
+                zstack![
+                    option,
+                    hstack![mark]
+                        .key(format!("{option_key}-mark"))
+                        .width(inner)
+                        .height(ROW)
+                        .align(Align::Center)
+                        .padding(10., Edge::Left)
+                        .scroll_passthrough(true),
+                ]
+                .key(format!("{option_key}-row"))
+                .width(inner)
+                .height(ROW)
+                .into(),
+            );
         }
         let close = on_open.clone();
         let mut popup = super::dialogs::overlay_scope(

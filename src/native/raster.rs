@@ -25,6 +25,45 @@ pub enum Shape {
     ClipEnd,
     Image([f32; 4], BackgroundImage, f32),
     Path(VectorPath, [f32; 4], Option<f32>),
+    /// A gradient-filled rounded rectangle: bounds, corner radii, geometry and
+    /// resolved (offset, colour) stops, all in physical pixels.
+    Gradient([f32; 4], [f32; 4], GradientGeometry, Vec<(f32, [f32; 4])>),
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GradientGeometry {
+    Linear { start: [f32; 2], end: [f32; 2] },
+    Radial { centre: [f32; 2], radius: f32 },
+}
+impl GradientGeometry {
+    /// CSS geometry for a box: a linear line through the centre whose length
+    /// lets the end colours reach the corners; a radial circle reaching the
+    /// farthest corner.
+    pub(crate) fn for_box(
+        kind: crate::declarative::extras::GradientKind,
+        [x, y, w, h]: [f32; 4],
+    ) -> Self {
+        use crate::declarative::extras::GradientKind;
+        match kind {
+            GradientKind::Linear(angle) => {
+                let (sin, cos) = angle.to_radians().sin_cos();
+                let (dx, dy) = (sin, -cos);
+                let half = (w * sin.abs() + h * cos.abs()) * 0.5;
+                let (cx, cy) = (x + w * 0.5, y + h * 0.5);
+                Self::Linear {
+                    start: [cx - dx * half, cy - dy * half],
+                    end: [cx + dx * half, cy + dy * half],
+                }
+            }
+            GradientKind::Radial([fx, fy]) => {
+                let centre = [x + w * fx, y + h * fy];
+                let radius = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]
+                    .iter()
+                    .map(|c| (c[0] - centre[0]).hypot(c[1] - centre[1]))
+                    .fold(1_f32, f32::max);
+                Self::Radial { centre, radius }
+            }
+        }
+    }
 }
 
 const EFFECT_CACHE_BYTES: usize = 8 * 1024 * 1024;
@@ -32,6 +71,9 @@ const EFFECT_CACHE_ENTRIES: usize = 32;
 const EFFECT_TINT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EFFECT_PIXELS: u64 = 4_194_304;
 const MAX_FRAME_EFFECT_PIXELS: u64 = 16_777_216;
+/// Shaped text layouts kept between frames: comfortably above a dense
+/// document page plus navigation, measured at several widths.
+const TEXT_CACHE_ENTRIES: usize = 2048;
 /// Largest window framebuffer either renderer accepts: a 6K display at 2×
 /// is ~20 MP and 8K at 1× ~33 MP. The GPU's own texture-dimension limit and
 /// the runtime's 16,384-pixel side limit are enforced separately.
@@ -95,6 +137,7 @@ fn translated_batch(
             | Shape::Corners(b, _, _)
             | Shape::Outline(b, _, _, _)
             | Shape::Shadow(b, _, _, _, _, _)
+            | Shape::Gradient(b, _, _, _)
             | Shape::Image(b, _, _) => bounds(b),
             Shape::Triangle(points, _) => points.iter_mut().for_each(point),
             Shape::Line(a, b, _, _) => {
@@ -152,7 +195,7 @@ pub struct Glyph {
     pub(super) style: TextStyle,
     pub(super) color: [f32; 4],
 }
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct TextKey {
     text: String,
     family: String,
@@ -160,12 +203,65 @@ struct TextKey {
     italic: bool,
     size: u32,
     width: u32,
+    tracking: u32,
+    align: crate::declarative::TextAlign,
+    line_height: u32,
+    max_lines: u16,
+    no_wrap: bool,
 }
 fn default_style(size: f32) -> TextStyle {
     TextStyle {
         size,
         ..TextStyle::default()
     }
+}
+static REGISTERED_FONTS: std::sync::Mutex<Vec<std::sync::Arc<Vec<u8>>>> =
+    std::sync::Mutex::new(Vec::new());
+const MAX_REGISTERED_FONTS: usize = 64;
+const MAX_FONT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_REGISTERED_FONT_BYTES: usize = 256 * 1024 * 1024;
+fn font_registration_fits(count: usize, bytes: usize, incoming: usize) -> bool {
+    count < MAX_REGISTERED_FONTS
+        && bytes
+            .checked_add(incoming)
+            .is_some_and(|sum| sum <= MAX_REGISTERED_FONT_BYTES)
+}
+/// Bundle a font with the app: TrueType/OpenType (or a collection) bytes,
+/// e.g. `include_bytes!("../fonts/Inter.ttf")`. Call before creating windows;
+/// families become available by name to `font_family`, alongside system
+/// fonts. Returns the family names found. At most 64 files / 256 MiB total;
+/// immutable bytes are shared across windows rather than copied per painter.
+pub fn register_font(data: Vec<u8>) -> Result<Vec<String>, String> {
+    if data.is_empty() || data.len() > MAX_FONT_BYTES {
+        return Err("font data must be 1 byte to 64 MiB".into());
+    }
+    let mut fonts = REGISTERED_FONTS
+        .lock()
+        .map_err(|_| "font registry poisoned")?;
+    let bytes = fonts.iter().map(|f| f.len()).sum();
+    if !font_registration_fits(fonts.len(), bytes, data.len()) {
+        return Err("at most 64 fonts / 256 MiB total can be registered".into());
+    }
+    let data = std::sync::Arc::new(data);
+    let mut probe = cosmic_text::fontdb::Database::new();
+    probe.load_font_source(cosmic_text::fontdb::Source::Binary(data.clone()));
+    let mut families: Vec<String> = probe
+        .faces()
+        .flat_map(|f| f.families.iter().map(|(n, _)| n.clone()))
+        .collect();
+    families.sort();
+    families.dedup();
+    if families.is_empty() {
+        return Err("not a TrueType/OpenType font".into());
+    }
+    fonts.push(data);
+    Ok(families)
+}
+fn registered_fonts() -> Vec<std::sync::Arc<Vec<u8>>> {
+    REGISTERED_FONTS
+        .lock()
+        .map(|f| f.clone())
+        .unwrap_or_default()
 }
 /// Shaped text buffers and glyph rasters are reused between event-driven frames.
 pub struct RasterPainter {
@@ -175,12 +271,18 @@ pub struct RasterPainter {
     sf_text: String,
     sf_display: String,
     sf_mono: String,
+    /// Every installed family name, for CSS-style fallback lists.
+    installed: std::collections::HashSet<String>,
     swash: SwashCache,
     /// Normalized outline ink boxes, not rasterized glyphs. Bounded independently
     /// so repeated GPU frames need no font-table parsing to decide clipping.
     #[cfg(feature = "native-gpu")]
     gpu_ink: BTreeMap<(cosmic_text::fontdb::ID, u16), Option<[f32; 4]>>,
-    text: BTreeMap<TextKey, (Buffer, u64)>,
+    /// Hashed, not ordered: ordering compares whole paragraphs on every lookup.
+    text: std::collections::HashMap<TextKey, (Buffer, u64)>,
+    /// Unwrapped sizes by a hash of text and style, so layout can answer
+    /// "does it fit?" without building a key or touching a shaped buffer.
+    natural: std::collections::HashMap<u64, [f32; 2]>,
     clock: u64,
     glyph_bytes: usize,
     pub text_cache_misses: u64,
@@ -252,6 +354,7 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
         Shape::Rectangle(b, _)
         | Shape::Rounded(b, ..)
         | Shape::Corners(b, ..)
+        | Shape::Gradient(b, ..)
         | Shape::Image(b, ..) => pad(*b, 1.),
         Shape::Outline(b, _, w, _) => pad(*b, w + 1.),
         Shape::Triangle(p, _) => pad(
@@ -372,7 +475,7 @@ impl RasterPainter {
     /// hit testing. Only glyph cache misses rasterize small glyph resources.
     #[cfg(feature = "native-gpu")]
     pub(super) fn gpu_glyphs(&mut self, glyph: &Glyph) -> Vec<(cosmic_text::CacheKey, [f64; 2])> {
-        let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
+        let key = self.draw_key(&glyph.text, &glyph.style, glyph.bounds[2]);
         let [gx, gy, gw, gh] = glyph.bounds;
         let mut out = Vec::new();
         for run in self.text[&key].0.layout_runs() {
@@ -401,7 +504,7 @@ impl RasterPainter {
     /// reports text that crosses its box and therefore still needs a clip.
     #[cfg(feature = "native-gpu")]
     pub(super) fn gpu_glyph_runs(&mut self, glyph: &Glyph) -> (Vec<GpuGlyphRun>, bool) {
-        let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
+        let key = self.draw_key(&glyph.text, &glyph.style, glyph.bounds[2]);
         let [gx, gy, gw, gh] = glyph.bounds;
         let (ox, oy) = (gx.round(), gy.round());
         let mut runs: Vec<GpuGlyphRun> = Vec::new();
@@ -523,7 +626,42 @@ impl RasterPainter {
     /// Other platforms (or missing faces) use sans-serif / monospace. This
     /// reports the requested family, not per-glyph fallback or optical sizing.
     /// Existing `system` and generic family choices remain unchanged.
+    /// Resolve a requested family. A comma-separated list (`"New York Extra
+    /// Large, Charter, serif"`) picks the first installed family, like CSS;
+    /// aliases and generic names in it always resolve.
     pub fn resolved_font_family(&self, requested: &str, size: f32) -> String {
+        if requested.contains(',') {
+            let generic = |name: &str| {
+                matches!(
+                    name,
+                    "SF" | "SF Pro"
+                        | "SF Mono"
+                        | "system"
+                        | "serif"
+                        | "sans-serif"
+                        | "sans"
+                        | "monospace"
+                        | "mono"
+                        | "cursive"
+                        | "fantasy"
+                )
+            };
+            let mut last = "";
+            for name in requested
+                .split(',')
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+            {
+                if generic(name) {
+                    return self.resolved_font_family(name, size);
+                }
+                if self.installed.contains(name) {
+                    return name.to_owned();
+                }
+                last = name;
+            }
+            return last.to_owned();
+        }
         match requested {
             "SF" | "SF Pro" if size >= 24. * self.viewport.scale => self.sf_display.clone(),
             "SF" | "SF Pro" => self.sf_text.clone(),
@@ -534,6 +672,11 @@ impl RasterPainter {
     }
     pub fn new(viewport: Viewport) -> Self {
         let mut fonts = FontSystem::new();
+        for data in registered_fonts() {
+            fonts
+                .db_mut()
+                .load_font_source(cosmic_text::fontdb::Source::Binary(data));
+        }
         configure_generic_families(&mut fonts);
         let system_family = system_family(&fonts);
         let sf_text = apple_family(
@@ -547,6 +690,11 @@ impl RasterPainter {
             "sans-serif",
         );
         let sf_mono = apple_family(&fonts, &["SF Mono", ".SF NS Mono"], "monospace");
+        let installed = fonts
+            .db()
+            .faces()
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .collect();
         if std::env::var_os("VOLT_UI_TRACE").is_some() {
             eprintln!("VOLT_UI_FONTS system={system_family:?} sf_text={sf_text:?} sf_display={sf_display:?} sf_mono={sf_mono:?}");
         }
@@ -557,10 +705,12 @@ impl RasterPainter {
             sf_text,
             sf_display,
             sf_mono,
+            installed,
             swash: SwashCache::new(),
             #[cfg(feature = "native-gpu")]
             gpu_ink: BTreeMap::new(),
-            text: BTreeMap::new(),
+            text: std::collections::HashMap::new(),
+            natural: std::collections::HashMap::new(),
             text_cache_misses: 0,
             shape_draw_calls: 0,
             effect_cache_misses: 0,
@@ -612,10 +762,26 @@ impl RasterPainter {
             italic: style.italic,
             size: size.to_bits(),
             width: width.to_bits(),
+            tracking: if style.tracking.is_finite() {
+                style.tracking.clamp(-0.2, 1.).to_bits()
+            } else {
+                0
+            },
+            align: style.align,
+            line_height: if style.line_height.is_finite() && style.line_height > 0. {
+                style.line_height.clamp(0.5, 4.).to_bits()
+            } else {
+                0
+            },
+            max_lines: style.max_lines,
+            no_wrap: style.no_wrap,
         };
         self.clock += 1;
         if !self.text.contains_key(&key) {
-            if self.text.len() >= 256 {
+            // A frame touches every visible label at each width it is
+            // measured at. LRU below a frame's working set misses on every
+            // lookup (cyclic access), reshaping all text each frame.
+            if self.text.len() >= TEXT_CACHE_ENTRIES {
                 if let Some(oldest) = self
                     .text
                     .iter()
@@ -625,9 +791,20 @@ impl RasterPainter {
                     self.text.remove(&oldest);
                 }
             }
-            let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size, size * 1.2));
+            let line_height = match f32::from_bits(key.line_height) {
+                v if v > 0. => v,
+                _ => 1.2,
+            };
+            let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size, size * line_height));
             buffer.set_size(&mut self.fonts, Some(width.max(0.1)), None);
-            buffer.set_wrap(&mut self.fonts, Wrap::WordOrGlyph);
+            buffer.set_wrap(
+                &mut self.fonts,
+                if key.no_wrap && key.max_lines == 0 {
+                    Wrap::None
+                } else {
+                    Wrap::WordOrGlyph
+                },
+            );
             let family = match key.family.as_str() {
                 "sans" | "sans-serif" => Family::SansSerif,
                 "serif" => Family::Serif,
@@ -644,8 +821,54 @@ impl RasterPainter {
                 } else {
                     Style::Normal
                 });
-            buffer.set_text(&mut self.fonts, text, &attrs, Shaping::Advanced);
-            buffer.shape_until_scroll(&mut self.fonts, false);
+            let tracking = f32::from_bits(key.tracking);
+            let attrs = if tracking == 0. {
+                attrs
+            } else {
+                attrs.letter_spacing(tracking)
+            };
+            let align = match key.align {
+                crate::declarative::TextAlign::Start => None,
+                crate::declarative::TextAlign::Center => Some(cosmic_text::Align::Center),
+                crate::declarative::TextAlign::End => Some(cosmic_text::Align::End),
+                crate::declarative::TextAlign::Justified => Some(cosmic_text::Align::Justified),
+            };
+            let fonts = &mut self.fonts;
+            let mut shape = |buffer: &mut Buffer, value: &str| {
+                buffer.set_text(fonts, value, &attrs, Shaping::Advanced);
+                if align.is_some() {
+                    for line in &mut buffer.lines {
+                        line.set_align(align);
+                    }
+                }
+                buffer.shape_until_scroll(fonts, false);
+                buffer.layout_runs().count()
+            };
+            let lines = shape(&mut buffer, text);
+            let limit = usize::from(key.max_lines);
+            // Truncate: the longest prefix that, with an ellipsis, fits the
+            // line limit. Binary search over character boundaries; only on a
+            // cache miss.
+            if limit > 0 && lines > limit {
+                let cuts: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+                let (mut lo, mut hi) = (0, cuts.len());
+                while lo < hi {
+                    let mid = (lo + hi).div_ceil(2);
+                    let candidate =
+                        format!("{}…", text[..cuts[mid.min(cuts.len() - 1)]].trim_end());
+                    if mid < cuts.len() && shape(&mut buffer, &candidate) <= limit {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
+                    }
+                }
+                let kept = if lo == 0 {
+                    ""
+                } else {
+                    text[..cuts[lo]].trim_end()
+                };
+                shape(&mut buffer, &format!("{kept}…"));
+            }
             self.text.insert(key.clone(), (buffer, self.clock));
             self.text_cache_misses += 1;
         }
@@ -1385,6 +1608,56 @@ impl RasterPainter {
                         self.shape_draw_calls += 1;
                         continue;
                     }
+                    Shape::Gradient(bounds, radii, geometry, stops) => {
+                        let Some(path) = rounded_corners(*bounds, *radii) else {
+                            continue;
+                        };
+                        let stops: Vec<_> = stops
+                            .iter()
+                            .filter_map(|(at, c)| {
+                                tiny_skia::Color::from_rgba(c[0], c[1], c[2], c[3])
+                                    .map(|c| tiny_skia::GradientStop::new(*at, c))
+                            })
+                            .collect();
+                        let shader = match *geometry {
+                            GradientGeometry::Linear { start, end } => {
+                                tiny_skia::LinearGradient::new(
+                                    tiny_skia::Point::from_xy(start[0], start[1]),
+                                    tiny_skia::Point::from_xy(end[0], end[1]),
+                                    stops,
+                                    tiny_skia::SpreadMode::Pad,
+                                    Transform::identity(),
+                                )
+                            }
+                            GradientGeometry::Radial { centre, radius } => {
+                                let c = tiny_skia::Point::from_xy(centre[0], centre[1]);
+                                tiny_skia::RadialGradient::new(
+                                    c,
+                                    c,
+                                    radius,
+                                    stops,
+                                    tiny_skia::SpreadMode::Pad,
+                                    Transform::identity(),
+                                )
+                            }
+                        };
+                        if let Some(shader) = shader {
+                            let paint = Paint {
+                                shader,
+                                anti_alias: true,
+                                ..Paint::default()
+                            };
+                            pixmap.fill_path(
+                                &path,
+                                &paint,
+                                FillRule::Winding,
+                                Transform::identity(),
+                                Some(mask),
+                            );
+                        }
+                        self.shape_draw_calls += 1;
+                        continue;
+                    }
                     Shape::Outline(bounds, radii, width, color) => {
                         if !width.is_finite() || *width <= 0. {
                             continue;
@@ -1473,6 +1746,7 @@ impl RasterPainter {
                         (path, *c)
                     }
                     Shape::Outline(..)
+                    | Shape::Gradient(..)
                     | Shape::Shadow(..)
                     | Shape::LayerBegin(..)
                     | Shape::LayerEnd
@@ -1509,7 +1783,7 @@ impl RasterPainter {
                 if self.damage.is_some() && (visible[2] <= 0. || visible[3] <= 0.) {
                     continue;
                 }
-                let key = self.key(&glyph.text, &glyph.style, glyph.bounds[2]);
+                let key = self.draw_key(&glyph.text, &glyph.style, glyph.bounds[2]);
                 let buffer = &self.text[&key].0;
                 let [gx, gy, gw, gh] = glyph.bounds;
                 let [ox, oy] = self.raster_origin;
@@ -1730,6 +2004,51 @@ fn shape_paint(color: [f32; 4]) -> Paint<'static> {
 fn byte(v: f32) -> u8 {
     (v.clamp(0., 1.) * 255.).round() as u8
 }
+impl RasterPainter {
+    /// The shaped buffer to draw with. Start-aligned text that fits unwrapped
+    /// draws identically from its natural-width buffer, which measurement
+    /// already shaped, so a changing box width does not reshape it.
+    fn draw_key(&mut self, text: &str, style: &TextStyle, width: f32) -> TextKey {
+        if style.align == crate::declarative::TextAlign::Start
+            && width.is_finite()
+            && width < 1_000_000.
+            && self.measure_unbounded(text, style)[0] <= width
+        {
+            return self.key(text, style, 1_000_000.);
+        }
+        self.key(text, style, width)
+    }
+    fn measure_unbounded(&mut self, text: &str, style: &TextStyle) -> [f32; 2] {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        style.family.hash(&mut h);
+        style.weight.hash(&mut h);
+        style.italic.hash(&mut h);
+        style.size.to_bits().hash(&mut h);
+        style.tracking.to_bits().hash(&mut h);
+        style.line_height.to_bits().hash(&mut h);
+        style.max_lines.hash(&mut h);
+        style.no_wrap.hash(&mut h);
+        let id = h.finish();
+        if let Some(size) = self.natural.get(&id) {
+            return *size;
+        }
+        if self.natural.len() >= 8 * TEXT_CACHE_ENTRIES {
+            self.natural.clear();
+        }
+        let key = self.key(text, style, 1_000_000.);
+        let buffer = &self.text[&key].0;
+        let mut width = 0_f32;
+        let mut height = f32::from_bits(key.size) * 1.2;
+        for run in buffer.layout_runs() {
+            width = width.max(run.line_w);
+            height = height.max(run.line_top + run.line_height);
+        }
+        self.natural.insert(id, [width, height]);
+        [width, height]
+    }
+}
 impl TextMetrics for RasterPainter {
     fn line_advances(&mut self, text: &str, style: &TextStyle, byte_offsets: &[usize]) -> Vec<f32> {
         // Share the same shaped buffer as painting: prefix measurement would
@@ -1776,6 +2095,16 @@ impl TextMetrics for RasterPainter {
         self.measure_styled(text, &default_style(size), max_width)
     }
     fn measure_styled(&mut self, text: &str, style: &TextStyle, max_width: f32) -> [f32; 2] {
+        // Layout measures the same text at many widths (natural width, then
+        // shares of a row). Whenever the unwrapped text already fits, the
+        // result is its natural size: reuse that one shaped buffer instead of
+        // shaping again at every new width (divider drags, window resizes).
+        if max_width.is_finite() && max_width < 1_000_000. {
+            let natural = self.measure_unbounded(text, style);
+            if natural[0] <= max_width {
+                return natural;
+            }
+        }
         let key = self.key(text, style, max_width);
         let buffer = &self.text[&key].0;
         let mut width = 0_f32;
@@ -1917,6 +2246,39 @@ impl DocumentPainter for RasterPainter {
         color: [f32; 4],
     ) {
         self.ui_text_styled(out, text, bounds, &default_style(size), color);
+    }
+    fn ui_gradient(
+        &mut self,
+        out: &mut Vec<Shape>,
+        bounds: [f32; 4],
+        radii: [f32; 4],
+        gradient: &crate::declarative::Gradient,
+        stops: &[(f32, [f32; 4])],
+    ) {
+        if bounds[2] > 0. && bounds[3] > 0. {
+            out.push(Shape::Gradient(
+                bounds,
+                radii,
+                GradientGeometry::for_box(gradient.kind, bounds),
+                stops.to_vec(),
+            ));
+        }
+    }
+    fn ui_text_lines(&mut self, text: &str, bounds: [f32; 4], style: &TextStyle) -> Vec<[f32; 3]> {
+        let key = self.draw_key(text, style, bounds[2]);
+        let (ox, oy) = (bounds[0].round(), bounds[1].round());
+        self.text[&key]
+            .0
+            .layout_runs()
+            .filter(|run| run.line_top < bounds[3])
+            .filter_map(|run| {
+                let first = run.glyphs.first()?;
+                let last = run.glyphs.last()?;
+                let start = first.x.min(last.x);
+                let end = (first.x + first.w).max(last.x + last.w);
+                Some([ox + start, oy + run.line_y, (end - start).min(bounds[2])])
+            })
+            .collect()
     }
     fn ui_text_styled(
         &mut self,
@@ -2476,10 +2838,184 @@ mod tests {
         let misses = p.text_cache_misses;
         p.measure("WWW", 20., 400.);
         assert_eq!(p.text_cache_misses, misses);
-        for i in 0..300 {
+        for i in 0..TEXT_CACHE_ENTRIES + 50 {
             p.measure(&format!("entry{i}"), 12., 400.);
         }
-        assert_eq!(p.text.len(), 256);
+        assert_eq!(p.text.len(), TEXT_CACHE_ENTRIES, "bounded");
+    }
+    #[test]
+    fn register_font_validates_data_and_reports_families() {
+        assert!(font_registration_fits(63, MAX_REGISTERED_FONT_BYTES - 1, 1));
+        assert!(!font_registration_fits(64, 0, 1));
+        assert!(!font_registration_fits(1, MAX_REGISTERED_FONT_BYTES, 1));
+        assert!(!font_registration_fits(1, usize::MAX, 1));
+        assert!(register_font(vec![]).is_err());
+        assert!(register_font(b"definitely not a font".to_vec()).is_err());
+        // A real system font registers and reports its family names.
+        let path = [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists());
+        if let Some(path) = path {
+            let families = register_font(std::fs::read(path).unwrap()).unwrap();
+            assert!(!families.is_empty());
+        }
+    }
+    #[test]
+    fn truncation_alignment_line_height_and_no_wrap() {
+        use crate::declarative::{DocumentPainter, TextAlign};
+        let mut p = RasterPainter::new(Viewport::new(400., 400., 1.).unwrap());
+        let long = "The quick brown fox jumps over the lazy dog again and again";
+        let base = TextStyle {
+            family: "SF".into(),
+            size: 16.,
+            ..Default::default()
+        };
+        let wrapped = p.measure_styled(long, &base, 160.);
+        let one = p.measure_styled(
+            long,
+            &TextStyle {
+                max_lines: 1,
+                ..base.clone()
+            },
+            160.,
+        );
+        let two = p.measure_styled(
+            long,
+            &TextStyle {
+                max_lines: 2,
+                ..base.clone()
+            },
+            160.,
+        );
+        assert!(
+            wrapped[1] > two[1] && two[1] > one[1],
+            "{wrapped:?} {two:?} {one:?}"
+        );
+        assert!(one[0] <= 160.);
+        // The truncated layout really ends in an ellipsis.
+        let key = p.key(
+            long,
+            &TextStyle {
+                max_lines: 1,
+                ..base.clone()
+            },
+            160.,
+        );
+        let shown: String = p.text[&key].0.lines.iter().map(|l| l.text()).collect();
+        assert!(shown.ends_with('…') && shown.len() < long.len(), "{shown}");
+        // Short text is untouched by max_lines.
+        let key = p.key(
+            "Short",
+            &TextStyle {
+                max_lines: 1,
+                ..base.clone()
+            },
+            160.,
+        );
+        assert_eq!(p.text[&key].0.lines[0].text(), "Short");
+        // Centre and end alignment move the line right within the box.
+        let x = |p: &mut RasterPainter, align| {
+            p.ui_text_lines(
+                "Hi",
+                [0., 0., 200., 40.],
+                &TextStyle {
+                    align,
+                    ..base.clone()
+                },
+            )[0][0]
+        };
+        let (start, centre, end) = (
+            x(&mut p, TextAlign::Start),
+            x(&mut p, TextAlign::Center),
+            x(&mut p, TextAlign::End),
+        );
+        assert!(
+            start < 2. && centre > 80. && end > centre,
+            "{start} {centre} {end}"
+        );
+        // Line height scales the height of wrapped text.
+        let loose = p.measure_styled(
+            long,
+            &TextStyle {
+                line_height: 2.,
+                ..base.clone()
+            },
+            160.,
+        );
+        assert!(loose[1] > wrapped[1] * 1.5);
+        // No-wrap keeps one line however narrow the box.
+        let single = p.measure_styled(
+            long,
+            &TextStyle {
+                no_wrap: true,
+                ..base.clone()
+            },
+            60.,
+        );
+        assert!(single[1] < 25., "{single:?}");
+    }
+    #[test]
+    fn letter_spacing_widens_text_by_its_em_fraction() {
+        let mut p = RasterPainter::new(Viewport::new(400., 100., 1.).unwrap());
+        let style = TextStyle {
+            family: "SF Mono".into(),
+            size: 20.,
+            ..Default::default()
+        };
+        let plain = p.measure_styled("ABCDEFGH", &style, 400.)[0];
+        let tracked = p.measure_styled(
+            "ABCDEFGH",
+            &TextStyle {
+                tracking: 0.2,
+                ..style.clone()
+            },
+            400.,
+        )[0];
+        // Eight glyphs, each 0.2 × 20px wider.
+        assert!((tracked - plain - 32.).abs() < 1.5, "{plain} → {tracked}");
+    }
+    #[test]
+    fn family_lists_pick_the_first_installed_family() {
+        let p = RasterPainter::new(Viewport::new(100., 100., 1.).unwrap());
+        // Missing families are skipped; generic names always resolve.
+        assert_eq!(
+            p.resolved_font_family("Nonexistent Display, serif", 14.),
+            p.resolved_font_family("serif", 14.)
+        );
+        assert_eq!(
+            p.resolved_font_family("Nope A, Nope B, SF Mono", 14.),
+            p.resolved_font_family("SF Mono", 14.)
+        );
+        // An installed family wins over later candidates.
+        if let Some(real) = p.installed.iter().find(|n| !n.starts_with('.')).cloned() {
+            assert_eq!(
+                p.resolved_font_family(&format!("Nope, {real}, serif"), 14.),
+                real
+            );
+        }
+        // Nothing installed and no generic: the last name, for the default fallback.
+        assert_eq!(p.resolved_font_family("Nope A, Nope B", 14.), "Nope B");
+    }
+    #[test]
+    fn a_page_of_labels_is_shaped_once_not_every_frame() {
+        // ~600 layouts per frame (a dense page plus navigation, measured at
+        // two widths) previously exceeded a 256-entry LRU, which then missed
+        // on every lookup and reshaped every label every frame.
+        let mut p = RasterPainter::new(Viewport::new(400., 300., 1.).unwrap());
+        let frame = |p: &mut RasterPainter| {
+            for i in 0..300 {
+                p.measure(&format!("label {i}"), 14., 400.);
+                p.measure(&format!("label {i}"), 14., 120.);
+            }
+        };
+        frame(&mut p);
+        let misses = p.text_cache_misses;
+        frame(&mut p);
+        frame(&mut p);
+        assert_eq!(p.text_cache_misses, misses, "later frames reuse layouts");
     }
     #[test]
     fn clipping_and_rounded_rasterization() {

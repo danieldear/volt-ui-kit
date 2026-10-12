@@ -101,6 +101,7 @@ fn scope<C>(content: Element<C>, kind: OverlayKind, dismiss: Option<Click<C>>) -
         escape_dismiss: true,
         anchor: None,
         position: None,
+        keep_anchor: false,
     });
     root.node.style.background = Some(
         match kind {

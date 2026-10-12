@@ -274,6 +274,89 @@ impl TextureImages {
     }
 }
 /// Premultiplied tiny-skia pixels to the straight alpha the present shader expects.
+/// Render the encoded frame into `target`. A frame the encoder split into
+/// strips renders each strip through a reusable strip texture (the scene
+/// shifted up by the strip's offset) and copies it into place, so large
+/// displays stay on the GPU within Vello's fixed per-pass buffers.
+#[allow(clippy::too_many_arguments)]
+fn render_frame(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut vello::Renderer,
+    encoder: &GpuSceneEncoder,
+    target: &wgpu::Texture,
+    size: [u32; 2],
+    background: [f32; 4],
+    strip: &mut Option<(wgpu::Texture, [u32; 2])>,
+) -> Result<(), String> {
+    let params = |height| vello::RenderParams {
+        base_color: color(background),
+        width: size[0],
+        height,
+        antialiasing_method: vello::AaConfig::Area,
+    };
+    if encoder.bands.len() <= 1 {
+        return renderer
+            .render_to_texture(
+                device,
+                queue,
+                &encoder.scene,
+                &target.create_view(&Default::default()),
+                &params(size[1]),
+            )
+            .map_err(|e| e.to_string());
+    }
+    let tallest = encoder.bands.iter().map(|b| b[1]).max().unwrap_or(1);
+    let want = [size[0], tallest];
+    if strip.as_ref().is_none_or(|s| s.1 != want) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Volt UI GPU strip"),
+            size: wgpu::Extent3d {
+                width: want[0],
+                height: want[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        *strip = Some((texture, want));
+    }
+    let (texture, _) = strip.as_ref().unwrap();
+    let view = texture.create_view(&Default::default());
+    let mut shifted = vello::Scene::new();
+    for &[y, height] in &encoder.bands {
+        shifted.reset();
+        shifted.append(
+            &encoder.scene,
+            Some(vello::kurbo::Affine::translate((0., -f64::from(y)))),
+        );
+        renderer
+            .render_to_texture(device, queue, &shifted, &view, &params(height))
+            .map_err(|e| e.to_string())?;
+        // Queue order keeps this copy ahead of the next strip's render.
+        let mut commands = device.create_command_encoder(&Default::default());
+        commands.copy_texture_to_texture(
+            texture.as_image_copy(),
+            wgpu::TexelCopyTextureInfo {
+                texture: target,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: size[0],
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([commands.finish()]);
+    }
+    Ok(())
+}
 fn straight_rgba(pixmap: &tiny_skia::Pixmap) -> Vec<u8> {
     unpremultiply(pixmap.data()).into_owned()
 }
@@ -294,6 +377,8 @@ pub(super) struct GpuPresenter {
     layout: wgpu::BindGroupLayout,
     texture: Option<wgpu::Texture>,
     bind_group: Option<wgpu::BindGroup>,
+    /// Reusable strip target for frames rendered in horizontal bands.
+    strip: Option<(wgpu::Texture, [u32; 2])>,
     renderer: vello::Renderer,
     encoder: GpuSceneEncoder,
     textures: TextureImages,
@@ -423,6 +508,7 @@ impl GpuPresenter {
             layout,
             texture: None,
             bind_group: None,
+            strip: None,
             renderer,
             encoder: GpuSceneEncoder::default(),
             textures: TextureImages::default(),
@@ -515,20 +601,16 @@ impl GpuPresenter {
             );
             w as usize * h as usize * 4
         } else {
-            self.renderer
-                .render_to_texture(
-                    &self.device,
-                    &self.queue,
-                    &self.encoder.scene,
-                    &texture.create_view(&Default::default()),
-                    &vello::RenderParams {
-                        base_color: color(background),
-                        width: w,
-                        height: h,
-                        antialiasing_method: vello::AaConfig::Area,
-                    },
-                )
-                .map_err(|e| e.to_string())?;
+            render_frame(
+                &self.device,
+                &self.queue,
+                &mut self.renderer,
+                &self.encoder,
+                texture,
+                [w, h],
+                background,
+                &mut self.strip,
+            )?;
             0
         };
         let frame = match self.surface.get_current_texture() {
@@ -574,7 +656,7 @@ impl GpuPresenter {
         }
         if std::env::var_os("VOLT_UI_TRACE").is_some() {
             let stats = self.encoder.stats();
-            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.over_budget,stats.resource_bytes,framebuffer_upload_bytes);
+            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} bands={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.bands,stats.over_budget,stats.resource_bytes,framebuffer_upload_bytes);
         }
         Ok(PresentStatus::Presented)
     }
@@ -591,6 +673,7 @@ pub struct GpuOffscreenRenderer {
     textures: TextureImages,
     lost: Arc<AtomicBool>,
     target: Option<(wgpu::Texture, wgpu::Buffer, [u32; 2])>,
+    strip: Option<(wgpu::Texture, [u32; 2])>,
     pub adapter_name: String,
 }
 impl GpuOffscreenRenderer {
@@ -628,6 +711,7 @@ impl GpuOffscreenRenderer {
             textures: TextureImages::default(),
             lost,
             target: None,
+            strip: None,
             adapter_name: format!("{} / {:?}", info.name, info.backend),
         })
     }
@@ -645,6 +729,10 @@ impl GpuOffscreenRenderer {
     /// then drawn in software), or `None` when it rendered on the GPU.
     pub fn last_over_budget(&self) -> Option<&'static str> {
         self.encoder.stats().over_budget
+    }
+    /// Horizontal strips the latest GPU frame was rendered in (1 = one pass).
+    pub fn last_bands(&self) -> usize {
+        self.encoder.stats().bands
     }
     /// New CPU-side cached glyph/image bytes constructed in the latest render.
     /// Not a measurement of actual GPU transfers or total GPU memory.
@@ -701,7 +789,9 @@ impl GpuOffscreenRenderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
             let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -713,20 +803,16 @@ impl GpuOffscreenRenderer {
             self.target = Some((texture, buffer, size));
         }
         let (texture, buffer, _) = self.target.as_ref().unwrap();
-        self.renderer
-            .render_to_texture(
-                &self.device,
-                &self.queue,
-                &self.encoder.scene,
-                &texture.create_view(&Default::default()),
-                &vello::RenderParams {
-                    base_color: color(background),
-                    width: size[0],
-                    height: size[1],
-                    antialiasing_method: vello::AaConfig::Area,
-                },
-            )
-            .map_err(|e| e.to_string())?;
+        render_frame(
+            &self.device,
+            &self.queue,
+            &mut self.renderer,
+            &self.encoder,
+            texture,
+            size,
+            background,
+            &mut self.strip,
+        )?;
         let mut commands = self.device.create_command_encoder(&Default::default());
         commands.copy_texture_to_buffer(
             texture.as_image_copy(),

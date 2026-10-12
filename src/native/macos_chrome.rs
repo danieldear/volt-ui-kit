@@ -37,6 +37,28 @@ pub(super) fn install_unified_titlebar(window: &Window) -> Result<(), String> {
     Ok(())
 }
 
+/// In fullscreen AppKit moves a visible toolbar into its own opaque titlebar
+/// window pinned over the content, hiding the toolkit-painted header. The
+/// overlay toolbar is empty, so hide it while fullscreen (the titlebar then
+/// auto-hides and reveals on hover) and show it again in a normal window.
+pub(super) fn sync_fullscreen_toolbar(window: &Window) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Ok(ns_window) = app_window(window, mtm) else {
+        return;
+    };
+    let Some(toolbar) = ns_window.toolbar() else {
+        return;
+    };
+    let fullscreen = ns_window
+        .styleMask()
+        .contains(NSWindowStyleMask::FullScreen);
+    if toolbar.isVisible() == fullscreen {
+        toolbar.setVisible(!fullscreen);
+    }
+}
+
 pub(super) fn app_window(
     window: &Window,
     mtm: MainThreadMarker,

@@ -131,17 +131,16 @@ fn split_drag_has_capture_clamps_to_minima_and_survives_recomposition() {
             } else {
                 (px, py + 70. * scale)
             };
-            assert!(
-                r.pointer_move_outcome(nx, ny, &mut h, &mut app)
-                    .unwrap()
-                    .activated
-            );
+            // Moves update application state and request layout only; the
+            // host recomposes once when the drag ends.
+            let moved = r.pointer_move_outcome(nx, ny, &mut h, &mut app).unwrap();
+            assert!(moved.changed && !moved.activated);
             assert!(app.ratio > 0.4);
             replace(&mut r, &mut h, panes(app.ratio, axis, true), scale);
             assert!(
                 r.pointer_move_outcome(-1000., -1000., &mut h, &mut app)
                     .unwrap()
-                    .activated
+                    .changed
             );
             replace(&mut r, &mut h, panes(app.ratio, axis, true), scale);
             let first = bounds(&r, "first");
@@ -150,9 +149,10 @@ fn split_drag_has_capture_clamps_to_minima_and_survives_recomposition() {
             assert!((first[a + 2] / scale - 80.).abs() < 0.01);
             assert!(second[a + 2] / scale >= 99.99);
             assert!(
-                !r.pointer_up_outcome(-1000., -1000., &mut h, &mut app)
+                r.pointer_up_outcome(-1000., -1000., &mut h, &mut app)
                     .unwrap()
-                    .activated
+                    .activated,
+                "a drag that resized recomposes once on release"
             );
             let changes = app.changes;
             assert!(

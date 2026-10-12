@@ -272,7 +272,7 @@ for APIs, limits, compatibility and native-blur platform caveats.
 
 ### Application runtime and extended components
 
-Typed bounded worker messages wake the native event loop without idle polling. New visual acceptance uses **Showcase Activity** (jobs, menus, tooltip/popover, wrapping) and **Explorer** (10,000 virtual rows, tables, trees, split panes), preserving Atelier typography and tokens. Existing Lab routes remain regression fixtures; new demos are not added there. GPU Showcase defaults to a translucent blur-request window; `--background opaque` restores a solid window.
+Typed bounded worker messages wake the native event loop without idle polling. **Catalog is the current acceptance app.** Existing **Showcase Activity** (jobs, menus, tooltip/popover, wrapping), **Explorer** (10,000 virtual rows, tables, trees, split panes), and Lab routes remain regression fixtures; new demos are not added there. GPU Showcase defaults to a translucent blur-request window; `--background opaque` restores a solid window.
 
 ```sh
 cargo run --locked --features native-gpu --example showcase -- --screen activity
@@ -280,6 +280,28 @@ cargo run --locked --features native-gpu --example showcase -- --screen explorer
 ```
 
 See [runtime](docs/APP_RUNTIME.md), [declarations and limits](docs/EXTENDED_COMPONENTS.md), and [implementation/acceptance receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).
+
+### Extended Rust components (Unreleased)
+
+Catalog now includes Utilities, Icons, Date & time, Form inputs, Overlays,
+Data display and Charts. The added APIs are Rust-only; schema-1 JSON and the
+legacy default renderer/dependencies are unchanged.
+
+- Layout/style: grids and spans, wrapping, justification, sizing constraints,
+  responsive visibility/width/font size, gradients, text alignment, borders,
+  cursors and paint-time motion.
+- Inputs: calendars/date ranges/time, radio groups, number inputs, searchable
+  comboboxes, tags, two-thumb ranges, colors, OTP, ratings, labelled fields and
+  native file drop zones.
+- Composition: drawers, disclosure, command palettes, toasts, avatars, alerts,
+  breadcrumbs, pagination, steps, timelines, empty states and static charts.
+- Assets: 65 vector icons, bounded SVG path import and registered bundled fonts
+  (64 files / 256 MiB total, shared between windows).
+
+Values and callbacks remain controlled by Rust application state. See the
+[API/coverage plan](docs/PARITY_PLAN.md) for examples and explicit limitations;
+component availability is not a claim of complete shadcn/Tailwind equivalence
+or full cross-platform runtime acceptance.
 
 ## Application development (first slice)
 

@@ -127,6 +127,21 @@ pub(crate) struct NodeStyle {
     pub font_size: Option<f32>,
     pub font_weight: Option<u16>,
     pub font_style: Option<FontSlant>,
+    /// Rust-only tracking in em (fraction of the font size); schema 1 unchanged.
+    #[serde(skip)]
+    pub letter_spacing: Option<f32>,
+    #[serde(skip)]
+    pub text_align: Option<super::extras::TextAlign>,
+    #[serde(skip)]
+    pub line_height: Option<f32>,
+    #[serde(skip)]
+    pub max_lines: Option<u16>,
+    #[serde(skip)]
+    pub no_wrap: Option<bool>,
+    #[serde(skip)]
+    pub underline: Option<bool>,
+    #[serde(skip)]
+    pub strikethrough: Option<bool>,
 }
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -263,6 +278,9 @@ pub struct Node {
     pub(crate) overlay: Option<Overlay>,
     #[serde(skip)]
     pub(crate) on_context: Option<String>,
+    /// Drop zones: receives files dragged in from the system.
+    #[serde(skip)]
+    pub(crate) on_files_dropped: Option<String>,
     #[serde(skip)]
     pub(crate) virtual_list: Option<VirtualListProps>,
     #[serde(skip)]
@@ -271,6 +289,9 @@ pub struct Node {
     pub(crate) split_handle: Option<String>,
     #[serde(skip)]
     pub(crate) progress: Option<ProgressProps>,
+    /// Rust-only Tailwind-style extensions; schema 1 is unchanged.
+    #[serde(skip)]
+    pub(crate) ext: super::extras::NodeExtras,
 }
 impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -316,6 +337,8 @@ pub(crate) struct EditorOptions {
     pub soft_wrap: bool,
     /// Multiline only: Enter submits and Shift+Enter inserts a newline.
     pub enter_submits: bool,
+    /// Extra logical inset (leading, trailing) for icons inside the field.
+    pub inset: [f32; 2],
 }
 #[derive(Clone, Debug)]
 pub(crate) struct SliderProps {
@@ -324,6 +347,9 @@ pub(crate) struct SliderProps {
     pub max: f32,
     pub step: f32,
     pub on_change: Option<String>,
+    /// Range sliders: the lower thumb (`value` is the upper one).
+    pub lower: Option<f32>,
+    pub on_lower_change: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
@@ -341,6 +367,8 @@ pub(crate) struct Overlay {
     pub escape_dismiss: bool,
     pub anchor: Option<String>,
     pub position: Option<[f32; 2]>,
+    /// The anchor stays in the input scope (combobox fields keep typing).
+    pub keep_anchor: bool,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct VirtualListProps {
@@ -360,6 +388,9 @@ pub(crate) struct SplitProps {
     pub min_second: f32,
     pub handle_size: f32,
     pub on_change: Option<String>,
+    /// Pixel mode: the first pane's logical size and its maximum. The
+    /// pane keeps this size when the window resizes; callbacks report it.
+    pub pixels: Option<[f32; 2]>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
@@ -475,10 +506,12 @@ impl Node {
             slider: None,
             overlay: None,
             on_context: None,
+            on_files_dropped: None,
             virtual_list: None,
             split: None,
             split_handle: None,
             progress: None,
+            ext: super::extras::NodeExtras::default(),
         }
     }
     /// Logical insets in top/right/bottom/left order. JSON precedence is explicit
@@ -560,6 +593,17 @@ impl Bindings {
 impl Document {
     pub fn root(&self) -> &Node {
         &self.root
+    }
+    /// Runtime-owned edits (e.g. a divider drag) between recompositions.
+    #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
+    pub(crate) fn node_mut(&mut self, id: &str) -> Option<&mut Node> {
+        fn find<'a>(node: &'a mut Node, id: &str) -> Option<&'a mut Node> {
+            if node.id == id {
+                return Some(node);
+            }
+            node.children.iter_mut().find_map(|child| find(child, id))
+        }
+        find(&mut self.root, id)
     }
     pub fn parse(source: &str) -> Result<Self, DocumentError> {
         if source.len() > MAX_DOCUMENT_BYTES {
@@ -682,6 +726,7 @@ impl Document {
                 (&n.on_text_changed, EventKind::TextChanged),
                 (&n.on_submit, EventKind::Activate),
                 (&n.on_context, EventKind::ContextRequested),
+                (&n.on_files_dropped, EventKind::FilesDropped),
             ] {
                 if let Some(name) = name {
                     handlers
@@ -690,7 +735,10 @@ impl Document {
                 }
             }
             if let Some(slider) = &n.slider {
-                if let Some(name) = &slider.on_change {
+                for name in [&slider.on_change, &slider.on_lower_change]
+                    .into_iter()
+                    .flatten()
+                {
                     handlers
                         .validate(name, EventKind::ValueChanged)
                         .map_err(|e| error(&n.id, &e.to_string()))?;
@@ -915,6 +963,8 @@ fn check_style(style: &NodeStyle, path: &str) -> Result<(), DocumentError> {
     for (name, value, min, max) in [
         ("font_size", style.font_size, 8., 96.),
         ("border_width", style.border_width, 0., 16.),
+        ("letter_spacing", style.letter_spacing, -0.2, 1.),
+        ("line_height", style.line_height, 0.5, 4.),
     ] {
         if value.is_some_and(|v| !v.is_finite() || !(min..=max).contains(&v)) {
             return Err(error(&format!("{path}.{name}"), "invalid style value"));
@@ -943,6 +993,9 @@ fn check_node(
     ids: &mut BTreeSet<String>,
 ) -> Result<(), DocumentError> {
     n.effects.validate(path)?;
+    if !n.ext.valid() {
+        return Err(error(path, "invalid layout or style extension value"));
+    }
     *count += 1;
     if *count > MAX_NODES || depth > MAX_DEPTH {
         return Err(error(path, "node count or depth limit exceeded"));
@@ -1063,6 +1116,10 @@ fn check_node(
             || (f64::from(slider.min) + f64::from(slider.step)) as f32 == slider.min
             || (f64::from(slider.max) - f64::from(slider.step)) as f32 == slider.max
             || slider.on_change.is_none()
+            || slider
+                .lower
+                .is_some_and(|l| !l.is_finite() || l < slider.min || l > slider.value)
+            || slider.lower.is_some() != slider.on_lower_change.is_some()
         {
             return Err(error(
                 path,
@@ -1106,6 +1163,9 @@ fn check_node(
             || split.min_first > 1e6
             || split.min_second > 1e6
             || !(1.0..=64.0).contains(&split.handle_size)
+            || split.pixels.is_some_and(|[size, max]| {
+                !(size.is_finite() && max.is_finite() && size >= 0. && (0. ..=1e6).contains(&max))
+            })
             || !split.on_change.as_deref().is_some_and(valid_name)
         {
             return Err(error(path, "invalid split pane geometry or callback"));
@@ -1149,6 +1209,7 @@ fn check_node(
         &n.on_text_changed,
         &n.on_submit,
         &n.on_context,
+        &n.on_files_dropped,
     ]
     .into_iter()
     .flatten()
