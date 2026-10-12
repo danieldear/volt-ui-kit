@@ -23,7 +23,8 @@ fn view(app: &App) -> Element<App> {
         ]
         .key("notification")
         .height(56.)
-        .background("#153A32")
+        .background(ColorToken::Success)
+        .color(ColorToken::SuccessContent)
         .rounded_on(12, Corners::Left)
         .padding(14., [Edge::Top, Edge::Left, Edge::Right])
         .transition(Transition::fade().duration_ms(180))
@@ -38,19 +39,19 @@ fn view(app: &App) -> Element<App> {
             button("Toggle notice").key("notice-toggle")
                 .on_click(|app:&mut App|app.notice = !app.notice),
         ].key("header").height(48.).padding(12.,Edge::Right).padding(80.,Edge::Left)
-            .gap(12.,Axis::Horizontal).flow(Flow::Center).background("#16212D").drag_region(true),
+            .gap(12.,Axis::Horizontal).flow(Flow::Center).background(ColorToken::Base200).drag_region(true),
         vstack![
             text("Small corners. Intentional effects.").font_size(28.).font_weight(700),
-            text("Move over Save; press it; use Tab. Callbacks run immediately, independently of animation.").font_size(13.).color("#AAB8CA"),
+            text("Move over Save; press it; use Tab. Callbacks run immediately, independently of animation.").font_size(13.).color(ColorToken::Muted),
             panel![
                 text(format!("Saved {} times",app.count)).font_size(22.).font_weight(600),
                 stack![
-                    button("Save").key("save").width(130.).height(42.).background("#24485F")
-                        .border_width(1.).border_color("#476678")
-                        .hover_style(|s|s.background("#326481").border_color("#79CBFF")
+                    button("Save").key("save").width(130.).height(42.).background(ColorToken::Primary).color(ColorToken::PrimaryContent)
+                        .border_width(1.).border_color(ColorToken::Border)
+                        .hover_style(|s|s.background(ColorToken::Accent).border_color(ColorToken::Accent)
                             .glow(Glow::new().color("#60A5FA90").blur(16.).spread(1.)))
-                        .pressed_style(|s|s.opacity(0.7).background("#193749"))
-                        .focus_style(|s|s.border_color("#B3E6FF"))
+                        .pressed_style(|s|s.opacity(0.7).background(ColorToken::Primary))
+                        .focus_style(|s|s.border_color(ColorToken::Accent))
                         .animate_on(Interaction::Hover,Animation::ease_out().duration_ms(120))
                         .animate_on(Interaction::Pressed,Animation::ease_out().duration_ms(70))
                         .animate_on(Interaction::Focus,Animation::ease_out().duration_ms(120))
@@ -60,15 +61,15 @@ fn view(app: &App) -> Element<App> {
                     button("Left only").key("left").rounded_on(Rounding::Full,Corners::Left)
                         .width(130.).height(42.).on_click(|app:&mut App|app.count+=1),
                 ].direction(responsive(Direction::Vertical).at(Breakpoint::Md,Direction::Horizontal)).gap(16.,[Axis::Horizontal,Axis::Vertical]),
-                divider().background("#344252"),
-                text("The panel shadow is blurred and cached. Hover glow animates alpha, not blur geometry.").font_size(12.).color("#AAB8CA"),
+                divider().background(ColorToken::Border),
+                text("The panel shadow is blurred and cached. Hover glow animates alpha, not blur geometry.").font_size(12.).color(ColorToken::Muted),
             ].key("effects-panel").padding(24.,Edge::All).gap(18.,Axis::Vertical)
-                .background("#1B2A36").rounded_on(14,[Corner::TopLeft,Corner::BottomRight])
+                .background(ColorToken::Base200).rounded_on(14,[Corner::TopLeft,Corner::BottomRight])
                 .shadow(Shadow::new().blur(18.).offset(0.,6.).color("#00000070")),
             notification,
-            text("2px default / selected corners / native window controls / reduced-motion opt-out").font_size(12.).color("#8C9BAD"),
+            text("2px default / selected corners / native window controls / reduced-motion opt-out").font_size(12.).color(ColorToken::Muted),
         ].padding(28.,[Edge::Left,Edge::Right,Edge::Top]).gap(24.,Axis::Vertical),
-    ].background("#101923").color("#EAF2FA").into()
+    ].background(ColorToken::Base100).color(ColorToken::BaseContent).into()
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     support::launch_with_chrome(

@@ -60,7 +60,7 @@ axis. Optional `flow` accepts `top_left`, `top`, `top_right`, `left`, `center`,
 Flow is placement, not wrapping; see [stack semantics](RUST_UI.md#stack-direction-and-content-placement).
 `flex` distributes remaining space; this constrained layout is not CSS.
 Text/labels are bounded to 8 KiB each. Names use ASCII letters, numbers, `_` and
-`-`, up to 128 bytes. Documents are limited to 256 KiB, 512 nodes and depth 24.
+`-`, up to 128 bytes. Documents are limited to 256 KiB, 4096 nodes and depth 48.
 
 Checkbox and toggle bindings are explicit: the event delivers the desired value
 to Rust, and the host publishes the updated `bind_checked` value. A literal

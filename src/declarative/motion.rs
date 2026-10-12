@@ -24,6 +24,8 @@ pub(crate) struct Visual {
     pub opacity: f32,
     pub shadow: Option<ResolvedShadow>,
     pub glow: Option<ResolvedShadow>,
+    /// Paint-time translation in physical pixels (hover lift, slide-ins).
+    pub offset: [f32; 2],
 }
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -58,6 +60,10 @@ impl Visual {
             opacity: mix(self.opacity, to.opacity, t),
             shadow: shadow(self.shadow, to.shadow, t),
             glow: shadow(self.glow, to.glow, t),
+            offset: [
+                mix(self.offset[0], to.offset[0], t),
+                mix(self.offset[1], to.offset[1], t),
+            ],
         }
     }
 }
@@ -88,6 +94,8 @@ struct Fade {
     start: Duration,
     animation: Animation,
     from: f32,
+    /// Logical offset the element slides in from.
+    slide: [f32; 2],
 }
 impl Fade {
     fn value(self, now: Duration) -> f32 {
@@ -108,6 +116,8 @@ pub(crate) struct Exit {
 pub(crate) struct Motion {
     pub now: Duration,
     pub reduced: bool,
+    /// Physical pixels per logical pixel, for slide offsets.
+    pub scale: f32,
     tracks: BTreeMap<String, Track>,
     seen: BTreeMap<String, Kind>,
     mounts: BTreeMap<String, Fade>,
@@ -160,7 +170,11 @@ impl Motion {
         track.flags = flags;
         let mut value = track.sample(now);
         if let Some(fade) = self.mounts.get(id) {
-            value.opacity *= fade.value(now);
+            let f = fade.value(now);
+            value.opacity *= f;
+            let s = self.scale.max(0.25);
+            value.offset[0] += fade.slide[0] * s * (1. - f);
+            value.offset[1] += fade.slide[1] * s * (1. - f);
         }
         value
     }
@@ -169,6 +183,11 @@ impl Motion {
             return value;
         }
         target.opacity *= b.detached_mount;
+        if let Some(t) = b.effects.transition {
+            let s = self.scale.max(0.25);
+            target.offset[0] += t.1[0] * s * (1. - b.detached_mount);
+            target.offset[1] += t.1[1] * s * (1. - b.detached_mount);
+        }
         target
     }
     fn sampled_opacity(&self, b: &LayoutBox) -> f32 {
@@ -207,6 +226,7 @@ impl Motion {
                             start: self.now,
                             animation: transition.0,
                             from: restoring.get(&b.id).copied().unwrap_or(0.),
+                            slide: transition.1,
                         },
                     );
                 }
@@ -284,6 +304,7 @@ impl Motion {
                                 start: self.now,
                                 animation: t.0,
                                 from: 0.,
+                                slide: t.1,
                             },
                             ancestors,
                             before,
