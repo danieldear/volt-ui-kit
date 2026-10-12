@@ -365,7 +365,7 @@ in [API, bounds and native receipt](DESKTOP_NOTIFICATIONS.md).
 
 `Application::background_from_state` updates native root opacity/blur from Rust
 state. `UiTheme::with_background_color` changes the root clear RGB independently
-of semantic component colors. See [Glass controls](GLASS_CONTROLS_2026_10_11.md).
+of semantic component colors. See [Glass controls](SURFACES_THEMES_AND_SCROLLING.md).
 Defaults remain unchanged; raw compositor blur is an explicit option using a
 private macOS API. The requested in-app GPU backdrop renderer remains pending:
 blur/saturation/tint/opacity with clipped panels, cached GPU targets and no

@@ -133,20 +133,23 @@ Header controls must click rather than drag. Overlay uses native decorations on
 non-macOS. Shared Rust CLI accepts both options; screenshots show settled motion.
 See [effects/windowing](../docs/EFFECTS_AND_WINDOWING.md) for limits and OS gates.
 
-UI Lab `--section runtime` and `--section data` are the canonical extended-component and worker-message test routes; no separate app is needed for them.
+UI Lab `--section runtime` and `--section data` remain regression routes;
+new extended-component and worker-message demonstrations belong in Catalog.
 
-## New component and glass-window acceptance
+## Current component and glass-window acceptance
 
-New polished tests extend Showcase, not UI Lab. Atelier retains SF/SF Mono,
-Iris/Tide/Ember semantic colors, corner language and responsive spacing.
+New polished tests extend **Catalog**, not UI Lab or the older app showcases.
+Those examples remain regression fixtures; do not duplicate new demonstrations.
 
 ```sh
-cargo run --locked --features native-gpu --example showcase -- --screen activity
-cargo run --locked --features native-gpu --example showcase -- --screen explorer
-cargo run --locked --features native-gpu --example showcase -- --background opaque
+cargo run --release --locked --features native-gpu,native-desktop --example catalog
+cargo run --release --locked --features native-gpu --example catalog -- --background opaque
+cargo run --release --locked --features native-gpu --example catalog -- --page form-inputs --theme light
 ```
 
-Only GPU Showcase defaults to a 0.82-tinted native blur request. Text remains
-opaque. Decorated macOS GPU windows now request public AppKit material. Borderless
-requests retain transparency; packaging/dependency acceptance still gates release.
-See [Showcase guide](../docs/SHOWCASE_APPS.md) and [verification receipt](../docs/APP_RUNTIME_VERIFICATION.md).
+Catalog defaults to public Material where supported by the GPU/native host.
+Opacity and tint are independent; foreground controls remain opaque. Private
+Compositor blur is an explicit opt-in with unresolved desktop-corner acceptance.
+See [Catalog](../docs/CATALOG.md), [window glass](../docs/SURFACES_THEMES_AND_SCROLLING.md)
+and [validation](../docs/VALIDATION.md). Existing app-scale routes remain documented
+in [Showcase apps](../docs/SHOWCASE_APPS.md).

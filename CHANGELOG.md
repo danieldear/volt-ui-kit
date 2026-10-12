@@ -40,7 +40,7 @@
   collapses into a drawer below 1024 px; the landing hero has compact,
   medium and full sizes; doc pages stop at a 1040 px column.
 
-- Tailwind / shadcn parity (see `docs/PARITY_PLAN.md`). All new APIs are
+- Tailwind / shadcn parity (see `docs/COMPONENTS.md`). All new APIs are
   Rust-only; the schema-1 JSON format is unchanged.
   - Layout and style utilities: `grid(..).columns(n)` / `.min_column_width`
     with `.column_span`, `.wrap(true)`, `.justify(Justify::…)`, min/max
@@ -150,7 +150,7 @@
   badge/selection backgrounds and antialiased text/borders. No tint, material,
   font-family, public default or dependency changes. Add backend-policy and
   real-GPU presentation-pixel regressions, SF face/weight checks and opt-in
-  surface/font diagnostics; see `docs/METAL_ALPHA_REGRESSION_2026_10_11.md`.
+  surface/font diagnostics; see `docs/GPU_RENDERING.md`.
 
 - Generated apps now use Catalog-style unified macOS chrome instead of a separate
   native title strip. All five templates retain native traffic lights, include an

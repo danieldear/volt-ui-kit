@@ -1,6 +1,7 @@
 # Native GPU drawing and dependency policy
 
-Source/runtime checked **2026-10-09**, image admission/text hardening **2026-10-10**.
+Current native renderer and dependency policy; validated build commands are in
+[validation](VALIDATION.md).
 The optional `native-gpu` host now draws
 shapes, paths, image/glyph textures, clips, group opacity and shadows with
 **Vello 0.6 / wgpu 26**. It no longer software-rasterizes the full window and
@@ -38,16 +39,16 @@ create a new GPU context. No Volt checkout/vendor synchronization is performed.
 ## Run existing apps without changing declarations
 
 ```sh
-VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example ui_lab
+VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example catalog
 VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example showcase -- --screen studio
 VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example desk
 VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example northbound
 
 # Compare the same compiled app with software drawing:
-VOLT_UI_RENDERER=software cargo run --locked --features native-gpu --example ui_lab
+VOLT_UI_RENDERER=software cargo run --locked --features native-gpu --example catalog
 
 # GPU-capable alpha window; OS blur is a separate platform capability:
-VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example ui_lab -- --section window --background blur --window-opacity 0.65 --chrome overlay
+VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example catalog -- --background blur --window-opacity 0.65
 ```
 
 | `VOLT_UI_RENDERER` | Behavior |
@@ -66,7 +67,7 @@ event-driven; bounded animation may schedule temporary deadlines.
 - Default library: **only `unicode-width`** as a direct dependency, unchanged.
 - `native`: software host/font/image/clipboard dependencies, unchanged.
 - `native-gpu`: optional Vello/wgpu/pollster, reusing the same native host.
-- Vello defaults disabled; only its `wgpu` feature is enabled.
+- Vello defaults disabled; its `wgpu` and `bump_estimate` features are enabled.
 - wgpu defaults disabled; `std`/`wgsl` plus **Metal on macOS, DX12 on Windows,
   Vulkan on other targets**. No GLES/WebGPU backend in this feature policy.
 
@@ -75,14 +76,11 @@ The latest Vello release has a newer minimum Rust requirement; see its
 [upstream changelog](https://github.com/linebender/vello/blob/main/research/CHANGELOG.md).
 This is a deliberate compatibility pin, not a claim to use the newest release.
 
-**Pruned features do not mean fewer macOS crates than the former presenter.**
-The measured macOS normal dependency graph has **151 package/version pairs**,
-versus **133** for the previous wgpu-30 texture presenter (root included).
-Vello's general-purpose drawing adds 18 packages. Before/after Vello pruning both
-have 151 on macOS because the unused platforms were not compiled here anyway.
-The savings are unwanted features/backend scope; no binary-size/build-time
-reduction is claimed without equivalent measurements. Reproduce with `cargo tree
---locked --features native-gpu -e normal --prefix none` and `cargo tree -e features`.
+Pruned features reduce unused backend/feature scope, not necessarily the number
+of compiled macOS crates. Vello adds drawing dependencies compared with a
+texture-only presenter. Do not claim smaller binaries/faster builds without
+an equivalent measurement. Inspect the selected graph with `cargo tree --locked
+--features native-gpu -e normal` and `cargo tree -e features`.
 
 ## Correctness and resource boundaries
 
@@ -122,57 +120,51 @@ VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example showcase
 VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example showcase -- --screen studio --bench 60 --bench-target studio-add --size 1280x900 --scale 2
 ```
 
-On Apple M4 Pro / Metal, actual GPU readback passed shapes/text/images, nested
-clips, cross-batch opacity, transparent path holes, cached-resource reuse and
-shadow symmetry. The 1x/2x mixed-scene mean absolute RGBA error versus software
-was **0.238 / 2.479** on a 0..255 scale. GPU/software Studio Retina snapshots were
-visually inspected. This is acceptance for these fixtures, not all possible scenes.
+GPU snapshots/benchmarks include blocking GPU completion, CPU readback and alpha
+conversion; native windows do not read back the rendered framebuffer. These are
+not native FPS, utilization, energy or input-to-photon measurements. See
+[performance methodology](PERFORMANCE.md) and [validation gates](VALIDATION.md).
 
-GPU snapshot/benchmark mode uses a persistent renderer and **waits for GPU
-completion + CPU readback + alpha conversion**. Its timings include this overhead;
-native windows do not pay readback. It excludes OS input queues/presentation, and
-is not a measurement of FPS, GPU utilization, energy or input-to-photon latency.
-See [resource measurements](RESOURCE_USAGE_AND_DESKTOP.md) for comparisons.
+## Large scenes and fallback
 
-Native UI Lab GPU smoke checks on the unlocked Mac also verified typing/Enter,
-button/tab callbacks, slider/popup selection, modal Escape/opener focus restoration,
-scrolling, glow, image/vector clipping and a circular clipped click target.
-The alpha/blur-request example also launched on Metal and repainted after Increment;
-this smoke check does not establish comprehensive desktop-through blur quality.
-A 30-second final GPU foreground sample showed no new redraw traces or process CPU
-time at `ps` 0.01s precision, with stable 126.53 MiB RSS; see the resource guide.
-The earlier GPU delivery baseline all-target suite passed **318 tests**, with this hardware test ignored by default
-and then run explicitly (one pass); **22 doctests**, strict Clippy and Rust 1.87
-all-target checks passed. Default/declarative/software tests and package verification
-also passed. These are scoped checks, not production certification.
+Vello 0.6 uses fixed per-pass buffers and can silently omit overflowing frames.
+Admission accounts for lines/segments, clips/blend spill, image packing, bins,
+tiles and the 64-word reservation per 16x16 tile, with headroom.
 
-Windows/Linux native runtime, device loss under real stress, OS alpha/blur,
-GPU memory/energy/utilization, accessibility and mobile remain separate gates.
+Area-overflowing scenes can render in up to **16 horizontal GPU strips**, using a
+reusable strip texture and queue-ordered copies into the final target. Whole-scene
+flattening and resource budgets still apply to every pass. Strips do not make all
+large scenes admissible: rejected scenes retain explicit per-frame software fallback.
+The actual 6K-strip regression compares readback with software at strip seams.
 
-### Current component/Showcase acceptance (2026-10-09)
+Software fallback for valid large opacity groups replays into **512px tiles with
+4px AA overlap**, rather than allocating a full-window buffer per group. Temporary
+group buffers fit about **26 MiB at depth 24**; output/other caches are additional.
+The 64-megapixel frame limit and malformed-stream/depth checks remain. This is a
+bounded slow path, not a claim of normal GPU performance or exact curved-stroke AA.
 
-Latest source: **391** native-GPU all-target tests passed (four explicit ignores),
-**27** rustdoc passes, strict Clippy and Rust 1.87 all-target checks passed. All four
-hardware checks (three renderer tests and Northbound's retina-screen layer-budget
-test) were run explicitly and passed. Final native Showcase validated jobs/input/menus/popover/wrapped editor and
-row selection on Metal. The 20-second idle sample added zero frames, CPU+.02s;
-see [the complete receipt and external gates](APP_RUNTIME_VERIFICATION.md).
+## Metal surface alpha and typography
 
-GPU Showcase defaults to `--background blur --window-opacity 0.82`; `--background
-opaque` restores a solid window. As of 2026-10-11 decorated macOS GPU windows request public AppKit material,
-not winit's private CGS blur call. Borderless requests retain transparency only.
-Shipping/signing and dependency review still gate distribution; no App Store
-certification or ChatGPT/Codex appearance parity is claimed.
+Pinned wgpu 26 advertises `PostMultiplied` on Metal, but Core Animation consumes
+premultiplied pixels. The presentation shader separates advertised configuration
+from pixel encoding: Metal receives premultiplied RGB, genuine other-backend
+straight-alpha surfaces retain straight RGB. The native surface uses non-sRGB
+8-bit formats to avoid extra alpha/color gamma encoding. GPU scenes and texture
+fallback share this presentation policy. Revisit it when upgrading wgpu.
 
-## 0.3.0 large-frame safety follow-up (2026-10-11)
+```text
+Vello straight RGBA      GPU presentation      macOS composition
+(1,1,1,0.1) white  ->    (0.1,0.1,0.1,0.1) -> correct translucent white
+```
 
-The pinned Vello coarse shader reserves 64 command words for every 16x16
-viewport tile, even empty ones. The old estimate counted two; at 8K, the base
-reservation alone nearly fills its 2^23-word buffer. Admission now counts that
-reservation and rounded-up 256-word spill allocations per tile, with headroom.
-This is conservative: complex large scenes can fall back to software earlier.
-The 64 MP cap allows large framebuffers, not all GPU scenes or opacity layers.
-CPU group opacity still has a separate 64 MiB aggregate buffer budget and may
-reject a large animated scene. Tiled GPU rendering and large-display driver
-acceptance remain follow-ups, not delivered guarantees. See
-[the review receipt](CLAUDE_REVIEW_2026_10_11.md).
+`VOLT_UI_TRACE=1` reports `VOLT_UI_SURFACE` encoding and `VOLT_UI_FONTS` family
+selection without logging application text. Metal can intentionally report
+`alpha_mode=PostMultiplied` and `pixel_encoding=premultiplied` together. SF resolves
+to installed SF Pro Text/Display and SF Mono, with portable fallbacks; no Apple
+fonts are distributed. Actual presentation-shader and font/weight regressions
+are separate from desktop blur and subjective visual acceptance.
+
+Public Material is the normal macOS blur path; private Compositor is opt-in.
+See [window opacity/tint/blur](SURFACES_THEMES_AND_SCROLLING.md). Windows/Linux
+runtime, device loss under real stress, compositor corners, memory/energy and
+assistive-technology acceptance remain separate gates.

@@ -76,7 +76,7 @@ shadow. Since 0.3.0, decorated macOS GPU windows use public AppKit
 `NSVisualEffectView`; unavailable/borderless requests retain transparency without
 blur. AppKit owns material appearance. This does not certify App Store packaging
 or guarantee ChatGPT/Codex appearance parity. See
-[the bridge and review receipt](CLAUDE_REVIEW_2026_10_11.md).
+[window glass and platform limits](SURFACES_THEMES_AND_SCROLLING.md).
 Windows/X11 do not gain blur from this winit API; Wayland needs a supporting KDE
 blur protocol. GPU auto initialization failure logs opaque software fallback;
 `VOLT_UI_RENDERER=gpu` fails rather than pretending GPU succeeded.

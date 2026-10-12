@@ -183,22 +183,20 @@ can be enums, integers or application types. Labels are display text, not IDs.
 - Legacy widgets/Painter and the schema1 JSON format remain unchanged. Group
   keyboard behavior is a Rust-only opt-in; ordinary buttons ignore selection keys.
 
-## Test in one app
+## Test in Catalog
 
 ```sh
-cargo run --locked --features native --example ui_lab -- --section controls
-cargo run --locked --features native --example showcase
+cargo run --release --locked --features native-gpu --example catalog -- --page button-group
+cargo run --release --locked --features native-gpu --example catalog -- --page tabs
 cargo test --locked --features rust-ui --test component_bars
-cargo test --locked --features native --example ui_lab
+cargo test --locked --all-features --example catalog
 ```
 
-Controls includes joined Save/Reset, density selection, active-page tabs,
-disabled options, top/bottom placement and real callback activity. Atelier's
-screen navigation now uses the reusable typed tab bar and its header is a toolbar.
-Automated tests cover pointer/keyboard callbacks, Full/selected corners, disabled
-items, active-only handlers, 1x/2x DPI and compact lab scrolling. Native Mac smoke checks now include typing/submit, Unicode paste/deletion/undo,
-slider keys, popup selection, modal Escape/focus restoration and background wheel isolation.
-Actual non-Latin OS IME and Linux/Windows acceptance still need target-platform testing.
+Catalog contains live bars/tabs, disabled options and callback witnesses. Existing
+Showcase/Lab examples remain regression fixtures. Automated checks cover pointer
+and keyboard callbacks, selected corners, disabled items, active-page-only
+handlers, DPI and compact layouts. Real IME and other-platform interaction remain
+separate [validation gates](VALIDATION.md).
 
 ## Editable fields, value controls and modal declarations
 
@@ -269,8 +267,8 @@ runtime: caret/selection/IME     portal: topmost input scope
   text. **App state remains ordinary plaintext in memory**, not an encrypted vault.
 - `text_area` is plain text, not rich text, syntax highlighting, spellchecking or a
   production code editor. Lines follow explicit newlines; wheel scrolling and caret-following use a clipped
-  internal viewport. Automatic wrapping and
-  fully correct complex bidi visual navigation/selection are not claimed.
+  internal viewport. `.soft_wrap(true)` opts into bounded measured wrapping;
+  fully correct complex bidi visual navigation/selection is not claimed.
 - Sliders validate finite values, ascending bounded range, representable positive
   step and in-range initial value. Pointer capture survives controlled recomposition;
   equal values emit no callback. Arrows/Home/End/PageUp/PageDown change value.
@@ -295,41 +293,97 @@ handlers/context), `pointer_up_outcome`, `slider_key(ValueKey)`, `overlay_key`,
 `dismiss_overlay`, editor keys/text and IME methods. The legacy bool pointer helpers
 cannot dispatch continuous slider changes. The native host supplies this routing.
 
-### Remaining priorities
+## Additional Rust components
 
-OS accessibility, broader native IME/device acceptance, Linux/Windows clipboard and
-interaction testing, automatic text wrapping/bidi completeness, arbitrary scroll
-focus reveal, asynchronous state-update wakeups and rendering performance remain.
-Mobile hosting and a desktop/compositor experiment are deferred. The scoped control
-batch is delivered; the entire toolkit is **not** declared production-complete.
-See [resource usage and GPU boundaries](RESOURCE_USAGE_AND_DESKTOP.md).
+These APIs are Rust-only; schema-1 JSON retains its existing format. Values and
+callbacks remain controlled by application state. Catalog's Utilities, Icons,
+Date & time, Form inputs, Overlays, Data display and Charts pages demonstrate them.
 
-## Verification receipt (2026-10-09)
+### Layout, text and style utilities
 
-- `native-gpu` all-target suite: **318 tests passed**, one opt-in GPU hardware test
-  ignored by default and run separately (one pass). Shared Lab tests occur through
-  multiple example entrypoints; this is not a count of unique cases.
-- Native doctests: **22 passed**, one pre-existing ignored native-host example.
-  Dedicated suites include **17 editable-input**, **19 value-control** and
-  **15 modal-dialog** integration tests. Claude's Northbound example and its
-  **five tests** are preserved.
-- Default and declarative-only tests and strict all-target Clippy passed; default
-  direct dependencies still contain only `unicode-width`. GPU all-target strict
-  Clippy, formatting, diff whitespace checks and **Rust 1.87** GPU all-target checks
-  passed. Package assembly/default-build verification passed. Package metadata
-  still warns about missing repository/homepage/docs links.
-- On the unlocked Mac, actual native typing/Enter submission, Unicode clipboard
-  paste, whole-emoji deletion, undo/redo, multiline editing and internal wheel
-  scrolling were inspected. Slider and popup input, modal Tab trapping,
-  Escape/opener focus restoration and blocked background scrolling were checked.
-  Desk sends actual edited text by click and **Cmd+Enter**; no service is contacted.
-- Optional native GPU drawing now uses Vello scenes rather than uploading a CPU
-  framebuffer. Actual Apple M4 Pro/Metal readback passed 1x/2x fixtures, clipped
-  opacity/path holes, cached resources and shadow symmetry. On the unlocked Mac,
-  GPU UI Lab typing/Enter, button/tab callbacks, slider/popup selection, modal
-  Escape/focus restoration, clipped images/vectors and circular hit targets were
-  visually checked. This is not measured GPU utilization or full OS alpha/blur
-  acceptance. See [GPU drawing](GPU_RENDERING.md) and the resource guide.
-- Foreign-language OS IME UX, VoiceOver, Linux/Windows native interactions,
-  GPU utilization/energy and input-to-photon latency still need separate acceptance.
-- No commit/push, memory write, Volt checkout edit or OS desktop setting change.
+| Item | Usage |
+|---|---|
+| Cursor styles | `.cursor(Cursor::Pointer)`; buttons/links → pointer, editors → I-beam, split handles → resize |
+| Text alignment | `.text_align(TextAlign::Center)` |
+| Line height | `.line_height(1.5)` (multiple of font size) |
+| Truncation | `.max_lines(1)` → ellipsis; `.no_wrap(true)` |
+| Case / decoration | `.uppercase()`, `.underline(true)`, `.strikethrough(true)` |
+| Min/max sizes | `.min_width() .max_width() .min_height() .max_height()` |
+| Fractional sizes | `.width_fraction(0.5)` (share of the parent's space) |
+| Aspect ratio | `.aspect_ratio(16. / 9.)` |
+| Justify | `.justify(Justify::SpaceBetween)` (start/center/end/between/around/evenly) |
+| Wrapping rows | `.wrap(true)` on a row |
+| Grid | `grid(children).columns(3)` or `.min_column_width(220.)`; child `.column_span(2)` |
+| Single-side borders | `.border_sides(Sides::BOTTOM)` |
+| Dashed / dotted borders | `.border_style(BorderStyle::Dashed)` |
+| Gradients | `.background_gradient(Gradient::linear(angle, stops))`, radial |
+| Translate / hover lift | `.offset(x, y)`, `.hover_style(\|s\| s.offset(0., -2.))` |
+| Pulse (skeletons) | `Ambient::pulse(0.4)` opacity animation |
+| Slide / fade transitions | `Transition::slide(dx, dy)` alongside fade |
+| Custom easing / delay | `Easing::CubicBezier(..)`, `Animation::delay_ms` |
+| Disabled / focus-visible styles | `.disabled_style(..)`; focus rings only after keyboard focus |
+| Responsive visibility / width / font size | `.visible(responsive(false).at(Md, true))`, responsive width / font size |
+| Programmatic scroll | `.scroll_to(key, request)` on a scroll view |
+| Bundled fonts | `native::register_font(bytes)` |
+| SVG path import | `VectorPath::from_svg(d)` |
+| Design tokens | `tokens::space::*`, `tokens::radius::*`, `tokens::text::*` scales |
+
+### Icons
+
+A built-in, theme-aware vector icon set (`icon(Icon::Search)`), 65 glyphs,
+original drawings on a 24-unit grid.
+
+### Date and time
+
+`CalendarDate` (no external date crate), `calendar`, `date_picker`,
+`date_range_picker`, `time_picker`.
+
+### Form inputs
+
+| Item | Usage |
+|---|---|
+| Radio group | `radio_group([(v, "Label")]).selected(v).on_select(..)`, descriptions, horizontal |
+| Number input | `number_input(v).range(0., 10.).step(1.).decimals(1).suffix(" kg")` |
+| Combobox | `combobox(items, &state).state(..).on_select(..)`; type to filter, Enter picks |
+| Tag input | `tag_input(&tags, &state).on_change(..)`; Enter adds, × removes |
+| Range slider | `range_slider(lo, hi).on_change(\|app, lo, hi\| ..)`; nearer thumb, no crossing |
+| Colour picker | `color_picker("#3B82F6")`: swatches, H/S/L sliders, hex field (`Hsl`) |
+| Drop zone | `drop_zone().accept(["png"]).on_drop(..)`; native drag and drop via winit |
+| One-time code | `otp_input(code, 6).on_complete(..)` |
+| Rating | `rating(n).max(5).on_change(..)`; read-only without a handler |
+| Adornments | `text_field(..).leading_icon(Icon::Search).trailing_action(..)` |
+| Form field | `form_field("Email", control).description(..).error(..).required(true)` |
+
+Runtime additions: two-thumb sliders (`SliderProps.lower`), `Event::FilesDropped`
+with `Runtime::file_hover` / `drop_files`, and `Popover::keep_anchor_interactive`
+so a combobox field keeps focus and typing while its list is open.
+
+### Overlays and disclosure
+
+`accordion`, `collapsible`, `drawer`, `toaster`, `command_palette`, menu
+check/radio items + submenus + shortcut hints, `hover_card`.
+
+Submenus open in place of the parent list with a back row (drill-down)
+rather than as cascading side panels; both are controlled by app state.
+
+### Display
+
+`avatar` / `avatar_group`, `alert`, `skeleton`, `kbd`, `breadcrumb`,
+`pagination`, `steps`, `timeline`, `empty_state`, `stat`, charts
+(`sparkline`, `bar_chart`, `line_chart`), `carousel`, `image` with fallback
+(`image_view`).
+
+### Limits and unfinished interaction polish
+
+- Range sliders currently expose one accessibility value; arrow keys move the
+  last grabbed thumb. Independent keyboard/screen-reader thumb targets remain.
+- Combobox Enter chooses the best match; command palettes support Tab. Dedicated
+  Up/Down result navigation remains to be added.
+- Toasts are dismissed by application state, not a built-in auto-dismiss timer.
+- Submenus use controlled drill-down/back rows, not cascading multi-popup focus.
+- Charts are static vectors; interactive tooltips and labelled axes are deferred.
+- Offsets and slide/ambient motion are paint-only: layout and hit targets stay put.
+- Registered fonts share immutable bytes across windows, with 64 files / 256 MiB
+  total. `VectorPath::from_svg` parses path data, not complete SVG documents.
+- Native IME, assistive technology, other-OS interactions, energy and device-loss
+  acceptance are distinct from API availability; see [validation](VALIDATION.md).

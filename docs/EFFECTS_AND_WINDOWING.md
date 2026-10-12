@@ -267,5 +267,5 @@ keeps root RGB separate from semantic surface colors. Catalog demonstrates both.
 The new explicitly opted-in `WindowBackground::CompositorBlur` uses winit's raw
 blur request (private macOS API), not public AppKit material; it is not an App
 Store-safe promise. Existing `Blur` and all toolkit defaults retain public material.
-See [glass controls and native limits](GLASS_CONTROLS_2026_10_11.md); the requested
+See [glass controls and native limits](SURFACES_THEMES_AND_SCROLLING.md); the requested
 in-app GPU backdrop renderer remains pending.
