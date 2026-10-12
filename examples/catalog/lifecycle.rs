@@ -91,8 +91,8 @@ pub fn commands() -> CommandRegistry<App> {
                 "command-palette",
                 "Open command palette",
                 |app: &mut App| {
-                    app.command_palette_open = true;
-                    app.command_query.clear();
+                    app.app_commands.open = true;
+                    app.app_commands.query.clear();
                 },
             )
             .shortcut(Shortcut::primary('k')),
@@ -116,8 +116,8 @@ pub fn close_request(app: &mut App, reason: CloseReason) -> CloseDecision {
         return CloseDecision::KeepOpen;
     }
     if dirty(app) {
-        app.command_palette_open = false;
-        app.palette_open = false;
+        app.app_commands.open = false;
+        app.palette.open = false;
         app.close_prompt = Some(reason);
         CloseDecision::KeepOpen
     } else {
@@ -208,39 +208,27 @@ pub fn doc(app: &App) -> Doc {
     }
 }
 pub fn overlays(app: &App) -> Vec<El<App>> {
-    let query = app.command_query.trim().to_lowercase();
-    let registry = commands();
-    let rows = registry
+    // Registered commands that may run now, with their shortcut hints; the
+    // toolkit's command palette does the search, grouping and Enter-to-run.
+    let commands = commands()
         .entries(app)
         .into_iter()
-        .filter(|c| c.label.to_lowercase().contains(&query))
+        .filter(|c| c.enabled)
         .map(|c| {
-            let id = c.id.to_owned();
-            button(format!(
-                "{}   {}",
-                c.label,
-                c.shortcut.map(Shortcut::label).unwrap_or_default()
-            ))
-            .key(format!("palette-command-{id}"))
-            .enabled(c.enabled)
-            .width(400.)
-            .variant(ButtonVariant::Ghost)
-            .on_click(move |app: &mut App| {
-                app.command_palette_open = false;
-                request(app, ApplicationRequest::Command(id.clone()));
-            })
-            .into()
+            let mut entry = command(c.id.to_owned(), c.label).group("Application");
+            if let Some(shortcut) = c.shortcut {
+                entry = entry.shortcut(shortcut.label());
+            }
+            entry
         })
-        .collect::<Vec<El<App>>>();
+        .collect::<Vec<_>>();
     vec![
-        dialog(vstack![
-            text_field(&app.command_query).key("application-command-query")
-                .accessible_label("Find application command").placeholder("Find a command…")
-                .on_change(|app: &mut App, value| app.command_query = value),
-            vstack(rows).gap(6., Axis::Vertical),
-        ].gap(12., Axis::Vertical)).key("application-palette").title("Application commands")
-            .open(app.command_palette_open).width(460.).rounded(12.).background(ColorToken::Base100)
-            .on_dismiss(|app: &mut App| app.command_palette_open = false).into(),
+        command_palette(commands, &app.app_commands)
+            .key("application-palette")
+            .placeholder("Find a command…")
+            .state(|app: &mut App| &mut app.app_commands)
+            .on_run(|app: &mut App, id: String| request(app, ApplicationRequest::Command(id)))
+            .into(),
         dialog(vstack![
             text("The example draft has unsaved changes. Saving keeps them in memory only; quitting does not persist them to disk.").font_size(14.),
             hstack![spacer(),

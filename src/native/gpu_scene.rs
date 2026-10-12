@@ -37,6 +37,10 @@ pub(super) struct SceneStats {
     pub glyphs: usize,
     pub layers: usize,
     pub resource_bytes: usize,
+    /// Horizontal strips the frame is rendered in (1 = one pass). A frame too
+    /// large for Vello's fixed per-frame buffers, but whose strips each fit,
+    /// stays on the GPU instead of falling back to software.
+    pub bands: usize,
     /// Always zero: scene resources are not a CPU-rendered window framebuffer.
     pub framebuffer_upload_bytes: usize,
 }
@@ -70,12 +74,19 @@ pub(super) struct GpuSceneEncoder {
     fonts: HashMap<cosmic_text::fontdb::ID, Option<FontData>>,
     budget: Budget,
     frame_images: HashSet<usize>,
+    /// Physical `[y, height]` strips for a banded frame; empty for one pass.
+    pub bands: Vec<[u32; 2]>,
+    viewport_height: u32,
 }
+/// Strips are whole 16px tile rows. A strip that cuts a 256px bin row counts
+/// that row's bins in full, which over-estimates binning (the safe side).
+const MAX_BANDS: usize = 16;
 /// Per-frame usage of the Vello buffers its own estimator does not cover.
 #[derive(Default)]
 struct Budget {
-    tiles: u64,
-    binning: u64,
+    /// Tile footprint per 16px tile row; bins per 256px bin row.
+    row_tiles: Vec<u64>,
+    bin_rows: Vec<u64>,
     glyph_lines: u64,
     atlas_area: u64,
     oversize_image: bool,
@@ -161,6 +172,7 @@ fn shape_bounds(s: &Shape) -> Option<Rect> {
         Shape::Rectangle(b, _)
         | Shape::Rounded(b, ..)
         | Shape::Corners(b, ..)
+        | Shape::Gradient(b, ..)
         | Shape::Image(b, ..) => rect(*b),
         Shape::Outline(b, _, w, _) => pad(rect(*b), *w),
         Shape::Triangle(p, _) => {
@@ -232,6 +244,7 @@ impl GpuSceneEncoder {
     pub(super) fn reject_frame(&mut self, reason: &'static str) {
         // Do not retain the previous frame's resources/statistics on fallback.
         self.scene.reset();
+        self.bands.clear();
         self.stats = SceneStats {
             over_budget: Some(reason),
             ..Default::default()
@@ -253,8 +266,6 @@ impl GpuSceneEncoder {
         }
         let span =
             |a: f64, b: f64, size: f64| ((b / size).ceil() - (a / size).floor()).max(1.) as u64;
-        let tiles = span(r.x0, r.x1, 16.) * span(r.y0, r.y1, 16.);
-        self.budget.tiles += tiles;
         // Fill + brush use at most eight words in pinned coarse.wgsl. Count
         // per tile: a dense tile spills in 256-word chunks, not by exact usage.
         let [tw, th] = self.tiles;
@@ -263,26 +274,29 @@ impl GpuSceneEncoder {
         let y0 = ((r.y0 / 16.).floor() as usize).min(th);
         let y1 = ((r.y1 / 16.).ceil() as usize).min(th);
         for y in y0..y1 {
+            self.budget.row_tiles[y] += (x1 - x0).max(1) as u64;
             for words in &mut self.commands[y * tw + x0..y * tw + x1] {
                 *words = words.saturating_add(8);
             }
         }
-        self.budget.binning += span(r.x0, r.x1, 256.) * span(r.y0, r.y1, 256.);
+        let bins = span(r.x0, r.x1, 256.);
+        let by0 = (r.y0 / 256.).floor() as usize;
+        let by1 = ((r.y1 / 256.).ceil() as usize).max(by0 + 1);
+        for by in by0..by1.min(self.budget.bin_rows.len()) {
+            self.budget.bin_rows[by] += bins;
+        }
     }
-    fn finish_budget(&mut self) {
-        self.stats.spill_slots = self
-            .peak
+    /// Area-dependent Vello buffers (blend spill, tiles, tile commands,
+    /// bins) for the tile rows `rows`, as one render pass would use them.
+    fn area_budget(&self, rows: std::ops::Range<usize>) -> Option<&'static str> {
+        let tw = self.tiles[0];
+        let cells = rows.start * tw..rows.end * tw;
+        let spill: u32 = self.peak[cells.clone()]
             .iter()
             .map(|d| u32::from(d.saturating_sub(BLEND_STACK_SPLIT)))
             .sum();
-        // Vello estimates path flattening itself, but not glyph outlines, which
-        // it resolves later; those are added from our own per-glyph estimate.
-        let vello = self.scene.bump_estimate(None);
-        let lines = u64::from(vello.lines.len()) + self.budget.glyph_lines;
-        let segments = u64::from(vello.segments.len()) + self.budget.glyph_lines * 3 / 2;
-        let ptcl = self.commands.len() as u64 * PTCL_INITIAL_ALLOC
-            + self
-                .commands
+        let ptcl = cells.len() as u64 * PTCL_INITIAL_ALLOC
+            + self.commands[cells]
                 .iter()
                 .map(|words| {
                     u64::from(
@@ -292,24 +306,79 @@ impl GpuSceneEncoder {
                     ) * PTCL_INCREMENT
                 })
                 .sum::<u64>();
-        let b = &self.budget;
-        self.stats.over_budget = if self.stats.spill_slots > SPILL_SLOT_LIMIT {
+        let tiles: u64 = self.budget.row_tiles[rows.clone()].iter().sum();
+        let bins: u64 = self.budget.bin_rows
+            [rows.start / 16..rows.end.div_ceil(16).min(self.budget.bin_rows.len())]
+            .iter()
+            .sum();
+        if spill > SPILL_SLOT_LIMIT {
             Some("blend spill")
-        } else if over(lines, LINE_CAPACITY) {
-            Some("lines")
-        } else if over(segments, LINE_CAPACITY) {
-            Some("segments")
-        } else if over(b.tiles, TILE_CAPACITY) {
+        } else if over(tiles, TILE_CAPACITY) {
             Some("tiles")
         } else if over(ptcl, PTCL_CAPACITY) {
             Some("tile commands")
-        } else if over(b.binning, BIN_CAPACITY) {
+        } else if over(bins, BIN_CAPACITY) {
             Some("binning")
+        } else {
+            None
+        }
+    }
+    fn finish_budget(&mut self) {
+        let th = self.tiles[1];
+        self.stats.spill_slots = self
+            .peak
+            .iter()
+            .map(|d| u32::from(d.saturating_sub(BLEND_STACK_SPLIT)))
+            .sum();
+        // Vello estimates path flattening itself, but not glyph outlines, which
+        // it resolves later; those are added from our own per-glyph estimate.
+        // Flattening covers the whole scene in every pass, so strips do not
+        // reduce these.
+        let vello = self.scene.bump_estimate(None);
+        let lines = u64::from(vello.lines.len()) + self.budget.glyph_lines;
+        let segments = u64::from(vello.segments.len()) + self.budget.glyph_lines * 3 / 2;
+        let b = &self.budget;
+        let global = if over(lines, LINE_CAPACITY) {
+            Some("lines")
+        } else if over(segments, LINE_CAPACITY) {
+            Some("segments")
         } else if b.oversize_image || over(b.atlas_area, ATLAS_SIDE * ATLAS_SIDE) {
             Some("image atlas")
         } else {
             None
         };
+        self.bands.clear();
+        self.stats.bands = 1;
+        self.stats.over_budget = global.or_else(|| self.area_budget(0..th));
+        if global.is_some() || self.stats.over_budget.is_none() {
+            return;
+        }
+        // Too big for one pass: find the fewest equal strips that each fit.
+        // Large displays (5K/6K Retina) exceed the fixed tile-command buffer
+        // on its per-tile reservation alone, before any content is drawn.
+        for n in 2..=MAX_BANDS {
+            let rows = th.div_ceil(n);
+            if rows == 0 {
+                break;
+            }
+            let strips: Vec<_> = (0..th)
+                .step_by(rows)
+                .map(|y| y..(y + rows).min(th))
+                .collect();
+            if strips.iter().all(|r| self.area_budget(r.clone()).is_none()) {
+                let height = self.viewport_height;
+                self.bands = strips
+                    .iter()
+                    .map(|r| {
+                        let y = (r.start * 16) as u32;
+                        [y, ((r.end * 16) as u32).min(height) - y]
+                    })
+                    .collect();
+                self.stats.bands = self.bands.len();
+                self.stats.over_budget = None;
+                return;
+            }
+        }
     }
     fn layer(
         &mut self,
@@ -368,6 +437,7 @@ impl GpuSceneEncoder {
         mut images: Option<ImageResolver<'_, '_>>,
     ) -> Result<(), String> {
         self.scene.reset();
+        self.bands.clear();
         self.stats = SceneStats::default();
         self.budget = Budget::default();
         self.frame_images.clear();
@@ -391,6 +461,9 @@ impl GpuSceneEncoder {
         self.peak.resize(count, 0);
         self.commands.clear();
         self.commands.resize(count, 0);
+        self.budget.row_tiles = vec![0; self.tiles[1]];
+        self.budget.bin_rows = vec![0; self.tiles[1].div_ceil(16)];
+        self.viewport_height = vp.height as u32;
         self.open_tiles.clear();
         let mut stack = Vec::<bool>::new();
         // Pixel bounds of the innermost structural clip. Opacity layers and
@@ -708,6 +781,32 @@ impl GpuSceneEncoder {
                 }
             }
             Shape::Image(b, image, scale) => self.image(*b, image, *scale, images)?,
+            Shape::Gradient(b, r, geometry, stops) => {
+                let stops: Vec<(f32, Color)> =
+                    stops.iter().map(|(at, c)| (*at, color(*c))).collect();
+                let gradient = match *geometry {
+                    raster::GradientGeometry::Linear { start, end } => {
+                        vello::peniko::Gradient::new_linear(
+                            (f64::from(start[0]), f64::from(start[1])),
+                            (f64::from(end[0]), f64::from(end[1])),
+                        )
+                    }
+                    raster::GradientGeometry::Radial { centre, radius } => {
+                        vello::peniko::Gradient::new_radial(
+                            (f64::from(centre[0]), f64::from(centre[1])),
+                            radius,
+                        )
+                    }
+                }
+                .with_stops(stops.as_slice());
+                self.scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    &gradient,
+                    None,
+                    &corners(*b, *r)?,
+                );
+            }
             _ => unreachable!("structural commands handled by encoder"),
         }
         Ok(())

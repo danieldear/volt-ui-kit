@@ -17,6 +17,8 @@ use std::{
 #[cfg(feature = "rust-ui")]
 pub(super) mod accessibility;
 #[cfg(feature = "rust-ui")]
+mod drops;
+#[cfg(feature = "rust-ui")]
 pub(super) mod editing;
 #[cfg(feature = "rust-ui")]
 mod overlays;
@@ -29,6 +31,17 @@ pub struct TextStyle {
     pub size: f32,
     pub weight: u16,
     pub italic: bool,
+    /// Extra space after each character, as a fraction of the font size.
+    pub tracking: f32,
+    pub align: super::extras::TextAlign,
+    /// Line height as a multiple of the font size; 0 keeps the default 1.2.
+    pub line_height: f32,
+    /// Cut to this many lines with an ellipsis; 0 = unlimited.
+    pub max_lines: u16,
+    /// Keep on one line (overflow is clipped, or ellipsised with `max_lines`).
+    pub no_wrap: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
 }
 impl Default for TextStyle {
     fn default() -> Self {
@@ -37,6 +50,13 @@ impl Default for TextStyle {
             size: 14.,
             weight: 400,
             italic: false,
+            tracking: 0.,
+            align: super::extras::TextAlign::Start,
+            line_height: 0.,
+            max_lines: 0,
+            no_wrap: false,
+            underline: false,
+            strikethrough: false,
         }
     }
 }
@@ -92,6 +112,30 @@ pub trait DocumentPainter: Painter + TextMetrics {
     ) {
     }
 
+    /// A gradient-filled rounded rectangle with resolved stop colours. The
+    /// default fills with the first stop for adapters without gradients.
+    fn ui_gradient(
+        &mut self,
+        out: &mut Vec<Self::Shape>,
+        bounds: [f32; 4],
+        radii: [f32; 4],
+        _gradient: &super::extras::Gradient,
+        stops: &[(f32, [f32; 4])],
+    ) {
+        if let Some((_, first)) = stops.first() {
+            self.card_corners(out, bounds, radii, *first);
+        }
+    }
+    /// Laid-out lines of `text` in `bounds` as (x, baseline y, width), for
+    /// underline and strikethrough. Adapters without layout access return none.
+    fn ui_text_lines(
+        &mut self,
+        _text: &str,
+        _bounds: [f32; 4],
+        _style: &TextStyle,
+    ) -> Vec<[f32; 3]> {
+        vec![]
+    }
     /// Must use the same style/font fallback rules as measure_styled.
     fn ui_text_styled(
         &mut self,
@@ -208,6 +252,20 @@ pub struct LayoutBox {
     pub(crate) detached_mount: f32,
     pub(crate) departing: bool,
     pub(crate) detached_state: Option<ButtonState>,
+    /// Paint-only extras: cursor, translation, border sides/style, gradient.
+    pub(crate) ext: BoxExtras,
+}
+#[derive(Clone, Debug, Default)]
+pub(crate) struct BoxExtras {
+    pub cursor: Option<super::extras::Cursor>,
+    pub offset: [f32; 2],
+    pub border_sides: Option<super::extras::Sides>,
+    pub border_style: super::extras::BorderStyle,
+    pub gradient: Option<super::extras::Gradient>,
+    /// Ambient pulse opacity for this frame (multiplies the visual opacity).
+    pub pulse: Option<f32>,
+    pub label_inset: Option<f32>,
+    pub reveal_handle: bool,
 }
 #[derive(Clone)]
 struct ScrollbarCapture {
@@ -264,6 +322,8 @@ pub struct Runtime {
     layout_boxes: Vec<LayoutBox>,
     scrollbar_capture: Option<ScrollbarCapture>,
     focused: Option<String>,
+    /// Focus arrived by keyboard (Tab, arrows, shortcuts), not a click.
+    focus_visible: bool,
     hovered: Option<String>,
     visual_hover: BTreeSet<String>,
     capture: Option<String>,
@@ -275,6 +335,11 @@ pub struct Runtime {
     scroll_offsets: BTreeMap<String, [f32; 2]>,
     /// Last laid-out vertical extent of end-anchored scroll views.
     scroll_ends: BTreeMap<String, f32>,
+    /// Resolved styles depend only on the document, scale and logical width,
+    /// so scroll-only layouts reuse them. Cleared when the document changes.
+    styles_cache: Option<([u32; 2], StyleMap)>,
+    /// Last applied `scroll_to` request per scroll view.
+    scroll_requests: BTreeMap<String, u32>,
     #[cfg(feature = "rust-ui")]
     editors: RefCell<BTreeMap<String, editing::EditorState>>,
     #[cfg(feature = "rust-ui")]
@@ -285,6 +350,12 @@ pub struct Runtime {
     slider_capture: Option<String>,
     #[cfg(feature = "rust-ui")]
     slider_values: BTreeMap<String, f32>,
+    /// Range slider whose lower thumb is active (pointer or keys).
+    #[cfg(feature = "rust-ui")]
+    slider_lower: Option<String>,
+    /// Drop zone under an in-progress system file drag.
+    #[cfg(feature = "rust-ui")]
+    file_hover: Option<String>,
     #[cfg(feature = "rust-ui")]
     split_capture: Option<value_controls::SplitCapture>,
     #[cfg(feature = "rust-ui")]
@@ -312,6 +383,7 @@ impl Runtime {
             layout_boxes: vec![],
             scrollbar_capture: None,
             focused: None,
+            focus_visible: false,
             hovered: None,
             visual_hover: BTreeSet::new(),
             capture: None,
@@ -322,6 +394,8 @@ impl Runtime {
             motion: RefCell::new(Motion::default()),
             scroll_offsets: BTreeMap::new(),
             scroll_ends: BTreeMap::new(),
+            styles_cache: None,
+            scroll_requests: BTreeMap::new(),
             #[cfg(feature = "rust-ui")]
             editors: RefCell::new(BTreeMap::new()),
             #[cfg(feature = "rust-ui")]
@@ -332,6 +406,8 @@ impl Runtime {
             slider_capture: None,
             #[cfg(feature = "rust-ui")]
             slider_values: BTreeMap::new(),
+            slider_lower: None,
+            file_hover: None,
             #[cfg(feature = "rust-ui")]
             split_capture: None,
             #[cfg(feature = "rust-ui")]
@@ -352,13 +428,17 @@ impl Runtime {
     }
     /// Host-provided monotonic clock; never calls application handlers or layout.
     pub fn advance_animations(&mut self, now: Duration) -> bool {
-        let changed = self.motion.get_mut().advance(now);
+        let changed = self.motion.get_mut().advance(now) || self.ambient_active();
         #[cfg(feature = "rust-ui")]
         let changed = self.advance_progress(now) || changed;
         changed
     }
+    /// Visible ambient motion keeps frames coming (never under reduced motion).
+    fn ambient_active(&self) -> bool {
+        !self.motion.borrow().reduced && self.boxes.iter().any(|b| b.effects.ambient.is_some())
+    }
     pub fn is_animating(&self) -> bool {
-        let active = self.motion.borrow().active();
+        let active = self.motion.borrow().active() || self.ambient_active();
         #[cfg(feature = "rust-ui")]
         let active = self.progress_active() || active;
         active
@@ -487,6 +567,7 @@ impl Runtime {
         keys(next.root(), &mut ids);
         self.scroll_offsets.retain(|id, _| ids.contains(id));
         self.scroll_ends.retain(|id, _| ids.contains(id));
+        self.styles_cache = None;
         self.motion.get_mut().remove(&self.boxes, &ids);
         #[cfg(feature = "rust-ui")]
         let slider_capture = self.slider_capture.clone();
@@ -577,16 +658,26 @@ impl Runtime {
         self.prepare_overlay_layout(viewport);
         let anchored = self.follow_scroll_ends();
         let mut boxes = vec![];
-        let mut memo = BTreeMap::new();
-        let mut styles = BTreeMap::new();
-        resolve_styles(
-            self.document.root(),
-            &InheritedStyle::default(),
-            self.scale,
-            viewport.width / self.scale,
-            &mut styles,
-            0,
-        );
+        let mut memo = MeasureMemo::new();
+        let style_key = [
+            self.scale.to_bits(),
+            (viewport.width / self.scale).to_bits(),
+        ];
+        let styles = match self.styles_cache.take() {
+            Some((key, styles)) if key == style_key => styles,
+            _ => {
+                let mut styles = StyleMap::new();
+                resolve_styles(
+                    self.document.root(),
+                    &InheritedStyle::default(),
+                    self.scale,
+                    viewport.width / self.scale,
+                    &mut styles,
+                    0,
+                );
+                styles
+            }
+        };
         let area = Rect::new(0., 0., viewport.width, viewport.height).unwrap();
         place(
             self.document.root(),
@@ -633,6 +724,7 @@ impl Runtime {
         for b in boxes.iter().filter(|b| anchored.contains(&b.id)) {
             self.scroll_ends.insert(b.id.clone(), b.scroll_max[1]);
         }
+        self.styles_cache = Some((style_key, styles));
         self.layout_boxes = boxes;
         self.boxes = self
             .layout_boxes
@@ -670,7 +762,59 @@ impl Runtime {
             return Ok(true);
         }
         self.cache = Some((key, values.clone()));
+        if self.apply_scroll_requests() {
+            self.cache = None;
+            self.layout(viewport, values, metrics)?;
+        }
         Ok(true)
+    }
+    /// Scroll views whose `scroll_to` request changed bring that element to
+    /// the top of their visible area once (a first request of 0 is ignored).
+    /// Returns true if anything moved.
+    fn apply_scroll_requests(&mut self) -> bool {
+        fn requests(n: &Node, out: &mut Vec<(String, String, u32)>) {
+            if let Some((key, request)) = &n.ext.scroll_to {
+                if n.surface.scroll.is_some() {
+                    out.push((n.id.clone(), key.clone(), *request));
+                }
+            }
+            for child in &n.children {
+                requests(child, out);
+            }
+        }
+        let mut pending = vec![];
+        requests(self.document.root(), &mut pending);
+        let mut moved = false;
+        for (view, key, request) in pending {
+            let previous = self.scroll_requests.insert(view.clone(), request);
+            // Request 0 on first sight means "nothing yet"; any change scrolls.
+            if previous == Some(request) || (previous.is_none() && request == 0) {
+                continue;
+            }
+            let (Some(container), Some(target)) = (
+                self.layout_boxes.iter().find(|b| b.id == view),
+                self.layout_boxes.iter().find(|b| b.id == key),
+            ) else {
+                continue;
+            };
+            let s = self.scale;
+            let mut offset = container.scroll_offset;
+            let top = container.bounds.bounds()[1] + container.style.layout.padding[0];
+            let left = container.bounds.bounds()[0] + container.style.layout.padding[3];
+            let [tx, ty, _, _] = target.bounds.bounds();
+            let axes = container.scroll.map_or([false; 2], |m| m.axes());
+            if axes[1] {
+                offset[1] = (offset[1] + (ty - top) / s).clamp(0., container.scroll_max[1]);
+            }
+            if axes[0] {
+                offset[0] = (offset[0] + (tx - left) / s).clamp(0., container.scroll_max[0]);
+            }
+            if offset != container.scroll_offset {
+                self.scroll_offsets.insert(view, offset);
+                moved = true;
+            }
+        }
+        moved
     }
     /// Reveal the focused control from the innermost scroll viewport outward.
     /// All mounted controls participate, even when currently clipped from painting.
@@ -880,6 +1024,7 @@ impl Runtime {
         }) else {
             return changed;
         };
+        let mut moved: Vec<(String, [f32; 2], [f32; 2])> = vec![];
         loop {
             let b = &self.boxes[index];
             if !self.scope_allows_id(&b.id) {
@@ -891,6 +1036,7 @@ impl Runtime {
                     .scroll_offsets
                     .entry(b.id.clone())
                     .or_insert(b.scroll_offset);
+                let before = *offset;
                 for axis in 0..2 {
                     if axes[axis] {
                         let old = offset[axis];
@@ -898,6 +1044,9 @@ impl Runtime {
                         delta[axis] -= offset[axis] - old;
                         changed |= old != offset[axis];
                     }
+                }
+                if *offset != before {
+                    moved.push((b.id.clone(), before, *offset));
                 }
             }
             if self.boxes[index].depth == 0 {
@@ -910,10 +1059,136 @@ impl Runtime {
             index = parent;
         }
         if changed {
-            self.invalidate_layout();
+            // Scrolling moves boxes but never resizes them: shift the
+            // scrolled subtrees in place instead of a full layout pass.
+            if !moved
+                .iter()
+                .all(|(id, before, after)| self.shift_scrolled(id, *before, *after))
+            {
+                self.invalidate_layout();
+            }
             self.cancel_input();
         }
         changed
+    }
+    /// Move the descendants of scroll view `id` from offset `before` to
+    /// `after` (logical) and recompute their clips, regions and visibility
+    /// exactly as `place` derives them. Returns false, leaving the full
+    /// layout to run, when the layout is stale or something besides plain
+    /// boxes depends on the offset (open overlays, virtual lists). Editor
+    /// geometry is relative to its box, so it survives the shift.
+    fn shift_scrolled(&mut self, id: &str, before: [f32; 2], after: [f32; 2]) -> bool {
+        if self.cache.is_none() {
+            return false;
+        }
+        #[cfg(feature = "rust-ui")]
+        if !self.visible_overlay_nodes().is_empty() {
+            // Overlay anchors are placed after the main tree.
+            return false;
+        }
+        let Some(start) = self.layout_boxes.iter().position(|b| b.id == id) else {
+            return false;
+        };
+        let depth = self.layout_boxes[start].depth;
+        let end = self.layout_boxes[start + 1..]
+            .iter()
+            .position(|b| b.depth <= depth)
+            .map_or(self.layout_boxes.len(), |n| start + 1 + n);
+        if self.layout_boxes[start..end]
+            .iter()
+            .any(|b| b.virtual_list.is_some())
+        {
+            return false;
+        }
+        let s = self.scale;
+        let d = [(before[0] - after[0]) * s, (before[1] - after[1]) * s];
+        self.layout_boxes[start].scroll_offset = after;
+        if !translate_descendants(&mut self.layout_boxes[..end], start, d) {
+            return false;
+        }
+        self.boxes = self
+            .layout_boxes
+            .iter()
+            .filter(|b| b.layout_visible)
+            .cloned()
+            .collect();
+        self.motion.get_mut().reconcile(&self.boxes);
+        self.hovered = None;
+        self.visual_hover.clear();
+        true
+    }
+    /// The cursor for the pointer at physical `x`, `y`: the nearest explicit
+    /// `.cursor(..)` on the topmost element or its ancestors, otherwise a
+    /// default from what is there — pointer over enabled clickable controls,
+    /// I-beam over editable text, resize arrows over split handles.
+    pub fn cursor_at(&self, x: f32, y: f32) -> super::extras::Cursor {
+        use super::extras::Cursor;
+        // A divider drag keeps its resize cursor even when the pointer runs
+        // ahead of the handle.
+        #[cfg(feature = "rust-ui")]
+        if let Some(handle) = self
+            .split_capture
+            .as_ref()
+            .and_then(|c| self.boxes.iter().find(|b| b.id == c.handle))
+        {
+            let [_, _, w, h] = handle.bounds.bounds();
+            return if w < h {
+                Cursor::ResizeColumn
+            } else {
+                Cursor::ResizeRow
+            };
+        }
+        // Start from the control that would receive the press (as hover
+        // does), so full-window passthrough layers such as toast stacks do
+        // not hide the cursor of what lies beneath them.
+        let hit = self
+            .hit(x, y)
+            .and_then(|id| self.boxes.iter().rposition(|b| b.id == id));
+        let Some(mut index) = hit.or_else(|| {
+            self.boxes.iter().rposition(|b| {
+                self.scope_allows_id(&b.id)
+                    && !self.portal_passthrough(&b.id)
+                    && b.clip.contains(x, y)
+                    && b.clip_regions.iter().all(|r| r.contains(x, y))
+                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+            })
+        }) else {
+            return Cursor::Default;
+        };
+        let mut fallback = None;
+        loop {
+            let b = &self.boxes[index];
+            if let Some(cursor) = b.ext.cursor {
+                return cursor;
+            }
+            if fallback.is_none() && interactive_box(b) {
+                fallback = Some(if !b.enabled {
+                    Cursor::Default
+                } else if b.editor.as_ref().is_some_and(|e| !e.read_only) {
+                    Cursor::Text
+                } else if b.split_handle.is_some() {
+                    if b.bounds.bounds()[2] < b.bounds.bounds()[3] {
+                        Cursor::ResizeColumn
+                    } else {
+                        Cursor::ResizeRow
+                    }
+                } else if b.editor.is_some() {
+                    Cursor::Text
+                } else {
+                    Cursor::Pointer
+                });
+            }
+            if b.depth == 0 {
+                break;
+            }
+            let depth = b.depth - 1;
+            let Some(parent) = self.boxes[..index].iter().rposition(|b| b.depth == depth) else {
+                break;
+            };
+            index = parent;
+        }
+        fallback.unwrap_or(Cursor::Default)
     }
     fn hit(&self, x: f32, y: f32) -> Option<String> {
         self.boxes
@@ -1082,6 +1357,7 @@ impl Runtime {
         self.capture = hit.clone();
         self.hovered = hit.clone();
         self.focused = hit;
+        self.focus_visible = false;
         self.keyboard = None;
         #[cfg(feature = "rust-ui")]
         self.sync_tooltip_visibility();
@@ -1116,10 +1392,10 @@ impl Runtime {
                     activated: false,
                 });
             }
-            if self.split_pointer_up() {
+            if let Some(moved) = self.split_pointer_up() {
                 return Ok(InputOutcome {
                     changed: true,
-                    activated: false,
+                    activated: moved,
                 });
             }
             if self.slider_pointer_up() {
@@ -1189,6 +1465,7 @@ impl Runtime {
             None => 0,
         };
         self.focused = Some(ids[index].clone());
+        self.focus_visible = true;
         self.reveal_focus(&ids[index]);
         #[cfg(feature = "rust-ui")]
         self.sync_tooltip_visibility();
@@ -1262,6 +1539,7 @@ impl Runtime {
         self.capture = None;
         self.keyboard = None;
         self.focused = Some(id.clone());
+        self.focus_visible = true;
         let changed = self.reveal_focus(id) || changed;
         #[cfg(feature = "rust-ui")]
         self.sync_tooltip_visibility();
@@ -1377,7 +1655,53 @@ impl Runtime {
     ) -> Vec<PaintBatch<P::Shape, P::Glyph>> {
         let mut out = Vec::new();
         let mut motion = self.motion.borrow_mut();
-        let boxes = motion.paint_boxes(&self.boxes);
+        motion.scale = self.scale;
+        let mut boxes = motion.paint_boxes(&self.boxes);
+        if !motion.reduced
+            && boxes
+                .as_deref()
+                .unwrap_or(&self.boxes)
+                .iter()
+                .any(|b| b.effects.ambient.is_some())
+        {
+            let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
+            apply_ambient(&mut list, motion.now, self.scale);
+            boxes = Some(list);
+        }
+        // Offsets (fixed, hover/press lifts, slide-ins) move whole subtrees at
+        // paint time; layout and hit targets keep their places.
+        let list = boxes.as_deref().unwrap_or(&self.boxes);
+        let moving = list.iter().any(|b| {
+            b.ext.offset != [0.; 2]
+                || b.effects.transition.is_some_and(|t| t.1 != [0.; 2])
+                || std::iter::once(&b.effects.base)
+                    .chain(&b.effects.states)
+                    .any(|s| s.offset.is_some())
+        });
+        if moving {
+            let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
+            for i in 0..list.len() {
+                let b = &list[i];
+                let state = self.state_for_box(b);
+                let target = visual_target(b, state, ui, self.scale);
+                let flags = [
+                    state.hovered && !state.disabled,
+                    state.pressed && !state.disabled,
+                    state.focused && !state.disabled,
+                ];
+                let d = if b.departing {
+                    motion.exit_value(b, target).offset
+                } else {
+                    motion
+                        .value(&b.id, b.kind, target, flags, &b.effects)
+                        .offset
+                };
+                if d != [0.; 2] && translate_box(&mut list[i], d) {
+                    translate_descendants(&mut list, i, d);
+                }
+            }
+            boxes = Some(list);
+        }
         self.paint_nodes(
             p,
             ui,
@@ -1432,7 +1756,7 @@ impl Runtime {
                 state.pressed && !state.disabled,
                 state.focused && !state.disabled,
             ];
-            let visual = if original.departing {
+            let mut visual = if original.departing {
                 motion.exit_value(original, target)
             } else {
                 motion.value(
@@ -1443,6 +1767,9 @@ impl Runtime {
                     &original.effects,
                 )
             };
+            if let Some(pulse) = original.ext.pulse {
+                visual.opacity *= pulse;
+            }
             if visual.opacity < 1. {
                 let mut shapes = vec![];
                 p.ui_layer_begin(&mut shapes, visual.opacity);
@@ -1578,7 +1905,7 @@ impl Runtime {
                 ui,
                 self.state_for_box(b),
                 self.scale,
-                self.slider_paint_value(b),
+                (self.slider_paint_lower(b), self.slider_paint_value(b)),
             );
             return PaintBatch {
                 clip: b.clip,
@@ -1622,9 +1949,45 @@ impl Runtime {
                 }
             }
             Kind::Row | Kind::Column | Kind::Stack | Kind::ZStack | Kind::Text | Kind::Canvas => {
-                paint_overrides(p, &mut shapes, r, &b.style, self.scale);
+                if let Some(gradient) = &b.ext.gradient {
+                    let stops: Vec<(f32, [f32; 4])> = gradient
+                        .stops
+                        .iter()
+                        .filter_map(|(at, c)| ui.resolve(c).map(|c| (*at, c)))
+                        .collect();
+                    if stops.len() >= 2 {
+                        let radii = match b.radius_spec(self.scale) {
+                            RadiusSpec::Uniform(v) => [v; 4],
+                            RadiusSpec::Corners(c) => c,
+                        };
+                        p.ui_gradient(&mut shapes, r, radii, gradient, &stops);
+                    }
+                }
+                paint_overrides(p, &mut shapes, r, &b.style, &b.ext, self.scale);
                 if b.kind == Kind::Text {
                     p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
+                    let style = &b.text_style;
+                    if style.underline || style.strikethrough {
+                        let size = style.size;
+                        let thickness = (size / 14.).max(self.scale).round().max(1.);
+                        for [x, baseline, width] in p.ui_text_lines(&b.text, r, style) {
+                            for (on, y) in [
+                                (style.underline, baseline + size * 0.14),
+                                (style.strikethrough, baseline - size * 0.3),
+                            ] {
+                                if on && width > 0. {
+                                    let y = y.round() + thickness * 0.5;
+                                    p.card_line(
+                                        &mut shapes,
+                                        [x, y],
+                                        [x + width, y],
+                                        thickness,
+                                        text_color,
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Kind::Button => {
@@ -1693,6 +2056,7 @@ impl Runtime {
                     );
                 }
                 let inset = 10. * self.scale;
+                let lead = b.ext.label_inset.map_or(inset, |v| v * self.scale);
                 // A disclosure chevron takes the trailing edge; its label
                 // starts at the leading edge like a native pop-up button.
                 let chevron = if b.disclosure.is_some() {
@@ -1712,7 +2076,7 @@ impl Runtime {
                     ink[3] *= 0.75;
                     p.ui_path(&mut shapes, &path, ink, Some(1.5 * s));
                 }
-                let max_width = (r[2] - 2. * inset - chevron).max(0.1);
+                let max_width = (r[2] - lead - inset - chevron).max(0.1);
                 let [w, h] = p.measure_styled(&b.text, &b.text_style, max_width);
                 let default_along = if b.disclosure.is_some() { 0. } else { 0.5 };
                 let along = b
@@ -1722,7 +2086,7 @@ impl Runtime {
                     &mut glyphs,
                     &b.text,
                     [
-                        r[0] + inset + ((r[2] - 2. * inset - w) * along).max(0.),
+                        r[0] + lead + ((r[2] - lead - inset - chevron - w) * along).max(0.),
                         r[1] + (r[3] - h) * 0.5,
                         max_width,
                         h,
@@ -1907,7 +2271,7 @@ impl Runtime {
                 );
             }
             Kind::Spacer => {
-                paint_overrides(p, &mut shapes, r, &b.style, self.scale);
+                paint_overrides(p, &mut shapes, r, &b.style, &b.ext, self.scale);
             }
             Kind::Separator => paint_surface(
                 p,
@@ -1978,7 +2342,10 @@ impl Runtime {
             pressed: (self.capture.as_deref() == Some(&b.id)
                 && self.hovered.as_deref() == Some(&b.id))
                 || self.keyboard.as_deref() == Some(&b.id),
-            focused: self.focused.as_deref() == Some(&b.id),
+            // Focus-visible: rings and focus styles follow keyboard focus;
+            // a click focuses quietly, except text fields, which show focus.
+            focused: self.focused.as_deref() == Some(&b.id)
+                && (self.focus_visible || b.editor.is_some()),
             disabled: !b.enabled,
         }
     }
@@ -2060,6 +2427,9 @@ fn apply_patch(v: &mut Visual, patch: &VisualStyle, scale: f32, ui: &UiTheme) {
     if let Some(g) = &patch.glow {
         v.glow = Some(resolved_shadow(&g.0, scale, ui));
     }
+    if let Some([x, y]) = patch.offset {
+        v.offset = [x * scale, y * scale];
+    }
 }
 fn visual_target(b: &LayoutBox, state: ButtonState, ui: &UiTheme, scale: f32) -> Visual {
     let theme = &ui.legacy_theme();
@@ -2109,8 +2479,12 @@ fn visual_target(b: &LayoutBox, state: ButtonState, ui: &UiTheme, scale: f32) ->
         opacity: 1.,
         shadow: None,
         glow: None,
+        offset: [b.ext.offset[0] * scale, b.ext.offset[1] * scale],
     };
     apply_patch(&mut v, &b.effects.base, scale, ui);
+    if state.disabled {
+        apply_patch(&mut v, &b.effects.disabled, scale, ui);
+    }
     if !state.disabled {
         for (i, active) in [(2, state.focused), (0, state.hovered), (1, state.pressed)] {
             if active {
@@ -2161,6 +2535,7 @@ fn paint_overrides<P: Painter>(
     out: &mut Vec<P::Shape>,
     r: [f32; 4],
     style: &ResolvedStyle,
+    ext: &BoxExtras,
     scale: f32,
 ) {
     let radius = style.corners.map_or(
@@ -2171,14 +2546,72 @@ fn paint_overrides<P: Painter>(
         paint_surface(p, out, r, radius, background);
     }
     if let Some(color) = style.border_color {
-        paint_border(
-            p,
-            out,
-            r,
-            radius,
-            style.border_width.unwrap_or(scale),
-            color,
-        );
+        let width = style.border_width.unwrap_or(scale);
+        if ext.border_sides.is_some() || ext.border_style != super::extras::BorderStyle::Solid {
+            paint_border_edges(
+                p,
+                out,
+                r,
+                width,
+                color,
+                ext.border_sides.unwrap_or(super::extras::Sides::ALL),
+                ext.border_style,
+            );
+        } else {
+            paint_border(p, out, r, radius, width, color);
+        }
+    }
+}
+/// Straight border edges: only the chosen sides, solid, dashed or dotted.
+/// Corners are square, as with Tailwind's single-side borders.
+fn paint_border_edges<P: Painter>(
+    p: &P,
+    out: &mut Vec<P::Shape>,
+    [x, y, w, h]: [f32; 4],
+    width: f32,
+    color: [f32; 4],
+    sides: super::extras::Sides,
+    style: super::extras::BorderStyle,
+) {
+    use super::extras::{BorderStyle, Sides};
+    if width <= 0. || color[3] <= 0. {
+        return;
+    }
+    let inset = width * 0.5;
+    let (dash, gap) = match style {
+        BorderStyle::Solid => (f32::INFINITY, 0.),
+        BorderStyle::Dashed => (width * 4., width * 3.),
+        BorderStyle::Dotted => (width, width * 1.5),
+    };
+    for (side, a, b) in [
+        (Sides::TOP, [x, y + inset], [x + w, y + inset]),
+        (Sides::BOTTOM, [x, y + h - inset], [x + w, y + h - inset]),
+        (Sides::LEFT, [x + inset, y], [x + inset, y + h]),
+        (Sides::RIGHT, [x + w - inset, y], [x + w - inset, y + h]),
+    ] {
+        if !sides.contains(side) {
+            continue;
+        }
+        let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let dir = [
+            (b[0] - a[0]) / length.max(1e-3),
+            (b[1] - a[1]) / length.max(1e-3),
+        ];
+        let mut t = 0.;
+        while t < length {
+            let end = (t + dash).min(length);
+            p.card_line(
+                out,
+                [a[0] + dir[0] * t, a[1] + dir[1] * t],
+                [a[0] + dir[0] * end, a[1] + dir[1] * end],
+                width,
+                color,
+            );
+            t = end + gap;
+            if gap == 0. {
+                break;
+            }
+        }
     }
 }
 /// Draw a true outline rather than overpainting a filled border, so RGBA fills stay correct.
@@ -2291,6 +2724,19 @@ struct ResolvedLayout {
     axis: usize,
     padding: [f32; 4],
     gap: f32,
+    /// Gap between wrapped lines / grid rows (the cross axis).
+    cross_gap: f32,
+    /// Physical explicit size (fixed or responsive), fraction, min and max.
+    size: [Option<f32>; 2],
+    fraction: [Option<f32>; 2],
+    min: [Option<f32>; 2],
+    max: [Option<f32>; 2],
+    aspect: Option<f32>,
+    hidden: bool,
+    justify: Option<super::extras::Justify>,
+    wrap: bool,
+    grid: Option<super::extras::GridColumns>,
+    span: usize,
 }
 impl ResolvedLayout {
     fn new(n: &Node, scale: f32, logical_width: f32) -> Self {
@@ -2309,6 +2755,12 @@ impl ResolvedLayout {
                 *value = *rule.resolve(logical_width);
             }
         }
+        let e = &n.ext;
+        let width = e
+            .responsive_width
+            .as_ref()
+            .map(|r| *r.resolve(logical_width))
+            .or(n.width);
         Self {
             axis,
             padding: padding.map(|v| v * scale),
@@ -2316,6 +2768,23 @@ impl ResolvedLayout {
                 .as_ref()
                 .map_or(n.main_gap(axis), |v| *v.resolve(logical_width))
                 * scale,
+            cross_gap: n.responsive.gap[1 - axis]
+                .as_ref()
+                .map_or(n.main_gap(1 - axis), |v| *v.resolve(logical_width))
+                * scale,
+            size: [width.map(|v| v * scale), n.height.map(|v| v * scale)],
+            fraction: e.fraction,
+            min: e.min.map(|v| v.map(|v| v * scale)),
+            max: e.max.map(|v| v.map(|v| v * scale)),
+            aspect: e.aspect,
+            hidden: e
+                .visible
+                .as_ref()
+                .is_some_and(|v| !*v.resolve(logical_width)),
+            justify: e.justify,
+            wrap: e.wrap,
+            grid: e.grid,
+            span: usize::from(e.span.max(1)),
         }
     }
 }
@@ -2346,6 +2815,9 @@ struct InheritedStyle {
     size: Option<f32>,
     weight: Option<u16>,
     italic: Option<bool>,
+    tracking: Option<f32>,
+    align: Option<super::extras::TextAlign>,
+    line_height: Option<f32>,
     color: Option<String>,
 }
 fn resolve_styles(
@@ -2353,7 +2825,7 @@ fn resolve_styles(
     inherited: &InheritedStyle,
     scale: f32,
     logical_width: f32,
-    out: &mut BTreeMap<String, ResolvedStyle>,
+    out: &mut StyleMap,
     depth: usize,
 ) {
     let mut text = inherited.clone();
@@ -2367,6 +2839,12 @@ fn resolve_styles(
         .font_style
         .map(|v| matches!(v, FontSlant::Italic))
         .or(text.italic);
+    text.tracking = n.style.letter_spacing.or(text.tracking);
+    text.align = n.style.text_align.or(text.align);
+    text.line_height = n.style.line_height.or(text.line_height);
+    if let Some(size) = n.ext.responsive_font_size.as_ref() {
+        text.size = Some(*size.resolve(logical_width));
+    }
     text.color = n.style.color.clone().or(text.color);
     let default_size = if matches!(n.kind, Kind::Button | Kind::Badge) {
         12.
@@ -2389,6 +2867,13 @@ fn resolve_styles(
                 size: text.size.unwrap_or(default_size) * scale,
                 weight: text.weight.unwrap_or(400),
                 italic: text.italic.unwrap_or(false),
+                tracking: text.tracking.unwrap_or(0.),
+                align: text.align.unwrap_or_default(),
+                line_height: text.line_height.unwrap_or(0.),
+                max_lines: n.style.max_lines.unwrap_or(0),
+                no_wrap: n.style.no_wrap.unwrap_or(false),
+                underline: n.style.underline.unwrap_or(false),
+                strikethrough: n.style.strikethrough.unwrap_or(false),
             },
             color: text.color.as_deref().and_then(parse_color),
             background: n.style.background.as_deref().and_then(parse_color),
@@ -2426,6 +2911,132 @@ fn enabled(n: &Node, values: &Bindings) -> bool {
             .as_ref()
             .is_none_or(|name| matches!(values.get(name), Some(Value::Bool(true))))
 }
+fn shift_region(region: ClipRegion, [dx, dy]: [f32; 2]) -> ClipRegion {
+    match region {
+        ClipRegion::Rounded { bounds, radii } => ClipRegion::Rounded {
+            bounds: [bounds[0] + dx, bounds[1] + dy, bounds[2], bounds[3]],
+            radii,
+        },
+        ClipRegion::Circle { bounds } => ClipRegion::Circle {
+            bounds: [bounds[0] + dx, bounds[1] + dy, bounds[2], bounds[3]],
+        },
+        ClipRegion::Path(p) => ClipRegion::Path(p.transformed([1., 0., 0., 1., dx, dy])),
+    }
+}
+/// Move `b` by `d` physical pixels, like a paint-only transform: it is
+/// clipped by real clipping ancestors (its effect clip, as shadows are), not
+/// by its parent's padding box, so a drifting card never loses an edge.
+fn translate_box(b: &mut LayoutBox, d: [f32; 2]) -> bool {
+    let [x, y, w, h] = b.bounds.bounds();
+    let Some(bounds) = Rect::new(x + d[0], y + d[1], w, h) else {
+        return false;
+    };
+    b.bounds = bounds;
+    b.ancestor_clip = b.effect_clip;
+    b.clip = intersection(bounds, b.effect_clip).unwrap_or(b.effect_clip);
+    b.content_clip = b.content_clip.take().map(|r| shift_region(r, d));
+    true
+}
+/// Move every descendant of `boxes[start]` (preorder, by depth, up to the end
+/// of the slice) by `d` physical pixels and recompute clips, clip regions and
+/// visibility exactly as `place` derives them from their parents.
+/// `boxes[start]` must already hold its final geometry.
+fn translate_descendants(boxes: &mut [LayoutBox], start: usize, d: [f32; 2]) -> bool {
+    struct Context {
+        clip: Rect,
+        effect: Rect,
+        regions: Vec<ClipRegion>,
+        visible: bool,
+    }
+    let context = |b: &LayoutBox| {
+        let mut regions = b.clip_regions.clone();
+        regions.extend(b.content_clip.clone());
+        let [x, y, w, h] = b.bounds.bounds();
+        let [top, right, bottom, left] = b.style.layout.padding;
+        let inner = Rect::new(
+            x + left,
+            y + top,
+            (w - (left + right)).max(0.),
+            (h - (top + bottom)).max(0.),
+        )
+        .and_then(|r| intersection(r, b.clip));
+        Context {
+            clip: inner.unwrap_or(b.clip),
+            effect: if b.content_clip.is_some() {
+                b.clip
+            } else {
+                b.effect_clip
+            },
+            regions,
+            visible: b.layout_visible && inner.is_some(),
+        }
+    };
+    let depth = boxes[start].depth;
+    let mut stack = vec![context(&boxes[start])];
+    for b in &mut boxes[start + 1..] {
+        if b.depth <= depth {
+            break;
+        }
+        stack.truncate(b.depth - depth);
+        let Some(parent) = stack.last() else {
+            return false;
+        };
+        let [x, y, w, h] = b.bounds.bounds();
+        let Some(bounds) = Rect::new(x + d[0], y + d[1], w, h) else {
+            return false;
+        };
+        let visible_part = intersection(bounds, parent.clip);
+        b.bounds = bounds;
+        b.clip = visible_part.unwrap_or(parent.clip);
+        b.layout_visible = parent.visible && visible_part.is_some();
+        b.ancestor_clip = parent.clip;
+        b.effect_clip = parent.effect;
+        b.clip_regions = parent.regions.clone();
+        b.content_clip = b.content_clip.take().map(|r| shift_region(r, d));
+        stack.push(context(b));
+    }
+    true
+}
+/// Paint-time ambient motion: drift subtrees and spin canvases for `now`.
+fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32) {
+    use super::effects::AmbientKind;
+    for i in 0..boxes.len() {
+        let Some(ambient) = boxes[i].effects.ambient else {
+            continue;
+        };
+        let angle = ambient.turns(now) * std::f32::consts::TAU;
+        match ambient.kind {
+            AmbientKind::Float([ax, ay]) => {
+                // An ellipse: smooth, periodic, never a straight bounce.
+                let d = [ax * angle.sin() * scale, ay * angle.cos() * scale];
+                if translate_box(&mut boxes[i], d) {
+                    translate_descendants(boxes, i, d);
+                }
+            }
+            AmbientKind::Pulse(min) => {
+                // Smooth breathing: 1 at the start of the cycle, `min` halfway.
+                let wave = 0.5 + 0.5 * angle.cos();
+                boxes[i].ext.pulse = Some(min + (1. - min) * wave);
+            }
+            AmbientKind::Spin => {
+                let [_, _, w, h] = boxes[i].bounds.bounds();
+                let (cx, cy) = (w / scale * 0.5, h / scale * 0.5);
+                let (sin, cos) = angle.sin_cos();
+                let m = [
+                    cos,
+                    sin,
+                    -sin,
+                    cos,
+                    cx - cos * cx + sin * cy,
+                    cy - sin * cx - cos * cy,
+                ];
+                for path in &mut boxes[i].canvas.paths {
+                    path.path = std::mem::take(&mut path.path).transformed(m);
+                }
+            }
+        }
+    }
+}
 fn intersection(a: Rect, b: Rect) -> Option<Rect> {
     let [x, y, w, h] = a.bounds();
     let [bx, by, bw, bh] = b.bounds();
@@ -2433,14 +3044,65 @@ fn intersection(a: Rect, b: Rect) -> Option<Rect> {
     let t = y.max(by);
     Rect::new(l, t, (x + w).min(bx + bw) - l, (y + h).min(by + bh) - t)
 }
-type MeasureMemo = BTreeMap<(String, u32, u32, [bool; 2]), [f32; 2]>;
+/// Resolved styles by node id. Hashed: auto ids share long prefixes, so an
+/// ordered map spends layout comparing strings.
+type StyleMap = std::collections::HashMap<String, ResolvedStyle>;
+/// Per-layout-pass measurement memo. The document is immutable during a
+/// pass, so a node's address identifies it without cloning its id string.
+type MeasureMemo = std::collections::HashMap<(usize, u32, u32, [bool; 2]), [f32; 2]>;
 /// Natural scroll sizing propagates through automatic-size descendants. Explicit
 /// dimensions establish a bounded inner layout again (so spacers still fill a
 /// fixed-height panel). Auto keeps the cross axis bounded for responsive flex.
-fn natural_children(n: &Node, inherited: [bool; 2], main: usize) -> [bool; 2] {
+/// Explicit size on `axis` (fixed, responsive or a fraction of `avail`), physical.
+fn fixed_size(l: &ResolvedLayout, axis: usize, avail: f32) -> Option<f32> {
+    l.size[axis].or(l.fraction[axis].map(|f| f * avail))
+}
+fn has_fixed(l: &ResolvedLayout, axis: usize) -> bool {
+    l.size[axis].is_some() || l.fraction[axis].is_some()
+}
+/// Apply min/max, never exceeding the space actually available.
+fn clamp_axis(l: &ResolvedLayout, axis: usize, value: f32, avail: f32) -> f32 {
+    let mut v = value;
+    if let Some(max) = l.max[axis] {
+        v = v.min(max);
+    }
+    if let Some(min) = l.min[axis] {
+        v = v.max(min);
+    }
+    v.min(avail).max(0.)
+}
+/// The box a node occupies inside the area its parent allocated: explicit
+/// sizes, min/max and aspect. Unset axes fill the area, as before. Fractions
+/// were already resolved against the parent's space when it allocated the
+/// area, so here they fill it rather than applying a second time.
+fn sized_box(l: &ResolvedLayout, avail: [f32; 2]) -> [f32; 2] {
+    let mut size = [0.; 2];
+    for a in 0..2 {
+        size[a] = clamp_axis(
+            l,
+            a,
+            l.size[a].map_or(avail[a], |v| v.min(avail[a])),
+            avail[a],
+        );
+    }
+    if let Some(ratio) = l.aspect {
+        if has_fixed(l, 1) && !has_fixed(l, 0) {
+            size[0] = clamp_axis(l, 0, size[1] * ratio, avail[0]);
+        } else {
+            size[1] = clamp_axis(l, 1, size[0] / ratio, avail[1]);
+        }
+    }
+    size
+}
+/// Takes part in flow layout: not an overlay and not hidden at this width.
+fn in_flow(c: &Node, styles: &StyleMap) -> bool {
+    c.overlay.is_none() && !styles[&c.id].layout.hidden
+}
+fn natural_children(n: &Node, l: &ResolvedLayout, inherited: [bool; 2]) -> [bool; 2] {
+    let main = l.axis;
     let mut axes = [
-        inherited[0] && n.width.is_none(),
-        inherited[1] && n.height.is_none(),
+        inherited[0] && !has_fixed(l, 0),
+        inherited[1] && !has_fixed(l, 1),
     ];
     if let Some(mode) = n.surface.scroll {
         let own = if mode == super::Scroll::Auto {
@@ -2456,6 +3118,158 @@ fn natural_children(n: &Node, inherited: [bool; 2], main: usize) -> [bool; 2] {
     }
     axes
 }
+/// Leading offset and extra per-gap space for `count` items with `free` space.
+fn justify_spacing(j: Option<super::extras::Justify>, free: f32, count: usize) -> (f32, f32) {
+    use super::extras::Justify::*;
+    let free = free.max(0.);
+    let n = count.max(1) as f32;
+    match j {
+        None | Some(Start) => (0., 0.),
+        Some(Center) => (free * 0.5, 0.),
+        Some(End) => (free, 0.),
+        Some(SpaceBetween) if count > 1 => (0., free / (n - 1.)),
+        Some(SpaceBetween) => (0., 0.),
+        Some(SpaceAround) => (free / n * 0.5, free / n),
+        Some(SpaceEvenly) => (free / (n + 1.), free / (n + 1.)),
+    }
+}
+/// Gaps between columns and between rows, whatever the container's axis.
+fn grid_gaps(l: &ResolvedLayout) -> (f32, f32) {
+    if l.axis == 1 {
+        (l.cross_gap, l.gap)
+    } else {
+        (l.gap, l.cross_gap)
+    }
+}
+type Cells = Vec<(usize, [f32; 4])>;
+/// Grid cells (child index, x, y, w, h relative to the content origin) and
+/// the total height. Items fill rows left to right, honour column spans and
+/// stretch to their row's height.
+#[allow(clippy::too_many_arguments)]
+fn grid_cells(
+    n: &Node,
+    columns: super::extras::GridColumns,
+    width: f32,
+    avail_h: f32,
+    v: &Bindings,
+    m: &mut impl TextMetrics,
+    s: f32,
+    memo: &mut MeasureMemo,
+    styles: &StyleMap,
+    natural: [bool; 2],
+) -> (Cells, f32) {
+    let l = &styles[&n.id].layout;
+    let (col_gap, row_gap) = grid_gaps(l);
+    let count = match columns {
+        super::extras::GridColumns::Count(c) => usize::from(c.max(1)),
+        super::extras::GridColumns::MinWidth(min) => {
+            (((width + col_gap) / (min * s + col_gap)).floor() as usize).max(1)
+        }
+    };
+    let col_w = ((width - col_gap * (count - 1) as f32) / count as f32).max(0.);
+    let mut cells: Cells = vec![];
+    let mut rows: Vec<f32> = vec![];
+    let (mut col, mut row) = (0, 0);
+    for (i, child) in n.children.iter().enumerate() {
+        if !in_flow(child, styles) {
+            continue;
+        }
+        let span = styles[&child.id].layout.span.min(count);
+        if col + span > count {
+            col = 0;
+            row += 1;
+        }
+        let w = col_w * span as f32 + col_gap * (span - 1) as f32;
+        let h = intrinsic(child, [w, avail_h], v, m, s, memo, styles, natural)[1];
+        if rows.len() <= row {
+            rows.push(0.);
+        }
+        rows[row] = rows[row].max(h);
+        cells.push((i, [col as f32 * (col_w + col_gap), row as f32, w, 0.]));
+        col += span;
+        if col >= count {
+            col = 0;
+            row += 1;
+        }
+    }
+    let mut tops = Vec::with_capacity(rows.len());
+    let mut y = 0.;
+    for h in &rows {
+        tops.push(y);
+        y += h + row_gap;
+    }
+    let total = (y - row_gap).max(0.);
+    for cell in &mut cells {
+        let r = cell.1[1] as usize;
+        cell.1[1] = tops[r];
+        cell.1[3] = rows[r];
+    }
+    (cells, total)
+}
+/// Wrapped row lines: items keep their natural size and break onto a new
+/// line when the next would overflow; lines are justified and cross-aligned.
+#[allow(clippy::too_many_arguments)]
+fn wrap_cells(
+    n: &Node,
+    width: f32,
+    avail_h: f32,
+    v: &Bindings,
+    m: &mut impl TextMetrics,
+    s: f32,
+    memo: &mut MeasureMemo,
+    styles: &StyleMap,
+    natural: [bool; 2],
+) -> (Cells, [f32; 2]) {
+    let l = &styles[&n.id].layout;
+    let (gap, line_gap) = (l.gap, l.cross_gap);
+    let mut lines: Vec<Vec<(usize, [f32; 2])>> = vec![vec![]];
+    let mut used = 0.;
+    for (i, child) in n.children.iter().enumerate() {
+        if !in_flow(child, styles) {
+            continue;
+        }
+        let size = intrinsic(child, [width, avail_h], v, m, s, memo, styles, natural);
+        let line = lines.last_mut().unwrap();
+        let need = if line.is_empty() {
+            size[0]
+        } else {
+            used + gap + size[0]
+        };
+        if !line.is_empty() && need > width + 0.01 {
+            lines.push(vec![(i, size)]);
+            used = size[0];
+        } else {
+            line.push((i, size));
+            used = need;
+        }
+    }
+    let mut cells: Cells = vec![];
+    let (mut y, mut widest) = (0., 0_f32);
+    for line in lines.iter().filter(|l| !l.is_empty()) {
+        let line_w: f32 =
+            line.iter().map(|(_, s)| s[0]).sum::<f32>() + gap * (line.len() - 1) as f32;
+        let line_h = line.iter().fold(0_f32, |h, (_, s)| h.max(s[1]));
+        widest = widest.max(line_w);
+        let (lead, extra) = justify_spacing(l.justify, width - line_w, line.len());
+        let mut x = lead;
+        for (i, size) in line {
+            let dy = match n.align {
+                Align::Center => (line_h - size[1]) * 0.5,
+                Align::End => line_h - size[1],
+                _ => 0.,
+            };
+            let h = if n.align == Align::Stretch {
+                line_h
+            } else {
+                size[1]
+            };
+            cells.push((*i, [x, y + dy, size[0], h]));
+            x += size[0] + gap + extra;
+        }
+        y += line_h + line_gap;
+    }
+    (cells, [widest, (y - line_gap).max(0.)])
+}
 #[allow(clippy::too_many_arguments)]
 fn intrinsic(
     n: &Node,
@@ -2464,11 +3278,11 @@ fn intrinsic(
     m: &mut impl TextMetrics,
     s: f32,
     memo: &mut MeasureMemo,
-    styles: &BTreeMap<String, ResolvedStyle>,
+    styles: &StyleMap,
     natural_axes: [bool; 2],
 ) -> [f32; 2] {
     let key = (
-        n.id.clone(),
+        std::ptr::from_ref(n) as usize,
         avail[0].to_bits(),
         avail[1].to_bits(),
         natural_axes,
@@ -2476,18 +3290,20 @@ fn intrinsic(
     if let Some(size) = memo.get(&key) {
         return *size;
     }
-    let limit = [
-        n.width.map_or(avail[0], |w| (w * s).min(avail[0])),
-        n.height.map_or(avail[1], |h| (h * s).min(avail[1])),
-    ];
-    let [top, right, bottom, left] = styles[&n.id].layout.padding;
+    let resolved = &styles[&n.id];
+    let lay = &resolved.layout;
+    let limit = [0, 1].map(|a| {
+        let base = fixed_size(lay, a, avail[a]).map_or(avail[a], |v| v.min(avail[a]));
+        lay.max[a].map_or(base, |max| base.min(max))
+    });
+    let [top, right, bottom, left] = lay.padding;
     let inset_size = [left + right, top + bottom];
     let content = [
         (limit[0] - inset_size[0]).max(0.1),
         (limit[1] - inset_size[1]).max(0.1),
     ];
-    let style = &styles[&n.id].text;
-    let child_natural = natural_children(n, natural_axes, styles[&n.id].layout.axis);
+    let style = &resolved.text;
+    let child_natural = natural_children(n, lay, natural_axes);
     let mut size = match n.kind {
         Kind::Text if n.editor.is_some() => [
             content[0],
@@ -2517,13 +3333,42 @@ fn intrinsic(
         Kind::Spacer | Kind::Canvas => [0., 0.],
         Kind::ZStack => {
             let mut result = [0_f32; 2];
-            for child in n.children.iter().filter(|c| c.overlay.is_none()) {
+            for child in n.children.iter().filter(|c| in_flow(c, styles)) {
                 let size = intrinsic(child, content, v, m, s, memo, styles, child_natural);
                 for axis in 0..2 {
                     result[axis] = result[axis].max(size[axis]);
                 }
             }
             [result[0] + inset_size[0], result[1] + inset_size[1]]
+        }
+        _ if lay.grid.is_some() => {
+            let (_, total) = grid_cells(
+                n,
+                lay.grid.unwrap(),
+                content[0],
+                content[1],
+                v,
+                m,
+                s,
+                memo,
+                styles,
+                child_natural,
+            );
+            [content[0] + inset_size[0], total + inset_size[1]]
+        }
+        _ if lay.wrap && lay.axis == 0 => {
+            let (_, [w, h]) = wrap_cells(
+                n,
+                content[0],
+                content[1],
+                v,
+                m,
+                s,
+                memo,
+                styles,
+                child_natural,
+            );
+            [w + inset_size[0], h + inset_size[1]]
         }
         _ => {
             let (sizes, gap) = child_sizes(n, content, v, m, s, memo, styles, child_natural);
@@ -2536,30 +3381,40 @@ fn intrinsic(
             result[axis] += gap
                 * n.children
                     .iter()
-                    .filter(|c| c.overlay.is_none())
+                    .filter(|c| in_flow(c, styles))
                     .count()
                     .saturating_sub(1) as f32;
             [result[0] + inset_size[0], result[1] + inset_size[1]]
         }
     };
-    if n.width.is_some() {
+    if has_fixed(lay, 0) {
         size[0] = limit[0];
     }
-    if n.height.is_some() {
+    if has_fixed(lay, 1) {
         size[1] = limit[1];
+    }
+    if let Some(ratio) = lay.aspect {
+        if has_fixed(lay, 1) && !has_fixed(lay, 0) {
+            size[0] = size[1] * ratio;
+        } else {
+            size[1] = size[0] / ratio;
+        }
     }
     if n.flex > 0. {
         if let Some(mode) = n.surface.scroll {
             let axes = mode.axes();
-            if axes[0] && n.width.is_none() {
+            if axes[0] && !has_fixed(lay, 0) {
                 size[0] = 0.;
             }
-            if axes[1] && n.height.is_none() {
+            if axes[1] && !has_fixed(lay, 1) {
                 size[1] = 0.;
             }
         }
     }
-    let result = [size[0].max(0.).min(avail[0]), size[1].max(0.).min(avail[1])];
+    let result = [
+        clamp_axis(lay, 0, size[0], avail[0]),
+        clamp_axis(lay, 1, size[1], avail[1]),
+    ];
     memo.insert(key, result);
     result
 }
@@ -2571,7 +3426,7 @@ fn child_sizes(
     m: &mut impl TextMetrics,
     s: f32,
     memo: &mut MeasureMemo,
-    styles: &BTreeMap<String, ResolvedStyle>,
+    styles: &StyleMap,
     natural_axes: [bool; 2],
 ) -> (Vec<[f32; 2]>, f32) {
     let axis = styles[&n.id].layout.axis;
@@ -2579,7 +3434,7 @@ fn child_sizes(
         available[axis]
             / n.children
                 .iter()
-                .filter(|c| c.overlay.is_none())
+                .filter(|c| in_flow(c, styles))
                 .count()
                 .max(1) as f32,
     );
@@ -2587,7 +3442,7 @@ fn child_sizes(
         - gap
             * n.children
                 .iter()
-                .filter(|c| c.overlay.is_none())
+                .filter(|c| in_flow(c, styles))
                 .count()
                 .saturating_sub(1) as f32)
         .max(0.);
@@ -2595,7 +3450,7 @@ fn child_sizes(
         .children
         .iter()
         .map(|child| {
-            if child.overlay.is_some() {
+            if !in_flow(child, styles) {
                 [0.; 2]
             } else {
                 intrinsic(child, available, v, m, s, memo, styles, natural_axes)
@@ -2606,11 +3461,11 @@ fn child_sizes(
     let total_flex: f32 = n
         .children
         .iter()
-        .filter(|c| c.overlay.is_none())
+        .filter(|c| in_flow(c, styles))
         .map(|child| child.flex)
         .sum();
     for (size, child) in sizes.iter_mut().zip(&n.children) {
-        if child.overlay.is_some() {
+        if !in_flow(child, styles) {
             continue;
         }
         if natural > room
@@ -2622,6 +3477,7 @@ fn child_sizes(
         } else if !natural_axes[axis] && total_flex > 0. && room > natural {
             size[axis] += (room - natural) * child.flex / total_flex;
         }
+        size[axis] = clamp_axis(&styles[&child.id].layout, axis, size[axis], available[axis]);
         if axis == 0 {
             let measured = intrinsic(
                 child,
@@ -2651,13 +3507,12 @@ fn place(
     s: f32,
     out: &mut Vec<LayoutBox>,
     memo: &mut MeasureMemo,
-    styles: &BTreeMap<String, ResolvedStyle>,
+    styles: &StyleMap,
     natural_axes: [bool; 2],
     visible: bool,
 ) {
     let [x, y, aw, ah] = area.bounds();
-    let w = n.width.map_or(aw, |w| (w * s).min(aw));
-    let h = n.height.map_or(ah, |h| (h * s).min(ah));
+    let [w, h] = sized_box(&styles[&n.id].layout, [aw, ah]);
     let Some(bounds) = Rect::new(x, y, w, h) else {
         return;
     };
@@ -2741,6 +3596,16 @@ fn place(
         detached_mount: 1.,
         departing: false,
         detached_state: None,
+        ext: BoxExtras {
+            cursor: n.ext.cursor,
+            offset: n.ext.offset,
+            border_sides: n.ext.border_sides,
+            border_style: n.ext.border_style,
+            gradient: n.ext.gradient.clone(),
+            pulse: None,
+            label_inset: n.ext.label_inset,
+            reveal_handle: n.ext.reveal_handle,
+        },
     });
     let index = out.len() - 1;
     let content_clip = match n.surface.clip.as_ref() {
@@ -2777,7 +3642,7 @@ fn place(
     let [top, right, bottom, left] = styles[&n.id].layout.padding;
     let mut start = [x + left, y + top];
     let mut available = [(w - (left + right)).max(0.), (h - (top + bottom)).max(0.)];
-    let child_natural = natural_children(n, natural_axes, styles[&n.id].layout.axis);
+    let child_natural = natural_children(n, &styles[&n.id].layout, natural_axes);
     if available.contains(&0.) {
         return;
     }
@@ -2798,18 +3663,47 @@ fn place(
             measure[cross] = n
                 .children
                 .iter()
-                .filter_map(|child| {
-                    if cross == 0 {
-                        child.width
-                    } else {
-                        child.height
-                    }
-                })
-                .fold(available[cross], |a, b| a.max(b * s));
+                .filter_map(|child| styles[&child.id].layout.size[cross])
+                .fold(available[cross], |a, b| a.max(b));
         }
         let (sizes, gap) = child_sizes(n, measure, v, m, s, memo, styles, child_natural);
         let main = styles[&n.id].layout.axis;
         let mut content = [0_f32; 2];
+        let lay = &styles[&n.id].layout;
+        let arranged_height = if let Some(columns) = lay.grid {
+            Some(
+                grid_cells(
+                    n,
+                    columns,
+                    available[0],
+                    measure[1],
+                    v,
+                    m,
+                    s,
+                    memo,
+                    styles,
+                    child_natural,
+                )
+                .1,
+            )
+        } else if lay.wrap && lay.axis == 0 {
+            Some(
+                wrap_cells(
+                    n,
+                    available[0],
+                    measure[1],
+                    v,
+                    m,
+                    s,
+                    memo,
+                    styles,
+                    child_natural,
+                )
+                .1[1],
+            )
+        } else {
+            None
+        };
         for size in &sizes {
             if n.kind == Kind::ZStack {
                 for a in 0..2 {
@@ -2824,9 +3718,12 @@ fn place(
             content[main] += gap
                 * n.children
                     .iter()
-                    .filter(|c| c.overlay.is_none())
+                    .filter(|c| in_flow(c, styles))
                     .count()
                     .saturating_sub(1) as f32;
+        }
+        if let Some(height) = arranged_height {
+            content = [available[0], height];
         }
         if let Some(list) = &n.virtual_list {
             content[1] = list.count as f32 * list.row_height * s;
@@ -2887,9 +3784,19 @@ fn place(
         } else {
             1
         };
-        let sizes = value_controls::split_sizes(available[axis], split, s);
+        // A responsively hidden first pane collapses the split: the second
+        // pane takes the whole area and the handle is not placed.
+        let collapsed = n.children.first().is_some_and(|c| !in_flow(c, styles));
+        let sizes = if collapsed {
+            [0., 0., available[axis]]
+        } else {
+            value_controls::split_sizes(available[axis], split, s)
+        };
         let mut cursor = start[axis];
-        for (child, length) in n.children.iter().zip(sizes) {
+        for (i, (child, length)) in n.children.iter().zip(sizes).enumerate() {
+            if collapsed && i < 2 {
+                continue;
+            }
             let mut pos = start;
             pos[axis] = cursor;
             let mut size = available;
@@ -2918,13 +3825,13 @@ fn place(
     }
     if n.kind == Kind::ZStack {
         let fractions = n.flow.map_or([0.5, 0.5], |flow| flow.fractions());
-        for child in n.children.iter().filter(|c| c.overlay.is_none()) {
+        for child in n.children.iter().filter(|c| in_flow(c, styles)) {
             let mut size = intrinsic(child, available, v, m, s, memo, styles, child_natural);
             if n.align == Align::Stretch {
-                if child.width.is_none() {
+                if !has_fixed(&styles[&child.id].layout, 0) {
                     size[0] = available[0];
                 }
-                if child.height.is_none() {
+                if !has_fixed(&styles[&child.id].layout, 1) {
                     size[1] = available[1];
                 }
             }
@@ -2985,6 +3892,64 @@ fn place(
         }
         return;
     }
+    let lay = &styles[&n.id].layout;
+    let arranged = if let Some(columns) = lay.grid {
+        Some(
+            grid_cells(
+                n,
+                columns,
+                available[0],
+                available[1],
+                v,
+                m,
+                s,
+                memo,
+                styles,
+                child_natural,
+            )
+            .0,
+        )
+    } else if lay.wrap && lay.axis == 0 {
+        Some(
+            wrap_cells(
+                n,
+                available[0],
+                available[1],
+                v,
+                m,
+                s,
+                memo,
+                styles,
+                child_natural,
+            )
+            .0,
+        )
+    } else {
+        None
+    };
+    if let Some(cells) = arranged {
+        for (i, [cx, cy, cw, ch]) in cells {
+            if let Some(r) = Rect::new(start[0] + cx, start[1] + cy, cw, ch) {
+                place(
+                    &n.children[i],
+                    r,
+                    child_clip,
+                    child_effect,
+                    &child_regions,
+                    offsets,
+                    v,
+                    m,
+                    s,
+                    out,
+                    memo,
+                    styles,
+                    child_natural,
+                    child_visible,
+                );
+            }
+        }
+        return;
+    }
     let axis = styles[&n.id].layout.axis;
     let cross = 1 - axis;
     let (sizes, gap) = child_sizes(n, available, v, m, s, memo, styles, child_natural);
@@ -2992,25 +3957,28 @@ fn place(
         + gap
             * n.children
                 .iter()
-                .filter(|c| c.overlay.is_none())
+                .filter(|c| in_flow(c, styles))
                 .count()
                 .saturating_sub(1) as f32;
     let placement = n.flow.map(|flow| flow.fractions());
+    let flowing = n.children.iter().filter(|c| in_flow(c, styles)).count();
+    // Justify distributes free space; it applies when no `flow` placement is set.
+    let (lead, extra) = if placement.is_none() {
+        justify_spacing(lay.justify, available[axis] - occupied, flowing)
+    } else {
+        (0., 0.)
+    };
     let mut cursor = start[axis]
+        + lead
         + placement.map_or(0., |fraction| {
             (available[axis] - occupied).max(0.) * fraction[axis]
         });
     for (child, mut size) in n.children.iter().zip(sizes) {
-        if child.overlay.is_some() {
+        if !in_flow(child, styles) {
             continue;
         }
         if n.align == Align::Stretch
-            || (child.kind == Kind::Spacer
-                && if cross == 0 {
-                    child.width.is_none()
-                } else {
-                    child.height.is_none()
-                })
+            || (child.kind == Kind::Spacer && !has_fixed(&styles[&child.id].layout, cross))
         {
             size[cross] = available[cross];
         }
@@ -3018,7 +3986,7 @@ fn place(
         if axis == 1
             && n.align == Align::Start
             && n.flow.is_none()
-            && child.width.is_none()
+            && !has_fixed(&styles[&child.id].layout, 0)
             && child.kind != Kind::Badge
         {
             size[cross] = available[cross];
@@ -3053,7 +4021,7 @@ fn place(
                 child_visible,
             );
         }
-        cursor += size[axis] + gap;
+        cursor += size[axis] + gap + extra;
     }
 }
 
@@ -3410,7 +4378,8 @@ mod style_component_tests {
                 family: "serif".into(),
                 size: 36.,
                 weight: 600,
-                italic: true
+                italic: true,
+                ..Default::default()
             }
         );
         let local = r.boxes().iter().find(|b| b.id == "override").unwrap();
@@ -3475,6 +4444,7 @@ mod style_component_tests {
             size: 30.,
             weight: 900,
             italic: true,
+            ..Default::default()
         };
         assert_eq!(
             Recorder.measure_styled("test", &custom, 500.),
@@ -3609,6 +4579,576 @@ mod style_component_tests {
                 .style
                 .accent_color,
             None
+        );
+    }
+}
+
+#[cfg(all(test, feature = "rust-ui"))]
+mod scroll_shift_tests {
+    use super::*;
+    use crate::ui::prelude::*;
+    struct Metrics;
+    impl TextMetrics for Metrics {
+        fn measure(&mut self, value: &str, size: f32, width: f32) -> [f32; 2] {
+            let w = value.chars().count() as f32 * size * 0.5;
+            [
+                w.min(width),
+                size * 1.2 * (w / width.max(1.)).ceil().max(1.),
+            ]
+        }
+    }
+    #[derive(Default)]
+    struct App {
+        text: String,
+    }
+    fn page(app: &App) -> Element<App> {
+        let rows = (0..30).map(|i| -> Element<App> {
+            if i % 7 == 3 {
+                // A nested horizontal scroller inside a rounded, clipped card.
+                hstack((0..12).map(|j| {
+                    Element::from(
+                        button(format!("Chip {i}.{j}"))
+                            .key(format!("chip-{i}-{j}"))
+                            .on_click(|_: &mut App| {}),
+                    )
+                }))
+                .key(format!("strip-{i}"))
+                .height(60.)
+                .gap(8., Axis::Horizontal)
+                .padding(10., Edge::All)
+                .scroll(Scroll::Horizontal)
+                .rounded(12.)
+                .clip(Clip::Rounded)
+                .into()
+            } else {
+                vstack![
+                    crate::ui::text(format!("Row {i} with a longer description that wraps"))
+                        .key(format!("label-{i}")),
+                    button(format!("Action {i}"))
+                        .key(format!("action-{i}"))
+                        .on_click(|_: &mut App| {}),
+                ]
+                .key(format!("row-{i}"))
+                .padding(12., Edge::All)
+                .rounded(8.)
+                .border_width(1.)
+                .border_color("#888888")
+                .into()
+            }
+        });
+        let mut items: Vec<Element<App>> = vec![text_field(&app.text)
+            .key("field")
+            .on_change(|a: &mut App, v| a.text = v)
+            .into()];
+        items.extend(rows);
+        hstack![
+            vstack![crate::ui::text("Sidebar").key("side")]
+                .key("sidebar")
+                .width(120.),
+            vstack(items)
+                .key("page")
+                .flex(1.)
+                .gap(10., Axis::Vertical)
+                .padding(24., Edge::Horizontal)
+                .padding(16., Edge::Top)
+                .scroll(Scroll::Vertical),
+        ]
+        .key("root")
+        .align(Align::Stretch)
+        .into()
+    }
+    fn snapshot(r: &Runtime) -> Vec<String> {
+        let round = |v: f32| (v * 100.).round() / 100.;
+        let rect = |r: Rect| r.bounds().map(round);
+        r.layout_boxes
+            .iter()
+            .map(|b| {
+                format!(
+                    "{} {:?} {:?} {} {:?} {:?} {:?} {:?} {:?}",
+                    b.id,
+                    rect(b.bounds),
+                    rect(b.clip),
+                    b.layout_visible,
+                    rect(b.ancestor_clip),
+                    rect(b.effect_clip),
+                    b.clip_regions.len(),
+                    b.content_clip.as_ref().map(|c| match c {
+                        ClipRegion::Rounded { bounds, .. } | ClipRegion::Circle { bounds } =>
+                            bounds.map(round),
+                        ClipRegion::Path(_) => [0.; 4],
+                    }),
+                    b.scroll_offset.map(round),
+                )
+            })
+            .collect()
+    }
+    #[test]
+    fn shifting_a_scrolled_subtree_matches_a_full_layout() {
+        for scale in [1., 2.] {
+            let app = App::default();
+            let (d, h) = page(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(640. * scale, 480. * scale, scale).unwrap();
+            r.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
+            let (x, y) = (400. * scale, 300. * scale);
+            for (i, delta) in [
+                [0., 37.],
+                [0., 290.5],
+                [0., 1000.],
+                [0., -333.],
+                [0., 12.25],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                assert!(r.scroll_at(x, y, delta));
+                assert!(r.cache.is_some(), "fast path kept the layout ({i})");
+                // Nested horizontal scroll inside the moved subtree, too.
+                let strip = r.layout_boxes.iter().find(|b| b.id == "strip-3").unwrap();
+                if strip.layout_visible {
+                    let [sx, sy, _, sh] = strip.clip.bounds();
+                    r.scroll_at(sx + 20., sy + sh * 0.5, [55., 0.]);
+                }
+                let shifted = snapshot(&r);
+                r.invalidate_layout();
+                r.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
+                let full = snapshot(&r);
+                for (a, b) in shifted.iter().zip(&full) {
+                    assert_eq!(a, b, "scale {scale}, step {i}");
+                }
+                assert_eq!(shifted.len(), full.len());
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "rust-ui"))]
+mod ambient_tests {
+    use super::*;
+    use crate::ui::prelude::*;
+    struct Metrics;
+    impl TextMetrics for Metrics {
+        fn measure(&mut self, value: &str, size: f32, width: f32) -> [f32; 2] {
+            [
+                (value.chars().count() as f32 * size * 0.5).min(width),
+                size * 1.2,
+            ]
+        }
+    }
+    fn mount(reduced: bool) -> Runtime {
+        let e: Element<()> = vstack![
+            vstack![crate::ui::text("Card").key("label")]
+                .key("card")
+                .width(100.)
+                .height(60.)
+                .ambient(Ambient::float(10., 6.).period_ms(4000)),
+            canvas::<()>(|c| c.fill(VectorPath::rectangle(0., 0., 40., 10.), "#ff0000"))
+                .key("ring")
+                .width(40.)
+                .height(40.)
+                .ambient(Ambient::spin().period_ms(4000)),
+        ]
+        .key("root")
+        .into();
+        let (d, h) = e.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        r.set_reduced_motion(reduced);
+        r.layout(
+            Viewport::new(300., 200., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+        r
+    }
+    fn painted_rect(r: &Runtime, at_ms: u64) -> Vec<LayoutBox> {
+        let mut motion = r.motion.borrow_mut();
+        motion.now = Duration::from_millis(at_ms);
+        let mut list = r.boxes.clone();
+        apply_ambient(&mut list, motion.now, r.scale);
+        list
+    }
+    #[test]
+    fn ambient_drift_moves_paint_only_and_keeps_frames_coming() {
+        let r = mount(false);
+        assert!(r.is_animating());
+        let card = |list: &[LayoutBox], id: &str| {
+            list.iter().find(|b| b.id == id).unwrap().bounds.bounds()
+        };
+        let laid_out = card(&r.boxes, "card");
+        // A quarter period: full x amplitude; the child moves with it.
+        let quarter = painted_rect(&r, 1000);
+        let moved = card(&quarter, "card");
+        assert!((moved[0] - laid_out[0] - 10.).abs() < 0.01, "{moved:?}");
+        let label = card(&quarter, "label");
+        assert!((label[0] - card(&r.boxes, "label")[0] - 10.).abs() < 0.01);
+        // Hit testing and layout still use the laid-out place.
+        assert_eq!(card(&r.boxes, "card"), laid_out);
+        // The spun canvas's square has rotated a quarter turn about its centre.
+        let ring = quarter.iter().find(|b| b.id == "ring").unwrap();
+        let original = r.boxes.iter().find(|b| b.id == "ring").unwrap();
+        assert_ne!(ring.canvas, original.canvas);
+    }
+    #[test]
+    fn a_card_drifting_into_its_parents_padding_keeps_every_edge() {
+        let e: Element<()> = vstack![vstack![]
+            .key("card")
+            .width(100.)
+            .height(40.)
+            .ambient(Ambient::float(10., 0.).period_ms(4000))]
+        .key("wrapper")
+        .width(140.)
+        .height(80.)
+        .padding(20., Edge::All)
+        .into();
+        let (d, h) = e.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        r.layout(
+            Viewport::new(300., 200., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+        let moved = painted_rect(&r, 1000);
+        let card = moved.iter().find(|b| b.id == "card").unwrap();
+        assert_eq!(
+            card.clip.bounds(),
+            card.bounds.bounds(),
+            "not cut by padding"
+        );
+    }
+    #[test]
+    fn reduced_motion_stops_ambient_frames() {
+        let r = mount(true);
+        assert!(!r.is_animating());
+    }
+    #[test]
+    fn invalid_ambient_is_rejected_at_build() {
+        let e: Element<()> = vstack![]
+            .key("bad")
+            .ambient(Ambient::float(f32::NAN, 0.))
+            .into();
+        assert!(e.build().is_err());
+        let e: Element<()> = vstack![]
+            .key("bad")
+            .ambient(Ambient::spin().period_ms(10))
+            .into();
+        assert!(e.build().is_err());
+    }
+}
+
+#[cfg(all(test, feature = "rust-ui"))]
+mod foundation_tests {
+    use super::*;
+    use crate::ui::prelude::*;
+    #[derive(Clone, Debug, PartialEq)]
+    enum S {
+        Rect([f32; 4], [f32; 4]),
+        Tri([[f32; 2]; 3], [f32; 4]),
+        Layer(f32),
+        Gradient([f32; 4], usize),
+    }
+    struct Rec;
+    impl TextMetrics for Rec {
+        fn measure(&mut self, value: &str, size: f32, max: f32) -> [f32; 2] {
+            [
+                ((value.chars().count() as f32) * size * 0.5).min(max),
+                size * 1.2,
+            ]
+        }
+    }
+    impl Painter for Rec {
+        type Shape = S;
+        type Glyph = ();
+        fn viewport(&self) -> Viewport {
+            Viewport::new(400., 400., 1.).unwrap()
+        }
+        fn draw_rect(&self, out: &mut Vec<S>, x: f32, y: f32, w: f32, h: f32, c: [f32; 4]) {
+            out.push(S::Rect([x, y, w, h], c));
+        }
+        fn card_triangle(&self, out: &mut Vec<S>, p: [[f32; 2]; 3], c: [f32; 4]) {
+            out.push(S::Tri(p, c));
+        }
+        fn card_text(&mut self, _: &mut Vec<()>, _: &str, _: f32, _: f32, _: f32, _: [f32; 4]) {}
+        fn draw_text_colored(
+            &mut self,
+            _: &mut Vec<()>,
+            _: &str,
+            _: f32,
+            _: f32,
+            _: f32,
+            _: f32,
+            _: &dyn Fn(usize) -> [f32; 4],
+        ) {
+        }
+    }
+    impl DocumentPainter for Rec {
+        fn ui_text(&mut self, _: &mut Vec<()>, _: &str, _: [f32; 4], _: f32, _: [f32; 4]) {}
+        fn ui_layer_begin(&mut self, out: &mut Vec<S>, opacity: f32) {
+            out.push(S::Layer(opacity));
+        }
+        fn ui_gradient(
+            &mut self,
+            out: &mut Vec<S>,
+            bounds: [f32; 4],
+            _: [f32; 4],
+            _: &Gradient,
+            stops: &[(f32, [f32; 4])],
+        ) {
+            out.push(S::Gradient(bounds, stops.len()));
+        }
+    }
+    struct App;
+    fn mount(e: Element<App>) -> (Runtime, Handlers<'static, App>) {
+        let (d, h) = e.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        r.layout(
+            Viewport::new(400., 400., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Rec,
+        )
+        .unwrap();
+        (r, h)
+    }
+    fn shapes(r: &Runtime) -> Vec<S> {
+        r.paint_ui(&mut Rec, &UiTheme::light())
+            .into_iter()
+            .flat_map(|b| b.shapes)
+            .collect()
+    }
+    const RED: &str = "#ff0000";
+    fn red_rects(r: &Runtime) -> Vec<[f32; 4]> {
+        shapes(r)
+            .into_iter()
+            .filter_map(|s| match s {
+                S::Rect(b, [1., 0., 0., 1.]) if b[2] > 0. && b[3] > 0. => Some(b),
+                _ => None,
+            })
+            .collect()
+    }
+    #[test]
+    fn offset_moves_paint_but_not_layout() {
+        let (r, _) = mount(
+            vstack![vstack![]
+                .key("box")
+                .width(50.)
+                .height(20.)
+                .background(RED)
+                .offset(10., 5.)]
+            .key("root")
+            .into(),
+        );
+        assert_eq!(red_rects(&r), vec![[10., 5., 50., 20.]]);
+        assert_eq!(
+            r.boxes()
+                .iter()
+                .find(|b| b.id == "box")
+                .unwrap()
+                .bounds
+                .bounds()[0],
+            0.
+        );
+    }
+    #[test]
+    fn hover_lift_animates_to_its_offset() {
+        let (mut r, _) = mount(
+            vstack![vstack![]
+                .key("card")
+                .width(50.)
+                .height(20.)
+                .background(RED)
+                .hover_style(|s| s.offset(0., -4.))
+                .animate_on(Interaction::Hover, Animation::linear().duration_ms(100))]
+            .key("root")
+            .padding(10., Edge::All)
+            .into(),
+        );
+        r.advance_animations(Duration::ZERO);
+        assert_eq!(red_rects(&r)[0][1], 10.);
+        r.visual_hover.insert("card".into());
+        r.advance_animations(Duration::from_millis(1));
+        shapes(&r);
+        r.advance_animations(Duration::from_millis(51));
+        let mid = red_rects(&r)[0][1];
+        assert!(mid < 10. && mid > 6., "{mid}");
+        r.advance_animations(Duration::from_millis(200));
+        assert_eq!(red_rects(&r)[0][1], 6.);
+    }
+    #[test]
+    fn slide_transition_rises_into_place() {
+        let (mut r, _) = mount(
+            vstack![vstack![]
+                .key("toast")
+                .width(50.)
+                .height(20.)
+                .background(RED)
+                .transition(
+                    Transition::slide(0., 20.)
+                        .duration_ms(200)
+                        .easing(Easing::Linear)
+                )]
+            .key("root")
+            .into(),
+        );
+        r.advance_animations(Duration::ZERO);
+        let start = red_rects(&r);
+        r.advance_animations(Duration::from_millis(100));
+        let middle = red_rects(&r);
+        r.advance_animations(Duration::from_millis(400));
+        let end = red_rects(&r);
+        assert_eq!(start[0][1], 20.);
+        assert_eq!(middle[0][1], 10.);
+        assert_eq!(end[0][1], 0.);
+    }
+    #[test]
+    fn pulse_breathes_opacity() {
+        let (mut r, _) = mount(
+            vstack![vstack![]
+                .key("skeleton")
+                .height(20.)
+                .background(RED)
+                .ambient(Ambient::pulse(0.4).period_ms(1000))]
+            .key("root")
+            .into(),
+        );
+        assert!(r.is_animating());
+        r.advance_animations(Duration::from_millis(500));
+        let layer = shapes(&r).into_iter().find_map(|s| match s {
+            S::Layer(o) => Some(o),
+            _ => None,
+        });
+        assert!((layer.unwrap() - 0.4).abs() < 0.01, "{layer:?}");
+    }
+    #[test]
+    fn easing_curves_and_delays() {
+        let ease = Animation::linear()
+            .duration_ms(100)
+            .easing(Easing::CubicBezier(0.25, 0.1, 0.25, 1.));
+        assert!(ease.progress(50.) > 0.7, "CSS `ease` front-loads");
+        assert_eq!(ease.progress(100.), 1.);
+        let delayed = Animation::linear().duration_ms(100).delay_ms(50);
+        assert_eq!(delayed.progress(40.), 0.);
+        assert_eq!(delayed.progress(100.), 0.5);
+        assert!(Animation::ease_in().progress(50.) < 0.5);
+    }
+    #[test]
+    fn disabled_style_applies_only_when_disabled() {
+        let make = |enabled| -> Element<App> {
+            vstack![button("Go")
+                .key("go")
+                .enabled(enabled)
+                .disabled_style(|s| s.background(RED))
+                .on_click(|_: &mut App| {})]
+            .key("root")
+            .into()
+        };
+        assert!(red_rects(&mount(make(true)).0).is_empty());
+        assert!(!red_rects(&mount(make(false)).0).is_empty());
+    }
+    #[test]
+    fn focus_rings_follow_the_keyboard_not_clicks() {
+        let (mut r, _) = mount(
+            vstack![
+                button("A").key("a").on_click(|_: &mut App| {}),
+                text_field("x").key("f").on_change(|_: &mut App, _| {}),
+            ]
+            .key("root")
+            .into(),
+        );
+        let centre = |r: &Runtime, id: &str| {
+            let [x, y, w, h] = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .bounds
+                .bounds();
+            (x + w * 0.5, y + h * 0.5)
+        };
+        let focused = |r: &Runtime, id: &str| {
+            let b = r.boxes().iter().find(|b| b.id == id).unwrap().clone();
+            r.state_for_box(&b).focused
+        };
+        let (x, y) = centre(&r, "a");
+        r.pointer_down(x, y);
+        assert_eq!(r.focused(), Some("a"));
+        assert!(!focused(&r, "a"), "a click focuses quietly");
+        r.focus_next(false);
+        assert!(focused(&r, "f"), "Tab shows focus");
+        let (x, y) = centre(&r, "f");
+        r.pointer_down(x, y);
+        assert!(focused(&r, "f"), "text fields show focus on click");
+    }
+    #[test]
+    fn scroll_to_brings_a_key_to_the_top_once_per_request() {
+        let make =
+            |request| -> Element<App> {
+                vstack((0..20).map(|i| -> Element<App> {
+                    vstack![].key(format!("item-{i}")).height(40.).into()
+                }))
+                .key("list")
+                .height(200.)
+                .scroll(Scroll::Vertical)
+                .scroll_to("item-8", request)
+                .into()
+            };
+        let (mut r, _) = mount(make(0));
+        assert_eq!(r.scroll_offset("list")[1], 0., "initial 0 does nothing");
+        let (d, h) = make(1).build().unwrap().into_parts();
+        r.replace_document(d, &h, &Bindings::default()).unwrap();
+        r.layout(
+            Viewport::new(400., 400., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Rec,
+        )
+        .unwrap();
+        assert_eq!(r.scroll_offset("list")[1], 320.);
+        // The reader scrolls away; the same request does not pull them back.
+        r.scroll_at(10., 10., [0., -100.]);
+        r.layout(
+            Viewport::new(400., 400., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Rec,
+        )
+        .unwrap();
+        assert_eq!(r.scroll_offset("list")[1], 220.);
+    }
+    #[test]
+    fn gradients_and_single_side_dashed_borders_paint() {
+        let (r, _) = mount(
+            vstack![
+                vstack![]
+                    .key("hero")
+                    .height(40.)
+                    .background_gradient(Gradient::linear(
+                        90.,
+                        [(0., ColorToken::Primary.into()), (1., "#00ff00".to_owned())]
+                    )),
+                vstack![]
+                    .key("rule")
+                    .height(20.)
+                    .width(100.)
+                    .border_color(RED)
+                    .border_width(2.)
+                    .border_sides(Sides::BOTTOM)
+                    .border_style(BorderStyle::Dashed),
+            ]
+            .key("root")
+            .into(),
+        );
+        let all = shapes(&r);
+        assert!(all.contains(&S::Gradient([0., 0., 400., 40.], 2)));
+        let reds: Vec<_> = all
+            .iter()
+            .filter_map(|s| match s {
+                S::Tri(p, [1., 0., 0., 1.]) => Some(p[0][1]),
+                _ => None,
+            })
+            .collect();
+        // Dashes along the bottom edge only (y ≈ 40 + 20 − 1), several of them.
+        assert!(
+            reds.len() >= 10 && reds.iter().all(|y| (*y - 59.).abs() <= 1.5),
+            "{reds:?}"
         );
     }
 }

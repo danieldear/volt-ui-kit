@@ -1,4 +1,5 @@
 //! Northbound screens. Each view is a pure function of `App`.
+use super::kit::stat;
 use super::{
     icons::{icon, mark, Icon},
     kit::*,

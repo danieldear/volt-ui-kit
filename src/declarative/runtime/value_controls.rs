@@ -91,6 +91,34 @@ impl Runtime {
                 as f32,
         ))
     }
+    /// Key under which a range slider's lower thumb value is tracked.
+    fn lower_key(id: &str) -> String {
+        format!("{id}\u{0}lower")
+    }
+    fn slider_current(&self, id: &str, props: &SliderProps, lower: bool) -> f32 {
+        if lower {
+            self.slider_values
+                .get(&Self::lower_key(id))
+                .copied()
+                .or(props.lower)
+                .unwrap_or(props.min)
+        } else {
+            self.slider_values.get(id).copied().unwrap_or(props.value)
+        }
+    }
+    /// Which thumb a press at `value` grabs: the nearer one; on a tie, the
+    /// lower when pressing at or below it.
+    fn slider_grabs_lower(&self, id: &str, props: &SliderProps, value: f32) -> bool {
+        if props.lower.is_none() {
+            return false;
+        }
+        let (lo, hi) = (
+            self.slider_current(id, props, true),
+            self.slider_current(id, props, false),
+        );
+        let (dl, dh) = ((value - lo).abs(), (value - hi).abs());
+        dl < dh || (dl == dh && value <= lo)
+    }
     pub(super) fn emit_slider<C>(
         &mut self,
         id: &str,
@@ -101,17 +129,31 @@ impl Runtime {
         let Some(b) = self.boxes.iter().find(|b| b.id == id && b.enabled) else {
             return Ok(false);
         };
-        let Some(props) = &b.slider else {
+        let Some(props) = b.slider.clone() else {
             return Ok(false);
         };
         if !value.is_finite() || value < props.min || value > props.max {
             return Ok(false);
         }
-        let previous = self.slider_values.get(id).copied().unwrap_or(props.value);
+        let lower = props.lower.is_some() && self.slider_lower.as_deref() == Some(id);
+        // Thumbs never cross: each is clamped by the other.
+        let value = if props.lower.is_none() {
+            value
+        } else if lower {
+            value.min(self.slider_current(id, &props, false))
+        } else {
+            value.max(self.slider_current(id, &props, true))
+        };
+        let previous = self.slider_current(id, &props, lower);
         if value == previous {
             return Ok(false);
         }
-        let Some(action) = props.on_change.clone() else {
+        let action = if lower {
+            props.on_lower_change.clone()
+        } else {
+            props.on_change.clone()
+        };
+        let Some(action) = action else {
             return Ok(false);
         };
         handlers
@@ -123,7 +165,12 @@ impl Runtime {
                 context,
             )
             .map_err(|e| DocumentError(e.to_string()))?;
-        self.slider_values.insert(id.into(), value);
+        let key = if lower {
+            Self::lower_key(id)
+        } else {
+            id.into()
+        };
+        self.slider_values.insert(key, value);
         Ok(true)
     }
     pub(super) fn slider_pointer_down<C>(
@@ -140,8 +187,22 @@ impl Runtime {
         self.capture = None;
         self.keyboard = None;
         self.focused = Some(id.clone());
+        self.focus_visible = false;
         self.hovered = Some(id.clone());
-        let activated = match self.slider_pointer_value(&id, x) {
+        let value = self.slider_pointer_value(&id, x);
+        if let (Some(v), Some(props)) = (
+            value,
+            self.boxes
+                .iter()
+                .find(|b| b.id == id)
+                .and_then(|b| b.slider.clone()),
+        ) {
+            if props.lower.is_some() {
+                let lower = self.slider_grabs_lower(&id, &props, v);
+                self.slider_lower = lower.then(|| id.clone());
+            }
+        }
+        let activated = match value {
             Some(value) => self.emit_slider(&id, value, handlers, context)?,
             None => false,
         };
@@ -202,12 +263,18 @@ impl Runtime {
             return Ok(InputOutcome::default());
         };
         let capture_changed = self.cancel_pointer_captures();
-        let value = self.slider_values.get(&id).copied().unwrap_or(props.value);
+        let lower = props.lower.is_some() && self.slider_lower.as_deref() == Some(id.as_str());
+        let value = self.slider_current(&id, &props, lower);
         let activated = self.emit_slider(&id, advance(&props, value, key), handlers, context)?;
         Ok(InputOutcome {
             changed: activated || capture_changed,
             activated,
         })
+    }
+    pub(super) fn slider_paint_lower(&self, b: &LayoutBox) -> Option<f32> {
+        let props = b.slider.as_ref()?;
+        props.lower?;
+        Some(self.slider_current(&b.id, props, true))
     }
     pub(super) fn slider_paint_value(&self, b: &LayoutBox) -> f32 {
         self.slider_values
@@ -224,11 +291,16 @@ pub(super) fn paint_slider<P: DocumentPainter>(
     ui: &UiTheme,
     state: ButtonState,
     scale: f32,
-    value: f32,
+    (lower, value): (Option<f32>, f32),
 ) {
     let Some(props) = &b.slider else {
         return;
     };
+    let fraction_of = |v: f32| {
+        ((f64::from(v) - f64::from(props.min)) / (f64::from(props.max) - f64::from(props.min)))
+            .clamp(0., 1.) as f32
+    };
+    let start = lower.map_or(0., fraction_of);
     let c = ui.colors();
     let [x, y, w, h] = b.bounds.bounds();
     let (left, length, radius) = slider_geometry(b, scale);
@@ -254,33 +326,32 @@ pub(super) fn paint_slider<P: DocumentPainter>(
             thickness * 0.5,
             track,
         );
-        if fraction > 0. {
+        if fraction > start {
             paint_surface(
                 p,
                 shapes,
-                [left, center - thickness * 0.5, length * fraction, thickness],
+                [
+                    left + length * start,
+                    center - thickness * 0.5,
+                    length * (fraction - start),
+                    thickness,
+                ],
                 thickness * 0.5,
                 accent,
             );
         }
     }
     if radius > 0. {
-        paint_surface(
-            p,
-            shapes,
-            [thumb - radius, center - radius, radius * 2., radius * 2.],
-            radius,
-            thumb_color,
-        );
-        if state.focused {
-            paint_border(
-                p,
-                shapes,
-                [thumb - radius, center - radius, radius * 2., radius * 2.],
-                radius,
-                2. * scale,
-                accent,
-            );
+        let thumbs = lower
+            .map(|_| left + length * start)
+            .into_iter()
+            .chain([thumb]);
+        for at in thumbs {
+            let disc = [at - radius, center - radius, radius * 2., radius * 2.];
+            paint_surface(p, shapes, disc, radius, thumb_color);
+            if state.focused {
+                paint_border(p, shapes, disc, radius, 2. * scale, accent);
+            }
         }
     }
     if state.focused {
@@ -297,6 +368,8 @@ mod tests {
             max: 1.,
             step: 0.3,
             on_change: None,
+            lower: None,
+            on_lower_change: None,
         }
     }
     #[test]
@@ -332,6 +405,8 @@ mod numeric_properties {
                 max,
                 step,
                 on_change: None,
+                lower: None,
+                on_lower_change: None,
             };
             let mut value = min;
             for _ in 0..256 {
@@ -361,6 +436,8 @@ pub(super) struct SplitCapture {
     pub handle: String,
     pub owner: String,
     pub grab_offset: f32,
+    /// The drag changed the size; recompose once on release.
+    pub moved: bool,
 }
 #[derive(Default)]
 pub(super) struct ProgressClock {
@@ -378,10 +455,11 @@ pub(super) fn split_sizes(total: f32, props: &SplitProps, scale: f32) -> [f32; 3
     let first = if sum > available && sum > 0. {
         available * first_min / sum
     } else {
-        (available * props.ratio).clamp(
-            first_min.min(available),
-            (available - second_min).max(first_min.min(available)),
-        )
+        let (want, max) = match props.pixels {
+            Some([size, max]) => (size * scale, (max * scale).min(available - second_min)),
+            None => (available * props.ratio, available - second_min),
+        };
+        want.clamp(first_min.min(available), max.max(first_min.min(available)))
     };
     [first, handle, (available - first).max(0.)]
 }
@@ -410,6 +488,16 @@ impl Runtime {
             (total - sizes[1]).max(0.),
         ))
     }
+    /// The latest value for a split: a ratio, or the first pane's logical
+    /// size in pixel mode.
+    fn apply_split_value(&self, owner: &str, props: &mut SplitProps) {
+        if let Some(v) = self.split_values.get(owner).copied() {
+            match props.pixels.as_mut() {
+                Some(p) => p[0] = v,
+                None => props.ratio = v,
+            }
+        }
+    }
     fn emit_split<C>(
         &mut self,
         owner: &str,
@@ -423,13 +511,24 @@ impl Runtime {
         if available <= 0. || !value.is_finite() {
             return Ok(false);
         }
-        props.ratio = self.split_values.get(owner).copied().unwrap_or(props.ratio);
-        let previous = split_sizes(total, &props, self.scale)[0] / available;
-        props.ratio = value.clamp(0., 1.);
-        let value = split_sizes(total, &props, self.scale)[0] / available;
-        if (previous - value).abs() <= f32::EPSILON {
+        self.apply_split_value(owner, &mut props);
+        let previous = split_sizes(total, &props, self.scale)[0];
+        // `value` is a ratio of the space available to the panes.
+        match props.pixels.as_mut() {
+            // Whole logical pixels: fractional widths shift every glyph by a
+            // sub-pixel amount each frame, which reads as shimmer.
+            Some(p) => p[0] = (value.clamp(0., 1.) * available / self.scale).round(),
+            None => props.ratio = value.clamp(0., 1.),
+        }
+        let first = split_sizes(total, &props, self.scale)[0];
+        if (previous - first).abs() <= f32::EPSILON * available.max(1.) {
             return Ok(false);
         }
+        let value = if props.pixels.is_some() {
+            first / self.scale
+        } else {
+            first / available
+        };
         let Some(action) = props.on_change else {
             return Ok(false);
         };
@@ -443,6 +542,15 @@ impl Runtime {
             )
             .map_err(|e| DocumentError(e.to_string()))?;
         self.split_values.insert(owner.into(), value);
+        // Apply the new size to the installed document so layout follows the
+        // drag without the host recomposing the whole view on every move.
+        if let Some(split) = self.document.node_mut(owner).and_then(|n| n.split.as_mut()) {
+            match split.pixels.as_mut() {
+                Some(p) => p[0] = value,
+                None => split.ratio = value,
+            }
+            self.cache = None;
+        }
         Ok(true)
     }
     pub(super) fn split_pointer_down<C>(
@@ -477,10 +585,12 @@ impl Runtime {
             handle: id.clone(),
             owner,
             grab_offset,
+            moved: false,
         });
         self.capture = None;
         self.keyboard = None;
         self.focused = Some(id.clone());
+        self.focus_visible = false;
         self.hovered = Some(id);
         Ok(Some(InputOutcome {
             changed: true,
@@ -522,14 +632,26 @@ impl Runtime {
         }
         let handle = split_sizes(total, &props, self.scale)[1];
         let ratio = ([x, y][axis] - capture.grab_offset - origin - handle * 0.5) / available;
-        let activated = self.emit_split(&capture.owner, ratio, handlers, context)?;
+        let changed = self.emit_split(&capture.owner, ratio, handlers, context)?;
+        if changed {
+            if let Some(c) = self.split_capture.as_mut() {
+                c.moved = true;
+            }
+        }
+        // Layout-only while dragging: application state is already updated
+        // and the document patched; the host recomposes once on release.
         Ok(Some(InputOutcome {
-            changed: activated,
-            activated,
+            changed,
+            activated: false,
         }))
     }
-    pub(super) fn split_pointer_up(&mut self) -> bool {
-        self.split_capture.take().is_some()
+    /// A divider is being dragged: hosts may coalesce layout to one per frame.
+    pub fn split_dragging(&self) -> bool {
+        self.split_capture.is_some()
+    }
+    /// `Some(moved)` when a divider drag ends.
+    pub(super) fn split_pointer_up(&mut self) -> Option<bool> {
+        self.split_capture.take().map(|c| c.moved)
     }
     pub fn split_key<C>(
         &mut self,
@@ -558,11 +680,7 @@ impl Runtime {
             return Ok(InputOutcome::default());
         }
         let capture_changed = self.cancel_pointer_captures();
-        props.ratio = self
-            .split_values
-            .get(&owner)
-            .copied()
-            .unwrap_or(props.ratio);
+        self.apply_split_value(&owner, &mut props);
         let current = split_sizes(total, &props, self.scale)[0] / available;
         let value = match key {
             ValueKey::First => 0.,
@@ -727,6 +845,47 @@ impl Runtime {
         let c = ui.colors();
         let r = b.bounds.bounds();
         let state = self.state_for_box(b);
+        if b.ext.reveal_handle {
+            let dragging = self
+                .split_capture
+                .as_ref()
+                .is_some_and(|capture| capture.handle == b.id);
+            if !state.disabled && (state.hovered || dragging || state.focused) {
+                // A rounded pill centred on the divider.
+                let vertical = r[3] >= r[2];
+                let s = self.scale;
+                let (thick, long) = (4. * s, 64. * s);
+                let pill = if vertical {
+                    let h = long.min(r[3]);
+                    [
+                        r[0] + (r[2] - thick) * 0.5,
+                        r[1] + (r[3] - h) * 0.5,
+                        thick,
+                        h,
+                    ]
+                } else {
+                    let w = long.min(r[2]);
+                    [
+                        r[0] + (r[2] - w) * 0.5,
+                        r[1] + (r[3] - thick) * 0.5,
+                        w,
+                        thick,
+                    ]
+                };
+                let mut ink = b.style.color.unwrap_or(c.text);
+                ink[3] *= if dragging || state.focused {
+                    0.55
+                } else {
+                    0.32
+                };
+                paint_surface(p, &mut shapes, pill, thick * 0.5, ink);
+            }
+            return PaintBatch {
+                clip: b.clip,
+                shapes,
+                glyphs: vec![],
+            };
+        }
         let mut surface = b.style.background.unwrap_or(c.selected);
         let mut ink = b.style.color.unwrap_or(c.muted);
         if state.disabled {

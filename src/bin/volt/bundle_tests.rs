@@ -94,7 +94,13 @@ fn bundle_structure_resources_and_no_overwrite() {
     options.resources.push(data);
     assemble(&options).unwrap();
     assert_eq!(
-        fs::read(options.output.join("Contents/MacOS/VoltApp")).unwrap(),
+        fs::read(
+            options
+                .output
+                .join("Contents/MacOS")
+                .join(options.executable_name())
+        )
+        .unwrap(),
         fs::read(&options.binary).unwrap()
     );
     assert_eq!(
@@ -236,4 +242,21 @@ fn bundle_build_number_is_independent_from_zero_major_release_and_signing_is_exp
     *wrong.last_mut().unwrap() = "Developer ID".into();
     assert!(BundleOptions::parse(&wrong).is_err());
     assert!(validate_deployment("cmd LC_VERSION_MIN_IPHONEOS\n version 11.0\n", "12.0").is_err());
+}
+
+#[test]
+fn executable_is_named_after_the_app_in_safe_ascii() {
+    let fixture = Fixture::new();
+    let mut options = fixture.options();
+    for (name, expected) in [
+        ("Volt Notes", "Volt Notes"),
+        ("Café/Notes ✨", "CafNotes"),
+        ("✨✨", "VoltApp"),
+    ] {
+        options.name = name.into();
+        assert_eq!(options.executable_name(), expected);
+        assert!(options.plist().contains(&format!(
+            "<key>CFBundleExecutable</key><string>{expected}</string>"
+        )));
+    }
 }

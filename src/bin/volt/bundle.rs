@@ -124,6 +124,21 @@ impl BundleOptions {
             sign,
         })
     }
+    /// The executable file name, shown by Activity Monitor and crash reports:
+    /// the app name reduced to ASCII letters, digits, spaces, `-` and `_`.
+    pub fn executable_name(&self) -> String {
+        let name: String = self
+            .name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+            .collect();
+        let name = name.trim();
+        if name.is_empty() {
+            "VoltApp".into()
+        } else {
+            name.into()
+        }
+    }
     pub fn validate(&self) -> io::Result<()> {
         text(&self.name, 128)?;
         if self.identifier.len() > 255
@@ -222,7 +237,7 @@ impl BundleOptions {
         for (key, value) in [
             ("CFBundleInfoDictionaryVersion", "6.0"),
             ("CFBundlePackageType", "APPL"),
-            ("CFBundleExecutable", "VoltApp"),
+            ("CFBundleExecutable", &self.executable_name()),
             ("CFBundleName", &self.name),
             ("CFBundleDisplayName", &self.name),
             ("CFBundleIdentifier", &self.identifier),
@@ -355,7 +370,7 @@ pub fn assemble(options: &BundleOptions) -> io::Result<()> {
     fs::create_dir(contents.join("Resources"))?;
     copy(
         &options.binary,
-        &contents.join("MacOS/VoltApp"),
+        &contents.join("MacOS").join(options.executable_name()),
         MAX_BINARY,
         true,
     )?;
@@ -481,7 +496,10 @@ pub fn run(options: BundleOptions) -> io::Result<()> {
             path: options.output.clone(),
             keep: false,
         };
-        let executable = options.output.join("Contents/MacOS/VoltApp");
+        let executable = options
+            .output
+            .join("Contents/MacOS")
+            .join(options.executable_name());
         tool(
             "/usr/bin/plutil",
             &["-lint"],

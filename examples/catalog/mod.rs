@@ -4,6 +4,8 @@
 pub mod art;
 pub mod desktop_services;
 pub mod documents;
+mod kit;
+mod landing;
 pub mod lifecycle;
 mod pages;
 mod shell;
@@ -66,8 +68,12 @@ pub struct App {
     pub compositor_blur: bool,
     pub blur: bool,
     pub sidebar_query: String,
-    pub palette_open: bool,
-    pub palette_query: String,
+    /// Site search (⌘K): open flag and query.
+    pub palette: volt_ui_kit::ui::CommandPaletteState,
+    /// Narrow windows: the page list shown as a drawer.
+    pub nav_open: bool,
+    /// Sidebar width in logical pixels; drag the divider to change it.
+    pub sidebar_width: f32,
     pub theme_menu_open: bool,
     /// Section ids currently showing code instead of the preview.
     pub code: BTreeSet<String>,
@@ -92,8 +98,8 @@ pub struct App {
     pub document_text: String,
     pub saved_document: String,
     pub close_prompt: Option<volt_ui_kit::native::CloseReason>,
-    pub command_palette_open: bool,
-    pub command_query: String,
+    /// The Application lifecycle page's command palette.
+    pub app_commands: volt_ui_kit::ui::CommandPaletteState,
     pub log_draft: String,
     pub log_entries: Vec<String>,
     pub volume: f32,
@@ -119,9 +125,15 @@ pub struct App {
     pub record: Option<usize>,
     pub split: f32,
     pub reveal: bool,
+    /// Sign-in demo: the password is shown in plain text.
+    pub show_password: bool,
     pub liked: bool,
     pub last_action: String,
     pub image: Image,
+    /// Demo state for the parity component pages.
+    pub kit: kit::State,
+    /// The landing page's live counter demo.
+    pub counter: u32,
     // Background task demo.
     pub sender: Option<UiSender<Message>>,
     pub job_running: bool,
@@ -140,8 +152,7 @@ impl App {
             document_text: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
             saved_document: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
             close_prompt: None,
-            command_palette_open: false,
-            command_query: String::new(),
+            app_commands: Default::default(),
             log_draft: String::new(),
             log_entries: (1..=12)
                 .map(|i| format!("Event {i:02} · UI thread ready"))
@@ -155,8 +166,9 @@ impl App {
             compositor_blur: false,
             blur: true,
             sidebar_query: String::new(),
-            palette_open: false,
-            palette_query: String::new(),
+            palette: Default::default(),
+            nav_open: false,
+            sidebar_width: 248.,
             theme_menu_open: false,
             code: BTreeSet::new(),
             toast: None,
@@ -196,9 +208,12 @@ impl App {
             record: None,
             split: 0.4,
             reveal: true,
+            show_password: false,
             liked: false,
             last_action: "Nothing yet".into(),
             image: art::landscape(480, 300),
+            kit: kit::State::default(),
+            counter: 0,
             sender: None,
             job_running: false,
             job_progress: 0,
@@ -208,10 +223,11 @@ impl App {
     }
     pub fn go(&mut self, page: Page) {
         self.page = page;
-        self.command_palette_open = false;
-        self.command_query.clear();
-        self.palette_open = false;
-        self.palette_query.clear();
+        self.app_commands.open = false;
+        self.app_commands.query.clear();
+        self.palette.open = false;
+        self.palette.query.clear();
+        self.nav_open = false;
         // Close every open overlay that belonged to the previous page.
         self.fruit_open = false;
         self.timezone_open = false;
@@ -222,6 +238,7 @@ impl App {
         self.theme_menu_open = false;
         self.dialog_open = false;
         self.delete_open = false;
+        self.kit.close_overlays();
     }
     pub fn append_log(&mut self) {
         let value = self.log_draft.trim();

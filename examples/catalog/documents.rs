@@ -249,8 +249,8 @@ pub fn close_guard(app: &mut App, reason: CloseReason) -> bool {
     if !app.documents.busy && !app.documents.dirty() {
         return false;
     }
-    app.command_palette_open = false;
-    app.palette_open = false;
+    app.app_commands.open = false;
+    app.palette.open = false;
     app.documents.after = Some(After::Close(reason));
     app.documents.prompt = true;
     true

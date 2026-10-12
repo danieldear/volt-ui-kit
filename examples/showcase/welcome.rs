@@ -1,3 +1,4 @@
+use super::style::avatar;
 use super::{style::*, App, Screen};
 use volt_ui_kit::ui::prelude::*;
 

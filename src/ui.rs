@@ -122,8 +122,11 @@ fn bounded_semantic_name(text: &str, fallback: &str) -> String {
     }
 }
 pub use crate::declarative::{
-    responsive, Align, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
+    responsive, Align, Ambient, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
     Responsive, Rounding, Scroll, Scrollbars, Shadow, Tone, Transition, VisualStyle,
+};
+pub use crate::declarative::{
+    BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
 };
 
 pub use crate::graphics::{
@@ -256,6 +259,7 @@ type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
 type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
 type ContextCallback<C> = Box<dyn FnMut(&mut C, [f32; 2])>;
 type WindowCallback<C> = Box<dyn FnMut(&mut C, std::ops::Range<usize>)>;
+type FilesCallback<C> = Box<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
@@ -264,19 +268,50 @@ enum Callback<C> {
         submit: Option<Click<C>>,
     },
     Number(ChangeNumber<C>),
+    Range {
+        lower: ChangeNumber<C>,
+        upper: ChangeNumber<C>,
+    },
     Dismiss(Click<C>),
     Context(ContextCallback<C>),
     Window(WindowCallback<C>),
+    Files(FilesCallback<C>),
 }
 mod bars;
 mod data;
+mod dates;
 mod dialogs;
+mod disclosure;
+mod display;
+mod forms;
+pub use disclosure::{
+    accordion, collapsible, command, command_palette, drawer, toaster, Accordion, Collapsible,
+    Command, CommandPalette, CommandPaletteState, Drawer, DrawerSide, Toast, ToastPosition,
+    Toaster,
+};
+pub use display::{
+    alert, avatar, avatar_group, bar_chart, breadcrumb, carousel, empty_state, image_view, kbd,
+    line_chart, pagination, skeleton, skeleton_text, sparkline, stat, steps, timeline, Alert,
+    Avatar, Breadcrumb, Carousel, Pagination, Presence, Severity, Stat, TimelineItem,
+};
+mod icons;
 mod inputs;
 mod menus;
 mod navigation;
 mod popovers;
 mod progress;
 mod split;
+pub mod tokens;
+pub use dates::{
+    calendar, date_picker, date_range_picker, days_in_month, time_picker, Calendar, CalendarDate,
+    DatePicker, DatePickerState, DateRange, DateRangePicker, TimeOfDay, TimePicker,
+};
+pub use forms::{
+    color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group, rating,
+    tag_input, ColorPicker, Combobox, ComboboxState, DropZone, FormField, Hsl, NumberInput,
+    OtpInput, RadioGroup, Rating, TagInput, TagInputState,
+};
+pub use icons::{icon, Icon, IconElement, ALL_ICONS};
 mod value_controls;
 pub use bars::{
     button_bar, segmented_control, tab, tab_bar, tab_item, tabs, toolbar, ButtonBar,
@@ -288,14 +323,18 @@ pub use data::{
 };
 pub use dialogs::{dialog, Dialog};
 pub use inputs::{text_area, text_field, TextInput};
-pub use menus::{context_menu, menu, menu_item, menu_separator, ContextMenu, Menu, MenuItem};
+pub use menus::{
+    context_menu, menu, menu_item, menu_separator, menu_submenu, ContextMenu, Menu, MenuItem,
+};
 pub use navigation::{
     navigation, navigation_item, Navigation, NavigationItem, NavigationPlacement,
 };
-pub use popovers::{popover, tooltip, Popover, Tooltip};
+pub use popovers::{hover_card, popover, tooltip, Popover, Tooltip};
 pub use progress::{loading, progress, progress_indeterminate, spinner, Progress};
 pub use split::{split, SplitPane};
-pub use value_controls::{select, select_item, slider, Select, SelectItem, Slider};
+pub use value_controls::{
+    range_slider, select, select_item, slider, RangeSlider, Select, SelectItem, Slider,
+};
 /// A composed, owned UI description. No callback is run while building it.
 pub struct Element<C> {
     node: Node,
@@ -403,6 +442,19 @@ impl<C: 'static> Element<C> {
                             split.on_change = Some(name);
                         }
                     }
+                    Callback::Range { lower, upper } => {
+                        let low = format!("{name}-lower");
+                        handlers
+                            .on_value_changed(&name, upper)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        handlers
+                            .on_value_changed(&low, lower)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        if let Some(slider) = node.slider.as_mut() {
+                            slider.on_change = Some(name);
+                            slider.on_lower_change = Some(low);
+                        }
+                    }
                     Callback::Context(f) => {
                         handlers
                             .on_context_requested(&name, f)
@@ -416,6 +468,12 @@ impl<C: 'static> Element<C> {
                         if let Some(list) = node.virtual_list.as_mut() {
                             list.on_window_change = Some(name);
                         }
+                    }
+                    Callback::Files(f) => {
+                        handlers
+                            .on_files_dropped(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        node.on_files_dropped = Some(name);
                     }
                     Callback::Dismiss(f) => {
                         handlers
@@ -478,9 +536,36 @@ macro_rules! modifiers {
                 self.$($field)*.accessible_label = Some(label.into()); self
             }
             pub fn width(mut self, value: f32) -> Self { self.$($field)*.width = Some(value); self }
+            /// Logical size limits; they apply to fixed, flexible and natural sizes.
+            pub fn min_width(mut self, value: f32) -> Self { self.$($field)*.ext.min[0] = Some(value); self }
+            pub fn max_width(mut self, value: f32) -> Self { self.$($field)*.ext.max[0] = Some(value); self }
+            pub fn min_height(mut self, value: f32) -> Self { self.$($field)*.ext.min[1] = Some(value); self }
+            pub fn max_height(mut self, value: f32) -> Self { self.$($field)*.ext.max[1] = Some(value); self }
+            /// A share (0..=1) of the parent's available width, like `w-1/2`.
+            pub fn width_fraction(mut self, value: f32) -> Self { self.$($field)*.ext.fraction[0] = Some(value); self }
+            pub fn height_fraction(mut self, value: f32) -> Self { self.$($field)*.ext.fraction[1] = Some(value); self }
+            /// Width over height; the unset axis follows the other.
+            pub fn aspect_ratio(mut self, value: f32) -> Self { self.$($field)*.ext.aspect = Some(value); self }
+            /// A width that changes at breakpoints.
+            pub fn responsive_width(mut self, value: impl Into<Responsive<f32>>) -> Self { self.$($field)*.ext.responsive_width = Some(value.into()); self }
+            /// Show or hide at breakpoints; hidden content takes no space.
+            pub fn visible(mut self, value: impl Into<Responsive<bool>>) -> Self { self.$($field)*.ext.visible = Some(value.into()); self }
+            /// Columns this item spans inside a `grid`.
+            pub fn column_span(mut self, value: u16) -> Self { self.$($field)*.ext.span = value; self }
+            /// The mouse cursor while the pointer is over this element.
+            pub fn cursor(mut self, value: Cursor) -> Self { self.$($field)*.ext.cursor = Some(value); self }
+            /// Paint-time translation in logical pixels; layout and hit targets stay put.
+            pub fn offset(mut self, x: f32, y: f32) -> Self { self.$($field)*.ext.offset = [x, y]; self }
+            /// Draw the border only on these edges (straight edges; corners stay square).
+            pub fn border_sides(mut self, sides: Sides) -> Self { self.$($field)*.ext.border_sides = Some(sides); self }
+            pub fn border_style(mut self, style: BorderStyle) -> Self { self.$($field)*.ext.border_style = style; self }
+            /// A linear or radial gradient fill, resolved from theme tokens.
+            pub fn background_gradient(mut self, gradient: Gradient) -> Self { self.$($field)*.ext.gradient = Some(gradient); self }
             /// Remove a component's fixed-width default; use the parent's cross-axis allocation.
             /// In a vertical stack this fills the available width. Horizontal stacks still use flex.
             pub fn fill_width(mut self) -> Self { self.$($field)*.width = None; self }
+            /// Drop an explicit height so the parent decides (stretch or flex).
+            pub fn fill_height(mut self) -> Self { self.$($field)*.height = None; self }
             pub fn height(mut self, value: f32) -> Self { self.$($field)*.height = Some(value); self }
             pub fn flex(mut self, value: f32) -> Self { self.$($field)*.flex = value; self }
             pub fn color(mut self, value: impl Into<String>) -> Self { self.$($field)*.style.color = Some(value.into()); self }
@@ -519,15 +604,41 @@ macro_rules! modifiers {
             pub fn shadow(mut self, value:Shadow) -> Self { self.$($field)*.effects.base.shadow=Some(value); self }
             pub fn glow(mut self, value:Glow) -> Self { self.$($field)*.effects.base.glow=Some(value); self }
             pub fn hover_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[0]=patch(VisualStyle::default()); self }
+            /// Appearance while disabled (`disabled:` variant).
+            pub fn disabled_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.disabled=patch(VisualStyle::default()); self }
             pub fn pressed_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[1]=patch(VisualStyle::default()); self }
             pub fn focus_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[2]=patch(VisualStyle::default()); self }
             pub fn animate_on(mut self, interaction:Interaction, animation:Animation) -> Self { self.$($field)*.effects.animations[interaction.index()]=Some(animation); self }
             /// Animate explicit appearance changes for the same key after recomposition.
             pub fn animation(mut self, animation:Animation) -> Self { self.$($field)*.effects.animation=Some(animation); self }
             pub fn transition(mut self, transition:Transition) -> Self { self.$($field)*.effects.transition=Some(transition); self }
+            /// Continuous decorative motion; see [`Ambient`].
+            pub fn ambient(mut self, ambient:Ambient) -> Self { self.$($field)*.effects.ambient=Some(ambient); self }
             pub fn font_family(mut self, value: impl Into<String>) -> Self { self.$($field)*.style.font_family = Some(value.into()); self }
             pub fn font_size(mut self, value: f32) -> Self { self.$($field)*.style.font_size = Some(value); self }
             pub fn font_weight(mut self, value: u16) -> Self { self.$($field)*.style.font_weight = Some(value); self }
+            /// Horizontal alignment of text lines within the element (inherited).
+            pub fn text_align(mut self, value: TextAlign) -> Self { self.$($field)*.style.text_align = Some(value); self }
+            /// Line height as a multiple of the font size, e.g. `1.5` (inherited).
+            pub fn line_height(mut self, value: f32) -> Self { self.$($field)*.style.line_height = Some(value); self }
+            /// Cut text to this many lines, ending with an ellipsis (`line-clamp`).
+            pub fn max_lines(mut self, value: u16) -> Self { self.$($field)*.style.max_lines = Some(value); self }
+            /// One line with an ellipsis when it does not fit (`truncate`).
+            pub fn truncate(mut self) -> Self { self.$($field)*.style.max_lines = Some(1); self }
+            /// Keep text on one line; overflow is clipped (`whitespace-nowrap`).
+            pub fn no_wrap(mut self, value: bool) -> Self { self.$($field)*.style.no_wrap = Some(value); self }
+            pub fn underline(mut self, value: bool) -> Self { self.$($field)*.style.underline = Some(value); self }
+            pub fn strikethrough(mut self, value: bool) -> Self { self.$($field)*.style.strikethrough = Some(value); self }
+            /// Upper-case the text and label (`uppercase`).
+            pub fn uppercase(mut self) -> Self {
+                if let Some(t) = self.$($field)*.text.as_mut() { *t = t.to_uppercase(); }
+                if let Some(l) = self.$($field)*.label.as_mut() { *l = l.to_uppercase(); }
+                self
+            }
+            /// A font size that changes at breakpoints.
+            pub fn responsive_font_size(mut self, value: impl Into<Responsive<f32>>) -> Self { self.$($field)*.ext.responsive_font_size = Some(value.into()); self }
+            /// Tracking in em: `0.12` adds 12% of the font size after each character.
+            pub fn letter_spacing(mut self, em: f32) -> Self { self.$($field)*.style.letter_spacing = Some(em); self }
             pub fn font_style(mut self, value: FontStyle) -> Self {
                 self.$($field)*.style.font_style = Some(match value { FontStyle::Normal => FontSlant::Normal, FontStyle::Italic => FontSlant::Italic }); self
             }
@@ -706,6 +817,12 @@ impl<C> Button<C> {
         self.0.node.disclosure = Some(open);
         self
     }
+    /// Space before the label at the leading edge (default 10), e.g. to make
+    /// room for an icon layered over the button.
+    pub fn label_inset(mut self, value: f32) -> Self {
+        self.0.node.ext.label_inset = Some(value);
+        self
+    }
     /// Place the label at the start, centre (default) or end of the button.
     pub fn label_align(mut self, align: Align) -> Self {
         self.0.node.flow = Some(match align {
@@ -770,6 +887,13 @@ pub fn hstack<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C>
     row(children)
 }
 /// An adaptive stack; defaults to vertical. Fixed stacks do not expose direction.
+/// Equal-width columns (two by default); see `columns` and `min_column_width`.
+/// Items fill rows left to right, span with `column_span` and share row heights.
+pub fn grid<C>(children: impl IntoIterator<Item = Element<C>>) -> Container<C> {
+    let mut container = column(children);
+    container.0.node.ext.grid = Some(GridColumns::Count(2));
+    container
+}
 pub fn stack<C>(children: impl IntoIterator<Item = Element<C>>) -> Stack<C> {
     Stack(container(Kind::Stack, children).0)
 }
@@ -843,6 +967,34 @@ macro_rules! container_modifiers {
                 self.0.node.align = value;
                 self
             }
+            /// Distribute free main-axis space (`justify-content`).
+            pub fn justify(mut self, value: Justify) -> Self {
+                self.0.node.ext.justify = Some(value);
+                self
+            }
+            /// Rows only: break onto new lines instead of shrinking children.
+            /// The cross-axis gap separates lines.
+            pub fn wrap(mut self, value: bool) -> Self {
+                self.0.node.ext.wrap = value;
+                self
+            }
+            /// Scroll views: bring the element with `key` to the top whenever
+            /// `request` changes (bump it from a callback to scroll again; an
+            /// initial 0 does nothing). The reader can scroll freely afterwards.
+            pub fn scroll_to(mut self, key: impl Into<String>, request: u32) -> Self {
+                self.0.node.ext.scroll_to = Some((key.into(), request));
+                self
+            }
+            /// Grid containers: a fixed number of equal columns.
+            pub fn columns(mut self, count: u16) -> Self {
+                self.0.node.ext.grid = Some(GridColumns::Count(count));
+                self
+            }
+            /// Grid containers: as many equal columns as fit at this width.
+            pub fn min_column_width(mut self, width: f32) -> Self {
+                self.0.node.ext.grid = Some(GridColumns::MinWidth(width));
+                self
+            }
         }
     };
 }
@@ -870,7 +1022,10 @@ macro_rules! stack { ($($child:expr),* $(,)?) => { $crate::ui::stack(vec![$($cra
 /// Compose overlapping layers; declaration order is back to front.
 #[macro_export]
 macro_rules! zstack { ($($child:expr),* $(,)?) => { $crate::ui::zstack(vec![$($crate::ui::Element::from($child)),*]) }; }
-pub use crate::{hstack, stack, vstack, zstack};
+/// Compose heterogeneous children into a grid.
+#[macro_export]
+macro_rules! grid { ($($child:expr),* $(,)?) => { $crate::ui::grid(vec![$($crate::ui::Element::from($child)),*]) }; }
+pub use crate::{grid, hstack, stack, vstack, zstack};
 modifiers!(ButtonBar, [0.node], [0.auto_id]);
 modifiers!(Toolbar, [0.node], [0.auto_id]);
 modifiers!(SelectionControl, [T], [0.node], [0.auto_id]);
@@ -907,20 +1062,36 @@ pub use crate::{button_bar, tab_bar, tabs, toolbar};
 /// Import component functions, types and layout macros together.
 pub mod prelude {
     pub use super::{
+        accordion, alert, avatar, avatar_group, bar_chart, breadcrumb, carousel, collapsible,
+        command, command_palette, drawer, empty_state, hover_card, image_view, kbd, line_chart,
+        pagination, skeleton, skeleton_text, sparkline, stat, steps, timeline, toaster,
+        CommandPaletteState, DrawerSide, Presence, Severity, TimelineItem, Toast, ToastPosition,
+    };
+    pub use super::{
         badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
-        divider, hstack, loading, menu, menu_item, menu_separator, navigation, navigation_item,
-        panel, popover, progress, progress_indeterminate, responsive, row, segmented_control,
-        select, select_item, separator, slider, spacer, spinner, split, stack, tab, tab_bar,
-        tab_item, table, table_column, table_row, tabs, text, text_area, text_field, toggle,
-        toolbar, tooltip, tree_node, tree_view, virtual_list, vstack, zstack, Align, Animation,
-        Axes, Axis, BackgroundImage, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip,
-        ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, DataItem, Dialog,
-        Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Image, ImageFit,
-        ImagePosition, Interaction, Menu, MenuItem, Navigation, NavigationItem,
-        NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
-        Select, SelectItem, SelectionControl, Shadow, Slider, SortDirection, SplitPane, Tab,
-        TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextInput, ThemeMode, Tone,
-        Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
+        divider, grid, hstack, loading, menu, menu_item, menu_separator, menu_submenu, navigation,
+        navigation_item, panel, popover, progress, progress_indeterminate, range_slider,
+        responsive, row, segmented_control, select, select_item, separator, slider, spacer,
+        spinner, split, stack, tab, tab_bar, tab_item, table, table_column, table_row, tabs, text,
+        text_area, text_field, toggle, toolbar, tooltip, tree_node, tree_view, virtual_list,
+        vstack, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage, BorderStyle,
+        Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu, ControlSize,
+        Corner, CornerSet, Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge, Edges,
+        Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image, ImageFit, ImagePosition,
+        Interaction, Justify, Menu, MenuItem, Navigation, NavigationItem, NavigationPlacement,
+        Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem,
+        SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle, SplitPane, Tab,
+        TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode,
+        Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
         VisualStyle,
     };
+    pub use super::{
+        calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
+        DateRange, TimeOfDay,
+    };
+    pub use super::{
+        color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
+        rating, tag_input, ComboboxState, Hsl, TagInputState,
+    };
+    pub use super::{icon, Icon, IconElement};
 }

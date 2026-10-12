@@ -2,6 +2,141 @@
 
 ## Unreleased
 
+- Harden the component-parity delivery after review: validate inactive
+  responsive rules and disabled offsets, bound date/time and pagination
+  arithmetic, keep number-input callbacks finite, revalidate file-drop scope
+  and enablement, and retain private file permissions on linkless volumes.
+  Align editable ink, caret/selection and IME geometry consistently; form
+  labels name controls unless an explicit accessible name was supplied.
+  Registered fonts now share immutable bytes across windows and have a
+  256 MiB aggregate limit. Add review regressions and an acceptance receipt.
+
+- `select` is styled as a field, matching text fields and `combobox`: a
+  light filled trigger with a thin outline and an inner chevron (hover
+  darkens the outline), and a card popup with quiet rows and a check mark on
+  the chosen option instead of a primary fill. Behaviour, keys and
+  accessibility are unchanged; `.background(..)` / `.border_color(..)` still
+  override. The catalog Select page compares select and combobox.
+- Catalog chrome uses the new components: `command_palette` for ⌘K search
+  (grouped pages, fuzzy keywords), a `kbd` hint on the search button, an
+  icon filter field with a clear action, a clickable `breadcrumb`, `toaster`
+  confirmations, checked accent menu items, `form_field` sign-in with a
+  password reveal, and a `command_palette` for application commands.
+
+- Pixel-sized split panes: `split(a, b).first_size(px).max_first(px)` keeps
+  the first pane at a fixed width as the window resizes and reports pixels
+  from `on_resize`; `.handle_color(..)` styles the divider. A responsively
+  hidden first pane collapses the split. `.fill_height()` joins
+  `.fill_width()`. `.handle_style(SplitHandle::Reveal)` hides the divider
+  until hover, drag or keyboard focus, then shows a rounded pill; the resize
+  cursor holds for the whole drag. Divider drags patch the installed
+  document and lay out once per frame: `on_resize` still fires on every move,
+  but moves return `changed` (layout) rather than `activated` (recompose), and
+  the host recomposes once on release. Layout is cheaper when widths change:
+  text that fits unwrapped reuses its natural-width measurement (and draws
+  from it when start-aligned), and the measure memo, style map and shaped-text
+  cache are hashed rather than ordered by id/text strings (catalog landing:
+  24.7 → 5.9 ms per drag frame at 2×; other pages 1–1.6 ms). The catalog sidebar is now resizable (200–420 px), and
+  collapses into a drawer below 1024 px; the landing hero has compact,
+  medium and full sizes; doc pages stop at a 1040 px column.
+
+- Tailwind / shadcn parity (see `docs/PARITY_PLAN.md`). All new APIs are
+  Rust-only; the schema-1 JSON format is unchanged.
+  - Layout and style utilities: `grid(..).columns(n)` / `.min_column_width`
+    with `.column_span`, `.wrap(true)`, `.justify(Justify::…)`, min/max
+    sizes, `.width_fraction`, `.aspect_ratio`, responsive `.visible` /
+    width / font size, `.text_align`, `.line_height`, `.max_lines` /
+    `.truncate`, `.uppercase`, `.underline`, `.strikethrough`, single-side
+    and dashed/dotted borders, linear/radial gradients, `.offset`,
+    `.cursor(Cursor::…)`, `.scroll_to`, design `tokens`, `Ambient::pulse`,
+    slide transitions, `Easing::CubicBezier`, animation delays, disabled and
+    focus-visible styles, `native::register_font`, `VectorPath::from_svg`.
+  - Icons: `icon(Icon::…)`, 65 original theme-aware glyphs (`ALL_ICONS`).
+  - Date and time: `CalendarDate`, `calendar`, `date_picker`,
+    `date_range_picker`, `time_picker`.
+  - Form inputs: `radio_group`, `number_input`, `combobox`, `tag_input`,
+    `range_slider`, `color_picker` (`Hsl`), `otp_input`, `rating`,
+    `form_field`, text-field adornments (`.leading_icon`,
+    `.trailing_icon`, `.trailing_action`) and `drop_zone` with native file
+    drag and drop.
+  - Overlays and disclosure: `collapsible`, `accordion`, `drawer`,
+    `toaster` (`Toast`), `command_palette`, `hover_card`; menu rows gain
+    `.checked`, `.shortcut`, `.icon`, and `menu_submenu` drill-downs.
+  - Display: `avatar` / `avatar_group`, `alert` (`Severity`), `skeleton`,
+    `kbd`, `breadcrumb`, `pagination`, `steps`, `timeline`, `empty_state`,
+    `stat`, `sparkline`, `bar_chart`, `line_chart`, `carousel`, `image_view`.
+  - Runtime: two-thumb sliders, `Event::FilesDropped` /
+    `Handlers::on_files_dropped` with `Runtime::file_hover` / `drop_files`,
+    `Popover::keep_anchor_interactive`, `Button::label_inset`, and keyboard
+    menu navigation over decorated (icon/shortcut) rows.
+  - Catalog: Utilities, Icons, Date & time, Form inputs, Overlays, Data
+    display and Charts pages.
+  - Upgrade notes: `Event` and `EventKind` gain a `FilesDropped` variant
+    (exhaustive matches need an arm). The prelude now exports `avatar`,
+    `stat`, `steps` and other component names; a local function with the same
+    name imported by glob becomes ambiguous — import it explicitly.
+
+- Animation frames are paced by the display. GPU windows (FIFO presentation)
+  request the next frame after each present and let vsync set the rate —
+  120 Hz on ProMotion, measured 601 frames in 5 s — instead of a fixed
+  16.7 ms timer re-armed after each frame, which drifted to ~48 fps and beat
+  against vsync (judder). Software windows tick at the monitor's refresh
+  interval on a drift-free cadence. Refresh is rechecked each second while
+  animating (windows can move between displays).
+
+- `Ambient` paint-time motion: `.ambient(Ambient::float(x, y))` drifts a
+  subtree on a slow ellipse and `.ambient(Ambient::spin())` rotates a canvas,
+  with `period_ms` and `phase`. Applied at paint only: no recomposition,
+  layout or hit-target movement; frames continue only while an ambient node
+  is visible, and reduced motion stops them.
+- `.letter_spacing(em)` tracking for text (Rust-only style; schema 1 unchanged).
+- Catalog landing hero: typography-led on the page's own background (light or
+  dark): a custom vector VOLT wordmark, a sans + italic-serif headline, square
+  letter-spaced mono buttons, two hairline orbits with one slow accent arc,
+  and three small floating cards built from real components. Letter-spaced
+  mono navigation with an inverted active chip; a swaying capability ticker.
+- Ambient drift is clipped like a paint-only transform (by clipping ancestors,
+  not the parent's padding box), so drifting content never loses an edge.
+
+- Font fallback lists: `.font_family("New York Extra Large, Charter, serif")`
+  picks the first installed family, like CSS; aliases (`SF`, `SF Mono`) and
+  generic names in a list always resolve. Installed families are indexed once.
+- Catalog typography: New York display serif with italic accents for the
+  landing hero, section headings, numerals and page titles; numbered SF Mono
+  eyebrows; JetBrains Mono for code. Each has fallbacks for other machines.
+
+- Smooth scrolling: a scroll moves boxes without resizing them, so the
+  runtime now shifts the scrolled subtree in place and recomputes its clips,
+  instead of a full layout per wheel event (catalog landing at 2x: 4.3 ms →
+  0.19 ms per scroll frame). Open overlays and virtual lists still take the
+  full layout. Resolved styles are also cached across layouts until the
+  document or viewport width changes. Tests prove the shifted result equals a
+  full layout, including nested scrollers and real catalog pages.
+- Catalog landing: hero and product shot no longer use rounded clip layers,
+  which nested five deep and spilled Vello's blend stack on most scroll
+  positions (up to 3 GPU strips per frame); now no spill.
+- Shared Rust example harness: `--bench-scroll PX` times scroll frames.
+
+- Shaped-text cache raised from 256 to 2048 layouts. A page whose labels
+  (measured at several widths) exceeded 256 made the LRU miss on every
+  lookup, reshaping all text every frame: the catalog landing page took
+  ~38 ms of layout per click and 89k misses in 87 frames; now ~4.8 ms.
+
+- GPU strip rendering: frames too large for Vello 0.6's fixed per-pass
+  buffers (5K/6K/8K Retina windows exceed the tile-command buffer on its
+  per-tile reservation alone) render in up to 16 horizontal strips on the GPU
+  instead of every frame falling back to software (6K: ~280 ms software →
+  ~27 ms GPU including readback). Budgets are tracked per tile row; frames
+  whose strips still overflow, or that exceed scene-wide buffers, keep the
+  explicit software fallback. `VOLT_UI_TRACE` reports `bands=`.
+- New-file saves fall back to an exclusive create where hard links are
+  unsupported (exFAT, many network shares); never overwrites either way.
+- `cargo volt bundle` names the executable after the app (ASCII-safe,
+  `VoltApp` fallback) instead of always `VoltApp`.
+- Catalog landing page redesigned as an editorial tour: aurora hero, a live
+  miniature app, numbers, features, code with a live counter, live theming,
+  the component index and a closing call to action.
+
 - Keep Retina opacity-group overflow fallback bounded with tiled replay; preserve alpha instead of failing again in software. Reuse a hidden native material underlay on blur-backend switches, refresh native frame/shadow, and prepare backdrops before window visibility. Desktop-level Material-to-Compositor corner validation remains pending.
 
 - Separate Catalog background opacity from accent tint; add live blur toggle and

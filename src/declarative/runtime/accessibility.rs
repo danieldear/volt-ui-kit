@@ -199,6 +199,7 @@ impl Runtime {
             self.cancel_input();
             self.focused = Some(id.to_owned());
         }
+        self.focus_visible = true;
         self.reveal_focus(id) || focus_changed
     }
     /// Reveal a mounted semantic node without changing keyboard focus.

@@ -11,15 +11,26 @@ pub enum EventKind {
     ValueChanged,
     ContextRequested,
     WindowChanged,
+    FilesDropped,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Activate,
     TextChanged(String),
     ToggleChanged(bool),
-    ValueChanged { bits: u32 },
-    ContextRequested { x_bits: u32, y_bits: u32 },
-    WindowChanged { start: usize, end: usize },
+    ValueChanged {
+        bits: u32,
+    },
+    ContextRequested {
+        x_bits: u32,
+        y_bits: u32,
+    },
+    WindowChanged {
+        start: usize,
+        end: usize,
+    },
+    /// Files dragged from the system onto a drop zone (never empty).
+    FilesDropped(Vec<std::path::PathBuf>),
 }
 impl Event {
     pub fn kind(&self) -> EventKind {
@@ -30,6 +41,7 @@ impl Event {
             Self::ValueChanged { .. } => EventKind::ValueChanged,
             Self::ContextRequested { .. } => EventKind::ContextRequested,
             Self::WindowChanged { .. } => EventKind::WindowChanged,
+            Self::FilesDropped(_) => EventKind::FilesDropped,
         }
     }
 }
@@ -177,6 +189,21 @@ impl<'a, C> Handlers<'a, C> {
             }),
         )
     }
+    pub fn on_files_dropped(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, Vec<std::path::PathBuf>) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::FilesDropped,
+            Box::new(move |ctx, event| {
+                if let Event::FilesDropped(paths) = event {
+                    f(ctx, paths);
+                }
+            }),
+        )
+    }
     /// Validate a document connection without running application code.
     pub fn validate(&self, name: &str, kind: EventKind) -> Result<(), HandlerError> {
         let (expected, _) = self
@@ -204,6 +231,7 @@ impl<'a, C> Handlers<'a, C> {
         }
         if matches!(event, Event::ContextRequested { x_bits, y_bits } if !f32::from_bits(x_bits).is_finite() || !f32::from_bits(y_bits).is_finite())
             || matches!(event, Event::WindowChanged { start, end } if start > end)
+            || matches!(&event, Event::FilesDropped(paths) if paths.is_empty())
         {
             return Err(HandlerError::InvalidValue);
         }
@@ -278,8 +306,12 @@ mod tests {
 
 pub(crate) mod document;
 pub(crate) mod effects;
+pub(crate) mod extras;
+pub use extras::{
+    BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
+};
 mod responsive;
-pub use effects::{Animation, Easing, Glow, Interaction, Shadow, Transition, VisualStyle};
+pub use effects::{Ambient, Animation, Easing, Glow, Interaction, Shadow, Transition, VisualStyle};
 mod motion;
 mod runtime;
 pub use document::{
