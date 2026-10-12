@@ -656,7 +656,7 @@ impl GpuPresenter {
         }
         if std::env::var_os("VOLT_UI_TRACE").is_some() {
             let stats = self.encoder.stats();
-            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} bands={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.bands,stats.over_budget,stats.resource_bytes,framebuffer_upload_bytes);
+            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} bands={} lines_est={} segments_est={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.bands,stats.lines_estimate,stats.segments_estimate,stats.over_budget,stats.resource_bytes,framebuffer_upload_bytes);
         }
         Ok(PresentStatus::Presented)
     }
@@ -729,6 +729,12 @@ impl GpuOffscreenRenderer {
     /// then drawn in software), or `None` when it rendered on the GPU.
     pub fn last_over_budget(&self) -> Option<&'static str> {
         self.encoder.stats().over_budget
+    }
+    /// Estimated (lines, segments) of the latest frame against the
+    /// 2,097,152 capacity; frames over it draw in software.
+    pub fn last_path_estimate(&self) -> (u64, u64) {
+        let s = self.encoder.stats();
+        (s.lines_estimate, s.segments_estimate)
     }
     /// Horizontal strips the latest GPU frame was rendered in (1 = one pass).
     pub fn last_bands(&self) -> usize {

@@ -6,7 +6,15 @@ rust-version = "1.87"
 license = "MIT"
 description = "Renderer-independent desktop UI components extracted from Volt"
 readme = "README.md"
+repository = "https://github.com/danieldear/volt-ui-kit"
+keywords = ["gui", "ui", "desktop", "declarative", "gpu"]
+categories = ["gui", "graphics", "rendering", "accessibility"]
 include = ["docs/**", "src/**", "examples/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md", "ROADMAP.md"]
+
+[package.metadata.docs.rs]
+# Document the Rust UI, native host and GPU renderer, not just the core.
+features = ["native-gpu", "native-desktop"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []

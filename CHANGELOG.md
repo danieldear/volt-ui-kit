@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+- Interactive charts. `area_chart`, `candlestick_chart`, `donut_chart` and
+  `stacked_bar_chart` take `.key(..)`: every data point gets an invisible,
+  focusable hit target with a value tooltip (hover or keyboard focus; no
+  recomposition) and a spoken label. `.selected(..)` / `.on_select(..)` add
+  click and Enter selection, drawn as a highlight (candle band, outline and
+  close level; area rule and dots; popped-out donut slice; emphasised bar
+  column). Donut targets are clipped to their ring sectors and legend rows
+  select slices. The chart builders are now generic over the app state type.
+  The Catalog Dashboard reacts to selections and the Charts page has an
+  interactive example.
+
+- State-preserving dev restarts: `Application::dev_state(save, load)`.
+  Under `cargo volt dev`, a successful rebuild asks the running app to
+  save its state and window frame and exit; the new build restores both
+  before its first view (apps without `dev_state` restart as before).
+  `Application::theme_file(path)` reloads a theme JSON live when the file
+  changes. The Catalog keeps its page, theme, accent, sidebar width and
+  window across dev restarts.
+- crates.io readiness: repository, keywords, categories and docs.rs
+  configuration; `cargo publish --dry-run` passes (752 KiB package).
+
+- Faster interactions on large views. Layout reuses measurements of
+  subtrees that are unchanged since the previous recomposition (same id
+  and position, equal node fields, equal resolved styles for the whole
+  subtree, same bindings and viewport width); a test checks that reused
+  layouts equal fresh layouts on every Catalog page, across state changes
+  and a resize. Internal caches use a fast non-cryptographic hasher and
+  key styles by node identity instead of hashing id strings. Per click at
+  2× (rebuild + install + layout + paint): Catalog landing 4.75 → 2.56 ms,
+  Dashboard 2.84 → 1.67 ms; layout alone 3.05 → 0.88 ms.
+  `Runtime::reused_measurements()` reports reuse for diagnostics.
+- Fix building with only the `declarative` feature (two `rust-ui` fields
+  were initialised unconditionally). The core (`rust-ui`) also builds for
+  `wasm32-unknown-unknown`; CI now checks each feature alone and wasm32.
+
+- Data charts with axes (`charts` module): `area_chart` (overlaid or
+  stacked), `candlestick_chart` (OHLC with optional volume strip),
+  `donut_chart` (centre label, legend, percentages) and `stacked_bar_chart`.
+  Shared "nice" ticks (`nice_ticks`), compact labels (`short_number`), Y tick
+  labels on gridlines, length-aware X-label thinning, and theme-following
+  series colours (series 1 is `primary`). Invalid data is dropped quietly.
+- Catalog Dashboard pattern page: a dense analytics screen (KPIs with
+  sparklines, candlesticks with volume and range switch, traffic donut,
+  stacked revenue area, regional stacked bars, sortable orders table) built
+  only from Volt components; stays under 9% of the GPU segment budget.
+
+- Fix GPU frames falling back to software on pages with multi-line editors
+  (Catalog Theme editor: 109% of Vello's segment budget). Editor rows are
+  shaped unbounded, and an edge-touching text run was clipped to that
+  1,000,000 px box; Vello sizes clip layers by area. Text clip layers are now
+  clamped to the frame (output unchanged). Editor-heavy pages drop to under
+  10% of the budget; the heaviest Catalog page is 12%.
+  `VOLT_UI_TRACE` frames now report `lines_est` / `segments_est`, and
+  `GpuOffscreenRenderer::last_path_estimate()` exposes them.
+
+- Themes are fully user-defined: `ColorToken::ALL`, `Palette::set(role,
+  colour)`, `Palette::to_json()` / `Palette::from_json(text, &base)` (partial
+  files override only the listed roles; dependency-free parser),
+  `contrast_ratio`, `hex` and `parse_hex`, and `ColorToken::content_pair()`.
+  The Catalog gains a Theme editor page: every role for light and dark, a
+  colour picker, WCAG contrast grading, a component preview and JSON
+  export/import; preset accents clear a custom theme.
+- Custom SVG icons: `SvgIcon::parse` / `SvgIcon::load` read real SVG files
+  (`path`, `circle`, `ellipse`, `rect` with radii, `line`, `polyline`,
+  `polygon`, nested `g` with inherited fill/stroke/stroke-width/`style` and
+  `translate`/`scale`/`matrix` transforms; `viewBox` fitting). `svg_icon(&svg)`
+  takes the same `.size` / `.color` / `.stroke` options as built-in icons, plus
+  `.keep_colors(true)` for multi-colour art. `IconSet::from_dir` loads a whole
+  icon-set folder by file name. The Catalog Icons page accepts dropped or
+  pasted SVGs.
+
 ## 0.4.0 (2026-10-12; not published to crates.io)
 
 - Minor-version milestone for the expanded Rust component set, application

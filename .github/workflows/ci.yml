@@ -24,6 +24,17 @@ jobs:
       - run: cargo test --locked --all-features --all-targets
       - run: cargo test --locked --all-features --doc
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Each feature builds on its own
+        shell: bash
+        run: |
+          for f in declarative rust-ui native native-gpu native-desktop native-notifications dev-tools; do
+            cargo check --locked --lib --no-default-features --features "$f"
+          done
+      - name: Core builds for WebAssembly
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --locked --lib --target wasm32-unknown-unknown --features rust-ui
       - run: cargo package --locked
       - run: cargo run --locked --example gallery
       - run: cargo build --locked --features native --examples
