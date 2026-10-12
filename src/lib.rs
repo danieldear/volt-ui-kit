@@ -27,10 +27,12 @@ pub use workspace_card::{CardIcon, CardTone};
 pub mod button;
 pub use button::{Button, ButtonColors};
 
+#[cfg(feature = "declarative")]
+mod fasthash;
 pub mod geometry;
 pub mod graphics;
 pub mod theme;
-pub use theme::{ColorToken, Palette, ThemeMode, UiTheme};
+pub use theme::{contrast_ratio, hex, parse_hex, ColorToken, Palette, ThemeMode, UiTheme};
 pub mod panel;
 pub mod surface;
 pub use geometry::{HitMap, HitTarget, Rect};
