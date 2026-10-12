@@ -2,7 +2,7 @@
 
 The cards, buttons, forms, palettes and vector icons behind Volt — extracted into a small, renderer-independent Rust library.
 
-**Status:** working extraction, version 0.3.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
+**Status:** working extraction, version 0.4.0, not published to crates.io. This is an embeddable toolkit foundation, not yet a complete desktop application framework.
 
 ## Polished component testing: Volt Catalog
 

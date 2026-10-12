@@ -1,6 +1,6 @@
 # Application commands and guarded closing
 
-Implemented after v0.3.0; this is an **unreleased single-window slice**. The
+Included in v0.4.0; this is a **single-window slice**. The
 multi-window runtime, persistence and complete OS termination lifecycle are still
 pending. No new default dependency or unsafe code is introduced.
 

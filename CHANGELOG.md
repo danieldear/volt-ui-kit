@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.4.0 (2026-10-12; not published to crates.io)
+
+- Minor-version milestone for the expanded Rust component set, application
+  foundation, native desktop integrations and Catalog. Existing default
+  dependencies and opt-in native/GPU feature boundaries are unchanged.
+  Private-compositor corner switching, generic in-app GPU backdrop blur,
+  full composite keyboard/accessibility acceptance, multi-window lifecycle
+  and signed distribution remain separate gates; see `docs/VALIDATION.md`.
+
 - Harden the component-parity delivery after review: validate inactive
   responsive rules and disabled offsets, bound date/time and pagination
   arithmetic, keep number-input callbacks finite, revalidate file-drop scope
