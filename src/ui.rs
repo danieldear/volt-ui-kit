@@ -96,7 +96,6 @@
 //! # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
 //! ```
 #![cfg_attr(feature="native", doc=include_str!("../docs/SURFACES_THEMES_AND_SCROLLING.md"))]
-#![cfg_attr(feature="native", doc=include_str!("../docs/UI_LAB.md"))]
 #![doc = include_str!("../docs/COMPONENTS.md")]
 #![doc = include_str!("../docs/EXTENDED_COMPONENTS.md")]
 #![cfg_attr(feature="native",doc=include_str!("../docs/APP_RUNTIME.md"))]

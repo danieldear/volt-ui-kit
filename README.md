@@ -33,7 +33,8 @@ cargo run --features native --example ui_lab -- --section scrolling --theme ligh
 cargo run --features native-gpu --example ui_lab -- --section window --background blur --chrome overlay
 ```
 
-See [the lab guide](docs/UI_LAB.md) for all sections, flags and testing steps.
+See [the examples guide](examples/README.md) for fixture sections and CLI flags;
+use [Catalog](docs/CATALOG.md) for current component acceptance.
 The smaller examples remain focused regression/learning fixtures, not the main
 manual-testing workflow. Native window alpha/blur still requires platform acceptance.
 
@@ -41,8 +42,8 @@ The Controls section also includes reusable toolbars, joined button bars, typed
 segmented controls and active-page-only tabs, controlled text fields/areas, bounded
 sliders, typed selection popups and modal dialogs. See [the component API](docs/COMPONENTS.md)
 for Rust declarations, keyboard behavior and honest platform limits.
-See [resource usage and the later desktop experiment](docs/RESOURCE_USAGE_AND_DESKTOP.md)
-for software baseline costs, an idle CPU/RSS sample and measurement boundaries.
+See [performance measurement](docs/PERFORMANCE.md) for reproducible workloads
+and the distinction between native timing, readback and utilization.
 See [GPU drawing and dependencies](docs/GPU_RENDERING.md) for the optional Vello
 renderer, feature-pruned backend policy and explicit software comparison.
 
@@ -217,8 +218,8 @@ VOLT_UI_RENDERER=gpu cargo run --locked --features native-gpu --example ui_lab
 VOLT_UI_RENDERER=software cargo run --locked --features native-gpu --example ui_lab
 ```
 Rust source edits require rebuild. Current composition rebuilds the whole tree,
-not dependency-tracked signals/subtree diffing. Background state updates do not
-automatically notify the native runner yet.
+not dependency-tracked signals/subtree diffing. Background state updates use the bounded `UiSender` message API to wake the
+native runner without polling; see [worker messages](docs/APP_RUNTIME.md).
 
 Default builds keep existing widget/Painter APIs and depend only on unicode-width.
 `declarative` adds serde/serde_json; `rust-ui` currently shares that feature;
@@ -226,7 +227,7 @@ Default builds keep existing widget/Painter APIs and depend only on unicode-widt
 or snapshot synchronization are performed by building these examples.
 See [Rust UI design](docs/RUST_UI.md), [all examples](examples/README.md),
 [optional JSON format](docs/DECLARATIVE_UI.md), [styles](docs/STYLING.md) and
-[vertical-slice gates](docs/VERTICAL_SLICE.md). Local development profiles optimize
+[validation gates](docs/VALIDATION.md). Local development profiles optimize
 CPU rendering; consumer workspaces retain their own profiles. See
 [measured performance](docs/PERFORMANCE.md) for evidence and remaining limits.
 
@@ -279,7 +280,8 @@ cargo run --locked --features native-gpu --example showcase -- --screen activity
 cargo run --locked --features native-gpu --example showcase -- --screen explorer
 ```
 
-See [runtime](docs/APP_RUNTIME.md), [declarations and limits](docs/EXTENDED_COMPONENTS.md), and [implementation/acceptance receipt](docs/APP_RUNTIME_AND_COMPONENT_PLAN.md).
+See [runtime](docs/APP_RUNTIME.md), [declarations and limits](docs/EXTENDED_COMPONENTS.md),
+and [validation gates](docs/VALIDATION.md).
 
 ### Extended Rust components (Unreleased)
 
@@ -299,7 +301,7 @@ legacy default renderer/dependencies are unchanged.
   (64 files / 256 MiB total, shared between windows).
 
 Values and callbacks remain controlled by Rust application state. See the
-[API/coverage plan](docs/PARITY_PLAN.md) for examples and explicit limitations;
+[component APIs and limits](docs/COMPONENTS.md) for examples and explicit limitations;
 component availability is not a claim of complete shadcn/Tailwind equivalence
 or full cross-platform runtime acceptance.
 

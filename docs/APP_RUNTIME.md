@@ -44,12 +44,13 @@ thread / executor       queue (256)          UI event thread
 - No queue mutex is held while calling application code. At most 64 messages are dispatched per event; callbacks may enqueue more work. One recomposition follows the batch, not every result. A turn latch rearms pending work only in `AboutToWait`, so macOS winit cannot keep draining a reentrant producer forever before redraw/input.
 - Invalid views keep the previous document/handlers. State mutations are **not** rolled back. Callback/message work must be short; the host cannot make a blocking update nonblocking for you.
 - Window shutdown closes the queue and releases queued payloads. Worker lifetimes are application-owned; `is_closed()` and explicit cancellation tokens are useful. Detached threads are not forcibly terminated.
-- Use a job generation/ID to ignore stale results after cancellation/restart. Showcase Activity demonstrates this, including reset while work is pending.
+- Use a job generation/ID to ignore stale results after cancellation/restart.
+  Catalog Background tasks and existing Showcase Activity demonstrate this.
 - Memory bound is **message count**, not byte size. Do not enqueue unbounded payloads; use compact results, `Arc` assets and explicit retry/drop/coalescing policies. A Full result is not automatic retry.
 
 The native wakeup follows the pinned [winit 0.30.13 EventLoopProxy contract](https://docs.rs/winit/0.30.13/winit/event_loop/struct.EventLoopProxy.html). There is no polling file watcher, global mutable UI state or implicit async runtime.
 
-## Showcase acceptance
+## Example fixtures
 
 ```sh
 cargo run --locked --features native-gpu --example showcase -- --screen activity
@@ -58,3 +59,6 @@ VOLT_UI_RENDERER=software cargo run --locked --features native-gpu --example sho
 ```
 
 Snapshots/benchmarks are deterministic and do not start workers. Native **Prepare workspace**, **Cancel** and **Try a live click** exercise event wakeups while input remains live.
+
+Use [Catalog](CATALOG.md) for current acceptance and new demonstrations; the
+Showcase commands above are retained regression/learning routes.

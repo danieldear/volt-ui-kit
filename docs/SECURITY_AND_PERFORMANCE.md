@@ -1,17 +1,10 @@
-# Security and performance hardening — 2026-10-10
+# Security and resource boundaries
 
-Scope: canonical Volt UI Kit, after reviewing Claude's changes at `c54e421`.
-This is a source/dependency review and regression-hardening batch, not a security
-certification, cross-framework benchmark or completed platform accessibility audit.
-No Volt checkout, UI Lab design, OS permissions or font distribution was changed.
+This guide describes current input, rendering and asset constraints, not a
+security certification or sandbox for application callbacks. Default/legacy
+Painter behaviour and the embedded dependency footprint remain unchanged.
 
-## Plan and delivered changes
-
-1. Capture a clean baseline, current dependency advisories and reproducible defects.
-2. Add failing tests before fixing action validation, rendering and GPU admission.
-3. Reduce bounded resource/staging work without changing legacy APIs or defaults.
-4. Validate default/native/GPU builds, real Metal rendering, Showcase and Rust 1.87.
-5. Record measured results and explicitly retain the acceptance gaps below.
+## Input and renderer checks
 
 ```text
 Assistive request
@@ -79,12 +72,32 @@ remain 16 MiB encoded, 4096 per dimension and 128 MiB decoder allocation.
   fell from **16 MiB -> zero**. This measures CPU staging, not GPU upload time or
   whole-app latency. A unit test asserts borrowed buffer identity and alpha parity.
 
-## Fresh dependency audit
+## Files, dropped paths and bundled fonts
 
-`cargo audit --json`, advisory database commit
-`7eebec69c352c7191b1f13eb95dd510eeca5d1de`, updated 2026-10-09:
-**zero known vulnerabilities** in the lockfile. Five informational maintenance
-warnings cover three package families:
+- Drop dispatch revalidates mounting, enabled bindings and active modal scope;
+  cached file-hover state cannot bypass a newly opened modal.
+- Extension filtering is convenience, not file-content validation or authorization.
+  Hosts decide whether/how to open supplied paths; no file is read automatically.
+- Native text-file helpers bound UTF-8 to 8 KiB, refuse nonregular/symlink targets
+  and use explicit creation/replacement policy. New-file fallback uses exclusive
+  create with Unix mode 0600 when hard links are unavailable.
+- These helpers are not a filesystem sandbox or multi-process transaction manager:
+  checks and rename have documented races, ACL/xattrs are not retained, and parent
+  directories are not fsynced. Linkless fallback can leave a partial file if the
+  process dies during writing. See [document files](DOCUMENT_FILES.md).
+- Font registration accepts at most 64 files, 64 MiB per file and 256 MiB total;
+  immutable bytes are shared across windows. Register before creating windows.
+- SVG path import accepts bounded path data (1 MiB / 100,000 segments), validates
+  finite coordinates, and does not execute scripts or load external SVG assets.
+- Local bundle tooling sanitizes executable names and escapes plist values; it
+  passes argument vectors to native tools, not shell-expanded input. See
+  [packaging](MACOS_PACKAGING.md).
+
+## Dependency maintenance
+
+Run `cargo audit` against the current advisory database before releases. The
+latest local audit on 2026-10-12 reported zero known vulnerability advisories,
+with informational unmaintained warnings for the existing optional stacks:
 
 | Package | Dependency route | Official advisory |
 | --- | --- | --- |
@@ -99,78 +112,19 @@ not a blind lockfile update. Audit results are time-sensitive and do not prove
 unknown flaws absent; no fuzzing, penetration test or supply-chain attestation is
 claimed by this batch.
 
-## Measurement and verification receipts
+## Validation and remaining risks
 
-Raw logs live in `work/security-performance-2026-10-10/`. The delivered review
-copies the relevant logs alongside this report. Showcase remains the primary
-polished acceptance app; no new primary examples or UI Lab features were added.
+Run the [validation gates](VALIDATION.md), including actual GPU tests and native
+acceptance. Timing/staging optimizations are described in [performance](PERFORMANCE.md);
+these do not establish whole-app latency or CPU/GPU utilization guarantees.
 
-Benchmark: Apple M4 Pro / Metal, release build, Showcase Activity, 1280x900 logical
-pixels, opaque background, `activity-counter`, 4 warmups and 60 measured actions.
-Three serial before/after runs at each renderer/scale compare the archived
-`c54e421` source to this batch. GPU measurements include blocking completion and
-CPU readback; OS event queues/presentation are excluded. First overlapping runs
-are diagnostic only and are not used for conclusions.
+Late-generated colour glyphs are not completely atlas-packing-preflighted; dense
+mixed emoji/image scenes and conservative fixed-buffer estimates still need stress
+coverage. Real device loss, sustained image churn, cross-platform runtime and
+live assistive technology remain separate acceptance work. Native glass switching
+and generic in-app backdrop blur retain their [documented limits](SURFACES_THEMES_AND_SCROLLING.md).
 
-Median of each run's p50/p95, milliseconds (three runs per cell):
-
-| Renderer / scale | Before p50 / p95 | After p50 / p95 |
-| --- | ---: | ---: |
-| software / 1x | 2.729 / 2.784 | 2.736 / 2.830 |
-| software / 2x | 8.739 / 9.072 | 8.783 / 9.018 |
-| gpu / 1x | 3.622 / 5.031 | 3.749 / 3.890 |
-| gpu / 2x | 8.471 / 8.792 | 8.541 / 8.996 |
-
-Software changes are small; GPU 1x p50 is **0.127ms higher** in this sample,
-GPU 2x **0.070ms higher**. This safety/metadata work is not a demonstrated
-whole-app speedup. Three local runs are not statistical or cross-device proof.
-
-Final validation:
-
-| Gate | Result |
-| --- | --- |
-| Default / declarative (including doctest) | 40 / 65 passed, one ignored doctest each |
-| Native software all targets | 399 passed, one timing test ignored |
-| Native GPU all targets | 408 passed, ten explicit acceptance/timing tests ignored |
-| GPU doctests | 28 passed, one ignored |
-| Explicit GPU-library acceptance + staging timing | 8 passed (7 hardware, 1 CPU timing) |
-| Explicit Northbound GPU + incremental timing | 2 passed |
-| Strict all-target Clippy, fmt/diff, Rust 1.87 all-feature/all-target check | Passed |
-| Warning-free rustdoc, all-feature package verification | Passed (161 packaged files) |
-| Isolated public Volt 0.1.12 workspace compile + snapshot check | Passed; real checkout untouched |
-| Final adversarial probe rerun | Miter: zero pixel differences; emoji alpha: 51; italic outside pixels: zero; primary variants: matching contrast; all image centres present |
-
-Counts overlap between feature configurations and include existing example
-tests; they must not be summed into a count of unique tests. Package metadata
-(homepage/repository) and non-root profile notices remain non-fatal warnings.
-Do not equate these frame costs with CPU/GPU utilization, native FPS, energy,
-thermal load or comparisons against Iced/COSMIC.
-
-Reproduce:
-
-```sh
-cargo audit
-cargo test --locked --features native-gpu --all-targets
-cargo test --locked --features native-gpu --lib -- --ignored --nocapture
-cargo clippy --locked --features native-gpu --all-targets -- -D warnings
-cargo +1.87.0 check --locked --all-features --all-targets
-VOLT_UI_RENDERER=gpu cargo run --release --locked --features native-gpu --example showcase -- --screen activity --background opaque --bench 60 --bench-target activity-counter --scale 2
-```
-
-## Still pending / outside this batch
-
-- Accessibility scrolling/focus reveal and composite semantic names/selected
-  states from the Claude review are **not** completed by action hardening.
-  Live VoiceOver/Narrator/Orca acceptance remains separate.
-- Explicit source-image packing is preflighted. Vello's late-bound colour-glyph
-  image generation is not completely packing-preflighted; dense mixed emoji/image
-  scenes and approximation-based fixed-buffer estimates remain GPU stress risks.
-- Real window input-to-present latency, CPU/GPU utilization, energy, memory under
-  sustained image churn, device-loss recovery and Linux/Windows runtime acceptance
-  remain profiling/platform gates. Headless Metal tests do not satisfy those gates.
-- The isolated public Volt compile is a compatibility check, **not** an actual
-  vendor sync, visual/performance test or release approval.
-
-Recommended next batch: complete AX semantics/scrolling, then profile Showcase
-native idle/interaction/animation/scroll/image churn and validate the remaining
-GPU/platform risks before making production performance claims.
+Private compositor blur remains opt-in and is not an App Store-safe distribution
+claim. Avoid broad dependency updates that silently raise the MSRV or invalidate
+surface-alpha/font/renderer contracts. Toolkit checks do not authorize a Volt
+vendor sync or replace terminal visual/performance verification.

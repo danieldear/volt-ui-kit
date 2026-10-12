@@ -77,11 +77,11 @@ log transparency without material. Explicit Compositor mode uses winit blur,
 checks Reduce Transparency on redraw, and returns to an opaque clear when that
 accessibility preference is enabled. It is not an App Store-safe claim. Other compositors may ignore blur. Application packaging,
 permission and dependency review still gate App Store distribution claims.
-See [the current review receipt](CLAUDE_REVIEW_2026_10_11.md).
+See [validation and platform gates](VALIDATION.md).
 The in-app landscape demo illustrates surface alpha, **not desktop blur**.
 Glass Browser-style in-app GPU backdrop blur is still pending; native window blur
 must not be represented as blur of application content.
-See [the independent-control receipt](GLASS_CONTROLS_2026_10_11.md).
+See [window opacity/tint/blur](SURFACES_THEMES_AND_SCROLLING.md).
 
 The pinned wgpu 26 Metal backend advertises `PostMultiplied`, but macOS consumes
 premultiplied surface pixels. Volt compensates only in the Metal presentation
@@ -89,7 +89,7 @@ shader; otherwise light-mode translucent fills wash to white and antialiased
 text/borders lose their intended appearance. This is not a tint or font change.
 `VOLT_UI_TRACE=1` now reports `VOLT_UI_SURFACE` pixel encoding and `VOLT_UI_FONTS`
 resolved SF Text/Display/Mono families. See the
-[regression receipt](METAL_ALPHA_REGRESSION_2026_10_11.md) for evidence and limits.
+[surface encoding policy](GPU_RENDERING.md) for evidence and limits.
 
 ## Screen structure and design
 

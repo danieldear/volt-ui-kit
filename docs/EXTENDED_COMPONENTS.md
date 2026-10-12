@@ -1,6 +1,7 @@
 # Menus, overlays, data and loading components
 
-New visual acceptance uses [Showcase Activity/Explorer](SHOWCASE_APPS.md), preserving its existing theme/type/corner language; Lab remains a diagnostic fixture.
+New visual acceptance uses [Catalog](CATALOG.md). Existing Showcase
+Activity/Explorer and Lab remain regression fixtures, not places for new demos.
 
 `.fill_width()` removes a builder's fixed-width default so a vertical parent can stretch the component. Virtual rows stretch with their viewport. Menu font/corner/background modifiers style the actual trigger.
 

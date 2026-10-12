@@ -7,9 +7,8 @@ and existing `Painter` implementations remain source-compatible.
 
 ## Try the examples
 
-For everyday testing, use the single [Volt UI Lab app](UI_LAB.md):
-`cargo run --features native --example ui_lab`. The focused examples below are
-retained for learning and regression isolation.
+For everyday component testing, use [Volt Catalog](CATALOG.md). The focused
+surface examples below remain regression fixtures for learning and isolation:
 
 ```sh
 cargo run --features native --example rust_surfaces
@@ -202,12 +201,12 @@ let options = NativeOptions::default().with_theme(ThemeMode::System)
 ```
 
 `WindowBackground::Transparent { opacity }` requests alpha without blur;
-Opaque is the backward-compatible default. The opacity tints the root clear;
+Opaque is the backward-compatible default. The opacity controls the root clear alpha;
 text and controls remain opaque unless their own modifiers request otherwise.
 **Do not paint an opaque root background** if the desktop should remain visible.
 
 `native-gpu` now draws Vello GPU scenes for opaque/alpha windows, adapting the
-output to the advertised PreMultiplied/PostMultiplied compositor mode. It does not
+output to compositor pixel encoding (including the pinned Metal workaround). It does not
 make the default widget library GPU-dependent. Without this feature, or when
 initialization is unavailable in `auto` mode, the host logs opaque software
 fallback. `VOLT_UI_RENDERER=gpu` instead requires successful GPU drawing. See
@@ -217,7 +216,8 @@ It never labels an opaque tint/shadow as backdrop blur.
 winit blur is an OS request: macOS and KDE Wayland support vary; Windows/X11 and
 other unsupported platforms do not gain native blur from this API. There is no
 portable backdrop blur-radius control. Pixel tests verify premultiplied rendering;
-desktop-through transparency, blur, OS appearance changes and trackpad feel require device/platform acceptance testing. Since 0.3.0 decorated macOS GPU windows request a public `NSVisualEffectView` behind-window material, without invoking winit's private blur API. Borderless/unsupported requests warn and retain transparency. Packaging/dependency review, fullscreen and live accessibility preference acceptance still gate release claims.
+desktop-through transparency, blur, OS appearance changes and trackpad feel require device/platform acceptance testing. `WindowBackground::Blur` requests a public `NSVisualEffectView` behind-window
+material on decorated macOS GPU windows, without invoking winit's private blur API. Borderless/unsupported requests warn and retain transparency. Packaging/dependency review, fullscreen and live accessibility preference acceptance still gate release claims.
 
 Primary references: [semantic colors](https://daisyui.com/docs/colors/),
 [winit window capabilities](https://docs.rs/winit/0.30.13/winit/window/struct.Window.html),
@@ -226,20 +226,87 @@ The image decoder is pinned to 0.25.8 for Rust 1.87 compatibility. The optional
 renderer uses Vello 0.6.0/wgpu 26.0.1 with pruned backend features; the complete
 GPU all-target build is checked with Rust 1.87. Newer Vello needs newer Rust.
 
-## Verification receipt (2026-10-08)
+## Window opacity, tint and blur
 
-- All-feature targets: 187 tests passed; rustdoc: 17 passed, 1 existing ignored.
-- Default and Rust-only feature tests passed independently.
-- Strict all-feature Clippy, formatting, and Rust 1.87 all-target checks passed.
-- The all-feature Cargo package was assembled and verified by compiling it.
-- Light/dark and 1x/2x headless snapshots were inspected; tests cover nested
-  scrolling, reachable callbacks, scroll clamping, matching paint/input clipping,
-  image fit/opacity, semantic colors and glow on all four sides.
+Catalog keeps separate controls for **Background opacity**, **Tint strength**,
+**Backdrop blur**, and (on macOS) **Material / Compositor**. Opacity is the native
+root clear's alpha, not a subtree-opacity animation. The content sheet and text
+remain opaque. Tint mixes the selected accent (or a neutral surface for Zinc) into root RGB, not
+another alpha layer. Default opacity is 72%, tint 0%; the Catalog opacity control
+has a 10% floor to avoid macOS zero-alpha hit-test fall-through. Applications can
+request any finite opacity from 0 to 1.
 
-These checks do not replace the native device acceptance listed above. Warm CPU
-benchmarking of the 960x900 surfaces example measured a 14.3 ms p95 from release
-handling to packed pixels (20 samples after 4 warmups); it excludes OS event queues,
-compositor presentation and input-to-photon latency, and is not a frame-rate promise.
+```text
+Window content behind app -> selected native blur -> root RGB + opacity
+                                                       |
+                                                       +-> text/controls on top
+
+Opacity: coverage / see-through strength       10% ... 100% ... 10%
+Tint:    accent contribution to background RGB  0% ... 100% (independent)
+Blur:    native blur on/off + explicit source   never implied by tint
+```
+
+- `WindowBackground::Blur`: existing public AppKit material on macOS, unchanged.
+  The material itself adds system tint/opacity; a root alpha of 10% does not mean
+  the **combined native material** has 10% opacity. This limitation is labeled.
+- `WindowBackground::CompositorBlur`: explicit winit compositor request. Volt
+  Terminal uses this path. Pinned winit calls private
+  `CGSSetWindowBackgroundBlurRadius` on macOS (radius 80); **not an App Store-safe
+  distribution claim**. No radius slider or cross-platform pixel equivalence is
+  promised. It has no permanent AppKit material tint underneath the root clear.
+- `Transparent`: alpha without blur. `Opaque`: solid root. Software fallback
+  remains opaque and disables an opted-in compositor blur after GPU loss/error.
+- Raw macOS blur checks Reduce Transparency on each redraw: disable the blur and
+  use an opaque clear while enabled. There is no new idle preference observer;
+  a subsequent frame/focus/input is needed to apply that preference.
+
+The ordinary GPU Catalog defaults still use public material. To try Terminal-style
+behavior, select **Compositor** in Catalog or explicitly launch:
+
+```sh
+cargo run --locked --release --features native-gpu,native-desktop --example catalog -- \
+  --background compositor --window-opacity 0.72 --tint 0
+```
+
+### State-derived window backgrounds
+
+```rust,ignore
+Application::new("My app", state, view)
+    .background_from_state(|app| WindowBackground::CompositorBlur {
+        opacity: app.background_opacity,
+    })
+    .theme_with(|app, mode| {
+        theme(app, mode).with_background_color(app.background_color)
+    });
+```
+
+`background_from_state` runs after changed/activated input, native command and
+background-message updates. Nonfinite or out-of-range values are rejected and retain
+the previous surface configuration. Initial options are validated before OS
+creation. Changing opacity within a translucent mode does not recreate the device;
+changing between `Opaque` and translucent modes does recreate the GPU surface.
+`background(...)` called afterward clears the state callback (last builder wins).
+`UiTheme::with_background_color` overrides the root only: semantic palette colors
+remain intact. The host rejects invalid RGBA on rendering. Existing public options
+struct fields, `ApplicationRequest` equality, default dependencies, legacy Painter
+and Volt's vendored snapshot remain unchanged. `WindowBackground` gained an
+additional variant; exhaustive downstream matches must cover it.
+
+### Native transition and renderer limitations
+
+Public Material is the default for decorated macOS GPU windows. Compositor blur
+is a private-API opt-in. The reported **Material -> Compositor square external
+corners are not certified fixed**. The current host retains/hides its native
+Material underlay between modes, refreshes native views/shadow, and prepares the
+backdrop before showing the window; this does not replace desktop-level QA.
+
+Generic in-app GPU backdrop blur remains unimplemented. A native window material
+or translucent panel does not blur content drawn inside the app. That requires
+an explicit backdrop source, bounded cached targets and alpha-correct blur passes.
+
+Window-only captures cannot certify desktop blur quality. Test light/dark modes,
+repeated source switches, desktop contrast and Reduce Transparency on a real Mac.
+See [GPU encoding](GPU_RENDERING.md) and [validation](VALIDATION.md).
 
 ### Wheel scrolling through an empty overlay
 
