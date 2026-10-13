@@ -9,6 +9,7 @@ pub use commands::{
     CommandRegistry, Shortcut,
 };
 mod assets;
+pub mod clipboard;
 pub mod file_dialog;
 pub mod files;
 #[cfg(target_os = "macos")]
