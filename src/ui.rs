@@ -324,8 +324,9 @@ pub use bars::{
     SelectionControl, Tab, TabItem, TabPlacement, Tabs, Toolbar,
 };
 pub use data::{
-    data_item, table, table_column, table_row, tree_node, tree_view, virtual_list, DataItem,
-    SortDirection, Table, TableColumn, TableRow, TreeNode, TreeView, VirtualList,
+    data_item, lazy_list, table, table_column, table_row, tree_node, tree_view, virtual_list,
+    DataItem, LazyList, SortDirection, Table, TableColumn, TableRow, TreeNode, TreeView,
+    VirtualList,
 };
 pub use dialogs::{dialog, Dialog};
 pub use inputs::{text_area, text_field, TextInput};
@@ -1051,6 +1052,7 @@ modifiers!(ContextMenu, [T], [0.node], [0.auto_id]);
 modifiers!(Popover, [0.node], [0.auto_id]);
 modifiers!(Tooltip, [0.node], [0.auto_id]);
 modifiers!(VirtualList, [T, F], [0.node], [0.auto_id]);
+modifiers!(LazyList, [F], [0.node], [0.auto_id]);
 modifiers!(Table, [T, K], [0.node], [0.auto_id]);
 modifiers!(TreeView, [T], [0.node], [0.auto_id]);
 modifiers!(Progress, [0.node], [0.auto_id]);
@@ -1082,21 +1084,21 @@ pub mod prelude {
     pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
     pub use super::{
         badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
-        divider, grid, hstack, loading, menu, menu_item, menu_separator, menu_submenu, navigation,
-        navigation_item, panel, popover, progress, progress_indeterminate, range_slider,
-        responsive, row, segmented_control, select, select_item, separator, slider, spacer,
-        spinner, split, stack, tab, tab_bar, tab_item, table, table_column, table_row, tabs, text,
-        text_area, text_field, toggle, toolbar, tooltip, tree_node, tree_view, virtual_list,
-        vstack, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage, BorderStyle,
-        Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu, ControlSize,
-        Corner, CornerSet, Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge, Edges,
-        Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image, ImageFit, ImagePosition,
-        Interaction, Justify, Menu, MenuItem, Navigation, NavigationItem, NavigationPlacement,
-        Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem,
-        SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle, SplitPane, Tab,
-        TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode,
-        Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
-        VisualStyle,
+        divider, grid, hstack, lazy_list, loading, menu, menu_item, menu_separator, menu_submenu,
+        navigation, navigation_item, panel, popover, progress, progress_indeterminate,
+        range_slider, responsive, row, segmented_control, select, select_item, separator, slider,
+        spacer, spinner, split, stack, tab, tab_bar, tab_item, table, table_column, table_row,
+        tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node, tree_view,
+        virtual_list, vstack, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage,
+        BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
+        ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge,
+        Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image, ImageFit,
+        ImagePosition, Interaction, Justify, LazyList, Menu, MenuItem, Navigation, NavigationItem,
+        NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
+        Select, SelectItem, SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle,
+        SplitPane, Tab, TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextAlign,
+        TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme,
+        VectorPath, VirtualList, VisualStyle,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,

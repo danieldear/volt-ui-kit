@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `lazy_list(count, |row| ..)`: a scrolling column of variable-height rows
+  that builds only the rows near the viewport, so documents and feeds of
+  any length stay within the element budget. Rows are measured as they
+  mount (estimates stand in for the rest), the visible row stays put when
+  rows above it are measured, and `.scroll_to_row(row, request)` jumps to
+  rows that are not built yet. Windows are reported through
+  `on_window_change`, as for `virtual_list`.
+- GPU text on macOS now uses font-smoothing-style stem darkening (outline
+  dilation matching CoreText) so it no longer reads thin and light next to
+  native apps, and is hinted on displays below 1.5x.
+  `VOLT_UI_TEXT_DARKENING=0` turns the darkening off.
+- `native::clipboard::{set_text, text}` for plain-text copy and paste.
+
 - Rich text: `rich_text([span(..), ..])` lays out one paragraph of styled
   runs (weight, italic, font family, colour, rounded background, underline,
   strikethrough; `.code()` for inline code). It wraps, aligns and truncates

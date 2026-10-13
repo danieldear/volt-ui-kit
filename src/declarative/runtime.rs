@@ -375,6 +375,8 @@ pub struct Runtime {
     last_viewport: Option<[f32; 3]>,
     motion: RefCell<Motion>,
     scroll_offsets: BTreeMap<String, [f32; 2]>,
+    /// Variable-height lists: measured row heights per list key.
+    lazy_heights: BTreeMap<String, LazyHeights>,
     /// Last laid-out vertical extent of end-anchored scroll views.
     scroll_ends: BTreeMap<String, f32>,
     /// Resolved styles depend only on the document, scale and logical width,
@@ -441,6 +443,7 @@ impl Runtime {
             last_viewport: None,
             motion: RefCell::new(Motion::default()),
             scroll_offsets: BTreeMap::new(),
+            lazy_heights: BTreeMap::new(),
             scroll_ends: BTreeMap::new(),
             styles_cache: None,
             reuse: Reuse::default(),
@@ -757,6 +760,7 @@ impl Runtime {
             area,
             &[],
             &mut self.scroll_offsets,
+            &mut self.lazy_heights,
             values,
             metrics,
             self.scale,
@@ -781,6 +785,7 @@ impl Runtime {
                 area,
                 &[],
                 &mut self.scroll_offsets,
+                &mut self.lazy_heights,
                 values,
                 metrics,
                 self.scale,
@@ -3887,6 +3892,53 @@ fn child_sizes(
     }
     (sizes, gap)
 }
+/// Row heights of one variable-height list: measured when mounted,
+/// estimated otherwise. Logical pixels.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LazyHeights {
+    count: usize,
+    generation: u64,
+    /// Negative: not measured yet.
+    measured: Vec<f32>,
+    /// Last jump-to-index request handled.
+    request: u32,
+}
+impl LazyHeights {
+    fn sync(&mut self, count: usize, generation: u64) {
+        if self.count != count || self.generation != generation || self.measured.len() != count {
+            self.count = count;
+            self.generation = generation;
+            self.measured = vec![-1.; count];
+        }
+    }
+    fn height(&self, i: usize, estimates: &[f32]) -> f32 {
+        match self.measured.get(i) {
+            Some(&h) if h >= 0. => h,
+            _ => estimates.get(i).copied().unwrap_or(0.),
+        }
+    }
+    /// Top of row `i` (or the total height for `i == count`) with `gap`
+    /// between rows.
+    fn top(&self, i: usize, estimates: &[f32], gap: f32) -> f32 {
+        (0..i.min(self.count))
+            .map(|j| self.height(j, estimates) + gap)
+            .sum()
+    }
+    fn total(&self, estimates: &[f32], gap: f32) -> f32 {
+        (self.top(self.count, estimates, gap) - gap).max(0.)
+    }
+    /// The row containing logical offset `y`.
+    fn index_at(&self, y: f32, estimates: &[f32], gap: f32) -> usize {
+        let mut top = 0.;
+        for i in 0..self.count {
+            top += self.height(i, estimates) + gap;
+            if top > y {
+                return i;
+            }
+        }
+        self.count.saturating_sub(1)
+    }
+}
 #[allow(clippy::too_many_arguments)]
 fn place(
     n: &Node,
@@ -3895,6 +3947,7 @@ fn place(
     effect_ancestor: Rect,
     regions: &[ClipRegion],
     offsets: &mut BTreeMap<String, [f32; 2]>,
+    lazy: &mut BTreeMap<String, LazyHeights>,
     v: &Bindings,
     m: &mut impl TextMetrics,
     s: f32,
@@ -4122,12 +4175,51 @@ fn place(
             content = [available[0], height];
         }
         if let Some(list) = &n.virtual_list {
-            content[1] = list.count as f32 * list.row_height * s;
+            match list.estimates.as_deref() {
+                None => content[1] = list.count as f32 * list.row_height * s,
+                Some(estimates) => {
+                    let gap_l = gap / s;
+                    let lz = lazy.entry(n.id.clone()).or_default();
+                    lz.sync(list.count, list.generation);
+                    // Measure the mounted rows; keep the first visible row
+                    // where it was if rows above it changed height.
+                    let current = offsets.get(&n.id).map(|o| o[1]);
+                    let anchor = current.map(|y| lz.index_at(y, estimates, gap_l));
+                    let before = anchor.map(|a| lz.top(a, estimates, gap_l));
+                    for (k, size) in sizes.iter().enumerate() {
+                        if let Some(slot) = lz.measured.get_mut(list.start + k) {
+                            *slot = size[1] / s;
+                        }
+                    }
+                    if let (Some(a), Some(before), Some(offset)) =
+                        (anchor, before, offsets.get_mut(&n.id))
+                    {
+                        offset[1] += lz.top(a, estimates, gap_l) - before;
+                    }
+                    if let Some((row, request)) = list.scroll_to_index {
+                        if request != lz.request {
+                            if request != 0 {
+                                let top = lz.top(row, estimates, gap_l);
+                                offsets.insert(n.id.clone(), [0., top]);
+                            }
+                            lz.request = request;
+                        }
+                    }
+                    content[1] = lz.total(estimates, gap_l) * s;
+                }
+            }
         }
         let offset = offsets.entry(n.id.clone()).or_insert_with(|| {
             n.virtual_list
                 .as_ref()
-                .map_or([0.; 2], |list| [0., list.start as f32 * list.row_height])
+                .map_or([0.; 2], |list| match list.estimates.as_deref() {
+                    None => [0., list.start as f32 * list.row_height],
+                    Some(estimates) => [
+                        0.,
+                        lazy.get(&n.id)
+                            .map_or(0., |lz| lz.top(list.start, estimates, gap / s)),
+                    ],
+                })
         });
         for a in 0..2 {
             let max = if axes[a] {
@@ -4143,6 +4235,38 @@ fn place(
             }
         }
         out[index].scroll_offset = *offset;
+    }
+    if let Some(list) = n.virtual_list.as_ref().filter(|l| l.estimates.is_some()) {
+        let estimates = list.estimates.as_deref().unwrap_or(&[]);
+        let measure = [available[0], 16_384. * s];
+        let (sizes, gap) = child_sizes(n, measure, v, m, s, memo, styles, child_natural);
+        let top = lazy
+            .get(&n.id)
+            .map_or(0., |lz| lz.top(list.start, estimates, gap / s));
+        let mut y = start[1] + top * s;
+        for (child, size) in n.children.iter().zip(sizes) {
+            if let Some(r) = Rect::new(start[0], y, available[0], size[1].max(1.)) {
+                place(
+                    child,
+                    r,
+                    child_clip,
+                    child_effect,
+                    &child_regions,
+                    offsets,
+                    lazy,
+                    v,
+                    m,
+                    s,
+                    out,
+                    memo,
+                    styles,
+                    child_natural,
+                    child_visible,
+                );
+            }
+            y += size[1] + gap;
+        }
+        return;
     }
     if let Some(list) = &n.virtual_list {
         for (row, child) in n.children.iter().enumerate() {
@@ -4160,6 +4284,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -4205,6 +4330,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -4275,6 +4401,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -4333,6 +4460,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -4407,6 +4535,7 @@ fn place(
                 child_effect,
                 &child_regions,
                 offsets,
+                lazy,
                 v,
                 m,
                 s,

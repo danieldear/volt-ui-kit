@@ -378,7 +378,16 @@ pub(crate) struct VirtualListProps {
     pub row_height: f32,
     pub overscan: usize,
     pub on_window_change: Option<String>,
+    /// Variable-height rows: an estimated logical height per row (one per
+    /// row). Mounted rows are measured; estimates stand in for the rest.
+    pub estimates: Option<std::sync::Arc<[f32]>>,
+    /// Bumped by the app when row contents change; resets measurements.
+    pub generation: u64,
+    /// Scroll so row `.0` is at the top whenever `.1` changes.
+    pub scroll_to_index: Option<(usize, u32)>,
 }
+/// Most rows a variable-height list mounts at once.
+pub(crate) const MAX_LAZY_WINDOW: usize = 256;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
 pub(crate) struct SplitProps {
@@ -1148,10 +1157,25 @@ fn check_node(
         }
     }
     if let Some(list) = &n.virtual_list {
+        let variable = list.estimates.as_ref().is_some_and(|e| {
+            e.len() == list.count
+                && e.iter()
+                    .all(|h| h.is_finite() && (1. ..=100_000.).contains(h))
+        });
+        if list.estimates.is_some() && !variable {
+            return Err(error(
+                path,
+                "variable list needs one finite estimate (1–100000) per row",
+            ));
+        }
+        let max_window = if variable { MAX_LAZY_WINDOW } else { 96 };
         if n.kind != Kind::Panel
             || list.start > list.end
             || list.end > list.count
-            || list.end - list.start > 96
+            || list.end - list.start > max_window
+            || list
+                .scroll_to_index
+                .is_some_and(|(i, _)| i >= list.count.max(1))
             || list.overscan > 16
             || list.count > 10_000_000
             || !list.row_height.is_finite()

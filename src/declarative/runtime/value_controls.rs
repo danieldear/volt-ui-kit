@@ -731,17 +731,40 @@ impl Runtime {
         let pad = b.style.layout.padding;
         let height = ((r[3] - pad[0] - pad[2]) / self.scale).max(0.);
         let offset = self.scroll_offsets.get(&b.id).map_or(0., |v| v[1]);
-        let first = (f64::from(offset) / f64::from(props.row_height))
-            .floor()
-            .max(0.) as usize;
-        let visible = (height / props.row_height).ceil() as usize;
-        let start = first.saturating_sub(props.overscan).min(props.count);
-        let end = first
-            .saturating_add(visible)
-            .saturating_add(props.overscan)
-            .saturating_add(1)
-            .min(props.count)
-            .min(start.saturating_add(96));
+        let (start, end) = if let Some(estimates) = props.estimates.as_deref() {
+            // Variable heights: measured rows where known, estimates elsewhere.
+            let gap = b.style.layout.gap / self.scale;
+            let mut fresh = super::LazyHeights::default();
+            let heights = match self.lazy_heights.get(&b.id) {
+                Some(lz) => lz,
+                None => {
+                    fresh.sync(props.count, props.generation);
+                    &fresh
+                }
+            };
+            let first = heights.index_at(offset, estimates, gap);
+            let last = heights.index_at(offset + height, estimates, gap);
+            let start = first.saturating_sub(props.overscan).min(props.count);
+            let end = last
+                .saturating_add(props.overscan)
+                .saturating_add(1)
+                .min(props.count)
+                .min(start.saturating_add(super::super::document::MAX_LAZY_WINDOW));
+            (start, end)
+        } else {
+            let first = (f64::from(offset) / f64::from(props.row_height))
+                .floor()
+                .max(0.) as usize;
+            let visible = (height / props.row_height).ceil() as usize;
+            let start = first.saturating_sub(props.overscan).min(props.count);
+            let end = first
+                .saturating_add(visible)
+                .saturating_add(props.overscan)
+                .saturating_add(1)
+                .min(props.count)
+                .min(start.saturating_add(96));
+            (start, end)
+        };
         if start != props.start || end != props.end {
             if let Some(action) = props.on_window_change.as_deref() {
                 handlers
