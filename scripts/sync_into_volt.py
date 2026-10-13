@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def sources():
     files = [ROOT / n for n in ("Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md", "ROADMAP.md")]
-    files += [p for d in ("src", "examples", "tests", "docs") for p in (ROOT / d).rglob("*") if p.is_file()]
+    files += [p for d in ("src", "examples", "tests", "docs") for p in (ROOT / d).rglob("*")
+              if p.is_file() and "images" not in p.relative_to(ROOT).parts]  # README screenshots
     return {str(p.relative_to(ROOT)): p for p in sorted(files)}
 
 def main():

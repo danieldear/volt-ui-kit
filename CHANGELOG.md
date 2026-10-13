@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- GPU stack upgraded from Vello 0.6 / wgpu 26 to **Vello 0.11 / wgpu 30**
+  (guillotiere 0.7, matching Vello's atlas allocator). The minimum Rust
+  version rises from 1.87 to **1.89**, which Vello 0.11 requires; generated
+  `cargo volt new` projects follow. Rendering is unchanged on 51 of 53
+  Catalog views (within 1/255). Bitmap images drawn with
+  `ImageQuality::High` now get true bicubic sampling on the GPU (Vello 0.6
+  fell back to bilinear), which brings them 2–3× closer to the software
+  renderer. Vello's fixed buffer capacities are unchanged, so frame
+  admission and strip splitting are kept as they were. The Metal
+  premultiplied-alpha workaround is still required on wgpu 30.
+- Fixed: charts with many data points could exceed the canvas limit of 256
+  paths, and the view was then rejected. Selecting a candle in the Catalog
+  Dashboard's 6M range did nothing for this reason. Candlestick, volume,
+  stacked-bar and bar charts now batch their shapes by colour into a few
+  paths, so their path count no longer grows with the data (the output is
+  pixel-identical). `line_chart` draws point markers only while they don't
+  overlap. The limits are public as `graphics::MAX_CANVAS_PATHS` and
+  `graphics::MAX_PATH_COMMANDS`.
+
 - Documentation rewritten for a public release. The 21 Markdown guides,
   which had grown into session logs, are now eight user guides under
   `docs/`, plus a new README, `CONTRIBUTING.md` and `SECURITY.md` and a
