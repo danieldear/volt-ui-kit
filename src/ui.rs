@@ -258,6 +258,8 @@ type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
 type ContextCallback<C> = Box<dyn FnMut(&mut C, [f32; 2])>;
 type WindowCallback<C> = Box<dyn FnMut(&mut C, std::ops::Range<usize>)>;
 type FilesCallback<C> = Box<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>;
+type SelectionCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::TextSelection)>;
+type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
@@ -265,6 +267,8 @@ enum Callback<C> {
         change: Option<ChangeText<C>>,
         submit: Option<Click<C>>,
         cancel: Option<Click<C>>,
+        selection: Option<SelectionCallback<C>>,
+        key: Option<KeyCallback<C>>,
     },
     Number(ChangeNumber<C>),
     Range {
@@ -427,7 +431,23 @@ impl<C: 'static> Element<C> {
                         change,
                         submit,
                         cancel,
+                        selection,
+                        key,
                     } => {
+                        if let Some(f) = selection {
+                            let action = format!("{name}-selection");
+                            handlers
+                                .on_selection_changed(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_selection = Some(action);
+                        }
+                        if let Some(f) = key {
+                            let action = format!("{name}-key");
+                            handlers
+                                .on_key(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_key = Some(action);
+                        }
                         if let Some(f) = change {
                             let action = format!("{name}-change");
                             handlers

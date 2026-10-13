@@ -7,6 +7,8 @@ struct InputCallbacks<C> {
     change: Option<TextChange<C>>,
     submit: Option<Click<C>>,
     cancel: Option<Click<C>>,
+    selection: Option<SelectionCallback<C>>,
+    key: Option<KeyCallback<C>>,
     leading: Option<Icon>,
     trailing: Option<Trailing<C>>,
 }
@@ -42,6 +44,8 @@ fn input<C>(value: impl Into<String>, multiline: bool) -> TextInput<C> {
             change: None,
             submit: None,
             cancel: None,
+            selection: None,
+            key: None,
             leading: None,
             trailing: None,
         },
@@ -56,9 +60,41 @@ impl<C> TextInput<C> {
         self.1.submit = Some(Box::new(f));
         self
     }
+    /// The selection or caret moved (or the text changed): byte range and
+    /// the caret's rectangle, for popups that follow the caret.
+    pub fn on_selection(
+        mut self,
+        f: impl FnMut(&mut C, crate::declarative::TextSelection) + 'static,
+    ) -> Self {
+        self.1.selection = Some(Box::new(f));
+        self
+    }
+    /// Hand `keys` to `f` instead of editing, e.g. Up, Down and Enter while
+    /// a completion menu is open. An empty list hands over nothing.
+    pub fn on_keys(
+        mut self,
+        keys: impl IntoIterator<Item = crate::declarative::EditKey>,
+        f: impl FnMut(&mut C, crate::declarative::EditKey) + 'static,
+    ) -> Self {
+        self.0.node.editor.as_mut().unwrap().keys = keys.into_iter().collect();
+        self.1.key = Some(Box::new(f));
+        self
+    }
+    /// Select `range` (caret at its end) whenever `request` changes, e.g.
+    /// to place the caret after text the application inserted.
+    pub fn select(mut self, range: std::ops::Range<usize>, request: u32) -> Self {
+        self.0.node.editor.as_mut().unwrap().select = Some((range.start, range.end, request));
+        self
+    }
     /// Escape while the field has focus, e.g. to close a find bar.
     pub fn on_cancel(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
         self.1.cancel = Some(Box::new(f));
+        self
+    }
+    /// Text areas: Tab inserts four spaces instead of moving focus (Shift+Tab
+    /// still moves focus), as source editors expect.
+    pub fn tab_indents(mut self, value: bool) -> Self {
+        self.0.node.editor.as_mut().unwrap().tab_indents = value;
         self
     }
     /// Take keyboard focus when the field first appears (not on every
@@ -127,6 +163,8 @@ impl<C: 'static> From<TextInput<C>> for Element<C> {
             change: input.1.change,
             submit: input.1.submit,
             cancel: input.1.cancel,
+            selection: input.1.selection,
+            key: input.1.key,
         });
         let (leading, trailing) = (input.1.leading, input.1.trailing);
         if leading.is_none() && trailing.is_none() {

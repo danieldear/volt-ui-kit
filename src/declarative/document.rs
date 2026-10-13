@@ -276,6 +276,10 @@ pub struct Node {
     #[serde(skip)]
     pub(crate) on_cancel: Option<String>,
     #[serde(skip)]
+    pub(crate) on_selection: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_key: Option<String>,
+    #[serde(skip)]
     pub(crate) slider: Option<SliderProps>,
     #[serde(skip)]
     pub(crate) overlay: Option<Overlay>,
@@ -344,7 +348,16 @@ pub(crate) struct EditorOptions {
     pub inset: [f32; 2],
     /// Take keyboard focus when the field first appears.
     pub autofocus: bool,
+    /// Multiline only: Tab indents instead of moving focus.
+    pub tab_indents: bool,
+    /// Keys the application handles instead of the editor.
+    #[cfg(feature = "rust-ui")]
+    pub keys: Vec<super::runtime::editing::EditKey>,
+    /// Select `start..end` (caret at `end`) when the request number changes.
+    pub select: Option<(usize, usize, u32)>,
 }
+/// Text a multiline editor may hold: whole documents, not just fields.
+pub(crate) const MAX_EDITOR_TEXT: usize = 4 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SliderProps {
     pub value: f32,
@@ -518,6 +531,8 @@ impl Node {
             on_text_changed: None,
             on_submit: None,
             on_cancel: None,
+            on_selection: None,
+            on_key: None,
             slider: None,
             overlay: None,
             on_context: None,
@@ -746,6 +761,8 @@ impl Document {
                 (&n.on_text_changed, EventKind::TextChanged),
                 (&n.on_submit, EventKind::Activate),
                 (&n.on_cancel, EventKind::Activate),
+                (&n.on_selection, EventKind::SelectionChanged),
+                (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
             ] {
@@ -1089,7 +1106,12 @@ fn check_node(
             "accessible label must be nonempty, control-free and at most 8 KiB",
         ));
     }
-    if n.text.as_ref().is_some_and(|v| v.len() > 8192)
+    let text_limit = if n.editor.as_ref().is_some_and(|e| e.multiline) {
+        MAX_EDITOR_TEXT
+    } else {
+        8192
+    };
+    if n.text.as_ref().is_some_and(|v| v.len() > text_limit)
         || n.label.as_ref().is_some_and(|v| v.len() > 8192)
     {
         return Err(error(path, "text exceeds 8 KiB limit"));
@@ -1257,6 +1279,8 @@ fn check_node(
         &n.on_text_changed,
         &n.on_submit,
         &n.on_cancel,
+        &n.on_selection,
+        &n.on_key,
         &n.on_context,
         &n.on_files_dropped,
     ]

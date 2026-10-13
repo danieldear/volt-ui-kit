@@ -806,10 +806,14 @@ impl<C: 'static> App<C> {
         // Viewport/resize changes can alter the visible virtual window too, not
         // just wheel input. Bound this corrective recomposition to one per layout.
         if !self.window_update_in_progress
-            && self
+            && (self
                 .runtime
                 .dispatch_virtual_windows(&mut self.handlers, &mut self.context)
                 .map_err(|e| e.to_string())?
+                | self
+                    .runtime
+                    .dispatch_editor_selections(&mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?)
         {
             self.window_update_in_progress = true;
             let result = self.after_input(InputOutcome {
@@ -1108,6 +1112,17 @@ impl<C: 'static> App<C> {
                 return Ok(true);
             }
             return Ok(false);
+        }
+        if event.logical_key == Key::Named(NamedKey::Tab)
+            && !shift
+            && self.runtime.editing_tab_indents()
+        {
+            let outcome = self
+                .runtime
+                .text_input("    ", &mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            self.after_input(outcome)?;
+            return Ok(true);
         }
         let outcome = match &event.logical_key {
             Key::Named(NamedKey::Tab) => return Ok(false),

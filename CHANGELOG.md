@@ -17,7 +17,17 @@
   `file_dialog::open_file_or_folder` either.
 - Shortcuts match the key pressed without modifiers, so Shift+Cmd+] is
   `primary(']').shift(true)` and Option shortcuts work on every layout.
-- Icons: `Sidebar`, `FileText` and `Type`.
+- Icons: `Sidebar`, `FileText`, `Type` and `Columns`.
+- Text areas hold whole documents: multiline editors take up to 4 MiB
+  (single-line fields stay at 8 KiB), reflow only the lines that changed,
+  and open with the caret at the top. `native::files` reads and saves up
+  to the same limit.
+- Editor hooks for writing tools: `.on_selection(|app, sel| ..)` reports
+  the selection with the caret's and the editor's rectangles after layout
+  (hosts call `Runtime::dispatch_editor_selections`); `.on_keys([..], f)`
+  hands chosen keys (arrows, Enter) to the app instead of editing;
+  `.select(range, request)` places the selection; `.tab_indents(true)`
+  makes Tab insert four spaces.
 - `lazy_list(count, |row| ..)`: a scrolling column of variable-height rows
   that builds only the rows near the viewport, so documents and feeds of
   any length stay within the element budget. Rows are measured as they

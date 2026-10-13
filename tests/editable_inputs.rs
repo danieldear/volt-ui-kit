@@ -407,6 +407,11 @@ fn multiline_wheel_scroll_persists_without_caret_snap_until_navigation() {
         let v = Viewport::new(400. * scale, 100. * scale, scale).unwrap();
         r.layout(v, &Bindings::default(), &mut Metrics).unwrap();
         r.focus_next(false);
+        // Documents open at the top; go to the end so there is room to scroll.
+        assert_eq!(r.editor_scroll_offset("entry").unwrap()[1], 0.);
+        r.editor_key(EditKey::DocumentEnd, false, &mut h, &mut a)
+            .unwrap();
+        r.layout(v, &Bindings::default(), &mut Metrics).unwrap();
         let initial = r.editor_scroll_offset("entry").unwrap()[1];
         assert!(initial > 0.);
         assert!(r.scroll_at(20. * scale, 20. * scale, [0., -20.]));
@@ -799,4 +804,115 @@ fn autofocus_takes_focus_once_and_escape_runs_on_cancel() {
     assert_eq!(r.focused(), Some("find"));
     r.editor_cancel(&mut h, &mut a).unwrap();
     assert_eq!((a.open, a.closed), (false, 1));
+}
+#[derive(Default)]
+struct Doc {
+    text: String,
+}
+fn doc_view(app: &Doc) -> Element<Doc> {
+    text_area(&app.text)
+        .key("source")
+        .tab_indents(true)
+        .on_change(|a: &mut Doc, v| a.text = v)
+        .height(300.)
+        .into()
+}
+#[test]
+fn text_areas_hold_whole_documents_and_reflow_only_changed_lines() {
+    let viewport = Viewport::new(600., 400., 1.).unwrap();
+    let line = "A line of Markdown with **emphasis** and `code` in it.\n";
+    let mut a = Doc {
+        text: line.repeat(4000),
+    };
+    assert!(a.text.len() > 200_000);
+    let (doc, mut h) = doc_view(&a).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.focus_next(false);
+    assert_eq!(r.focused(), Some("source"));
+    r.editor_key(EditKey::DocumentEnd, false, &mut h, &mut a).unwrap();
+    r.ime_commit("The end.", &mut h, &mut a).unwrap();
+    assert!(a.text.ends_with("The end."));
+    assert_eq!(a.text.len(), line.len() * 4000 + 8);
+    // Rebuild with the new value, as an app does, and lay out again.
+    let (doc, next) = doc_view(&a).build().unwrap().into_parts();
+    r.replace_document(doc, &next, &Bindings::default()).unwrap();
+    h = next;
+    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    assert!(r.editing_tab_indents());
+    r.editor_key(EditKey::Undo, false, &mut h, &mut a).unwrap();
+    assert!(!a.text.ends_with("The end."));
+    // A value over the editor limit is rejected when the view is built.
+    let huge = Doc {
+        text: "x".repeat(5 * 1024 * 1024),
+    };
+    assert!(doc_view(&huge).build().is_err());
+}
+#[derive(Default)]
+struct Slash {
+    text: String,
+    selection: Option<volt_ui_kit::declarative::TextSelection>,
+    menu: bool,
+    picked: Vec<EditKey>,
+    caret: (usize, u32),
+}
+fn slash_view(app: &Slash) -> Element<Slash> {
+    let keys: Vec<EditKey> = if app.menu {
+        vec![EditKey::Up, EditKey::Down, EditKey::Enter]
+    } else {
+        vec![]
+    };
+    text_area(&app.text)
+        .key("source")
+        .on_change(|a: &mut Slash, v| {
+            a.menu = v.ends_with('/');
+            a.text = v;
+        })
+        .on_selection(|a: &mut Slash, s| a.selection = Some(s))
+        .on_keys(keys, |a: &mut Slash, k| a.picked.push(k))
+        .select(app.caret.0..app.caret.0, app.caret.1)
+        .height(200.)
+        .into()
+}
+#[test]
+fn editors_report_selection_hand_over_keys_and_take_a_caret() {
+    let viewport = Viewport::new(400., 300., 1.).unwrap();
+    let mut a = Slash {
+        text: "Hello\n".into(),
+        ..Slash::default()
+    };
+    let (doc, mut h) = slash_view(&a).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    let settle = |r: &mut Runtime, h: &mut _, a: &mut Slash| {
+        let (doc, next) = slash_view(a).build().unwrap().into_parts();
+        r.replace_document(doc, &next, &Bindings::default()).unwrap();
+        *h = next;
+        r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+        r.dispatch_editor_selections(h, a).unwrap()
+    };
+    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    assert!(r.dispatch_editor_selections(&mut h, &mut a).unwrap());
+    assert_eq!(a.selection.map(|s| (s.start, s.end)), Some((0, 0)));
+    assert!(!r.dispatch_editor_selections(&mut h, &mut a).unwrap(), "reported once");
+    r.focus_next(false);
+    r.editor_key(EditKey::DocumentEnd, false, &mut h, &mut a).unwrap();
+    r.ime_commit("/", &mut h, &mut a).unwrap();
+    assert!(a.menu);
+    settle(&mut r, &mut h, &mut a);
+    let s = a.selection.unwrap();
+    assert_eq!((s.start, s.end, s.caret_at), (7, 7, 7));
+    assert!(s.caret[1] > 10., "the caret is on the second line: {:?}", s.caret);
+    // While the menu is open the arrows and Enter go to the app.
+    r.editor_key(EditKey::Down, false, &mut h, &mut a).unwrap();
+    r.editor_key(EditKey::Enter, false, &mut h, &mut a).unwrap();
+    assert_eq!(a.picked, [EditKey::Down, EditKey::Enter]);
+    assert_eq!(a.text, "Hello\n/", "Enter did not insert a newline");
+    // The app replaces the command and puts the caret after the insertion.
+    a.text = "Hello\n## ".into();
+    a.menu = false;
+    a.caret = (9, 1);
+    settle(&mut r, &mut h, &mut a);
+    assert_eq!(r.editor_selection("source"), Some((9, 9)));
+    r.editor_key(EditKey::Enter, false, &mut h, &mut a).unwrap();
+    assert_eq!(a.text, "Hello\n## \n", "with the menu closed Enter edits again");
 }
