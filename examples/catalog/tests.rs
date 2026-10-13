@@ -1675,12 +1675,37 @@ fn dev_restart_round_trips_page_and_appearance() {
 }
 
 #[test]
+fn dashboard_builds_for_every_range_and_selection() {
+    // A rejected view keeps the previous screen, so a click that produces an
+    // invalid tree silently does nothing. Every range must build with and
+    // without each chart's selection.
+    for range in 0..3u8 {
+        for pick in [None, Some(0), Some(12), Some(200)] {
+            let mut app = App::new();
+            app.go(Page::Dashboard);
+            app.kit.dash_range = range;
+            app.kit.dash_candle = pick;
+            app.kit.dash_slice = pick.map(|i| i % 5);
+            app.kit.dash_month = pick.map(|i| i % 12);
+            app.kit.dash_quarter = pick.map(|i| i % 4);
+            if let Err(e) = view(&app).build() {
+                panic!("range {range}, pick {pick:?}: {e}");
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "visual probe"]
 fn dashboard_interaction_snapshot() {
     let mut app = App::new();
     app.go(Page::Dashboard);
     app.mode = ThemeMode::Dark;
     app.theme = 2;
+    app.kit.dash_range = std::env::var("SNAP_RANGE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     app.kit.dash_candle = Some(12);
     app.kit.dash_slice = Some(1);
     app.kit.dash_month = Some(5);

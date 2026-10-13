@@ -30,7 +30,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked
 cargo test --locked --all-features --all-targets
 cargo test --locked --all-features --doc
-cargo +1.87.0 check --locked --all-targets --all-features
+cargo +1.89.0 check --locked --all-targets --all-features
 cargo check --locked --lib --target wasm32-unknown-unknown --features rust-ui
 ```
 
@@ -50,7 +50,7 @@ On Linux, install a font (for example `fonts-dejavu-core`) for the text tests.
   live preview, its source and an API table, plus tests in `tests/`.
 - **Keep the default build small.** With no features the crate depends only on
   `unicode-width`. New dependencies belong behind a feature.
-- **Stay on Rust 1.87.** Don't take dependency updates that raise the minimum
+- **Stay on Rust 1.89.** Don't take dependency updates that raise the minimum
   version without discussing it first.
 - **No `unsafe`.** The crate forbids it; platform code goes through safe bindings.
 - **Bound every input.** Sizes, counts, text lengths and caches have explicit

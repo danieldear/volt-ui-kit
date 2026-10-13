@@ -95,7 +95,7 @@ cargo volt dev my-app
 | `rust-ui` / `declarative` | The builders and runtime without a window, for custom hosts |
 | `dev-tools` | The `cargo volt` command |
 
-Rust 1.87 or newer.
+Rust 1.89 or newer.
 
 ## Status
 

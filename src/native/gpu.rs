@@ -25,8 +25,8 @@ pub(super) fn alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::Com
     .into_iter()
     .find(|m| modes.contains(m))
 }
-// Separate surface configuration from pixel encoding: wgpu 26 advertises
-// PostMultiplied for Metal, although Core Animation consumes premultiplied RGB.
+// Separate surface configuration from pixel encoding: wgpu (26 through 30)
+// advertises PostMultiplied for Metal, although Core Animation consumes premultiplied RGB.
 // Keep the advertised/supported SurfaceConfiguration, but compensate in the
 // presentation shader. Do not apply this quirk to genuine straight-alpha
 // compositors. Revisit on a wgpu pin change: gfx-rs/wgpu#9896, #9922.
@@ -50,7 +50,7 @@ fn shader_source(post: bool) -> String {
 "#
     )
 }
-/// Vello 0.6 drops a frame that overflows any of its fixed GPU buffers, leaving
+/// Vello drops a frame that overflows any of its fixed GPU buffers, leaving
 /// the previous image in place (a window that looks frozen). Such frames are
 /// drawn in software instead; this is reported once per process.
 fn report_fallback_once(reason: &str) {
@@ -89,7 +89,7 @@ fn watch_device(device: &wgpu::Device) -> Arc<AtomicBool> {
         flag.store(true, Ordering::Relaxed);
     });
     let flag = lost.clone();
-    device.on_uncaptured_error(Box::new(move |error| {
+    device.on_uncaptured_error(std::sync::Arc::new(move |error: wgpu::Error| {
         eprintln!("Volt UI: GPU error: {error}");
         flag.store(true, Ordering::Relaxed);
     }));
@@ -115,7 +115,7 @@ const TEXTURE_BUDGET: usize = 96 * 1024 * 1024;
 
 /// Admit explicit images before any GPU upload. Area alone is insufficient:
 /// a full-width strip and a full-height strip cannot coexist in the atlas.
-/// Match Vello 0.6's allocator and image order at its maximum atlas size.
+/// Match Vello's allocator and image order at its maximum atlas size.
 fn image_admission(
     batches: &[PaintBatch<Shape, Glyph>],
     max_side: u32,
@@ -432,6 +432,9 @@ impl GpuPresenter {
             desired_maximum_frame_latency: 2,
             alpha_mode: alpha,
             view_formats: vec![],
+            // Auto keeps wgpu's historical non-HDR choice; the presentation
+            // shader below encodes alpha for this surface explicitly.
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
@@ -460,8 +463,8 @@ impl GpuPresenter {
         });
         let pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
@@ -485,7 +488,7 @@ impl GpuPresenter {
             primitive: Default::default(),
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let renderer = vello::Renderer::new(
@@ -614,8 +617,9 @@ impl GpuPresenter {
             0
         };
         let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface = self
                     .instance
                     .create_surface(self.window.clone())
@@ -623,8 +627,12 @@ impl GpuPresenter {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(PresentStatus::Retry);
             }
-            Err(wgpu::SurfaceError::Timeout) => return Ok(PresentStatus::Retry),
-            Err(e) => return Err(e.to_string()),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(PresentStatus::Retry)
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("GPU surface validation error".into())
+            }
         };
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -643,6 +651,7 @@ impl GpuPresenter {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, self.bind_group.as_ref().unwrap(), &[]);
@@ -650,7 +659,7 @@ impl GpuPresenter {
         }
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
-        frame.present();
+        self.queue.present(frame);
         if self.lost.load(Ordering::Relaxed) {
             return Ok(PresentStatus::Lost);
         }
@@ -844,7 +853,7 @@ impl GpuOffscreenRenderer {
                 let _ = send.send(result);
             });
         self.device
-            .poll(wgpu::PollType::Wait)
+            .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|e| e.to_string())?;
         recv.recv_timeout(std::time::Duration::from_secs(30))
             .map_err(|e| e.to_string())?
@@ -852,7 +861,10 @@ impl GpuOffscreenRenderer {
         let mut result =
             tiny_skia::Pixmap::new(size[0], size[1]).ok_or("invalid GPU snapshot size")?;
         {
-            let data = buffer.slice(..).get_mapped_range();
+            let data = buffer
+                .slice(..)
+                .get_mapped_range()
+                .map_err(|e| e.to_string())?;
             for (dst, src) in result
                 .data_mut()
                 .chunks_exact_mut(size[0] as usize * 4)
@@ -1067,7 +1079,7 @@ mod tests {
                 primitive: Default::default(),
                 depth_stencil: None,
                 multisample: Default::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1097,6 +1109,7 @@ mod tests {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &bind, &[]);
@@ -1121,13 +1134,13 @@ mod tests {
                 .map_async(wgpu::MapMode::Read, move |result| {
                     let _ = send.send(result);
                 });
-            device.poll(wgpu::PollType::Wait).unwrap();
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
             receive
                 .recv_timeout(std::time::Duration::from_secs(30))
                 .unwrap()
                 .unwrap();
             {
-                let pixels = readback.slice(..).get_mapped_range();
+                let pixels = readback.slice(..).get_mapped_range().unwrap();
                 for (a, b) in pixels[..12].iter().zip(expected) {
                     assert!(
                         a.abs_diff(b) <= 1,
