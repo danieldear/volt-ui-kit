@@ -1037,7 +1037,16 @@ impl<C: 'static> App<C> {
         if !self.runtime.application_commands_allowed() {
             return Ok(false);
         }
-        let Key::Character(key) = &event.logical_key else {
+        // Match the key as typed without modifiers, so Shift+Cmd+] is `]`
+        // with shift (not `}`) and Option+Cmd+R is `r` on any layout.
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        let unmodified = {
+            use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+            event.key_without_modifiers()
+        };
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let unmodified = event.logical_key.clone();
+        let Key::Character(key) = &unmodified else {
             return Ok(false);
         };
         let mut chars = key.chars();

@@ -64,6 +64,7 @@ pub fn available() -> bool {
 enum Panel {
     OpenFile,
     OpenFolder,
+    OpenEither,
     Save,
 }
 pub fn open_file(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
@@ -74,6 +75,11 @@ pub fn open_file(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDia
 pub fn open_folder(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
     options.validate()?;
     show(options, Panel::OpenFolder)
+}
+/// Choose a file or a folder, as a combined Open… command does.
+pub fn open_file_or_folder(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
+    options.validate()?;
+    show(options, Panel::OpenEither)
 }
 pub fn save_file(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
     options.validate()?;
@@ -95,11 +101,11 @@ fn show(options: &FileDialogOptions, kind: Panel) -> Result<Option<PathBuf>, Fil
         panel = NSSavePanel::savePanel(mtm);
         &panel
     } else {
-        let folder = kind == Panel::OpenFolder;
+        let folders = kind != Panel::OpenFile;
         open = NSOpenPanel::openPanel(mtm);
-        open.setCanChooseDirectories(folder);
-        open.setCanChooseFiles(!folder);
-        open.setCanCreateDirectories(folder);
+        open.setCanChooseDirectories(folders);
+        open.setCanChooseFiles(kind != Panel::OpenFolder);
+        open.setCanCreateDirectories(kind == Panel::OpenFolder);
         open.setAllowsMultipleSelection(false);
         &open
     };
