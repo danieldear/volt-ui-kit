@@ -1089,8 +1089,19 @@ impl<C: 'static> App<C> {
             }
             return Ok(true);
         }
+        if event.logical_key == Key::Named(NamedKey::Escape) {
+            let outcome = self
+                .runtime
+                .editor_cancel(&mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            if outcome.activated {
+                self.after_input(outcome)?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
         let outcome = match &event.logical_key {
-            Key::Named(NamedKey::Tab | NamedKey::Escape) => return Ok(false),
+            Key::Named(NamedKey::Tab) => return Ok(false),
             Key::Character(c) if command => match c.to_lowercase().as_str() {
                 "a" => {
                     if self.runtime.editor_select_all() {

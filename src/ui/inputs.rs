@@ -6,6 +6,7 @@ type TextChange<C> = Box<dyn FnMut(&mut C, String)>;
 struct InputCallbacks<C> {
     change: Option<TextChange<C>>,
     submit: Option<Click<C>>,
+    cancel: Option<Click<C>>,
     leading: Option<Icon>,
     trailing: Option<Trailing<C>>,
 }
@@ -40,6 +41,7 @@ fn input<C>(value: impl Into<String>, multiline: bool) -> TextInput<C> {
         InputCallbacks {
             change: None,
             submit: None,
+            cancel: None,
             leading: None,
             trailing: None,
         },
@@ -52,6 +54,17 @@ impl<C> TextInput<C> {
     }
     pub fn on_submit(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
         self.1.submit = Some(Box::new(f));
+        self
+    }
+    /// Escape while the field has focus, e.g. to close a find bar.
+    pub fn on_cancel(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+        self.1.cancel = Some(Box::new(f));
+        self
+    }
+    /// Take keyboard focus when the field first appears (not on every
+    /// rebuild), as a find field does when its bar opens.
+    pub fn autofocus(mut self, value: bool) -> Self {
+        self.0.node.editor.as_mut().unwrap().autofocus = value;
         self
     }
     pub fn placeholder(mut self, value: impl Into<String>) -> Self {
@@ -113,6 +126,7 @@ impl<C: 'static> From<TextInput<C>> for Element<C> {
         input.0.callback = Some(Callback::Text {
             change: input.1.change,
             submit: input.1.submit,
+            cancel: input.1.cancel,
         });
         let (leading, trailing) = (input.1.leading, input.1.trailing);
         if leading.is_none() && trailing.is_none() {

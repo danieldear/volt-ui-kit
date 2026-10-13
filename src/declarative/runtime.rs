@@ -234,6 +234,8 @@ pub struct LayoutBox {
     pub(crate) on_text_changed: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_submit: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_cancel: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -477,6 +479,11 @@ impl Runtime {
         {
             runtime.reconcile_editors();
             runtime.sync_overlay_state();
+            if let Some(id) = Self::autofocus_target(None, runtime.document.root())
+                .filter(|id| runtime.scope_allows_id(id))
+            {
+                runtime.focused = Some(id);
+            }
         }
         Ok(runtime)
     }
@@ -636,6 +643,8 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         let composition = self.editor_composition_snapshot(&next);
         let scrollbar_capture = self.scrollbar_capture.clone();
+        #[cfg(feature = "rust-ui")]
+        let autofocus = Self::autofocus_target(Some(self.document.root()), next.root());
         let mut old = std::mem::replace(&mut self.document, next);
         self.reuse.prepare(
             &mut old,
@@ -654,6 +663,10 @@ impl Runtime {
         self.boxes.clear();
         self.layout_boxes.clear();
         self.cancel_input();
+        #[cfg(feature = "rust-ui")]
+        if let Some(id) = autofocus.filter(|id| self.scope_allows_id(id)) {
+            self.focused = Some(id);
+        }
         if let Some(capture) = scrollbar_capture {
             if find(self.document.root(), &capture.id).is_some_and(|n| {
                 n.surface.scroll.is_some()
@@ -2001,7 +2014,13 @@ impl Runtime {
             if b.editor.is_some() && !batch.glyphs.is_empty() {
                 let glyphs = std::mem::take(&mut batch.glyphs);
                 out.push(batch);
-                let [x, y, w, h] = self.editor_inner(b);
+                let [x, mut y, w, mut h] = self.editor_inner(b);
+                // One line never scrolls vertically: clip to the field, not
+                // the line box, so descenders and accents are not cut.
+                if b.editor.as_ref().is_some_and(|e| !e.multiline) {
+                    let [_, by, _, bh] = b.bounds.bounds();
+                    (y, h) = (by, bh);
+                }
                 if let Some(inner) = Rect::new(x, y, w, h).and_then(|r| intersection(r, b.clip)) {
                     out.push(PaintBatch {
                         clip: inner,
@@ -3994,6 +4013,8 @@ fn place(
         on_text_changed: n.on_text_changed.clone(),
         #[cfg(feature = "rust-ui")]
         on_submit: n.on_submit.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_cancel: n.on_cancel.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate
