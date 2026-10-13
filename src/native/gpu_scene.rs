@@ -3,7 +3,7 @@
 //! fonts, positions and editor geometry) but is drawn as Vello vector glyphs, so
 //! colour changes and animations need no new bitmaps.
 //!
-//! Vello 0.6 renders into fixed-size GPU buffers and silently drops a frame that
+//! Vello renders into fixed-size GPU buffers and silently drops a frame that
 //! overflows any of them, leaving the previous image on screen. The encoder
 //! therefore estimates every buffer while encoding; the host draws an
 //! over-budget frame in software instead (see `SceneStats::over_budget`).
@@ -96,10 +96,11 @@ struct Budget {
     atlas_area: u64,
     oversize_image: bool,
 }
-/// Vello 0.6 fixed buffer sizes (vello_encoding `BufferSizes::new`), in elements.
+/// Vello fixed buffer sizes (vello_encoding `BufferSizes::new`), in elements.
+/// Unchanged from Vello 0.6 through 0.11; recheck them when Vello changes.
 const TILE_CAPACITY: u64 = 1 << 21;
 const PTCL_CAPACITY: u64 = 1 << 23;
-// Pinned Vello 0.6 shared/ptcl.wgsl and coarse.wgsl: the initial allocation
+// Pinned Vello shared/ptcl.wgsl and coarse.wgsl (0.6 through 0.11): the initial allocation
 // exists even for empty viewport tiles; spill allocations are 256-word chunks.
 const PTCL_INITIAL_ALLOC: u64 = 64;
 const PTCL_INCREMENT: u64 = 256;
@@ -127,7 +128,7 @@ pub(super) type ImageResolver<'a, 'b> =
     &'a mut (dyn FnMut(&Image) -> Result<ImageData, String> + 'b);
 /// Vello keeps this many nested layers on chip; deeper tiles spill.
 const BLEND_STACK_SPLIT: u8 = 4;
-/// Vello 0.6's fixed blend spill buffer holds 4096 tile-layer slots per frame;
+/// Vello's fixed blend spill buffer holds 4096 tile-layer slots per frame;
 /// exceeding it silently drops the whole frame. Keep a safety margin.
 pub(super) const SPILL_SLOT_LIMIT: u32 = 3584;
 const IMAGE_BUDGET: usize = 64 * 1024 * 1024;
@@ -428,7 +429,15 @@ impl GpuSceneEncoder {
         // A layer is two draw objects (begin/end) over its clip path's tiles.
         self.note(b);
         self.note(b);
-        self.scene.push_layer(blend, alpha, Affine::IDENTITY, shape);
+        // Clip layers use the non-zero rule (the only rule before Vello 0.11);
+        // even-odd path clips are drawn as explicit masks elsewhere.
+        self.scene.push_layer(
+            vello::peniko::Fill::NonZero,
+            blend,
+            alpha,
+            Affine::IDENTITY,
+            shape,
+        );
     }
     fn pop_layer(&mut self) {
         if let Some(r) = self.open_tiles.pop() {

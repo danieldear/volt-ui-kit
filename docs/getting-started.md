@@ -16,7 +16,7 @@ volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit", features = ["
 # volt-ui-kit = { path = "../volt-ui-kit", features = ["native-gpu"] }
 ```
 
-Rust 1.87 or newer is required.
+Rust 1.89 or newer is required.
 
 ### Features
 

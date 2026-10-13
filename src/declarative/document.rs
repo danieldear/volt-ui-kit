@@ -1046,7 +1046,7 @@ fn check_node(
     {
         return Err(error(path, "invalid image opacity"));
     }
-    if n.surface.canvas.paths.len() > 256
+    if n.surface.canvas.paths.len() > crate::graphics::MAX_CANVAS_PATHS
         || n.surface.canvas.paths.iter().any(|p| {
             !p.path.is_valid()
                 || (parse_color(&p.color).is_none() && crate::ColorToken::parse(&p.color).is_none())
