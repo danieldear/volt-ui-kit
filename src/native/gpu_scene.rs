@@ -133,6 +133,27 @@ const BLEND_STACK_SPLIT: u8 = 4;
 pub(super) const SPILL_SLOT_LIMIT: u32 = 3584;
 const IMAGE_BUDGET: usize = 64 * 1024 * 1024;
 const GLYPH_BUDGET: usize = 16 * 1024 * 1024;
+/// macOS draws text with font smoothing: each glyph outline is dilated
+/// slightly, so text looks heavier than its plain coverage. Without it,
+/// Volt text reads thin and light next to native apps. The amounts follow
+/// Pathfinder's emulation of CoreText (per side, in device pixels, up to
+/// 0.3px, none above 72px). `VOLT_UI_TEXT_DARKENING=0` turns it off.
+fn stem_darkening(size: f32) -> Option<vello::FontEmbolden> {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let enabled = *ENABLED.get_or_init(|| {
+        cfg!(target_os = "macos")
+            && std::env::var("VOLT_UI_TEXT_DARKENING").map_or(true, |v| v != "0")
+    });
+    if !enabled || !(1. ..=72.).contains(&size) {
+        return None;
+    }
+    let x = (0.0121 * size).min(0.3);
+    let y = (0.0121 * 1.25 * size).min(0.3);
+    Some(vello::FontEmbolden::new(vello::kurbo::Diagonal2::new(
+        f64::from(x),
+        f64::from(y),
+    )))
+}
 fn byte(v: f32) -> u8 {
     (v.clamp(0., 1.) * 255.).round() as u8
 }
@@ -1000,7 +1021,11 @@ impl GpuSceneEncoder {
         if overflow {
             self.layer(Mix::Normal, 1., &bounds);
         }
+        // Pixel-grid hinting sharpens text on low-density (1x) displays;
+        // Retina text keeps its true outlines, as native macOS text does.
+        let hint = painter.gpu_viewport().scale < 1.5;
         for (run, font) in runs.iter().zip(&fonts) {
+            let darken = stem_darkening(run.size);
             for &(_, x, y) in &run.glyphs {
                 let s = f64::from(run.size);
                 self.note(Rect::new(
@@ -1009,8 +1034,10 @@ impl GpuSceneEncoder {
                     x as f64 + s,
                     y as f64 + s * 0.35,
                 ));
-                // Flattened outline lines grow with size (0.25px tolerance).
-                self.budget.glyph_lines += 48 + (run.size * 1.5) as u64;
+                // Flattened outline lines grow with size (0.25px tolerance);
+                // an expanded (darkened) outline has about twice as many.
+                let lines = 48 + (run.size * 1.5) as u64;
+                self.budget.glyph_lines += if darken.is_some() { lines * 2 } else { lines };
             }
             let mut draw = self
                 .scene
@@ -1020,7 +1047,11 @@ impl GpuSceneEncoder {
                 // foreground brush. Keep the brush opaque to avoid applying
                 // alpha twice to outline glyphs.
                 .brush(color([run.color[0], run.color[1], run.color[2], 1.]))
-                .brush_alpha(run.color[3]);
+                .brush_alpha(run.color[3])
+                .hint(hint);
+            if let Some(embolden) = darken {
+                draw = draw.font_embolden(embolden);
+            }
             if run.fake_italic {
                 // cosmic-text synthesises italic with a 14 degree skew.
                 draw = draw.glyph_transform(Some(Affine::skew(-(14f64.to_radians().tan()), 0.)));
