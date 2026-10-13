@@ -56,9 +56,10 @@ pub enum Page {
     Charts,
     ThemeEditor,
     Dashboard,
+    RichText,
 }
 use Page::*;
-pub const PAGES: [Page; 49] = [
+pub const PAGES: [Page; 50] = [
     Introduction,
     Theming,
     ThemeEditor,
@@ -66,6 +67,7 @@ pub const PAGES: [Page; 49] = [
     Layout,
     Utilities,
     Icons,
+    RichText,
     Badge,
     Button,
     ButtonGroup,
@@ -159,6 +161,7 @@ impl Page {
             Disclosure => "Overlays",
             DataDisplay => "Data display",
             Charts => "Charts",
+            RichText => "Rich text",
             ThemeEditor => "Theme editor",
             Dashboard => "Dashboard",
         }
@@ -193,6 +196,7 @@ impl Page {
                 | Disclosure
                 | DataDisplay
                 | Charts
+                | RichText
                 | Menu
                 | ContextMenu
                 | Popover
@@ -266,6 +270,7 @@ impl Page {
             Disclosure => "Collapsibles, accordions, drawers, toasts, a command palette and rich menus.",
             DataDisplay => "Avatars, alerts, skeletons, breadcrumbs, pagination, steps and more.",
             Charts => "Sparklines, bar charts and line charts drawn with vector paths.",
+            RichText => "One paragraph with bold, italic, code, colour and decorated runs.",
             ThemeEditor => "Edit every colour role for light and dark, check contrast, export JSON.",
             Dashboard => "A dense analytics screen: KPIs, candlesticks, donut, stacked charts and orders.",
         }
@@ -365,6 +370,7 @@ pub fn doc(page: Page, app: &App) -> Doc {
         Disclosure => super::kit::disclosure_doc(app),
         DataDisplay => super::kit::display_doc(app),
         Charts => super::kit::charts_doc(app),
+        RichText => super::kit::rich_text_doc(),
         ThemeEditor => super::kit::theme_editor_doc(app),
         Dashboard => super::kit::dashboard_doc(app),
     }

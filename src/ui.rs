@@ -282,10 +282,12 @@ mod dates;
 mod dialogs;
 mod disclosure;
 mod display;
+mod rich_text;
 pub use charts::{
     area_chart, candlestick_chart, donut_chart, nice_ticks, short_number, stacked_bar_chart,
     AreaChart, Candle, CandlestickChart, DonutChart, StackedBarChart,
 };
+pub use rich_text::{rich_text, span, Span};
 mod forms;
 pub use disclosure::{
     accordion, collapsible, command, command_palette, drawer, toaster, Accordion, Collapsible,
@@ -1098,4 +1100,5 @@ pub mod prelude {
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
+    pub use super::{rich_text, span, Span};
 }

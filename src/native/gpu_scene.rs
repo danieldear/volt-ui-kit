@@ -1019,8 +1019,8 @@ impl GpuSceneEncoder {
                 // Bitmap/COLR glyphs use brush_alpha independently of the
                 // foreground brush. Keep the brush opaque to avoid applying
                 // alpha twice to outline glyphs.
-                .brush(color([glyph.color[0], glyph.color[1], glyph.color[2], 1.]))
-                .brush_alpha(glyph.color[3]);
+                .brush(color([run.color[0], run.color[1], run.color[2], 1.]))
+                .brush_alpha(run.color[3]);
             if run.fake_italic {
                 // cosmic-text synthesises italic with a 14 degree skew.
                 draw = draw.glyph_transform(Some(Affine::skew(-(14f64.to_radians().tan()), 0.)));
@@ -1042,15 +1042,11 @@ impl GpuSceneEncoder {
     }
     /// Bitmap glyph fallback (per colour), kept for faces Vello cannot load.
     fn text_bitmaps(&mut self, glyph: &Glyph, painter: &mut RasterPainter) -> Result<(), String> {
-        let rgb = [
-            byte(glyph.color[0]),
-            byte(glyph.color[1]),
-            byte(glyph.color[2]),
-        ];
         // Pass 1: make sure every glyph bitmap is cached.
         let placed = painter.gpu_glyphs(glyph);
         let mut drawn = Vec::with_capacity(placed.len());
-        for (key, origin) in placed {
+        for (key, origin, c) in placed {
+            let rgb = [byte(c[0]), byte(c[1]), byte(c[2])];
             let id = (key, rgb);
             if !self.glyphs.contains_key(&id) {
                 let Some(image) = painter.gpu_glyph_image(key) else {
@@ -1115,14 +1111,14 @@ impl GpuSceneEncoder {
                     },
                 );
             }
-            drawn.push((id, origin));
+            drawn.push((id, origin, c[3]));
         }
         // Clip only text whose ink leaves its box (scrolled or truncated text):
         // a layer per label made ordinary screens exceed Vello's blend budget.
         // Clip layers cost by area: an editor row's box is effectively
         // unbounded (no wrapping), so clamp to the frame it can appear in.
         let bounds = self.on_frame(rect(glyph.bounds));
-        let ink = drawn.iter().filter_map(|(id, o)| {
+        let ink = drawn.iter().filter_map(|(id, o, _)| {
             let e = self.glyphs.get(id)?;
             let (x, y) = (o[0] + e.offset[0], o[1] + e.offset[1]);
             Some(Rect::new(
@@ -1144,7 +1140,7 @@ impl GpuSceneEncoder {
             self.layer(Mix::Normal, 1., &bounds);
         }
         // Pass 2: draw. An entry evicted mid-text is skipped, never unwrapped.
-        for (id, origin) in drawn {
+        for (id, origin, alpha) in drawn {
             let Some(entry) = self.glyphs.get_mut(&id) else {
                 continue;
             };
@@ -1154,7 +1150,7 @@ impl GpuSceneEncoder {
                 image: entry.data.clone(),
                 sampler: ImageSampler::default(),
             }
-            .with_alpha(glyph.color[3])
+            .with_alpha(alpha)
             .with_quality(ImageQuality::Low);
             self.budget.atlas_area += u64::from(gw + 2) * u64::from(gh + 2);
             self.scene.draw_image(

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Rich text: `rich_text([span(..), ..])` lays out one paragraph of styled
+  runs (weight, italic, font family, colour, rounded background, underline,
+  strikethrough; `.code()` for inline code). It wraps, aligns and truncates
+  as a single text, in both renderers. Font changes go through cosmic-text
+  rich shaping; colours are applied per glyph when drawing, so colour-only
+  runs share the plain text's shaped layout. New painter hook
+  `DocumentPainter::ui_text_range_rects` returns per-line rectangles for a
+  byte range (backgrounds and decorations use it). Catalog has a Rich text
+  page.
+
 - GPU stack upgraded from Vello 0.6 / wgpu 26 to **Vello 0.11 / wgpu 30**
   (guillotiere 0.7, matching Vello's atlas allocator). The minimum Rust
   version rises from 1.87 to **1.89**, which Vello 0.11 requires; generated
