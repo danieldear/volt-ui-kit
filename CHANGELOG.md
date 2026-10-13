@@ -30,7 +30,10 @@
   (hosts call `Runtime::dispatch_editor_selections`); `.on_keys([..], f)`
   hands chosen keys (arrows, Enter) to the app instead of editing;
   `.select(range, request)` places the selection; `.tab_indents(true)`
-  makes Tab insert four spaces.
+  makes Tab insert four spaces. Selections also report the first visible
+  line (`top`), `.scroll_to_offset(byte, request)` scrolls an editor, and
+  `.highlights(palette, ranges)` colours byte ranges (syntax highlighting)
+  without changing layout.
 - `lazy_list(count, |row| ..)`: a scrolling column of variable-height rows
   that builds only the rows near the viewport, so documents and feeds of
   any length stay within the element budget. Rows are measured as they

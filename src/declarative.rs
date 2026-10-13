@@ -30,6 +30,8 @@ pub struct TextSelection {
     pub caret: [f32; 4],
     /// The editor's box, so popups can open above the caret near its bottom.
     pub bounds: [f32; 4],
+    /// Byte offset where the first visible line starts (follows scrolling).
+    pub top: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -57,6 +59,7 @@ pub enum Event {
         caret_at: usize,
         caret_bits: [u32; 4],
         bounds_bits: [u32; 4],
+        top: usize,
     },
     #[cfg(feature = "rust-ui")]
     Key(runtime::editing::EditKey),
@@ -252,6 +255,7 @@ impl<'a, C> Handlers<'a, C> {
                     caret_at,
                     caret_bits,
                     bounds_bits,
+                    top,
                 } = event
                 {
                     f(
@@ -262,6 +266,7 @@ impl<'a, C> Handlers<'a, C> {
                             caret_at,
                             caret: caret_bits.map(f32::from_bits),
                             bounds: bounds_bits.map(f32::from_bits),
+                            top,
                         },
                     );
                 }
@@ -410,8 +415,8 @@ pub use effects::{Ambient, Animation, Easing, Glow, Interaction, Shadow, Transit
 mod motion;
 mod runtime;
 pub use document::{
-    Align, Bindings, Document, DocumentError, Flow, Kind, Node, Rounding, Scroll, Scrollbars, Tone,
-    Value,
+    Align, Bindings, Document, DocumentError, EditorHighlights, Flow, Kind, Node, Rounding, Scroll,
+    Scrollbars, Tone, Value,
 };
 pub use responsive::{responsive, Breakpoint, Direction, Responsive};
 pub use runtime::{
