@@ -353,6 +353,8 @@ pub struct Element<C> {
     auto_id: bool,
     children: Vec<Element<C>>,
     callback: Option<Callback<C>>,
+    /// Selectable containers: the selected text changed.
+    select_text: Option<ChangeText<C>>,
     validation_error: Option<String>,
 }
 impl<C> Element<C> {
@@ -368,6 +370,7 @@ impl<C> Element<C> {
             auto_id: true,
             children: vec![],
             callback: None,
+            select_text: None,
             validation_error: None,
         }
     }
@@ -404,6 +407,7 @@ impl<C: 'static> Element<C> {
                 auto_id,
                 children,
                 callback,
+                select_text,
                 validation_error,
             } = element;
             if let Some(message) = validation_error {
@@ -411,6 +415,13 @@ impl<C: 'static> Element<C> {
             }
             if auto_id {
                 node.id = path.clone();
+            }
+            if let Some(f) = select_text {
+                let name = format!("rust-select-{}", *count);
+                handlers
+                    .on_text_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_select_text = Some(name);
             }
             if let Some(callback) = callback {
                 let name = format!("rust-action-{}", *count);
@@ -672,6 +683,9 @@ macro_rules! modifiers {
             pub fn truncate(mut self) -> Self { self.$($field)*.style.max_lines = Some(1); self }
             /// Keep text on one line; overflow is clipped (`whitespace-nowrap`).
             pub fn no_wrap(mut self, value: bool) -> Self { self.$($field)*.style.no_wrap = Some(value); self }
+            /// Text inside can be selected with the pointer and copied
+            /// (inherited); `false` opts a subtree out, e.g. list markers.
+            pub fn selectable(mut self, value: bool) -> Self { self.$($field)*.ext.selectable = Some(value); self }
             pub fn underline(mut self, value: bool) -> Self { self.$($field)*.style.underline = Some(value); self }
             pub fn strikethrough(mut self, value: bool) -> Self { self.$($field)*.style.strikethrough = Some(value); self }
             /// Upper-case the text and label (`uppercase`).
@@ -958,6 +972,12 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// Selectable containers: called with the selected text when the
+            /// selection changes (empty when it is cleared).
+            pub fn on_select_text(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
+                self.0.select_text = Some(Box::new(f));
+                self
+            }
             /// Logical inner spacing. The last setter affecting an edge wins,
             /// replacing that edge's entire responsive rule set, not merging it.
             pub fn padding(

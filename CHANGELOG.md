@@ -22,6 +22,14 @@
   (single-line fields stay at 8 KiB), reflow only the lines that changed,
   and open with the caret at the top. `native::files` reads and saves up
   to the same limit.
+- Selectable text: `.selectable(true)` on a container lets its text be
+  selected with the pointer across paragraphs (double-click a word,
+  triple-click a paragraph, Shift-click to extend), with Cmd/Ctrl+A to
+  select all and Cmd/Ctrl+C to copy; `.selectable(false)` opts a subtree
+  out. `.on_select_text(|app, text| ..)` reports the selection. Selections
+  are anchored to keyed text boxes. New `TextMetrics::text_offset_at` hit
+  test; hosts call `Runtime::dispatch_text_selection` after input.
+  `LayoutBox::text()` exposes a box's text.
 - `Application::before_launch(|app| ..)` runs once the native event loop
   and application object exist, before the run loop starts, for platform
   integration that launch events need (receiving Finder's open requests).

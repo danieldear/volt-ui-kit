@@ -240,6 +240,12 @@ pub fn lazy_list<C, F: FnMut(usize) -> Element<C>>(count: usize, row: F) -> Lazy
     )
 }
 impl<C, F> LazyList<C, F> {
+    /// Called with the selected text when a selection inside the list
+    /// changes (see `.selectable(true)`); empty when it is cleared.
+    pub fn on_select_text(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
+        self.0.select_text = Some(Box::new(f));
+        self
+    }
     /// One estimated height (logical pixels) for every unmeasured row.
     pub fn estimate(mut self, height: f32) -> Self {
         self.1.estimate = height;

@@ -277,6 +277,9 @@ pub struct Node {
     pub(crate) on_cancel: Option<String>,
     #[serde(skip)]
     pub(crate) on_selection: Option<String>,
+    /// Selected read-only text changed (selectable containers).
+    #[serde(skip)]
+    pub(crate) on_select_text: Option<String>,
     #[serde(skip)]
     pub(crate) on_key: Option<String>,
     #[serde(skip)]
@@ -544,6 +547,7 @@ impl Node {
             on_submit: None,
             on_cancel: None,
             on_selection: None,
+            on_select_text: None,
             on_key: None,
             slider: None,
             overlay: None,
@@ -774,6 +778,7 @@ impl Document {
                 (&n.on_submit, EventKind::Activate),
                 (&n.on_cancel, EventKind::Activate),
                 (&n.on_selection, EventKind::SelectionChanged),
+                (&n.on_select_text, EventKind::TextChanged),
                 (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
@@ -1314,6 +1319,7 @@ fn check_node(
         &n.on_submit,
         &n.on_cancel,
         &n.on_selection,
+        &n.on_select_text,
         &n.on_key,
         &n.on_context,
         &n.on_files_dropped,

@@ -23,6 +23,8 @@ pub(super) mod editing;
 #[cfg(feature = "rust-ui")]
 mod overlays;
 #[cfg(feature = "rust-ui")]
+mod selection;
+#[cfg(feature = "rust-ui")]
 pub(super) mod value_controls;
 /// Physical-pixel typography resolved from inherited document styles.
 #[derive(Clone, Debug, PartialEq)]
@@ -98,6 +100,17 @@ pub trait TextMetrics {
     /// (x, line top, width, line height, baseline y). Used for rich text
     /// backgrounds, decorations and link targets. Adapters without layout
     /// access return none.
+    /// The byte offset in `text`, laid out in `bounds`, nearest to `point`
+    /// (for selecting text). Adapters without layout access return none.
+    fn text_offset_at(
+        &mut self,
+        _text: &str,
+        _bounds: [f32; 4],
+        _style: &TextStyle,
+        _point: [f32; 2],
+    ) -> Option<usize> {
+        None
+    }
     fn text_range_rects(
         &mut self,
         _text: &str,
@@ -418,6 +431,8 @@ pub struct Runtime {
     progress_clock: value_controls::ProgressClock,
     #[cfg(feature = "rust-ui")]
     overlays: overlays::OverlayState,
+    #[cfg(feature = "rust-ui")]
+    text_selection: selection::TextSelectionState,
 }
 impl Runtime {
     /// Native application shortcuts must not bypass modal/menu scope or IME.
@@ -476,6 +491,8 @@ impl Runtime {
             progress_clock: value_controls::ProgressClock::default(),
             #[cfg(feature = "rust-ui")]
             overlays: overlays::OverlayState::default(),
+            #[cfg(feature = "rust-ui")]
+            text_selection: Default::default(),
         };
         #[cfg(feature = "rust-ui")]
         let mut runtime = runtime;
@@ -848,6 +865,8 @@ impl Runtime {
             .collect();
         #[cfg(feature = "rust-ui")]
         self.layout_editors(metrics);
+        #[cfg(feature = "rust-ui")]
+        self.refresh_text_selection(metrics);
         self.motion.get_mut().reconcile(&self.boxes);
         let valid = |id: &Option<String>| {
             id.as_ref().is_none_or(|id| {
@@ -2011,6 +2030,10 @@ impl Runtime {
             } else {
                 original
             };
+            #[cfg(feature = "rust-ui")]
+            if let Some(highlight) = self.paint_text_selection(p, ui, b) {
+                out.push(highlight);
+            }
             let batch = self.paint_one(p, ui, b, treatment.then_some(visual));
             #[cfg(feature = "rust-ui")]
             let mut batch = batch;
@@ -2562,6 +2585,10 @@ impl From<f32> for RadiusSpec {
     }
 }
 impl LayoutBox {
+    /// The text the box shows (labels, paragraphs; empty for containers).
+    pub fn text(&self) -> &str {
+        &self.text
+    }
     fn radius_spec(&self, scale: f32) -> RadiusSpec {
         self.style.corners.map_or(
             RadiusSpec::Uniform(self.style.radius.unwrap_or(
@@ -2918,6 +2945,10 @@ struct ResolvedStyle {
     corner_rules: Option<[Rounding; 4]>,
     corners: Option<[f32; 4]>,
     depth: usize,
+    /// Inside a `.selectable(true)` container: text can be selected.
+    selectable: bool,
+    /// The selectable container's `on_select_text` handler.
+    select_handler: Option<String>,
 }
 /// Resolve once per layout, so measurement, allocation, placement, and hits agree.
 #[derive(Clone, Debug, PartialEq)]
@@ -3012,6 +3043,8 @@ impl ResolvedStyle {
 }
 #[derive(Clone, Default)]
 struct InheritedStyle {
+    selectable: bool,
+    select_handler: Option<String>,
     family: Option<String>,
     size: Option<f32>,
     weight: Option<u16>,
@@ -3047,6 +3080,12 @@ fn resolve_styles(
         text.size = Some(*size.resolve(logical_width));
     }
     text.color = n.style.color.clone().or(text.color);
+    if let Some(selectable) = n.ext.selectable {
+        text.selectable = selectable;
+    }
+    if n.on_select_text.is_some() {
+        text.select_handler = n.on_select_text.clone();
+    }
     let default_size = if matches!(n.kind, Kind::Button | Kind::Badge) {
         12.
     } else {
@@ -3103,6 +3142,8 @@ fn resolve_styles(
             corner_rules: n.style.corners,
             corners: None,
             depth,
+            selectable: text.selectable,
+            select_handler: text.select_handler.clone(),
         },
     );
     for child in &n.children {
