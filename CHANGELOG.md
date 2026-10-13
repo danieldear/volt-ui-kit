@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Documentation rewritten for a public release. The 21 Markdown guides,
+  which had grown into session logs, are now eight user guides under
+  `docs/`, plus a new README, `CONTRIBUTING.md` and `SECURITY.md` and a
+  shorter roadmap. The guides are also the `guide` module (with `native`),
+  so all 31 of their Rust examples are compiled as doctests. The crate root
+  docs no longer include the README.
+- Removed the `native_window`, `panels_and_layout`, `buttons_and_events`,
+  `declarative_ui` and `render_benchmark` examples; `complete_app`,
+  `components` and the Catalog's `--bench` cover the same ground.
+
 - Interactive charts. `area_chart`, `candlestick_chart`, `donut_chart` and
   `stacked_bar_chart` take `.key(..)`: every data point gets an invisible,
   focusable hit target with a value tooltip (hover or keyboard focus; no
