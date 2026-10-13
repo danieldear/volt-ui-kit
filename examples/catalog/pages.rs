@@ -370,7 +370,7 @@ pub fn doc(page: Page, app: &App) -> Doc {
         Disclosure => super::kit::disclosure_doc(app),
         DataDisplay => super::kit::display_doc(app),
         Charts => super::kit::charts_doc(app),
-        RichText => super::kit::rich_text_doc(),
+        RichText => super::kit::rich_text_doc(app),
         ThemeEditor => super::kit::theme_editor_doc(app),
         Dashboard => super::kit::dashboard_doc(app),
     }

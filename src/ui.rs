@@ -274,6 +274,7 @@ enum Callback<C> {
     Context(ContextCallback<C>),
     Window(WindowCallback<C>),
     Files(FilesCallback<C>),
+    Link(ChangeText<C>),
 }
 mod bars;
 mod charts;
@@ -479,6 +480,12 @@ impl<C: 'static> Element<C> {
                             .on_files_dropped(&name, f)
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.on_files_dropped = Some(name);
+                    }
+                    Callback::Link(f) => {
+                        handlers
+                            .on_link(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        node.ext.on_link = Some(name);
                     }
                     Callback::Dismiss(f) => {
                         handlers

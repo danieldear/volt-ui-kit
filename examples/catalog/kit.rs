@@ -68,6 +68,8 @@ pub struct State {
     pub dash_quarter: Option<usize>,
     /// Charts page: the selected column in the interactive demo.
     pub chart_pick: Option<usize>,
+    /// Rich text page: the last link target clicked.
+    pub last_link: Option<String>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -127,6 +129,7 @@ impl Default for State {
             dash_month: None,
             dash_quarter: None,
             chart_pick: None,
+            last_link: None,
         }
     }
 }
@@ -1203,7 +1206,7 @@ pagination(app.page, 20).on_change(|app: &mut App, p| app.page = p)"#,
 
 // -------------------------------------------------------------- Rich text
 
-pub fn rich_text_doc() -> Doc {
+pub fn rich_text_doc(app: &App) -> Doc {
     let runs = rich_text([
         span("Rich text mixes "),
         span("bold").bold(),
@@ -1247,6 +1250,27 @@ pub fn rich_text_doc() -> Doc {
     ]
     .gap(24., Axis::Horizontal)
     .wrap(true);
+    let links = vstack![
+        rich_text([
+            span("Links are runs too: read the "),
+            span("getting started guide").link("docs/getting-started.md"),
+            span(", browse the "),
+            span("components").link("docs/components.md"),
+            span(" or open "),
+            span("the repository").link("https://github.com/danieldear/volt-ui-kit"),
+            span(". They underline on hover and report their target."),
+        ])
+        .key("rich-links-text")
+        .font_size(15.)
+        .line_height(1.6)
+        .on_link(|app: &mut App, target| app.kit.last_link = Some(target)),
+        muted(match &app.kit.last_link {
+            Some(target) => format!("Clicked: {target}"),
+            None => "Click a link.".into(),
+        }),
+    ]
+    .gap(10., Axis::Vertical)
+    .width(560.);
     let markdown = vstack![
         text("Install").font_size(20.).font_weight(700),
         rich_text([
@@ -1305,6 +1329,19 @@ pub fn rich_text_doc() -> Doc {
     .width(260.)"#,
             ),
             section(
+                "rich-links",
+                "Links",
+                "Give a run a target with .link(..) and handle clicks on the text with .on_link(..).",
+                links,
+                r#"rich_text([
+    span("Read the "),
+    span("guide").link("docs/getting-started.md"),
+    span(" or "),
+    span("the repository").link("https://github.com/danieldear/volt-ui-kit"),
+])
+.on_link(|app: &mut App, target| app.open(target))"#,
+            ),
+            section(
                 "rich-markdown",
                 "Inline Markdown",
                 "The building block for rendering Markdown paragraphs: code spans, emphasis and notes.",
@@ -1328,6 +1365,8 @@ pub fn rich_text_doc() -> Doc {
             (".family(name)", "Any installed family, or monospace / serif / sans-serif."),
             (".color(c) / .background(c)", "Hex or theme tokens; backgrounds are rounded chips."),
             (".underline() / .strikethrough()", "Decorations in the run's colour."),
+            (".link(target) + .on_link(f)", "Clickable runs: pointer cursor, hover underline, target reported to f."),
+            (".size(scale)", "Font size relative to the text; .code() uses 0.88."),
         ],
     }
 }

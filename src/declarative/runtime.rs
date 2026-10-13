@@ -55,6 +55,8 @@ pub struct TextRun {
     pub family: Option<String>,
     pub weight: Option<u16>,
     pub italic: Option<bool>,
+    /// Font size relative to the text; line spacing is unchanged.
+    pub scale: Option<f32>,
     pub color: Option<[f32; 4]>,
 }
 impl Default for TextStyle {
@@ -91,6 +93,19 @@ pub trait TextMetrics {
     /// Existing adapters remain valid; styled adapters override this for typography.
     fn measure_styled(&mut self, text: &str, style: &TextStyle, max_width: f32) -> [f32; 2] {
         self.measure(text, style.size, max_width)
+    }
+    /// Rectangles covering a byte range of laid-out text, one per line, as
+    /// (x, line top, width, line height, baseline y). Used for rich text
+    /// backgrounds, decorations and link targets. Adapters without layout
+    /// access return none.
+    fn text_range_rects(
+        &mut self,
+        _text: &str,
+        _bounds: [f32; 4],
+        _style: &TextStyle,
+        _range: std::ops::Range<usize>,
+    ) -> Vec<[f32; 5]> {
+        vec![]
     }
 }
 /// Paint adapters for the new runtime provide the same measurement and draw rules.
@@ -149,19 +164,6 @@ pub trait DocumentPainter: Painter + TextMetrics {
         _bounds: [f32; 4],
         _style: &TextStyle,
     ) -> Vec<[f32; 3]> {
-        vec![]
-    }
-    /// Rectangles covering a byte range of laid-out text, one per line, as
-    /// (x, line top, width, line height, baseline y). Used for rich text
-    /// backgrounds, decorations and link targets. Adapters without layout
-    /// access return none.
-    fn ui_text_range_rects(
-        &mut self,
-        _text: &str,
-        _bounds: [f32; 4],
-        _style: &TextStyle,
-        _range: std::ops::Range<usize>,
-    ) -> Vec<[f32; 5]> {
         vec![]
     }
     /// Must use the same style/font fallback rules as measure_styled.
@@ -298,6 +300,10 @@ pub(crate) struct BoxExtras {
     pub reveal_handle: bool,
     /// Rich text spans (colours, backgrounds, decorations) for painting.
     pub spans: Vec<super::extras::TextSpan>,
+    /// Rich text: handler for clicked links, and each link run's line
+    /// rectangles relative to the box origin (span index, [x, y, w, h]).
+    pub on_link: Option<String>,
+    pub links: Vec<(usize, [f32; 4])>,
 }
 #[derive(Clone)]
 struct ScrollbarCapture {
@@ -357,6 +363,10 @@ pub struct Runtime {
     /// Focus arrived by keyboard (Tab, arrows, shortcuts), not a click.
     focus_visible: bool,
     hovered: Option<String>,
+    /// Rich text link under the pointer and the link being pressed:
+    /// (text box id, span index).
+    hovered_link: Option<(String, usize)>,
+    link_capture: Option<(String, usize)>,
     visual_hover: BTreeSet<String>,
     capture: Option<String>,
     keyboard: Option<String>,
@@ -421,6 +431,8 @@ impl Runtime {
             focused: None,
             focus_visible: false,
             hovered: None,
+            hovered_link: None,
+            link_capture: None,
             visual_hover: BTreeSet::new(),
             capture: None,
             keyboard: None,
@@ -788,6 +800,23 @@ impl Runtime {
         self.reuse.memo = memo;
         self.reuse.bindings = Some(values.clone());
         self.styles_cache = Some((style_key, styles));
+        // Rich text links: line rectangles relative to their box, so plain
+        // scrolling (which shifts boxes) keeps them aligned.
+        for b in boxes.iter_mut().filter(|b| b.ext.on_link.is_some()) {
+            let r = b.bounds.bounds();
+            let mut links = Vec::new();
+            for (i, span) in b.ext.spans.iter().enumerate() {
+                if span.link.is_none() {
+                    continue;
+                }
+                for [x, y, w, h, _] in
+                    metrics.text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+                {
+                    links.push((i, [x - r[0], y - r[1], w, h]));
+                }
+            }
+            b.ext.links = links;
+        }
         self.layout_boxes = boxes;
         self.boxes = self
             .layout_boxes
@@ -1207,6 +1236,9 @@ impl Runtime {
         let hit = self
             .hit(x, y)
             .and_then(|id| self.boxes.iter().rposition(|b| b.id == id));
+        if hit.is_none() && self.link_at(x, y).is_some() {
+            return Cursor::Pointer;
+        }
         let Some(mut index) = hit.or_else(|| {
             self.boxes.iter().rposition(|b| {
                 self.scope_allows_id(&b.id)
@@ -1268,6 +1300,33 @@ impl Runtime {
                     && b.bounds.contains_corners(b.radii(self.scale), x, y)
             })
             .map(|b| b.id.clone())
+    }
+    /// The rich text link under the point, when the topmost box there is a
+    /// text with a link run at that position: (text box id, span index).
+    fn link_at(&self, x: f32, y: f32) -> Option<(String, usize)> {
+        let b = self.boxes.iter().rev().find(|b| {
+            self.scope_allows_id(&b.id)
+                && !self.portal_passthrough(&b.id)
+                && b.clip.contains(x, y)
+                && b.clip_regions.iter().all(|r| r.contains(x, y))
+                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+        })?;
+        let [bx, by, _, _] = b.bounds.bounds();
+        b.ext
+            .links
+            .iter()
+            .find(|(_, [lx, ly, w, h])| {
+                x >= bx + lx && x < bx + lx + w && y >= by + ly && y < by + ly + h
+            })
+            .map(|(span, _)| (b.id.clone(), *span))
+    }
+    /// The text box under the pointer's hovered link run, if any.
+    pub(crate) fn hovered_link_span(&self, id: &str) -> Option<usize> {
+        self.hovered_link
+            .as_ref()
+            .filter(|(box_id, _)| box_id == id)
+            .map(|(_, span)| *span)
     }
     fn visual_hover_at(&self, x: f32, y: f32, hit: Option<&str>) -> BTreeSet<String> {
         let mut result = BTreeSet::new();
@@ -1381,15 +1440,26 @@ impl Runtime {
         let editing_changed = false;
         let next = self.hit(x, y);
         let visual = self.visual_hover_at(x, y, next.as_deref());
-        let changed = editing_changed || next != self.hovered || visual != self.visual_hover;
+        let link = if next.is_none() {
+            self.link_at(x, y)
+        } else {
+            None
+        };
+        let changed = editing_changed
+            || next != self.hovered
+            || visual != self.visual_hover
+            || link != self.hovered_link;
         self.hovered = next;
+        self.hovered_link = link;
         self.visual_hover = visual;
         #[cfg(feature = "rust-ui")]
         let changed = self.tooltip_pointer(Some([x, y])) || changed;
         changed
     }
     pub fn pointer_leave(&mut self) -> bool {
-        let changed = self.hovered.take().is_some() || !self.visual_hover.is_empty();
+        let changed = self.hovered.take().is_some()
+            || !self.visual_hover.is_empty()
+            || self.hovered_link.take().is_some();
         self.visual_hover.clear();
         #[cfg(feature = "rust-ui")]
         let changed = self.tooltip_pointer(None) || changed;
@@ -1412,6 +1482,11 @@ impl Runtime {
         }
         let hover_changed = self.pointer_move(x, y);
         let hit = self.hit(x, y);
+        self.link_capture = if hit.is_none() {
+            self.link_at(x, y)
+        } else {
+            None
+        };
         let changed = hover_changed
             || self.capture != hit
             || self.focused != hit
@@ -1473,6 +1548,26 @@ impl Runtime {
                 changed: true,
                 activated: false,
             });
+        }
+        if let Some(link) = self.link_capture.take() {
+            let target = (self.link_at(x, y).as_ref() == Some(&link))
+                .then(|| self.boxes.iter().find(|b| b.id == link.0))
+                .flatten()
+                .and_then(|b| {
+                    Some((
+                        b.ext.on_link.clone()?,
+                        b.ext.spans.get(link.1)?.link.clone()?,
+                    ))
+                });
+            if let Some((name, target)) = target {
+                handlers
+                    .dispatch(&name, Event::Link(target), context)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: true,
+                });
+            }
         }
         let pressed = self.capture.take();
         let activated = if let Some(id) = pressed
@@ -2031,6 +2126,7 @@ impl Runtime {
                     if b.ext.spans.is_empty() {
                         p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
                     } else {
+                        let hovered = self.hovered_link_span(&b.id);
                         paint_rich_text(
                             p,
                             &mut shapes,
@@ -2040,6 +2136,7 @@ impl Runtime {
                             ui,
                             text_color,
                             self.scale,
+                            hovered,
                         );
                     }
                     let style = &b.text_style;
@@ -2960,6 +3057,7 @@ fn resolve_styles(
                         family: s.family.clone(),
                         weight: s.weight,
                         italic: s.italic,
+                        scale: s.scale.map(|p| f32::from(p) / 100.),
                         color: None,
                     })
                     .collect(),
@@ -2995,6 +3093,7 @@ fn paint_rich_text<P: DocumentPainter>(
     ui: &crate::UiTheme,
     text_color: [f32; 4],
     scale: f32,
+    hovered_link: Option<usize>,
 ) {
     let mut style = b.text_style.clone();
     for (run, span) in style.runs.iter_mut().zip(&b.ext.spans) {
@@ -3007,8 +3106,7 @@ fn paint_rich_text<P: DocumentPainter>(
         };
         // A chip slightly wider than its glyphs and inset from the line box.
         let (pad, inset) = ((size * 0.2).round().max(scale), (size * 0.08).round());
-        for [x, top, w, h, _] in
-            p.ui_text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+        for [x, top, w, h, _] in p.text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
         {
             p.card_round(
                 shapes,
@@ -3020,16 +3118,18 @@ fn paint_rich_text<P: DocumentPainter>(
     }
     p.ui_text_styled(glyphs, &b.text, r, &style, text_color);
     let thickness = (size / 14.).max(scale).round().max(1.);
-    for (run, span) in style.runs.iter().zip(&b.ext.spans) {
-        if !(span.underline || span.strikethrough) {
+    for (i, (run, span)) in style.runs.iter().zip(&b.ext.spans).enumerate() {
+        // Links underline while hovered.
+        let underline = span.underline || hovered_link == Some(i);
+        if !(underline || span.strikethrough) {
             continue;
         }
         let color = run.color.unwrap_or(text_color);
         for [x, _, w, _, baseline] in
-            p.ui_text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+            p.text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
         {
             for (on, y) in [
-                (span.underline, baseline + size * 0.14),
+                (underline, baseline + size * 0.14),
                 (span.strikethrough, baseline - size * 0.3),
             ] {
                 if on && w > 0. {
@@ -3899,6 +3999,8 @@ fn place(
             label_inset: n.ext.label_inset,
             reveal_handle: n.ext.reveal_handle,
             spans: n.ext.spans.clone(),
+            on_link: n.ext.on_link.clone(),
+            links: Vec::new(),
         },
     });
     let index = out.len() - 1;

@@ -1,9 +1,9 @@
 #![cfg(feature = "native")]
 use volt_ui_kit::{
-    declarative::{Bindings, DocumentPainter, Runtime, TextMetrics, TextRun, TextStyle},
+    declarative::{Bindings, Runtime, TextMetrics, TextRun, TextStyle},
     native::RasterPainter,
     ui::prelude::*,
-    UiTheme, Viewport,
+    Painter, UiTheme, Viewport,
 };
 
 fn layout(ui: Element<()>, size: [f32; 2]) -> (Runtime, RasterPainter) {
@@ -177,14 +177,14 @@ fn a_wrapped_run_reports_one_rect_per_line() {
     let mut p = RasterPainter::new(Viewport::new(400., 400., 1.).unwrap());
     let text = "one two three four five six seven eight nine ten";
     let s = style(16.);
-    let all = p.ui_text_range_rects(text, [10., 10., 120., 300.], &s, 0..text.len());
+    let all = p.text_range_rects(text, [10., 10., 120., 300.], &s, 0..text.len());
     assert!(all.len() >= 3, "{all:?}");
     for w in all.windows(2) {
         assert!(w[1][1] > w[0][1], "lines go down: {all:?}");
     }
     // A range inside one word covers only part of its line.
     let start = text.find("three").unwrap();
-    let one = p.ui_text_range_rects(text, [10., 10., 120., 300.], &s, start..start + 5);
+    let one = p.text_range_rects(text, [10., 10., 120., 300.], &s, start..start + 5);
     assert_eq!(one.len(), 1);
     assert!(one[0][2] < 120.);
 }
@@ -208,4 +208,150 @@ fn truncation_across_runs_with_multibyte_text_never_panics() {
             p.rasterize(&batches, [1., 1., 1., 1.]).unwrap();
         }
     }
+}
+
+#[derive(Default)]
+struct Clicks(Vec<String>);
+
+fn link_runtime(
+    scroll: bool,
+) -> (
+    Runtime,
+    volt_ui_kit::declarative::Handlers<'static, Clicks>,
+    RasterPainter,
+) {
+    let paragraph = rich_text([
+        span("Read the "),
+        span("guide").link("docs/guide.md"),
+        span(" or visit "),
+        span("the website").link("https://example.com"),
+        span("."),
+    ])
+    .key("t")
+    .font_size(20.)
+    .on_link(|clicks: &mut Clicks, target| clicks.0.push(target));
+    let ui: Element<Clicks> = if scroll {
+        vstack![spacer().height(300.).flex(0.), paragraph]
+            .key("scroller")
+            .height(120.)
+            .scroll(Scroll::Vertical)
+            .into()
+    } else {
+        vstack![paragraph].padding(10., Edge::All).into()
+    };
+    let (doc, h) = ui.build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    let vp = Viewport::new(600., 120., 1.).unwrap();
+    let mut p = RasterPainter::new(vp);
+    r.layout(vp, &Bindings::default(), &mut p).unwrap();
+    (r, h, p)
+}
+/// Centre of the laid-out range of `needle` in the text box.
+fn centre_of(r: &Runtime, p: &mut RasterPainter, needle: &str) -> [f32; 2] {
+    let b = r.boxes().iter().find(|b| b.id == "t").unwrap();
+    let text = "Read the guide or visit the website.";
+    let start = text.find(needle).unwrap();
+    let [x, y, w, h, _] = p.text_range_rects(
+        text,
+        b.bounds.bounds(),
+        &b.text_style,
+        start..start + needle.len(),
+    )[0];
+    [x + w / 2., y + h / 2.]
+}
+
+#[test]
+fn clicking_a_link_reports_its_target_and_plain_text_does_not() {
+    let (mut r, mut h, mut p) = link_runtime(false);
+    let mut clicks = Clicks::default();
+    for (needle, expected) in [
+        ("guide", Some("docs/guide.md")),
+        ("website", Some("https://example.com")),
+        ("Read", None),
+    ] {
+        let [x, y] = centre_of(&r, &mut p, needle);
+        r.pointer_down(x, y);
+        let out = r.pointer_up_outcome(x, y, &mut h, &mut clicks).unwrap();
+        assert_eq!(out.activated, expected.is_some(), "{needle}");
+        if let Some(target) = expected {
+            assert_eq!(clicks.0.last().map(String::as_str), Some(target));
+        }
+    }
+    assert_eq!(clicks.0.len(), 2);
+    // Press on one link, release on another: no click.
+    let [ax, ay] = centre_of(&r, &mut p, "guide");
+    let [bx, by] = centre_of(&r, &mut p, "website");
+    r.pointer_down(ax, ay);
+    assert!(
+        !r.pointer_up_outcome(bx, by, &mut h, &mut clicks)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(clicks.0.len(), 2);
+}
+
+#[test]
+fn hovering_a_link_shows_a_pointer_and_an_underline() {
+    let (mut r, _h, mut p) = link_runtime(false);
+    let [x, y] = centre_of(&r, &mut p, "website");
+    let [px, py] = centre_of(&r, &mut p, "Read");
+    assert_eq!(r.cursor_at(px, py), Cursor::Default);
+    assert_eq!(r.cursor_at(x, y), Cursor::Pointer);
+    let ink = |r: &mut Runtime, p: &mut RasterPainter| {
+        let batches = r.paint_ui(p, &UiTheme::dark());
+        let pix = p.rasterize(&batches, [0., 0., 0., 1.]).unwrap();
+        (0..pix.width())
+            .flat_map(|x| (0..pix.height()).map(move |y| (x, y)))
+            .filter(|&(x, y)| pix.pixel(x, y).unwrap().blue() > 100)
+            .count()
+    };
+    let before = ink(&mut r, &mut p);
+    assert!(r.pointer_move(x, y), "hovering a link repaints");
+    let hovered = ink(&mut r, &mut p);
+    assert!(
+        hovered > before,
+        "underline adds link-coloured ink: {before} -> {hovered}"
+    );
+    assert!(r.pointer_move(px, py));
+    assert_eq!(ink(&mut r, &mut p), before);
+}
+
+#[test]
+fn links_follow_their_text_when_it_scrolls() {
+    let (mut r, mut h, mut p) = link_runtime(true);
+    assert!(r.scroll_at(50., 50., [0., 250.]));
+    r.layout(p.viewport(), &Bindings::default(), &mut p)
+        .unwrap();
+    let [x, y] = centre_of(&r, &mut p, "guide");
+    let mut clicks = Clicks::default();
+    r.pointer_down(x, y);
+    assert!(
+        r.pointer_up_outcome(x, y, &mut h, &mut clicks)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(clicks.0, ["docs/guide.md"]);
+}
+
+#[test]
+fn a_sized_run_measures_smaller_without_changing_line_height() {
+    let mut p = RasterPainter::new(Viewport::new(800., 200., 1.).unwrap());
+    let text = "monospace code sample";
+    let style = |scale: Option<f32>| TextStyle {
+        runs: vec![TextRun {
+            start: 0,
+            end: text.len(),
+            family: Some("monospace".into()),
+            scale,
+            ..TextRun::default()
+        }],
+        ..TextStyle {
+            size: 16.,
+            ..TextStyle::default()
+        }
+    };
+    let full = p.measure_styled(text, &style(None), 1_000_000.);
+    let small = p.measure_styled(text, &style(Some(0.8)), 1_000_000.);
+    assert!(small[0] < full[0] * 0.9, "{small:?} vs {full:?}");
+    assert_eq!(small[1], full[1], "line height follows the paragraph");
 }

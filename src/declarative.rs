@@ -12,6 +12,8 @@ pub enum EventKind {
     ContextRequested,
     WindowChanged,
     FilesDropped,
+    /// A link inside rich text was clicked.
+    Link,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -31,6 +33,8 @@ pub enum Event {
     },
     /// Files dragged from the system onto a drop zone (never empty).
     FilesDropped(Vec<std::path::PathBuf>),
+    /// The target of the rich text link that was clicked.
+    Link(String),
 }
 impl Event {
     pub fn kind(&self) -> EventKind {
@@ -42,6 +46,7 @@ impl Event {
             Self::ContextRequested { .. } => EventKind::ContextRequested,
             Self::WindowChanged { .. } => EventKind::WindowChanged,
             Self::FilesDropped(_) => EventKind::FilesDropped,
+            Self::Link(_) => EventKind::Link,
         }
     }
 }
@@ -185,6 +190,21 @@ impl<'a, C> Handlers<'a, C> {
             Box::new(move |ctx, event| {
                 if let Event::WindowChanged { start, end } = event {
                     f(ctx, start..end);
+                }
+            }),
+        )
+    }
+    pub fn on_link(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, String) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::Link,
+            Box::new(move |ctx, event| {
+                if let Event::Link(target) = event {
+                    f(ctx, target);
                 }
             }),
         )
