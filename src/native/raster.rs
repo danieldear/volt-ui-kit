@@ -2263,6 +2263,23 @@ impl TextMetrics for RasterPainter {
             })
             .collect()
     }
+    fn text_offset_at(
+        &mut self,
+        text: &str,
+        bounds: [f32; 4],
+        style: &TextStyle,
+        point: [f32; 2],
+    ) -> Option<usize> {
+        let key = self.draw_key(text, style, bounds[2]);
+        let buffer = &self.text[&key].0;
+        let starts = line_starts(buffer);
+        let cursor = buffer.hit(point[0] - bounds[0].round(), point[1] - bounds[1].round())?;
+        let mut at = (starts.get(cursor.line).copied().unwrap_or(0) + cursor.index).min(text.len());
+        while !text.is_char_boundary(at) {
+            at -= 1;
+        }
+        Some(at)
+    }
     fn line_advances(&mut self, text: &str, style: &TextStyle, byte_offsets: &[usize]) -> Vec<f32> {
         // Share the same shaped buffer as painting: prefix measurement would
         // lose kerning/ligatures. Interpolate grapheme stops within a cluster,

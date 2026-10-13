@@ -103,6 +103,9 @@ impl EditorState {
             ..Default::default()
         }
     }
+    pub(super) fn dragging(&self) -> bool {
+        self.drag
+    }
     fn range(&self) -> std::ops::Range<usize> {
         self.caret.min(self.anchor)..self.caret.max(self.anchor)
     }
