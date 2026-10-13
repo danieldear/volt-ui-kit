@@ -13,7 +13,10 @@
   rebuilds, and `.on_cancel(f)` runs when Escape is pressed in the field.
   Single-line fields no longer clip descenders of typed or placeholder text.
 - `native::font_families()` lists installed font families for font
-  pickers; `file_dialog::open_folder` chooses a folder.
+  pickers; `file_dialog::open_folder` chooses a folder and
+  `file_dialog::open_file_or_folder` either.
+- Shortcuts match the key pressed without modifiers, so Shift+Cmd+] is
+  `primary(']').shift(true)` and Option shortcuts work on every layout.
 - Icons: `Sidebar`, `FileText` and `Type`.
 - `lazy_list(count, |row| ..)`: a scrolling column of variable-height rows
   that builds only the rows near the viewport, so documents and feeds of
