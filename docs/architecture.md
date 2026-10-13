@@ -75,13 +75,13 @@ tests; live sessions with VoiceOver, Narrator and Orca are still to do.
 
 ## Dependencies and Rust version
 
-- The minimum Rust version is 1.87. Vello is pinned to 0.6 and wgpu to 26
-  because newer releases need a newer compiler.
+- The minimum Rust version is 1.89, set by Vello 0.11. Vello (0.11) and wgpu
+  (30) are pinned to exact versions because GPU output is validated against them.
 - wgpu is built with only the backend each platform uses (Metal, DX12 or
   Vulkan); Vello's default features are off.
 - `cargo audit` reports no vulnerabilities. It lists unmaintained-crate
-  warnings for `paste` (through Metal) and `rustybuzz`/`ttf-parser` (through
-  cosmic-text), which have no fixed versions yet.
+  warnings for `rustybuzz` and `ttf-parser` (through cosmic-text), which have
+  no fixed versions yet.
 
 ## Embedding the drawing layer
 

@@ -164,6 +164,40 @@ pub fn short_number(v: f32) -> String {
     format!("{text}{suffix}")
 }
 
+/// Packs many small shapes of one colour into as few canvas paths as possible.
+/// A canvas holds at most 256 paths, so one path per candle or bar would cap a
+/// chart at roughly a hundred items. Shapes in one batch must not overlap:
+/// canvas fills use the even-odd rule.
+pub(super) struct PathBatch(Vec<VectorPath>);
+impl PathBatch {
+    pub(super) fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub(super) fn add(&mut self, shape: VectorPath) {
+        match self.0.last_mut() {
+            Some(path)
+                if path.commands.len() + shape.commands.len()
+                    <= crate::graphics::MAX_PATH_COMMANDS =>
+            {
+                path.commands.extend(shape.commands)
+            }
+            _ => self.0.push(shape),
+        }
+    }
+    pub(super) fn fill(self, c: &mut Canvas, color: impl Into<String>) {
+        let color = color.into();
+        for path in self.0 {
+            c.fill(path, color.clone());
+        }
+    }
+    pub(super) fn stroke(self, c: &mut Canvas, color: impl Into<String>, width: f32) {
+        let color = color.into();
+        for path in self.0 {
+            c.stroke(path, color.clone(), width);
+        }
+    }
+}
+
 type Format = fn(f32) -> String;
 const AXIS: f32 = 44.;
 const X_LABELS: f32 = 20.;
@@ -643,42 +677,41 @@ impl<C: 'static> From<CandlestickChart<C>> for Element<C> {
                         ColorToken::BaseContent.alpha(9),
                     );
                 }
-                for (i, k) in candles.iter().enumerate() {
+                let body_rect = |i: usize, k: &Candle| {
                     let x = (i as f32 + 0.5) * slot;
-                    let up = k.close >= k.open;
-                    let color = if up {
-                        ColorToken::Success
-                    } else {
-                        ColorToken::Error
-                    };
-                    let wick_x = x.round() + 0.5;
-                    c.stroke(
+                    let (top, bottom) = (to_y(k.open.max(k.close)), to_y(k.open.min(k.close)));
+                    VectorPath::rectangle(x - body / 2., top, body, (bottom - top).max(1.))
+                };
+                // [rising, falling] wicks and bodies, each batched by colour.
+                let mut wicks = [PathBatch::new(), PathBatch::new()];
+                let mut bodies = [PathBatch::new(), PathBatch::new()];
+                for (i, k) in candles.iter().enumerate() {
+                    let side = usize::from(k.close < k.open);
+                    let wick_x = ((i as f32 + 0.5) * slot).round() + 0.5;
+                    wicks[side].add(
                         VectorPath::new()
                             .move_to(wick_x, to_y(k.high))
                             .line_to(wick_x, to_y(k.low)),
-                        color,
-                        1.,
                     );
-                    let (top, bottom) = (to_y(k.open.max(k.close)), to_y(k.open.min(k.close)));
-                    let rect =
-                        VectorPath::rectangle(x - body / 2., top, body, (bottom - top).max(1.));
-                    c.fill(rect.clone(), color);
-                    if selected == Some(i) {
-                        c.stroke(rect, ColorToken::BaseContent, 1.5);
-                    }
+                    bodies[side].add(body_rect(i, k));
                 }
-                // The selected close as a dashed level across the plot.
+                let [up_wicks, down_wicks] = wicks;
+                let [up_bodies, down_bodies] = bodies;
+                up_wicks.stroke(c, ColorToken::Success, 1.);
+                down_wicks.stroke(c, ColorToken::Error, 1.);
+                up_bodies.fill(c, ColorToken::Success);
+                down_bodies.fill(c, ColorToken::Error);
                 if let Some(i) = selected {
+                    c.stroke(body_rect(i, &candles[i]), ColorToken::BaseContent, 1.5);
+                    // The selected close as a dashed level across the plot.
                     let y = to_y(candles[i].close).round() + 0.5;
+                    let mut dashes = PathBatch::new();
                     let mut x = 0.;
                     while x < w {
-                        c.stroke(
-                            VectorPath::new().move_to(x, y).line_to((x + 4.).min(w), y),
-                            ColorToken::BaseContent.alpha(50),
-                            1.,
-                        );
+                        dashes.add(VectorPath::new().move_to(x, y).line_to((x + 4.).min(w), y));
                         x += 8.;
                     }
+                    dashes.stroke(c, ColorToken::BaseContent.alpha(50), 1.);
                 }
             },
         );
@@ -694,19 +727,26 @@ impl<C: 'static> From<CandlestickChart<C>> for Element<C> {
         let strip = canvas(move |c| {
             let slot = plot_w / n as f32;
             let body = (slot * 0.6).clamp(1., 18.);
+            // [rising, falling] bars; the selected bar is drawn stronger.
+            let mut bars = [PathBatch::new(), PathBatch::new()];
+            let mut picked = None;
             for (i, k) in candles.iter().enumerate() {
                 let h = k.volume / max_v * (vol_h - 4.);
                 let x = (i as f32 + 0.5) * slot;
-                let pct = if selected == Some(i) { 80 } else { 45 };
-                let color = if k.close >= k.open {
-                    ColorToken::Success.alpha(pct)
+                let bar = VectorPath::rectangle(x - body / 2., vol_h - h, body, h.max(1.));
+                let side = usize::from(k.close < k.open);
+                if selected == Some(i) {
+                    picked = Some((bar, side));
                 } else {
-                    ColorToken::Error.alpha(pct)
-                };
-                c.fill(
-                    VectorPath::rectangle(x - body / 2., vol_h - h, body, h.max(1.)),
-                    color,
-                );
+                    bars[side].add(bar);
+                }
+            }
+            let [up, down] = bars;
+            up.fill(c, ColorToken::Success.alpha(45));
+            down.fill(c, ColorToken::Error.alpha(45));
+            if let Some((bar, side)) = picked {
+                let token = [ColorToken::Success, ColorToken::Error][side];
+                c.fill(bar, token.alpha(80));
             }
         })
         .width(plot_w)
@@ -1041,8 +1081,15 @@ impl<C: 'static> From<StackedBarChart<C>> for Element<C> {
             move |c, w, _h, to_y| {
                 let slot = w / n.max(1) as f32;
                 let bar = (slot * 0.6).min(40.);
+                // Per series: [normal, faded]. Other columns step back while
+                // one is selected.
+                let mut batches: Vec<[PathBatch; 2]> = series
+                    .iter()
+                    .map(|_| [PathBatch::new(), PathBatch::new()])
+                    .collect();
                 for i in 0..n {
                     let x = (i as f32 + 0.5) * slot - bar / 2.;
+                    let faded_column = usize::from(selected.is_some_and(|sel| sel != i));
                     let mut base = 0.;
                     for (s, values) in series.iter().enumerate() {
                         let v = values[i];
@@ -1050,18 +1097,19 @@ impl<C: 'static> From<StackedBarChart<C>> for Element<C> {
                             continue;
                         }
                         let (top, bottom) = (to_y(base + v), to_y(base));
-                        let color = series_color(s);
-                        // Other columns step back while one is selected.
-                        let paint = match selected {
-                            Some(sel) if sel != i => faded(color, 40),
-                            _ => color.to_owned(),
-                        };
-                        c.fill(
-                            VectorPath::rectangle(x, top, bar, (bottom - top - 1.).max(1.)),
-                            paint,
-                        );
+                        batches[s][faded_column].add(VectorPath::rectangle(
+                            x,
+                            top,
+                            bar,
+                            (bottom - top - 1.).max(1.),
+                        ));
                         base += v;
                     }
+                }
+                for (s, [normal, dim]) in batches.into_iter().enumerate() {
+                    let color = series_color(s);
+                    normal.fill(c, color);
+                    dim.fill(c, faded(color, 40));
                 }
             },
         );

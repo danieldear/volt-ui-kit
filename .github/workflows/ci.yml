@@ -45,5 +45,5 @@ jobs:
       - run: cargo run --locked --features native --example rust_settings -- --snapshot target/rust-settings.png
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: 1.87.0
-      - run: cargo +1.87.0 check --locked --all-targets --all-features
+          toolchain: 1.89.0
+      - run: cargo +1.89.0 check --locked --all-targets --all-features
