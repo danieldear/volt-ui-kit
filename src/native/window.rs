@@ -445,6 +445,10 @@ fn run_host<C: 'static>(
         }));
     }
     event_loop.set_control_flow(ControlFlow::Wait);
+    let mut context = context;
+    if let Some(setup) = extensions.before_launch.take() {
+        setup(&mut context);
+    }
     let proxy = event_loop.create_proxy();
     let mut app = App {
         options,

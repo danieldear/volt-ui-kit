@@ -22,6 +22,9 @@
   (single-line fields stay at 8 KiB), reflow only the lines that changed,
   and open with the caret at the top. `native::files` reads and saves up
   to the same limit.
+- `Application::before_launch(|app| ..)` runs once the native event loop
+  and application object exist, before the run loop starts, for platform
+  integration that launch events need (receiving Finder's open requests).
 - Editor hooks for writing tools: `.on_selection(|app, sel| ..)` reports
   the selection with the caret's and the editor's rectangles after layout
   (hosts call `Runtime::dispatch_editor_selections`); `.on_keys([..], f)`
