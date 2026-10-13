@@ -355,6 +355,18 @@ pub(crate) struct EditorOptions {
     pub keys: Vec<super::runtime::editing::EditKey>,
     /// Select `start..end` (caret at `end`) when the request number changes.
     pub select: Option<(usize, usize, u32)>,
+    /// Scroll so the line holding this byte is at the top, when the request
+    /// number changes.
+    pub scroll_to: Option<(usize, u32)>,
+    /// Text colours by byte range, e.g. syntax highlighting.
+    pub highlights: Option<std::sync::Arc<EditorHighlights>>,
+}
+/// Coloured byte ranges for an editor: sorted, non-overlapping ranges that
+/// each name a colour in `palette` (theme tokens or hex).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditorHighlights {
+    pub palette: Vec<String>,
+    pub ranges: Vec<(usize, usize, u8)>,
 }
 /// Text a multiline editor may hold: whole documents, not just fields.
 pub(crate) const MAX_EDITOR_TEXT: usize = 4 * 1024 * 1024;
@@ -1156,6 +1168,28 @@ fn check_node(
                 path,
                 "invalid editable text role or missing on_change",
             ));
+        }
+        if let Some(h) = &editor.highlights {
+            let len = n.text.as_ref().map_or(0, String::len);
+            let mut last = 0;
+            let ordered = h.ranges.iter().all(|&(start, end, color)| {
+                let ok = start >= last
+                    && start < end
+                    && end <= len
+                    && usize::from(color) < h.palette.len();
+                last = end;
+                ok
+            });
+            if h.ranges.len() > 200_000
+                || h.palette.len() > 64
+                || !ordered
+                || h.palette.iter().any(|c| parse_color(c).is_none() && crate::ColorToken::parse(c).is_none())
+            {
+                return Err(error(
+                    path,
+                    "editor highlights must be ordered, disjoint ranges inside the text with palette colours",
+                ));
+            }
         }
     }
     if let Some(slider) = &n.slider {

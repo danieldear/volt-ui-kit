@@ -916,3 +916,59 @@ fn editors_report_selection_hand_over_keys_and_take_a_caret() {
     r.editor_key(EditKey::Enter, false, &mut h, &mut a).unwrap();
     assert_eq!(a.text, "Hello\n## \n", "with the menu closed Enter edits again");
 }
+#[derive(Default)]
+struct Long {
+    text: String,
+    top: usize,
+    request: u32,
+    seen_top: Option<usize>,
+}
+fn long_view(app: &Long) -> Element<Long> {
+    text_area(&app.text)
+        .key("long")
+        .on_change(|a: &mut Long, v| a.text = v)
+        .on_selection(|a: &mut Long, s| a.seen_top = Some(s.top))
+        .scroll_to_offset(app.top, app.request)
+        .highlights(
+            vec!["@primary".into(), "#FF0000".into()],
+            vec![(0, 4, 0), (10, 12, 1)],
+        )
+        .height(200.)
+        .into()
+}
+#[test]
+fn editors_scroll_to_an_offset_report_their_top_line_and_check_colours() {
+    let viewport = Viewport::new(400., 300., 1.).unwrap();
+    let mut a = Long {
+        text: (0..200).map(|i| format!("line {i}\n")).collect(),
+        ..Long::default()
+    };
+    let (doc, mut h) = long_view(&a).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.dispatch_editor_selections(&mut h, &mut a).unwrap();
+    assert_eq!(a.seen_top, Some(0));
+    let line_80 = a.text.find("line 80\n").unwrap();
+    a.top = line_80 + 3;
+    a.request = 1;
+    let (doc, next) = long_view(&a).build().unwrap().into_parts();
+    r.replace_document(doc, &next, &Bindings::default()).unwrap();
+    h = next;
+    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.dispatch_editor_selections(&mut h, &mut a).unwrap();
+    assert_eq!(a.seen_top, Some(line_80), "line 80 is at the top");
+    // Wheel scrolling moves the reported top line too.
+    assert!(r.scroll_at(20., 20., [0., 60.]));
+    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.dispatch_editor_selections(&mut h, &mut a).unwrap();
+    assert!(a.seen_top.unwrap() > line_80);
+    // Colour ranges must be ordered, inside the text and name a palette entry.
+    for ranges in [vec![(5, 4, 0)], vec![(0, 4, 2)], vec![(4, 8, 0), (2, 6, 0)], vec![(0, 999_999, 0)]] {
+        let bad: Element<Long> = text_area("short text")
+            .key("bad")
+            .on_change(|_: &mut Long, _| {})
+            .highlights(vec!["@primary".into()], ranges.clone())
+            .into();
+        assert!(bad.build().is_err(), "{ranges:?}");
+    }
+}

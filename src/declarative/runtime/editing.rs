@@ -67,13 +67,16 @@ pub(super) struct EditorState {
     /// `select` request.
     reported: Option<Reported>,
     select_request: u32,
+    /// The last applied `scroll_to` request and a scroll still to apply.
+    scroll_request: u32,
+    scroll_target: Option<usize>,
     /// Wrapped rows of each hard line from the last reflow, so typing in a
     /// long document only reshapes the lines that changed.
     lines: LineCache,
 }
 /// A reported selection: start, end, caret, caret rect and editor bounds
 /// (rects as bits, for exact comparison).
-type Reported = (usize, usize, usize, [u32; 4], [u32; 4]);
+type Reported = (usize, usize, usize, [u32; 4], [u32; 4], usize);
 #[derive(Clone, Default)]
 struct LineCache {
     width: f32,
@@ -481,6 +484,13 @@ impl Runtime {
                     e.preedit.clear();
                     e.follow_caret = true;
                 }
+                if let Some((at, request)) = n.editor.as_ref().and_then(|o| o.scroll_to) {
+                    if request != e.scroll_request {
+                        e.scroll_request = request;
+                        e.scroll_target = Some(at);
+                        e.follow_caret = false;
+                    }
+                }
                 // After the text is current, so the range is in it.
                 if let Some((start, end, request)) = n.editor.as_ref().and_then(|o| o.select) {
                     if request != e.select_request {
@@ -557,6 +567,10 @@ impl Runtime {
                     } else {
                         (max_x - width + 2. * self.scale).max(0.)
                     };
+                    if let Some(at) = e.scroll_target.take() {
+                        let row = e.rows.iter().position(|r| at < r.end || r.end == e.text.len());
+                        e.offset[1] = row.unwrap_or(0) as f32 * line_height;
+                    }
                     e.offset[0] = e.offset[0].clamp(0., max_x);
                     e.offset[1] = e.offset[1].clamp(0., (max_y - height).max(0.));
                     let pos = e.paint_caret;
@@ -675,12 +689,15 @@ impl Runtime {
             ];
             let range = e.range();
             let bounds = b.bounds.bounds().map(|v| v / self.scale);
+            let top_row = (e.offset[1] / line.max(1.)).floor() as usize;
+            let top = e.rows.get(top_row).map_or(0, |r| r.start);
             let report = (
                 range.start,
                 range.end,
                 e.caret,
                 caret.map(f32::to_bits),
                 bounds.map(f32::to_bits),
+                top,
             );
             if e.reported != Some(report) {
                 e.reported = Some(report);
@@ -692,6 +709,7 @@ impl Runtime {
                         caret_at: report.2,
                         caret_bits: report.3,
                         bounds_bits: report.4,
+                        top: report.5,
                     },
                 ));
             }
@@ -1299,10 +1317,39 @@ impl Runtime {
             p.ui_text_styled(&mut glyphs, &options.placeholder, rect, &style, tint(c.muted));
         } else {
             let row_style = editor_row_style(&b.text_style);
+            // Colour ranges become colour-only runs: they share the plain
+            // row's shaping, so ink still matches carets and selections.
+            let highlights = options.highlights.as_deref().filter(|_| !options.password);
+            let palette: Vec<Option<[f32; 4]>> = highlights
+                .map(|h| h.palette.iter().map(|c| ui.resolve(c).map(tint)).collect())
+                .unwrap_or_default();
             for (row, line) in e.rows.iter().enumerate() {
                 let top = inner[1] + row as f32 * line_height - e.offset[1];
                 if top + line_height <= inner[1] || top >= inner[1] + inner[3] {
                     continue;
+                }
+                let mut style = std::borrow::Cow::Borrowed(&row_style);
+                if let Some(h) = highlights {
+                    let first = h.ranges.partition_point(|r| r.1 <= line.start);
+                    let runs: Vec<TextRun> = h.ranges[first..]
+                        .iter()
+                        .take_while(|r| r.0 < line.end)
+                        .filter_map(|&(start, end, color)| {
+                            let color = palette.get(usize::from(color)).copied().flatten()?;
+                            let start = start.max(line.start) - line.start;
+                            let end = end.min(line.end) - line.start;
+                            (start < end && line.text.is_char_boundary(start) && line.text.is_char_boundary(end))
+                                .then_some(TextRun {
+                                    start,
+                                    end,
+                                    color: Some(color),
+                                    ..TextRun::default()
+                                })
+                        })
+                        .collect();
+                    if !runs.is_empty() {
+                        style.to_mut().runs = runs;
+                    }
                 }
                 // Same independently-shaped segments and widths used by visual_rows.
                 p.ui_text_styled(
@@ -1314,7 +1361,7 @@ impl Runtime {
                         1_000_000.,
                         line_height,
                     ],
-                    &row_style,
+                    &style,
                     tint(b.style.color.unwrap_or(c.text)),
                 );
             }

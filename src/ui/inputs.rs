@@ -86,6 +86,25 @@ impl<C> TextInput<C> {
         self.0.node.editor.as_mut().unwrap().select = Some((range.start, range.end, request));
         self
     }
+    /// Scroll so the line holding byte `at` is at the top whenever
+    /// `request` changes, e.g. to follow a preview.
+    pub fn scroll_to_offset(mut self, at: usize, request: u32) -> Self {
+        self.0.node.editor.as_mut().unwrap().scroll_to = Some((at, request));
+        self
+    }
+    /// Colour byte ranges of the text (syntax highlighting): sorted,
+    /// non-overlapping `(start, end, palette index)`. Colours only, so the
+    /// layout is unchanged; at most 200,000 ranges.
+    pub fn highlights(
+        mut self,
+        palette: Vec<String>,
+        ranges: Vec<(usize, usize, u8)>,
+    ) -> Self {
+        self.0.node.editor.as_mut().unwrap().highlights = Some(std::sync::Arc::new(
+            crate::declarative::EditorHighlights { palette, ranges },
+        ));
+        self
+    }
     /// Escape while the field has focus, e.g. to close a find bar.
     pub fn on_cancel(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
         self.1.cancel = Some(Box::new(f));
