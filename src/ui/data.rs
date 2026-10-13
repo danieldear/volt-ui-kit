@@ -176,6 +176,159 @@ impl<C: 'static, T: Clone + PartialEq + 'static, F: FnMut(usize) -> DataItem<T>>
             row_height: list.1.row_height,
             overscan: list.1.overscan,
             on_window_change: None,
+            estimates: None,
+            generation: 0,
+            scroll_to_index: None,
+        });
+        list.0.callback = Some(Callback::Window(list.1.on_window.take().unwrap()));
+        list.0
+    }
+}
+
+/// A scrolling column of variable-height rows where only the rows near the
+/// viewport are built, so documents and feeds of any length stay within the
+/// element budget. Rows are measured as they mount; `.estimate(..)` or
+/// `.estimates(..)` stand in for rows not yet seen.
+///
+/// ```
+/// use volt_ui_kit::ui::prelude::*;
+/// struct App { window: std::ops::Range<usize> }
+/// fn view(app: &App) -> Element<App> {
+///     lazy_list(10_000, |i| text(format!("Paragraph {i}")).key(format!("p{i}")).into())
+///         .key("doc")
+///         .estimate(24.)
+///         .window(app.window.clone())
+///         .on_window_change(|app: &mut App, window| app.window = window)
+///         .gap(8.)
+///         .into()
+/// }
+/// view(&App { window: 0..30 }).build()?;
+/// # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+/// ```
+pub struct LazyList<C, F>(pub(super) Element<C>, LazyOptions<C, F>);
+struct LazyOptions<C, F> {
+    count: usize,
+    factory: F,
+    estimate: f32,
+    estimates: Option<Vec<f32>>,
+    window: Option<Range<usize>>,
+    overscan: usize,
+    generation: u64,
+    scroll_to: Option<(usize, u32)>,
+    on_window: Option<WindowCallback<C>>,
+}
+/// See [`LazyList`]. `row(i)` builds row `i`; give each row a stable key.
+pub fn lazy_list<C, F: FnMut(usize) -> Element<C>>(count: usize, row: F) -> LazyList<C, F> {
+    let mut e = Element::new(Kind::Panel);
+    e.node.surface.scroll = Some(Scroll::Vertical);
+    e.node.style.background = Some("#00000000".into());
+    e.node.style.border_width = Some(0.);
+    e.node.style.radius = Some(Rounding::Radius(0.));
+    LazyList(
+        e,
+        LazyOptions {
+            count,
+            factory: row,
+            estimate: 48.,
+            estimates: None,
+            window: None,
+            overscan: 3,
+            generation: 0,
+            scroll_to: None,
+            on_window: None,
+        },
+    )
+}
+impl<C, F> LazyList<C, F> {
+    /// One estimated height (logical pixels) for every unmeasured row.
+    pub fn estimate(mut self, height: f32) -> Self {
+        self.1.estimate = height;
+        self
+    }
+    /// An estimated height per row; better estimates keep the scroll bar
+    /// steadier while rows are first measured.
+    pub fn estimates(mut self, heights: impl IntoIterator<Item = f32>) -> Self {
+        self.1.estimates = Some(heights.into_iter().collect());
+        self
+    }
+    /// The rows to build, as last reported by `on_window_change`.
+    pub fn window(mut self, value: Range<usize>) -> Self {
+        self.1.window = Some(value);
+        self
+    }
+    /// Space between rows, in logical pixels.
+    pub fn gap(mut self, value: f32) -> Self {
+        self.0.node.gap = value;
+        self
+    }
+    /// Extra rows kept built above and below the viewport (0–16).
+    pub fn overscan(mut self, rows: usize) -> Self {
+        self.1.overscan = rows;
+        self
+    }
+    /// Change this when row contents change (a new document): measured
+    /// heights are discarded and rows are measured again.
+    pub fn generation(mut self, value: u64) -> Self {
+        self.1.generation = value;
+        self
+    }
+    /// Scroll so `row` is at the top whenever `request` changes (bump a
+    /// counter to jump again). Works for rows that are not built yet.
+    pub fn scroll_to_row(mut self, row: usize, request: u32) -> Self {
+        self.1.scroll_to = Some((row, request));
+        self
+    }
+    /// Called with the new range of rows to build as the list scrolls.
+    pub fn on_window_change(mut self, f: impl FnMut(&mut C, Range<usize>) + 'static) -> Self {
+        self.1.on_window = Some(Box::new(f));
+        self
+    }
+}
+impl<C: 'static, F: FnMut(usize) -> Element<C>> From<LazyList<C, F>> for Element<C> {
+    fn from(mut list: LazyList<C, F>) -> Self {
+        let count = list.1.count;
+        let window = list.1.window.clone().unwrap_or(0..count.min(32));
+        let estimates: Vec<f32> = list
+            .1
+            .estimates
+            .take()
+            .unwrap_or_else(|| vec![list.1.estimate; count]);
+        let error = if list.0.auto_id {
+            Some("lazy list requires a stable .key(...)")
+        } else if list.1.on_window.is_none() {
+            Some("lazy list requires on_window_change")
+        } else if count > 1_000_000 || list.1.overscan > 16 || estimates.len() != count {
+            Some("lazy list count, overscan or estimates exceed bounds")
+        } else if window.start > window.end
+            || window.end > count
+            || window.len() > crate::declarative::document::MAX_LAZY_WINDOW
+        {
+            Some("lazy list window must be ordered, in range and at most 256 rows")
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            list.0.validation_error = Some(error.into());
+            return list.0;
+        }
+        for index in window.clone() {
+            let row = (list.1.factory)(index);
+            if row.auto_id {
+                list.0.validation_error = Some("lazy list rows require stable keys".into());
+                return list.0;
+            }
+            list.0.children.push(row);
+        }
+        list.0.node.virtual_list = Some(VirtualListProps {
+            count,
+            start: window.start,
+            end: window.end,
+            row_height: 1.,
+            overscan: list.1.overscan,
+            on_window_change: None,
+            estimates: Some(estimates.into()),
+            generation: list.1.generation,
+            scroll_to_index: list.1.scroll_to.filter(|(row, _)| *row < count),
         });
         list.0.callback = Some(Callback::Window(list.1.on_window.take().unwrap()));
         list.0
