@@ -264,6 +264,7 @@ enum Callback<C> {
     Text {
         change: Option<ChangeText<C>>,
         submit: Option<Click<C>>,
+        cancel: Option<Click<C>>,
     },
     Number(ChangeNumber<C>),
     Range {
@@ -422,7 +423,11 @@ impl<C: 'static> Element<C> {
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.on_toggle_changed = Some(name);
                     }
-                    Callback::Text { change, submit } => {
+                    Callback::Text {
+                        change,
+                        submit,
+                        cancel,
+                    } => {
                         if let Some(f) = change {
                             let action = format!("{name}-change");
                             handlers
@@ -436,6 +441,13 @@ impl<C: 'static> Element<C> {
                                 .on_activate(&action, f)
                                 .map_err(|e| DocumentError(e.to_string()))?;
                             node.on_submit = Some(action);
+                        }
+                        if let Some(f) = cancel {
+                            let action = format!("{name}-cancel");
+                            handlers
+                                .on_activate(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_cancel = Some(action);
                         }
                     }
                     Callback::Number(f) => {

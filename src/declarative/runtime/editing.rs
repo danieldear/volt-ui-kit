@@ -543,6 +543,39 @@ impl Runtime {
             })
         }
     }
+    /// Escape in the focused field: runs its `on_cancel` callback if any.
+    pub fn editor_cancel<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        ctx: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        let Some(name) = self.editable_box().and_then(|b| b.on_cancel.clone()) else {
+            return Ok(InputOutcome::default());
+        };
+        handlers
+            .dispatch(&name, Event::Activate, ctx)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        Ok(InputOutcome {
+            changed: true,
+            activated: true,
+        })
+    }
+    /// The first enabled `autofocus` field in `next` that `previous` lacks.
+    pub(super) fn autofocus_target(previous: Option<&Node>, next: &Node) -> Option<String> {
+        fn has(node: &Node, id: &str) -> bool {
+            node.id == id || node.children.iter().any(|c| has(c, id))
+        }
+        fn first<'a>(node: &'a Node, previous: Option<&Node>) -> Option<&'a str> {
+            if node.enabled
+                && node.editor.as_ref().is_some_and(|e| e.autofocus)
+                && previous.is_none_or(|p| !has(p, &node.id))
+            {
+                return Some(&node.id);
+            }
+            node.children.iter().find_map(|c| first(c, previous))
+        }
+        first(next, previous).map(str::to_owned)
+    }
     pub fn editor_key<C>(
         &mut self,
         key: EditKey,
@@ -1081,13 +1114,18 @@ impl Runtime {
             }
         }
         if e.text.is_empty() && e.preedit.is_empty() {
-            p.ui_text_styled(
-                &mut glyphs,
-                &options.placeholder,
-                inner,
-                &b.text_style,
-                tint(c.muted),
-            );
+            // Laid out like the first typed row, so descenders are not cut
+            // and the placeholder sits exactly where typing begins.
+            // Multiline placeholders wrap in the field instead.
+            let (rect, style) = if options.multiline {
+                (inner, b.text_style.clone())
+            } else {
+                (
+                    [inner[0], inner[1] - e.offset[1], inner[2], line_height],
+                    editor_row_style(&b.text_style),
+                )
+            };
+            p.ui_text_styled(&mut glyphs, &options.placeholder, rect, &style, tint(c.muted));
         } else {
             let row_style = editor_row_style(&b.text_style);
             for (row, line) in e.rows.iter().enumerate() {

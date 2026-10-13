@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Shortcuts may use unshifted punctuation keys as well as letters and
+  digits (`,` `.` `;` `'` `/` `[` `]` `\` `-` `=` `` ` ``), so apps can bind
+  ⌘, for Settings, ⌘=/⌘− for zoom and ⌘[/⌘] for history.
+- Native menus: `DesktopCommand::separator()` divides a menu into groups,
+  and `DesktopConfig::app_menu([..])` adds commands (such as Settings…)
+  to the application menu below About.
+- Text fields: `.autofocus(true)` takes keyboard focus when the field first
+  appears (a find bar opening, say) without stealing it back on later
+  rebuilds, and `.on_cancel(f)` runs when Escape is pressed in the field.
+  Single-line fields no longer clip descenders of typed or placeholder text.
+- `native::font_families()` lists installed font families for font
+  pickers; `file_dialog::open_folder` chooses a folder.
+- Icons: `Sidebar`, `FileText` and `Type`.
 - `lazy_list(count, |row| ..)`: a scrolling column of variable-height rows
   that builds only the rows near the viewport, so documents and feeds of
   any length stay within the element budget. Rows are measured as they

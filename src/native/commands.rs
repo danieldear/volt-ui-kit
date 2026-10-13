@@ -22,9 +22,13 @@ pub enum ApplicationRequest {
     Close(CloseReason),
 }
 
-/// Logical ASCII letter/digit shortcut with Cmd on macOS, Ctrl elsewhere.
+/// Logical ASCII letter, digit or punctuation shortcut with Cmd on macOS,
+/// Ctrl elsewhere (`,` for Settings, `=`/`-` for zoom, `[`/`]` for history).
 /// Matching requires exactly the requested modifiers. Clipboard/undo/select-all
 /// chords remain owned by the text editor and are rejected at validation.
+/// Unshifted punctuation keys a shortcut may use. Shifted symbols differ
+/// between keyboard layouts, so shortcuts name the unshifted key.
+const PUNCTUATION: &str = ",.;'/[]\\-=`";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Shortcut {
     key: char,
@@ -61,9 +65,10 @@ impl Shortcut {
         )
     }
     fn validate(self) -> Result<(), String> {
-        if !self.key.is_ascii_alphanumeric() || "acvqxyz".contains(self.key) {
+        let key = self.key.is_ascii_alphanumeric() || PUNCTUATION.contains(self.key);
+        if !key || "acvqxyz".contains(self.key) {
             return Err(
-                "shortcut requires an ASCII letter/digit and cannot override editor or system Quit chords".into(),
+                "shortcut requires an ASCII letter, digit or ,.;'/[]\\-=` and cannot override editor or system Quit chords".into(),
             );
         }
         Ok(())
@@ -284,6 +289,20 @@ mod tests {
             .alt(true)
             .matches('S', M::SUPER | M::SHIFT | M::ALT, true));
         assert!(!s.matches('s', M::SUPER, false));
+    }
+    #[test]
+    fn punctuation_shortcuts_validate_and_match() {
+        for key in [',', '=', '-', '[', ']', '/', '.', '`'] {
+            let r = CommandRegistry::new()
+                .command(Command::new("k", "K", |_: &mut ()| {}).shortcut(Shortcut::primary(key)));
+            r.validate().unwrap_or_else(|e| panic!("{key}: {e}"));
+            assert!(Shortcut::primary(key).matches(key, M::SUPER, true));
+        }
+        for key in ['+', '!', ' ', 'é', 'c', 'v'] {
+            let r = CommandRegistry::new()
+                .command(Command::new("k", "K", |_: &mut ()| {}).shortcut(Shortcut::primary(key)));
+            assert!(r.validate().is_err(), "{key:?} is rejected");
+        }
     }
     #[test]
     fn appending_after_validation_invalidates_the_cached_definition_result() {

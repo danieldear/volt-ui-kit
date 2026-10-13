@@ -345,11 +345,13 @@ fn password_glyphs_and_diagnostics_never_return_raw_text_and_glyph_clip_is_insid
         assert!(glyphs.iter().all(|(s, _)| s.chars().all(|c| c == '•')));
         assert!(glyphs.iter().any(|(s, _)| s == "•••••••"));
         let batch = batches.iter().find(|b| !b.glyphs.is_empty()).unwrap();
+        // Horizontally the clip is the text area; a single line may use
+        // the field's full height so descenders are never cut.
         let [x, y, w, h] = batch.clip.bounds();
         assert_eq!(x, 10. * scale);
-        assert!(y >= 7. * scale);
         assert_eq!(w, 380. * scale);
-        assert!(h > 0. && h <= 22. * scale);
+        assert!(y >= 0. && y + h <= 36. * scale, "{:?}", batch.clip.bounds());
+        assert!(h > 14. * 1.2 * scale);
     }
 }
 #[test]
@@ -742,4 +744,59 @@ fn chat_composer_submits_on_enter_and_breaks_lines_on_shift_enter() {
             .unwrap();
         assert_eq!(a.submitted, usize::from(enter_submits) + 1);
     }
+}
+#[derive(Default)]
+struct Find {
+    open: bool,
+    query: String,
+    closed: usize,
+}
+fn find_view(app: &Find) -> Element<Find> {
+    let mut items: Vec<Element<Find>> = vec![button("Open")
+        .key("open")
+        .on_click(|a: &mut Find| a.open = true)
+        .into()];
+    if app.open {
+        items.push(
+            text_field(&app.query)
+                .key("find")
+                .autofocus(true)
+                .on_change(|a: &mut Find, v| a.query = v)
+                .on_cancel(|a: &mut Find| {
+                    a.open = false;
+                    a.closed += 1;
+                })
+                .into(),
+        );
+    }
+    vstack(items).key("root").into()
+}
+#[test]
+fn autofocus_takes_focus_once_and_escape_runs_on_cancel() {
+    let viewport = Viewport::new(400., 200., 1.).unwrap();
+    let mut a = Find::default();
+    let (doc, mut h) = find_view(&a).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    assert_eq!(r.focused(), None);
+    let rebuild = |r: &mut Runtime, h: &mut _, a: &Find| {
+        let (doc, next) = find_view(a).build().unwrap().into_parts();
+        r.replace_document(doc, &next, &Bindings::default()).unwrap();
+        *h = next;
+        r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    };
+    a.open = true;
+    rebuild(&mut r, &mut h, &a);
+    assert_eq!(r.focused(), Some("find"), "a new autofocus field takes focus");
+    r.ime_commit("needle", &mut h, &mut a).unwrap();
+    assert_eq!(a.query, "needle");
+    // Moving focus away sticks: an existing field does not grab it back.
+    r.focus_next(true);
+    assert_ne!(r.focused(), Some("find"));
+    rebuild(&mut r, &mut h, &a);
+    assert_ne!(r.focused(), Some("find"));
+    r.focus_next(false);
+    assert_eq!(r.focused(), Some("find"));
+    r.editor_cancel(&mut h, &mut a).unwrap();
+    assert_eq!((a.open, a.closed), (false, 1));
 }

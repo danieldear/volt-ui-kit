@@ -272,6 +272,9 @@ pub struct Node {
     pub(crate) on_text_changed: Option<String>,
     #[serde(skip)]
     pub(crate) on_submit: Option<String>,
+    /// Escape while the field has focus.
+    #[serde(skip)]
+    pub(crate) on_cancel: Option<String>,
     #[serde(skip)]
     pub(crate) slider: Option<SliderProps>,
     #[serde(skip)]
@@ -339,6 +342,8 @@ pub(crate) struct EditorOptions {
     pub enter_submits: bool,
     /// Extra logical inset (leading, trailing) for icons inside the field.
     pub inset: [f32; 2],
+    /// Take keyboard focus when the field first appears.
+    pub autofocus: bool,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SliderProps {
@@ -512,6 +517,7 @@ impl Node {
             editor: None,
             on_text_changed: None,
             on_submit: None,
+            on_cancel: None,
             slider: None,
             overlay: None,
             on_context: None,
@@ -739,6 +745,7 @@ impl Document {
                 (&n.on_toggle_changed, EventKind::ToggleChanged),
                 (&n.on_text_changed, EventKind::TextChanged),
                 (&n.on_submit, EventKind::Activate),
+                (&n.on_cancel, EventKind::Activate),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
             ] {
@@ -1249,6 +1256,7 @@ fn check_node(
         &n.on_toggle_changed,
         &n.on_text_changed,
         &n.on_submit,
+        &n.on_cancel,
         &n.on_context,
         &n.on_files_dropped,
     ]

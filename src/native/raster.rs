@@ -311,6 +311,24 @@ pub fn register_font(data: Vec<u8>) -> Result<Vec<String>, String> {
     fonts.push(data);
     Ok(families)
 }
+/// Installed and registered font families, sorted, for font pickers.
+/// Hidden system faces (names starting with `.`) are left out. This scans
+/// the system font folders, so call it when a picker opens, not per frame.
+pub fn font_families() -> Vec<String> {
+    let mut db = cosmic_text::fontdb::Database::new();
+    db.load_system_fonts();
+    for data in registered_fonts() {
+        db.load_font_source(cosmic_text::fontdb::Source::Binary(data));
+    }
+    let mut families: Vec<String> = db
+        .faces()
+        .flat_map(|f| f.families.iter().map(|(n, _)| n.clone()))
+        .filter(|n| !n.starts_with('.') && !n.trim().is_empty())
+        .collect();
+    families.sort_by_key(|n| n.to_lowercase());
+    families.dedup();
+    families
+}
 fn registered_fonts() -> Vec<std::sync::Arc<Vec<u8>>> {
     REGISTERED_FONTS
         .lock()
