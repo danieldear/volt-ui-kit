@@ -4,12 +4,12 @@ version = "0.4.0"
 edition = "2021"
 rust-version = "1.87"
 license = "MIT"
-description = "Renderer-independent desktop UI components extracted from Volt"
+description = "Native desktop interfaces in plain Rust: declarative components, GPU drawing with Vello, themes and accessibility"
 readme = "README.md"
 repository = "https://github.com/danieldear/volt-ui-kit"
 keywords = ["gui", "ui", "desktop", "declarative", "gpu"]
 categories = ["gui", "graphics", "rendering", "accessibility"]
-include = ["docs/**", "src/**", "examples/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md", "ROADMAP.md"]
+include = ["docs/*.md", "src/**", "examples/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [package.metadata.docs.rs]
 # Document the Rust UI, native host and GPU renderer, not just the core.
@@ -75,26 +75,10 @@ opt-level = 1
 opt-level = 3
 
 [[example]]
-name = "native_window"
-required-features = ["native"]
-[[example]]
-name = "panels_and_layout"
-required-features = ["native"]
-[[example]]
-name = "buttons_and_events"
-required-features = ["native"]
-[[example]]
-name = "declarative_ui"
-required-features = ["native"]
-[[example]]
 name = "complete_app"
 required-features = ["native"]
 [[example]]
 name = "components"
-required-features = ["native"]
-
-[[example]]
-name = "render_benchmark"
 required-features = ["native"]
 
 [[example]]

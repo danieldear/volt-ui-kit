@@ -95,10 +95,9 @@
 //! ui.build()?;
 //! # Ok::<(), volt_ui_kit::declarative::DocumentError>(())
 //! ```
-#![cfg_attr(feature="native", doc=include_str!("../docs/SURFACES_THEMES_AND_SCROLLING.md"))]
-#![doc = include_str!("../docs/COMPONENTS.md")]
-#![doc = include_str!("../docs/EXTENDED_COMPONENTS.md")]
-#![cfg_attr(feature="native",doc=include_str!("../docs/APP_RUNTIME.md"))]
+//!
+//! The guides in `docs/` (also the `guide` module with the `native` feature)
+//! cover every component, styling and application services in depth.
 use crate::declarative::{
     document::{FontSlant, MAX_DEPTH, MAX_NODES},
     AccessRole, Bindings, Document, DocumentError, Handlers, Kind, Node,
