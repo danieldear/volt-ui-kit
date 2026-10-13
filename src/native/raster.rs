@@ -211,9 +211,10 @@ struct TextKey {
     max_lines: u16,
     no_wrap: bool,
     /// Rich text runs that change the font: (start, end, resolved family or
-    /// "", weight or 0, italic 0 = inherit / 1 = normal / 2 = italic).
-    /// Colour-only runs are applied when drawing and do not reshape.
-    runs: Vec<(usize, usize, String, u16, u8)>,
+    /// "", weight or 0, italic 0 = inherit / 1 = normal / 2 = italic, size
+    /// scale bits or 0). Colour-only runs are applied when drawing and do
+    /// not reshape.
+    runs: Vec<(usize, usize, String, u16, u8, u32)>,
 }
 fn default_style(size: f32) -> TextStyle {
     TextStyle {
@@ -830,7 +831,9 @@ impl RasterPainter {
         let runs = style
             .runs
             .iter()
-            .filter(|r| r.family.is_some() || r.weight.is_some() || r.italic.is_some())
+            .filter(|r| {
+                r.family.is_some() || r.weight.is_some() || r.italic.is_some() || r.scale.is_some()
+            })
             .map(|r| {
                 (
                     r.start,
@@ -845,6 +848,9 @@ impl RasterPainter {
                         Some(false) => 1,
                         Some(true) => 2,
                     },
+                    r.scale
+                        .filter(|s| s.is_finite())
+                        .map_or(0, |s| s.clamp(0.5, 2.).to_bits()),
                 )
             })
             .collect();
@@ -945,7 +951,7 @@ impl RasterPainter {
                 } else {
                     let mut spans: Vec<(&str, Attrs)> = Vec::with_capacity(runs.len() * 2 + 1);
                     let mut at = 0;
-                    for (start, end, run_family, weight, italic) in runs {
+                    for (start, end, run_family, weight, italic, scale) in runs {
                         let (start, end) = ((*start).min(prefix), (*end).min(prefix));
                         if start >= end || start < at {
                             continue;
@@ -966,6 +972,14 @@ impl RasterPainter {
                             } else {
                                 Style::Normal
                             });
+                        }
+                        if *scale != 0 {
+                            // Smaller (or larger) glyphs on the paragraph's
+                            // own line spacing.
+                            a = a.metrics(Metrics::new(
+                                size * f32::from_bits(*scale),
+                                size * line_height,
+                            ));
                         }
                         spans.push((&value[start..end], a));
                         at = end;
@@ -2173,8 +2187,9 @@ impl RasterPainter {
         style.no_wrap.hash(&mut h);
         // Font-changing runs alter the measurement; colours do not.
         for r in &style.runs {
-            if r.family.is_some() || r.weight.is_some() || r.italic.is_some() {
+            if r.family.is_some() || r.weight.is_some() || r.italic.is_some() || r.scale.is_some() {
                 (r.start, r.end, &r.family, r.weight, r.italic).hash(&mut h);
+                r.scale.map(f32::to_bits).hash(&mut h);
             }
         }
         let id = h.finish();
@@ -2197,6 +2212,39 @@ impl RasterPainter {
     }
 }
 impl TextMetrics for RasterPainter {
+    fn text_range_rects(
+        &mut self,
+        text: &str,
+        bounds: [f32; 4],
+        style: &TextStyle,
+        range: std::ops::Range<usize>,
+    ) -> Vec<[f32; 5]> {
+        let key = self.draw_key(text, style, bounds[2]);
+        let buffer = &self.text[&key].0;
+        let starts = line_starts(buffer);
+        let (ox, oy) = (bounds[0].round(), bounds[1].round());
+        buffer
+            .layout_runs()
+            .filter(|run| run.line_top < bounds[3])
+            .filter_map(|run| {
+                let base = starts.get(run.line_i).copied().unwrap_or(0);
+                let (mut x0, mut x1) = (f32::MAX, f32::MIN);
+                for g in run.glyphs {
+                    if base + g.start < range.end && base + g.end > range.start {
+                        x0 = x0.min(g.x);
+                        x1 = x1.max(g.x + g.w);
+                    }
+                }
+                (x0 < x1).then_some([
+                    ox + x0,
+                    oy + run.line_top,
+                    x1 - x0,
+                    run.line_height,
+                    oy + run.line_y,
+                ])
+            })
+            .collect()
+    }
     fn line_advances(&mut self, text: &str, style: &TextStyle, byte_offsets: &[usize]) -> Vec<f32> {
         // Share the same shaped buffer as painting: prefix measurement would
         // lose kerning/ligatures. Interpolate grapheme stops within a cluster,
@@ -2424,39 +2472,6 @@ impl DocumentPainter for RasterPainter {
                 let start = first.x.min(last.x);
                 let end = (first.x + first.w).max(last.x + last.w);
                 Some([ox + start, oy + run.line_y, (end - start).min(bounds[2])])
-            })
-            .collect()
-    }
-    fn ui_text_range_rects(
-        &mut self,
-        text: &str,
-        bounds: [f32; 4],
-        style: &TextStyle,
-        range: std::ops::Range<usize>,
-    ) -> Vec<[f32; 5]> {
-        let key = self.draw_key(text, style, bounds[2]);
-        let buffer = &self.text[&key].0;
-        let starts = line_starts(buffer);
-        let (ox, oy) = (bounds[0].round(), bounds[1].round());
-        buffer
-            .layout_runs()
-            .filter(|run| run.line_top < bounds[3])
-            .filter_map(|run| {
-                let base = starts.get(run.line_i).copied().unwrap_or(0);
-                let (mut x0, mut x1) = (f32::MAX, f32::MIN);
-                for g in run.glyphs {
-                    if base + g.start < range.end && base + g.end > range.start {
-                        x0 = x0.min(g.x);
-                        x1 = x1.max(g.x + g.w);
-                    }
-                }
-                (x0 < x1).then_some([
-                    ox + x0,
-                    oy + run.line_top,
-                    x1 - x0,
-                    run.line_height,
-                    oy + run.line_y,
-                ])
             })
             .collect()
     }

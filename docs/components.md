@@ -64,9 +64,13 @@ note.build()?;
 ```
 
 - A span can set `.bold()` or `.weight(w)`, `.italic()`, `.family(name)`,
-  `.color(c)`, `.background(c)` (a rounded chip), `.underline()` and
-  `.strikethrough()`. `.code()` is monospace on a subtle background. Unset
-  properties inherit the text's style.
+  `.size(scale)`, `.color(c)`, `.background(c)` (a rounded chip),
+  `.underline()` and `.strikethrough()`. `.code()` is monospace at 0.88× on a
+  subtle background. Unset properties inherit the text's style.
+- `.link(target)` makes a run a link: primary colour, pointer cursor and an
+  underline on hover. `.on_link(|app, target| ..)` on the text receives the
+  target of the link that was clicked. Keyboard focus for links is not
+  available yet.
 - Colours apply when drawing, so a colour change never reshapes the text.
 - Runs keep their styles where lines break; `max_lines` ends with an ellipsis.
 - Up to 1,024 spans per text, within the usual 8 KiB of text.

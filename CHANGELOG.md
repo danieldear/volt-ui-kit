@@ -11,6 +11,12 @@
   `DocumentPainter::ui_text_range_rects` returns per-line rectangles for a
   byte range (backgrounds and decorations use it). Catalog has a Rich text
   page.
+- Rich text links and sizes: `span(..).link(target)` with
+  `Text::on_link(|app, target| ..)` (pointer cursor, hover underline, click
+  reported through the new `Event::Link`), and `span(..).size(scale)` for
+  relative font size on the paragraph's line spacing; `.code()` now uses
+  0.88×. The range-rectangle hook moved to `TextMetrics::text_range_rects`
+  so layout can compute link targets.
 
 - GPU stack upgraded from Vello 0.6 / wgpu 26 to **Vello 0.11 / wgpu 30**
   (guillotiere 0.7, matching Vello's atlas allocator). The minimum Rust

@@ -153,6 +153,10 @@ pub(crate) struct TextSpan {
     pub background: Option<String>,
     pub underline: bool,
     pub strikethrough: bool,
+    /// Font size relative to the text, in percent (50–200).
+    pub scale: Option<u16>,
+    /// A link target reported to the text's `on_link` callback.
+    pub link: Option<String>,
 }
 /// Most spans one rich text node may carry.
 pub(crate) const MAX_TEXT_SPANS: usize = 1024;
@@ -179,6 +183,10 @@ impl TextSpan {
                     })
                     && colour(&s.color)
                     && colour(&s.background)
+                    && s.scale.is_none_or(|p| (50..=200).contains(&p))
+                    && s.link.as_deref().is_none_or(|l| {
+                        !l.is_empty() && l.len() <= 2048 && !l.chars().any(char::is_control)
+                    })
             })
     }
 }
@@ -215,6 +223,8 @@ pub(crate) struct NodeExtras {
     pub reveal_handle: bool,
     /// Rich text: styled byte ranges of the node's text.
     pub spans: Vec<TextSpan>,
+    /// Rich text: handler for clicked links.
+    pub on_link: Option<String>,
 }
 impl NodeExtras {
     pub(crate) fn valid(&self) -> bool {

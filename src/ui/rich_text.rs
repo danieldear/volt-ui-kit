@@ -46,10 +46,23 @@ impl Span {
         self.style.family = Some(family.into());
         self
     }
-    /// Inline code: monospace on a subtle rounded background.
+    /// Inline code: monospace at 88% size on a subtle rounded background.
     pub fn code(self) -> Self {
         self.family("monospace")
+            .size(0.88)
             .background(ColorToken::BaseContent.alpha(8))
+    }
+    /// Font size relative to the text (0.5–2.0); line spacing is unchanged.
+    pub fn size(mut self, scale: f32) -> Self {
+        self.style.scale = Some((scale.clamp(0.5, 2.) * 100.).round() as u16);
+        self
+    }
+    /// Make the run a link. Clicks report `target` to the text's
+    /// [`Text::on_link`] callback; links default to the primary colour and
+    /// underline on hover.
+    pub fn link(mut self, target: impl Into<String>) -> Self {
+        self.style.link = Some(target.into());
+        self
     }
     /// Text colour: hex or a theme token such as `ColorToken::Primary`.
     pub fn color(mut self, color: impl Into<String>) -> Self {
@@ -102,14 +115,27 @@ pub fn rich_text<C>(spans: impl IntoIterator<Item = impl Into<Span>>) -> Text<C>
         let start = value.len();
         value.push_str(&s.text);
         if s.styled() {
+            let mut style = s.style;
+            if style.link.is_some() && style.color.is_none() {
+                style.color = Some(ColorToken::Primary.into());
+            }
             runs.push(TextSpan {
                 start,
                 end: value.len(),
-                ..s.style
+                ..style
             });
         }
     }
     let mut element = text(value);
     element.0.node.ext.spans = runs;
     element
+}
+
+impl<C> Text<C> {
+    /// Called with a link's target when one of this text's link runs is
+    /// clicked. See [`Span::link`].
+    pub fn on_link(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
+        self.0.callback = Some(super::Callback::Link(Box::new(f)));
+        self
+    }
 }
