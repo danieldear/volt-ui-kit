@@ -24,6 +24,9 @@ jobs:
       - run: cargo test --locked --all-features --all-targets
       - run: cargo test --locked --all-features --doc
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Documentation builds without warnings
+        shell: bash
+        run: RUSTDOCFLAGS='-D warnings' cargo doc --locked --all-features --no-deps
       - name: Each feature builds on its own
         shell: bash
         run: |
