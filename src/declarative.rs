@@ -14,6 +14,22 @@ pub enum EventKind {
     FilesDropped,
     /// A link inside rich text was clicked.
     Link,
+    /// An editor's selection or caret moved.
+    SelectionChanged,
+    /// A key an editor hands to the application instead of editing.
+    Key,
+}
+/// An editor's selection: byte offsets into its text, `start <= end`, and
+/// the caret's rectangle in logical window coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextSelection {
+    pub start: usize,
+    pub end: usize,
+    /// The end the caret is at (the other end is the anchor).
+    pub caret_at: usize,
+    pub caret: [f32; 4],
+    /// The editor's box, so popups can open above the caret near its bottom.
+    pub bounds: [f32; 4],
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -35,6 +51,15 @@ pub enum Event {
     FilesDropped(Vec<std::path::PathBuf>),
     /// The target of the rich text link that was clicked.
     Link(String),
+    SelectionChanged {
+        start: usize,
+        end: usize,
+        caret_at: usize,
+        caret_bits: [u32; 4],
+        bounds_bits: [u32; 4],
+    },
+    #[cfg(feature = "rust-ui")]
+    Key(runtime::editing::EditKey),
 }
 impl Event {
     pub fn kind(&self) -> EventKind {
@@ -47,6 +72,9 @@ impl Event {
             Self::WindowChanged { .. } => EventKind::WindowChanged,
             Self::FilesDropped(_) => EventKind::FilesDropped,
             Self::Link(_) => EventKind::Link,
+            Self::SelectionChanged { .. } => EventKind::SelectionChanged,
+            #[cfg(feature = "rust-ui")]
+            Self::Key(_) => EventKind::Key,
         }
     }
 }
@@ -205,6 +233,53 @@ impl<'a, C> Handlers<'a, C> {
             Box::new(move |ctx, event| {
                 if let Event::Link(target) = event {
                     f(ctx, target);
+                }
+            }),
+        )
+    }
+    pub fn on_selection_changed(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, TextSelection) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::SelectionChanged,
+            Box::new(move |ctx, event| {
+                if let Event::SelectionChanged {
+                    start,
+                    end,
+                    caret_at,
+                    caret_bits,
+                    bounds_bits,
+                } = event
+                {
+                    f(
+                        ctx,
+                        TextSelection {
+                            start,
+                            end,
+                            caret_at,
+                            caret: caret_bits.map(f32::from_bits),
+                            bounds: bounds_bits.map(f32::from_bits),
+                        },
+                    );
+                }
+            }),
+        )
+    }
+    #[cfg(feature = "rust-ui")]
+    pub fn on_key(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, runtime::editing::EditKey) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::Key,
+            Box::new(move |ctx, event| {
+                if let Event::Key(key) = event {
+                    f(ctx, key);
                 }
             }),
         )

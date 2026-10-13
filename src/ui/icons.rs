@@ -81,6 +81,8 @@ pub enum Icon {
     FileText,
     /// A capital T, for typography settings.
     Type,
+    /// A window split into two panes, for split views.
+    Columns,
 }
 
 /// Stroked SVG path data and filled path data for each glyph.
@@ -216,6 +218,7 @@ fn paths(icon: Icon) -> (&'static [&'static str], &'static [&'static str]) {
         ),
         Sidebar => (&["M4.5 5.5h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z", "M9.5 5.5v13"], &[]),
         Type => (&["M5 7.5V5h14v2.5", "M12 5v14", "M9 19h6"], &[]),
+        Columns => (&["M4.5 5.5h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z", "M12 5.5v13"], &[]),
         Folder => (&["M3.5 6.5h6l2 2.5h9v10h-17z"], &[]),
         Filter => (&["M4 5h16l-6.5 7.5V19l-3-1.5v-5z"], &[]),
         Refresh => (&["M19.5 12a7.5 7.5 0 1 1-2.2-5.3", "M19.5 4.5v4h-4"], &[]),
@@ -370,7 +373,7 @@ impl<C> From<IconElement> for Element<C> {
     }
 }
 /// Every glyph, for galleries and tests.
-pub const ALL_ICONS: [Icon; 68] = {
+pub const ALL_ICONS: [Icon; 69] = {
     use Icon::*;
     [
         Search,
@@ -441,6 +444,7 @@ pub const ALL_ICONS: [Icon; 68] = {
         Sidebar,
         FileText,
         Type,
+        Columns,
     ]
 };
 #[cfg(test)]

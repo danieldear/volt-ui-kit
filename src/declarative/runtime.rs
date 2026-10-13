@@ -236,6 +236,10 @@ pub struct LayoutBox {
     pub(crate) on_submit: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_cancel: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_selection: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_key: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -4015,6 +4019,10 @@ fn place(
         on_submit: n.on_submit.clone(),
         #[cfg(feature = "rust-ui")]
         on_cancel: n.on_cancel.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_selection: n.on_selection.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_key: n.on_key.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate
