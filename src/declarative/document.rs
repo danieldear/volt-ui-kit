@@ -1078,6 +1078,18 @@ fn check_node(
     {
         return Err(error(path, "text exceeds 8 KiB limit"));
     }
+    if !n.ext.spans.is_empty()
+        && (n.kind != Kind::Text
+            || !super::extras::TextSpan::validate_all(
+                &n.ext.spans,
+                n.text.as_deref().unwrap_or(""),
+            ))
+    {
+        return Err(error(
+            path,
+            "rich text spans must be sorted, disjoint, on character boundaries of literal text, at most 1024, with valid styles",
+        ));
+    }
     if matches!(n.kind, Kind::Text | Kind::Badge) && (n.text.is_some() == n.bind_text.is_some()) {
         return Err(error(
             path,

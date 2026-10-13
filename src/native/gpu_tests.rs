@@ -711,3 +711,62 @@ fn six_k_frames_render_on_the_gpu_in_strips_matching_software() {
     assert!(mean < 0.5, "mean channel difference {mean}");
     assert!(worst < 96, "worst channel difference {worst}");
 }
+
+#[test]
+#[ignore = "requires a GPU; explicit hardware acceptance"]
+fn actual_gpu_rich_text_runs_keep_their_colours_and_backgrounds() {
+    use crate::{
+        declarative::{Bindings, Runtime},
+        ui::prelude::*,
+        UiTheme,
+    };
+    let ui: Element<()> = vstack![rich_text([
+        span("MMMM").color("#FF0000"),
+        span("code").background("#00FF00"),
+        span("MMMM").color("#0000FF").bold(),
+    ])
+    .key("t")
+    .font_size(28.)]
+    .padding(10., Edge::All)
+    .into();
+    let (doc, h) = ui.build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    let vp = Viewport::new(400., 80., 1.).unwrap();
+    let mut p = RasterPainter::new(vp);
+    r.layout(vp, &Bindings::default(), &mut p).unwrap();
+    let batches = r.paint_ui(&mut p, &UiTheme::dark());
+    let mut gpu = super::GpuOffscreenRenderer::new().unwrap();
+    let software = p.rasterize(&batches, [0., 0., 0., 1.]).unwrap();
+    let hardware = gpu.render(&mut p, &batches, [0., 0., 0., 1.]).unwrap();
+    for (name, pix) in [("software", &software), ("gpu", &hardware)] {
+        // x extents of red ink, the green chip and blue ink.
+        let mut extents = [[u32::MAX, 0]; 3];
+        for y in 0..80 {
+            for x in 0..400 {
+                let c = pix.pixel(x, y).unwrap();
+                let (r, g, b) = (c.red(), c.green(), c.blue());
+                for (i, hit) in [
+                    r > 150 && g < 40 && b < 40,
+                    g > 200 && r < 60 && b < 60,
+                    b > 150 && r < 40 && g < 40,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if hit {
+                        extents[i] = [extents[i][0].min(x), extents[i][1].max(x)];
+                    }
+                }
+            }
+        }
+        let [red, green, blue] = extents;
+        assert!(
+            red[0] < red[1] && green[0] < green[1] && blue[0] < blue[1],
+            "{name}: {extents:?}"
+        );
+        assert!(
+            red[1] < green[1] && green[0] < blue[0],
+            "{name}: runs out of order {extents:?}"
+        );
+    }
+}

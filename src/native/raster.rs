@@ -1,6 +1,6 @@
 use crate::graphics::{BackgroundImage, ClipRegion, ImageFit, PathCommand, VectorPath};
 use crate::{
-    declarative::{DocumentPainter, PaintBatch, TextMetrics, TextStyle},
+    declarative::{DocumentPainter, PaintBatch, TextMetrics, TextRun, TextStyle},
     Painter, Viewport,
 };
 use cosmic_text::{
@@ -185,6 +185,8 @@ pub(super) struct GpuGlyphRun {
     pub font: cosmic_text::fontdb::ID,
     pub size: f32,
     pub fake_italic: bool,
+    /// Rich text runs change colour mid-text; a run never mixes colours.
+    pub color: [f32; 4],
     /// (glyph id, baseline x, baseline y) in physical pixels.
     pub glyphs: Vec<(u16, f32, f32)>,
 }
@@ -208,11 +210,62 @@ struct TextKey {
     line_height: u32,
     max_lines: u16,
     no_wrap: bool,
+    /// Rich text runs that change the font: (start, end, resolved family or
+    /// "", weight or 0, italic 0 = inherit / 1 = normal / 2 = italic).
+    /// Colour-only runs are applied when drawing and do not reshape.
+    runs: Vec<(usize, usize, String, u16, u8)>,
 }
 fn default_style(size: f32) -> TextStyle {
     TextStyle {
         size,
         ..TextStyle::default()
+    }
+}
+/// Byte offset of each buffer line in the whole string (glyph offsets are
+/// relative to their line).
+fn line_starts(buffer: &Buffer) -> Vec<usize> {
+    let mut at = 0;
+    buffer
+        .lines
+        .iter()
+        .map(|line| {
+            let start = at;
+            at += line.text().len() + line.ending().as_str().len();
+            start
+        })
+        .collect()
+}
+/// The colour of the run covering byte `at`, if it sets one.
+pub(super) fn run_color(runs: &[TextRun], at: usize) -> Option<[f32; 4]> {
+    let i = runs.partition_point(|r| r.end <= at);
+    runs.get(i).filter(|r| r.start <= at).and_then(|r| r.color)
+}
+/// Per-glyph colour lookup for one shaped text: the text colour, or the run
+/// colour at each glyph's byte offset.
+pub(super) struct GlyphColors<'a> {
+    runs: &'a [TextRun],
+    starts: Vec<usize>,
+    base: [f32; 4],
+}
+impl<'a> GlyphColors<'a> {
+    fn new(glyph: &'a Glyph, buffer: &Buffer) -> Self {
+        let runs = glyph.style.runs.as_slice();
+        let starts = if runs.iter().any(|r| r.color.is_some()) {
+            line_starts(buffer)
+        } else {
+            Vec::new()
+        };
+        Self {
+            runs,
+            starts,
+            base: glyph.color,
+        }
+    }
+    pub(super) fn at(&self, line: usize, start: usize) -> [f32; 4] {
+        match self.starts.get(line) {
+            Some(base) => run_color(self.runs, base + start).unwrap_or(self.base),
+            None => self.base,
+        }
     }
 }
 static REGISTERED_FONTS: std::sync::Mutex<Vec<std::sync::Arc<Vec<u8>>>> =
@@ -474,11 +527,16 @@ impl RasterPainter {
     /// Positions come from the same shaped buffers as CPU drawing and editor
     /// hit testing. Only glyph cache misses rasterize small glyph resources.
     #[cfg(feature = "native-gpu")]
-    pub(super) fn gpu_glyphs(&mut self, glyph: &Glyph) -> Vec<(cosmic_text::CacheKey, [f64; 2])> {
+    pub(super) fn gpu_glyphs(
+        &mut self,
+        glyph: &Glyph,
+    ) -> Vec<(cosmic_text::CacheKey, [f64; 2], [f32; 4])> {
         let key = self.draw_key(&glyph.text, &glyph.style, glyph.bounds[2]);
         let [gx, gy, gw, gh] = glyph.bounds;
         let mut out = Vec::new();
-        for run in self.text[&key].0.layout_runs() {
+        let buffer = &self.text[&key].0;
+        let colors = GlyphColors::new(glyph, buffer);
+        for run in buffer.layout_runs() {
             if run.line_top >= gh || run.line_top + run.line_height <= 0. {
                 continue;
             }
@@ -493,6 +551,7 @@ impl RasterPainter {
                         f64::from(p.x + gx.round() as i32),
                         f64::from(p.y + run.line_y as i32 + gy.round() as i32),
                     ],
+                    colors.at(run.line_i, shaped.start),
                 ));
             }
         }
@@ -509,6 +568,11 @@ impl RasterPainter {
         let (ox, oy) = (gx.round(), gy.round());
         let mut runs: Vec<GpuGlyphRun> = Vec::new();
         let mut overflow = false;
+        let starts = if glyph.style.runs.iter().any(|r| r.color.is_some()) {
+            line_starts(&self.text[&key].0)
+        } else {
+            Vec::new()
+        };
         for run in self.text[&key].0.layout_runs() {
             if run.line_top >= gh || run.line_top + run.line_height <= 0. {
                 continue;
@@ -574,11 +638,18 @@ impl RasterPainter {
                         && y - ymin * size + 1. <= gy + gh
                 });
                 overflow |= !fits;
+                let color = match starts.get(run.line_i) {
+                    Some(base) => {
+                        run_color(&glyph.style.runs, base + shaped.start).unwrap_or(glyph.color)
+                    }
+                    None => glyph.color,
+                };
                 match runs.last_mut() {
                     Some(r)
                         if r.font == k.font_id
                             && r.size == size
-                            && r.fake_italic == fake_italic =>
+                            && r.fake_italic == fake_italic
+                            && r.color == color =>
                     {
                         r.glyphs.push((k.glyph_id, x, y));
                     }
@@ -586,6 +657,7 @@ impl RasterPainter {
                         font: k.font_id,
                         size,
                         fake_italic,
+                        color,
                         glyphs: vec![(k.glyph_id, x, y)],
                     }),
                 }
@@ -755,6 +827,27 @@ impl RasterPainter {
             1.
         };
         let family = self.resolved_font_family(&style.family, size);
+        let runs = style
+            .runs
+            .iter()
+            .filter(|r| r.family.is_some() || r.weight.is_some() || r.italic.is_some())
+            .map(|r| {
+                (
+                    r.start,
+                    r.end,
+                    r.family
+                        .as_deref()
+                        .map(|f| self.resolved_font_family(f, size))
+                        .unwrap_or_default(),
+                    r.weight.map_or(0, |w| w.clamp(1, 1000)),
+                    match r.italic {
+                        None => 0,
+                        Some(false) => 1,
+                        Some(true) => 2,
+                    },
+                )
+            })
+            .collect();
         let key = TextKey {
             text: text.into(),
             family,
@@ -775,6 +868,7 @@ impl RasterPainter {
             },
             max_lines: style.max_lines,
             no_wrap: style.no_wrap,
+            runs,
         };
         self.clock += 1;
         if !self.text.contains_key(&key) {
@@ -805,14 +899,17 @@ impl RasterPainter {
                     Wrap::WordOrGlyph
                 },
             );
-            let family = match key.family.as_str() {
-                "sans" | "sans-serif" => Family::SansSerif,
-                "serif" => Family::Serif,
-                "mono" | "monospace" => Family::Monospace,
-                "cursive" => Family::Cursive,
-                "fantasy" => Family::Fantasy,
-                name => Family::Name(name),
-            };
+            fn family_of(name: &str) -> Family<'_> {
+                match name {
+                    "sans" | "sans-serif" => Family::SansSerif,
+                    "serif" => Family::Serif,
+                    "mono" | "monospace" => Family::Monospace,
+                    "cursive" => Family::Cursive,
+                    "fantasy" => Family::Fantasy,
+                    name => Family::Name(name),
+                }
+            }
+            let family = family_of(key.family.as_str());
             let attrs = Attrs::new()
                 .family(family)
                 .weight(Weight(key.weight))
@@ -834,17 +931,54 @@ impl RasterPainter {
                 crate::declarative::TextAlign::Justified => Some(cosmic_text::Align::Justified),
             };
             let fonts = &mut self.fonts;
-            let mut shape = |buffer: &mut Buffer, value: &str| {
-                buffer.set_text(fonts, value, &attrs, Shaping::Advanced);
-                if align.is_some() {
-                    for line in &mut buffer.lines {
-                        line.set_align(align);
+            let runs = &key.runs;
+            // `prefix`: bytes of `value` that come from the original text (an
+            // ellipsis may follow); runs are clipped to it.
+            let mut shape = |buffer: &mut Buffer, value: &str, prefix: usize| {
+                if runs.is_empty() {
+                    buffer.set_text(fonts, value, &attrs, Shaping::Advanced);
+                    if align.is_some() {
+                        for line in &mut buffer.lines {
+                            line.set_align(align);
+                        }
                     }
+                } else {
+                    let mut spans: Vec<(&str, Attrs)> = Vec::with_capacity(runs.len() * 2 + 1);
+                    let mut at = 0;
+                    for (start, end, run_family, weight, italic) in runs {
+                        let (start, end) = ((*start).min(prefix), (*end).min(prefix));
+                        if start >= end || start < at {
+                            continue;
+                        }
+                        if at < start {
+                            spans.push((&value[at..start], attrs.clone()));
+                        }
+                        let mut a = attrs.clone();
+                        if !run_family.is_empty() {
+                            a = a.family(family_of(run_family));
+                        }
+                        if *weight > 0 {
+                            a = a.weight(Weight(*weight));
+                        }
+                        if *italic > 0 {
+                            a = a.style(if *italic == 2 {
+                                Style::Italic
+                            } else {
+                                Style::Normal
+                            });
+                        }
+                        spans.push((&value[start..end], a));
+                        at = end;
+                    }
+                    if at < value.len() {
+                        spans.push((&value[at..], attrs.clone()));
+                    }
+                    buffer.set_rich_text(fonts, spans, &attrs, Shaping::Advanced, align);
                 }
                 buffer.shape_until_scroll(fonts, false);
                 buffer.layout_runs().count()
             };
-            let lines = shape(&mut buffer, text);
+            let lines = shape(&mut buffer, text, text.len());
             let limit = usize::from(key.max_lines);
             // Truncate: the longest prefix that, with an ellipsis, fits the
             // line limit. Binary search over character boundaries; only on a
@@ -854,9 +988,9 @@ impl RasterPainter {
                 let (mut lo, mut hi) = (0, cuts.len());
                 while lo < hi {
                     let mid = (lo + hi).div_ceil(2);
-                    let candidate =
-                        format!("{}…", text[..cuts[mid.min(cuts.len() - 1)]].trim_end());
-                    if mid < cuts.len() && shape(&mut buffer, &candidate) <= limit {
+                    let kept = text[..cuts[mid.min(cuts.len() - 1)]].trim_end();
+                    let candidate = format!("{kept}…");
+                    if mid < cuts.len() && shape(&mut buffer, &candidate, kept.len()) <= limit {
                         lo = mid;
                     } else {
                         hi = mid - 1;
@@ -867,7 +1001,7 @@ impl RasterPainter {
                 } else {
                     text[..cuts[lo]].trim_end()
                 };
-                shape(&mut buffer, &format!("{kept}…"));
+                shape(&mut buffer, &format!("{kept}…"), kept.len());
             }
             self.text.insert(key.clone(), (buffer, self.clock));
             self.text_cache_misses += 1;
@@ -1795,7 +1929,7 @@ impl RasterPainter {
                 let [ox, oy] = self.raster_origin;
                 let (gx_pixel, gy_pixel) = (pixel_round(gx, ox) as i32, pixel_round(gy, oy) as i32);
                 let [cx, cy, cw, ch] = batch.clip.bounds();
-                let c = glyph.color;
+                let colors = GlyphColors::new(glyph, buffer);
                 for run in buffer.layout_runs() {
                     if run.line_top >= gh || run.line_top + run.line_height <= 0. {
                         continue;
@@ -1804,6 +1938,7 @@ impl RasterPainter {
                         if shaped.x >= gw || shaped.x + shaped.w < 0. {
                             continue;
                         }
+                        let c = colors.at(run.line_i, shaped.start);
                         let physical = shaped.physical((0., 0.), 1.);
                         if self.glyph_bytes > 16 * 1024 * 1024
                             || self.swash.image_cache.len() > 4096
@@ -2036,6 +2171,12 @@ impl RasterPainter {
         style.line_height.to_bits().hash(&mut h);
         style.max_lines.hash(&mut h);
         style.no_wrap.hash(&mut h);
+        // Font-changing runs alter the measurement; colours do not.
+        for r in &style.runs {
+            if r.family.is_some() || r.weight.is_some() || r.italic.is_some() {
+                (r.start, r.end, &r.family, r.weight, r.italic).hash(&mut h);
+            }
+        }
         let id = h.finish();
         if let Some(size) = self.natural.get(&id) {
             return *size;
@@ -2283,6 +2424,39 @@ impl DocumentPainter for RasterPainter {
                 let start = first.x.min(last.x);
                 let end = (first.x + first.w).max(last.x + last.w);
                 Some([ox + start, oy + run.line_y, (end - start).min(bounds[2])])
+            })
+            .collect()
+    }
+    fn ui_text_range_rects(
+        &mut self,
+        text: &str,
+        bounds: [f32; 4],
+        style: &TextStyle,
+        range: std::ops::Range<usize>,
+    ) -> Vec<[f32; 5]> {
+        let key = self.draw_key(text, style, bounds[2]);
+        let buffer = &self.text[&key].0;
+        let starts = line_starts(buffer);
+        let (ox, oy) = (bounds[0].round(), bounds[1].round());
+        buffer
+            .layout_runs()
+            .filter(|run| run.line_top < bounds[3])
+            .filter_map(|run| {
+                let base = starts.get(run.line_i).copied().unwrap_or(0);
+                let (mut x0, mut x1) = (f32::MAX, f32::MIN);
+                for g in run.glyphs {
+                    if base + g.start < range.end && base + g.end > range.start {
+                        x0 = x0.min(g.x);
+                        x1 = x1.max(g.x + g.w);
+                    }
+                }
+                (x0 < x1).then_some([
+                    ox + x0,
+                    oy + run.line_top,
+                    x1 - x0,
+                    run.line_height,
+                    oy + run.line_y,
+                ])
             })
             .collect()
     }

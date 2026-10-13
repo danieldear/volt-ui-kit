@@ -42,6 +42,20 @@ pub struct TextStyle {
     pub no_wrap: bool,
     pub underline: bool,
     pub strikethrough: bool,
+    /// Rich text: styled byte ranges of the string, sorted and disjoint.
+    /// Empty for plain text.
+    pub runs: Vec<TextRun>,
+}
+/// One styled byte range of a rich text string. Unset fields inherit the
+/// text's own style. Colours are resolved when painting, not for layout.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextRun {
+    pub start: usize,
+    pub end: usize,
+    pub family: Option<String>,
+    pub weight: Option<u16>,
+    pub italic: Option<bool>,
+    pub color: Option<[f32; 4]>,
 }
 impl Default for TextStyle {
     fn default() -> Self {
@@ -57,6 +71,7 @@ impl Default for TextStyle {
             no_wrap: false,
             underline: false,
             strikethrough: false,
+            runs: Vec::new(),
         }
     }
 }
@@ -134,6 +149,19 @@ pub trait DocumentPainter: Painter + TextMetrics {
         _bounds: [f32; 4],
         _style: &TextStyle,
     ) -> Vec<[f32; 3]> {
+        vec![]
+    }
+    /// Rectangles covering a byte range of laid-out text, one per line, as
+    /// (x, line top, width, line height, baseline y). Used for rich text
+    /// backgrounds, decorations and link targets. Adapters without layout
+    /// access return none.
+    fn ui_text_range_rects(
+        &mut self,
+        _text: &str,
+        _bounds: [f32; 4],
+        _style: &TextStyle,
+        _range: std::ops::Range<usize>,
+    ) -> Vec<[f32; 5]> {
         vec![]
     }
     /// Must use the same style/font fallback rules as measure_styled.
@@ -268,6 +296,8 @@ pub(crate) struct BoxExtras {
     /// Split dividers: painted only on hover/drag/focus (Rust UI builds).
     #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
     pub reveal_handle: bool,
+    /// Rich text spans (colours, backgrounds, decorations) for painting.
+    pub spans: Vec<super::extras::TextSpan>,
 }
 #[derive(Clone)]
 struct ScrollbarCapture {
@@ -1998,7 +2028,20 @@ impl Runtime {
                 }
                 paint_overrides(p, &mut shapes, r, &b.style, &b.ext, self.scale);
                 if b.kind == Kind::Text {
-                    p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
+                    if b.ext.spans.is_empty() {
+                        p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
+                    } else {
+                        paint_rich_text(
+                            p,
+                            &mut shapes,
+                            &mut glyphs,
+                            b,
+                            r,
+                            ui,
+                            text_color,
+                            self.scale,
+                        );
+                    }
                     let style = &b.text_style;
                     if style.underline || style.strikethrough {
                         let size = style.size;
@@ -2907,6 +2950,19 @@ fn resolve_styles(
                 no_wrap: n.style.no_wrap.unwrap_or(false),
                 underline: n.style.underline.unwrap_or(false),
                 strikethrough: n.style.strikethrough.unwrap_or(false),
+                runs: n
+                    .ext
+                    .spans
+                    .iter()
+                    .map(|s| TextRun {
+                        start: s.start,
+                        end: s.end,
+                        family: s.family.clone(),
+                        weight: s.weight,
+                        italic: s.italic,
+                        color: None,
+                    })
+                    .collect(),
             },
             color: text.color.as_deref().and_then(parse_color),
             background: n.style.background.as_deref().and_then(parse_color),
@@ -2925,6 +2981,63 @@ fn resolve_styles(
     );
     for child in &n.children {
         resolve_styles(child, &text, scale, logical_width, out, depth + 1);
+    }
+}
+/// Rich text: run colours, code backgrounds behind their ranges, glyphs,
+/// then per-run underline and strikethrough.
+#[allow(clippy::too_many_arguments)]
+fn paint_rich_text<P: DocumentPainter>(
+    p: &mut P,
+    shapes: &mut Vec<P::Shape>,
+    glyphs: &mut Vec<P::Glyph>,
+    b: &LayoutBox,
+    r: [f32; 4],
+    ui: &crate::UiTheme,
+    text_color: [f32; 4],
+    scale: f32,
+) {
+    let mut style = b.text_style.clone();
+    for (run, span) in style.runs.iter_mut().zip(&b.ext.spans) {
+        run.color = span.color.as_deref().and_then(|c| ui.resolve(c));
+    }
+    let size = style.size;
+    for span in &b.ext.spans {
+        let Some(background) = span.background.as_deref().and_then(|c| ui.resolve(c)) else {
+            continue;
+        };
+        // A chip slightly wider than its glyphs and inset from the line box.
+        let (pad, inset) = ((size * 0.2).round().max(scale), (size * 0.08).round());
+        for [x, top, w, h, _] in
+            p.ui_text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+        {
+            p.card_round(
+                shapes,
+                [x - pad, top + inset, w + 2. * pad, (h - 2. * inset).max(1.)],
+                (3. * scale).min(h * 0.5),
+                background,
+            );
+        }
+    }
+    p.ui_text_styled(glyphs, &b.text, r, &style, text_color);
+    let thickness = (size / 14.).max(scale).round().max(1.);
+    for (run, span) in style.runs.iter().zip(&b.ext.spans) {
+        if !(span.underline || span.strikethrough) {
+            continue;
+        }
+        let color = run.color.unwrap_or(text_color);
+        for [x, _, w, _, baseline] in
+            p.ui_text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+        {
+            for (on, y) in [
+                (span.underline, baseline + size * 0.14),
+                (span.strikethrough, baseline - size * 0.3),
+            ] {
+                if on && w > 0. {
+                    let y = y.round() + thickness * 0.5;
+                    p.card_line(shapes, [x, y], [x + w, y], thickness, color);
+                }
+            }
+        }
     }
 }
 fn text(n: &Node, values: &Bindings) -> String {
@@ -3785,6 +3898,7 @@ fn place(
             pulse: None,
             label_inset: n.ext.label_inset,
             reveal_handle: n.ext.reveal_handle,
+            spans: n.ext.spans.clone(),
         },
     });
     let index = out.len() - 1;

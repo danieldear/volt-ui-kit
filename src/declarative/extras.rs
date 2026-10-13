@@ -140,6 +140,49 @@ impl Gradient {
     }
 }
 
+/// A styled byte range of a rich text node (see `ui::rich_text`). Unset
+/// fields inherit the node's text style. Colours are hex or theme tokens.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TextSpan {
+    pub start: usize,
+    pub end: usize,
+    pub family: Option<String>,
+    pub weight: Option<u16>,
+    pub italic: Option<bool>,
+    pub color: Option<String>,
+    pub background: Option<String>,
+    pub underline: bool,
+    pub strikethrough: bool,
+}
+/// Most spans one rich text node may carry.
+pub(crate) const MAX_TEXT_SPANS: usize = 1024;
+impl TextSpan {
+    /// Ranges must be sorted, disjoint, non-empty and on character
+    /// boundaries of `text`; styles must be valid.
+    pub(crate) fn validate_all(spans: &[TextSpan], text: &str) -> bool {
+        let colour = |c: &Option<String>| {
+            c.as_deref().is_none_or(|c| {
+                super::document::parse_color(c).is_some() || crate::ColorToken::parse(c).is_some()
+            })
+        };
+        spans.len() <= MAX_TEXT_SPANS
+            && spans.windows(2).all(|w| w[0].end <= w[1].start)
+            && spans.iter().all(|s| {
+                s.start < s.end
+                    && s.end <= text.len()
+                    && text.is_char_boundary(s.start)
+                    && text.is_char_boundary(s.end)
+                    && s.weight
+                        .is_none_or(|w| (100..=900).contains(&w) && w % 100 == 0)
+                    && s.family.as_deref().is_none_or(|f| {
+                        !f.trim().is_empty() && f.len() <= 128 && !f.chars().any(char::is_control)
+                    })
+                    && colour(&s.color)
+                    && colour(&s.background)
+            })
+    }
+}
+
 /// Rust-only extensions carried by every node. Defaults change nothing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct NodeExtras {
@@ -170,6 +213,8 @@ pub(crate) struct NodeExtras {
     pub label_inset: Option<f32>,
     /// Split dividers: drawn only while hovered, dragged or focused.
     pub reveal_handle: bool,
+    /// Rich text: styled byte ranges of the node's text.
+    pub spans: Vec<TextSpan>,
 }
 impl NodeExtras {
     pub(crate) fn valid(&self) -> bool {
