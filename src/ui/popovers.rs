@@ -82,9 +82,10 @@ impl<C> From<Popover<C>> for Element<C> {
 /// No application callback, modal scope, timer or operating-system tooltip.
 pub struct Tooltip<C>(pub(super) Element<C>, Element<C>);
 pub fn tooltip<C>(label: impl Into<String>, target: impl Into<Element<C>>) -> Tooltip<C> {
+    // As wide as its label, wrapping only past 240: short hints stay small.
     let card = panel([text(label).into()])
         .font_size(12.)
-        .width(240.)
+        .max_width(240.)
         .padding(10., Edge::Horizontal)
         .padding(8., Edge::Vertical)
         .rounded(8)
