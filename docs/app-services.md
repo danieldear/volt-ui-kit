@@ -209,7 +209,7 @@ notifications::remove("build.ready")?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Notifications work only from a bundled `.app` (see [Packaging](#packaging)).
+Notifications work only from a bundled `.app` (see [Packaging and releasing](#packaging-and-releasing)).
 "Accepted" means the OS took the request; Focus modes and user settings decide
 whether it is shown. Forward the callback results to your UI with a
 background message.
@@ -240,12 +240,65 @@ Application::new("Dev", App::default(), view)
 - `theme_file` reloads the palette whenever the file changes, without a rebuild.
 - The dev loop runs your project's build scripts; use it on code you trust.
 
-## Packaging
+## Packaging and releasing
 
-`cargo volt bundle` turns a release binary into a macOS `.app`:
+Describe the app once in `Cargo.toml`, then let `cargo volt` build it:
+
+```toml
+[package.metadata.volt.bundle]
+name = "My App"
+identifier = "com.example.myapp"
+icon = "assets/AppIcon.icns"          # relative to Cargo.toml
+minimum-system-version = "13.0"
+category = "public.app-category.productivity"
+copyright = "© 2026 Example"
+notary-profile = "myapp"              # optional; see below
+
+# Files the app opens. Content types name system UTIs; extensions claim
+# types macOS has no UTI for. Give one or the other per entry.
+[[package.metadata.volt.bundle.document-types]]
+name = "Markdown Document"
+role = "Editor"                       # Editor, Viewer, Shell or None
+rank = "Default"                      # Owner, Default, Alternate or None
+content-types = ["net.daringfireball.markdown"]
+
+[[package.metadata.volt.bundle.document-types]]
+name = "Markdown Document"
+role = "Editor"
+extensions = ["mdown", "mkd"]
+```
+
+`imported-types` declares UTIs for formats no app on the system defines,
+and `resources`, `usage` (privacy descriptions) and `build-number` work as
+the manual flags below.
 
 ```sh
-cargo build --release
+cargo volt bundle                 # target/release/bundle/My App.app, signed ad hoc
+cargo volt bundle --universal     # one binary for Apple silicon and Intel
+```
+
+`cargo volt release` makes a build you can hand to other Macs: it signs with
+your Developer ID and the hardened runtime, notarizes the app with Apple and
+staples the ticket, then builds, signs, notarizes and staples a disk image.
+
+```sh
+# Once: store App Store Connect credentials in the keychain.
+xcrun notarytool store-credentials myapp --apple-id you@example.com --team-id TEAMID
+
+cargo volt release --universal --dry-run    # print every step
+cargo volt release --universal              # target/release/bundle/My-App-1.0.0.dmg
+```
+
+The identity defaults to the only "Developer ID Application" certificate in
+your keychain (`--identity` picks another). The notary profile comes from
+`--notary-profile`, `VOLT_NOTARY_PROFILE` or `notary-profile` in the
+metadata. `--no-notarize` and `--no-dmg` stop early, and `--entitlements`
+adds an entitlements file. Steps run programs directly, never a shell, and
+only files under `target/release/bundle` are ever replaced.
+
+To bundle a binary built some other way, pass everything as flags:
+
+```sh
 cargo volt bundle \
   --binary target/release/my-app \
   --output MyApp.app \
@@ -256,9 +309,11 @@ cargo volt bundle \
   --icon assets/AppIcon.icns
 ```
 
-It writes `Info.plist`, copies the files you pass with `--resource`, adds
-privacy descriptions from `--usage KEY=TEXT`, checks that the binary links only
-system libraries, and signs the bundle ad hoc for local use. It never
-overwrites an existing path. Distribution to other Macs still needs your
-Developer ID signature and Apple notarization. Run `cargo volt bundle --help`
-for every option.
+Every bundle gets an `Info.plist`, checks that the binary links only system
+libraries and declares a deployment target no newer than the minimum, and
+never overwrites a path it did not create. Run `cargo volt bundle --help` for
+every option.
+
+To receive the files Finder opens with your app (double-click, Open With,
+the Dock), install an AppKit handler in `Application::before_launch`, which
+runs once the application object exists and before launch events arrive.

@@ -2,6 +2,11 @@
 #![forbid(unsafe_code)]
 #[path = "volt/bundle.rs"]
 mod bundle;
+#[path = "volt/release.rs"]
+mod release;
+#[cfg(test)]
+#[path = "volt/release_tests.rs"]
+mod release_tests;
 #[cfg(test)]
 #[path = "volt/bundle_tests.rs"]
 mod bundle_tests;
@@ -336,10 +341,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             scaffold(Path::new(&args[1]),kind,kit.ok_or_else(||error("--kit-path required until published"))?, desktop)?;
             println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);
         }
-        Some("bundle") if args.get(1).is_some_and(|s| s == "--help") && args.len()==2 => println!("{}", bundle::HELP),
-        Some("bundle") => bundle::run(bundle::BundleOptions::parse(&args[1..])?)?,
+        Some("bundle" | "release") if args.get(1).is_some_and(|s| s == "--help") && args.len()==2 => {
+            println!("{}\n\nManual bundling from a prebuilt binary:\n{}", release::HELP, bundle::HELP)
+        }
+        // Explicit flags bundle a prebuilt binary; otherwise Cargo.toml metadata.
+        Some("bundle") if args.iter().any(|a| a == "--binary") => bundle::run(bundle::BundleOptions::parse(&args[1..])?)?,
+        Some("bundle") => release::main(&args[1..], false)?,
+        Some("release") => release::main(&args[1..], true)?,
         Some("dev") if args.len()<=2=>dev(Path::new(args.get(1).map_or(".",String::as_str)))?,
-        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--template minimal|navigation|mail|settings|agent] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle --help").into()),
+        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--template minimal|navigation|mail|settings|agent] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
     }
     Ok(())
 }
