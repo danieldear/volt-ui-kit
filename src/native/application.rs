@@ -201,7 +201,8 @@ impl<C: 'static> Application<C> {
     /// Derive the window background from application state after UI updates.
     /// This changes the root clear only, never text/control opacity. Invalid
     /// updates are rejected; the previous surface configuration remains active.
-    /// Switching between opaque and translucent modes recreates the GPU surface.
+    /// Switching between opaque and translucent modes reconfigures the GPU
+    /// surface in place.
     pub fn background_from_state(
         mut self,
         background: impl Fn(&C) -> WindowBackground + 'static,
