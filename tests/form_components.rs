@@ -419,3 +419,32 @@ fn drop_zone_receives_files_under_the_pointer_or_as_the_only_zone() {
         .unwrap();
     assert_eq!(app.other, 1);
 }
+#[test]
+fn drop_zones_grow_to_fit_their_content_instead_of_clipping_it() {
+    let zone = |height: f32| -> Element<usize> {
+        vstack![drop_zone()
+            .key("drop")
+            .title("Drop a Markdown file")
+            .description(".md, .markdown or .txt")
+            .height(height)
+            .on_drop(|n: &mut usize, _| *n += 1)
+            .on_browse(|n: &mut usize| *n += 10)]
+        .key("root")
+        .into()
+    };
+    let vp = Viewport::new(500., 600., 1.).unwrap();
+    let bounds = |height: f32, id: &str| {
+        let (d, h) = zone(height).build().unwrap().into_parts();
+        let mut rt = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        rt.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
+        rt.boxes().iter().find(|b| b.id == id).unwrap().bounds.bounds()
+    };
+    let small = bounds(60., "drop");
+    let browse = bounds(60., "drop-browse");
+    assert!(small[3] > 60., "a too-small height is a minimum: {small:?}");
+    assert!(
+        browse[1] + browse[3] <= small[1] + small[3] - 15.,
+        "the Browse button sits inside the zone's padding: {browse:?} in {small:?}"
+    );
+    assert_eq!(bounds(240., "drop")[3], 240., "a roomy height is kept");
+}
