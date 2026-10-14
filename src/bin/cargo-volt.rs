@@ -2,14 +2,14 @@
 #![forbid(unsafe_code)]
 #[path = "volt/bundle.rs"]
 mod bundle;
+#[cfg(test)]
+#[path = "volt/bundle_tests.rs"]
+mod bundle_tests;
 #[path = "volt/release.rs"]
 mod release;
 #[cfg(test)]
 #[path = "volt/release_tests.rs"]
 mod release_tests;
-#[cfg(test)]
-#[path = "volt/bundle_tests.rs"]
-mod bundle_tests;
 use std::{
     fs, io,
     path::{Path, PathBuf},

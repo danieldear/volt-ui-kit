@@ -128,7 +128,9 @@ impl DesktopConfig {
         let total = self
             .menus
             .iter()
-            .try_fold(self.app_commands.len(), |n, m| n.checked_add(m.commands.len()))
+            .try_fold(self.app_commands.len(), |n, m| {
+                n.checked_add(m.commands.len())
+            })
             .and_then(|n| n.checked_add(self.tray.as_ref().map_or(0, |t| t.commands.len())));
         if total.is_none_or(|n| n > 512) {
             return Err("desktop command limit exceeded".into());

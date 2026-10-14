@@ -196,12 +196,26 @@ impl Runtime {
         };
         let mut parts = Vec::new();
         let mut rects = Vec::new();
-        for (i, b) in self.boxes.iter().enumerate().take(end_box + 1).skip(start_box) {
+        for (i, b) in self
+            .boxes
+            .iter()
+            .enumerate()
+            .take(end_box + 1)
+            .skip(start_box)
+        {
             if !selectable(b) {
                 continue;
             }
-            let from = if i == start_box { start_at.min(b.text.len()) } else { 0 };
-            let to = if i == end_box { end_at.min(b.text.len()) } else { b.text.len() };
+            let from = if i == start_box {
+                start_at.min(b.text.len())
+            } else {
+                0
+            };
+            let to = if i == end_box {
+                end_at.min(b.text.len())
+            } else {
+                b.text.len()
+            };
             if from >= to || !b.text.is_char_boundary(from) || !b.text.is_char_boundary(to) {
                 continue;
             }
@@ -256,7 +270,11 @@ impl Runtime {
         ui: &UiTheme,
         b: &LayoutBox,
     ) -> Option<PaintBatch<P::Shape, P::Glyph>> {
-        let (_, rects) = self.text_selection.rects.iter().find(|(id, _)| *id == b.id)?;
+        let (_, rects) = self
+            .text_selection
+            .rects
+            .iter()
+            .find(|(id, _)| *id == b.id)?;
         let mut color = ui.colors().accent;
         color[3] *= 0.28;
         let [bx, by, _, _] = b.bounds.bounds();

@@ -1188,7 +1188,9 @@ fn check_node(
             if h.ranges.len() > 200_000
                 || h.palette.len() > 64
                 || !ordered
-                || h.palette.iter().any(|c| parse_color(c).is_none() && crate::ColorToken::parse(c).is_none())
+                || h.palette
+                    .iter()
+                    .any(|c| parse_color(c).is_none() && crate::ColorToken::parse(c).is_none())
             {
                 return Err(error(
                     path,

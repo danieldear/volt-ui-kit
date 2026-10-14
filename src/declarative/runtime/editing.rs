@@ -571,7 +571,10 @@ impl Runtime {
                         (max_x - width + 2. * self.scale).max(0.)
                     };
                     if let Some(at) = e.scroll_target.take() {
-                        let row = e.rows.iter().position(|r| at < r.end || r.end == e.text.len());
+                        let row = e
+                            .rows
+                            .iter()
+                            .position(|r| at < r.end || r.end == e.text.len());
                         e.offset[1] = row.unwrap_or(0) as f32 * line_height;
                     }
                     e.offset[0] = e.offset[0].clamp(0., max_x);
@@ -1317,7 +1320,13 @@ impl Runtime {
                     editor_row_style(&b.text_style),
                 )
             };
-            p.ui_text_styled(&mut glyphs, &options.placeholder, rect, &style, tint(c.muted));
+            p.ui_text_styled(
+                &mut glyphs,
+                &options.placeholder,
+                rect,
+                &style,
+                tint(c.muted),
+            );
         } else {
             let row_style = editor_row_style(&b.text_style);
             // Colour ranges become colour-only runs: they share the plain
@@ -1341,13 +1350,15 @@ impl Runtime {
                             let color = palette.get(usize::from(color)).copied().flatten()?;
                             let start = start.max(line.start) - line.start;
                             let end = end.min(line.end) - line.start;
-                            (start < end && line.text.is_char_boundary(start) && line.text.is_char_boundary(end))
-                                .then_some(TextRun {
-                                    start,
-                                    end,
-                                    color: Some(color),
-                                    ..TextRun::default()
-                                })
+                            (start < end
+                                && line.text.is_char_boundary(start)
+                                && line.text.is_char_boundary(end))
+                            .then_some(TextRun {
+                                start,
+                                end,
+                                color: Some(color),
+                                ..TextRun::default()
+                            })
                         })
                         .collect();
                     if !runs.is_empty() {

@@ -95,14 +95,12 @@ impl<C> TextInput<C> {
     /// Colour byte ranges of the text (syntax highlighting): sorted,
     /// non-overlapping `(start, end, palette index)`. Colours only, so the
     /// layout is unchanged; at most 200,000 ranges.
-    pub fn highlights(
-        mut self,
-        palette: Vec<String>,
-        ranges: Vec<(usize, usize, u8)>,
-    ) -> Self {
-        self.0.node.editor.as_mut().unwrap().highlights = Some(std::sync::Arc::new(
-            crate::declarative::EditorHighlights { palette, ranges },
-        ));
+    pub fn highlights(mut self, palette: Vec<String>, ranges: Vec<(usize, usize, u8)>) -> Self {
+        self.0.node.editor.as_mut().unwrap().highlights =
+            Some(std::sync::Arc::new(crate::declarative::EditorHighlights {
+                palette,
+                ranges,
+            }));
         self
     }
     /// Escape while the field has focus, e.g. to close a find bar.
