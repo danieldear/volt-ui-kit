@@ -294,3 +294,32 @@ fn aliases_link_to_the_executable_and_must_be_plain_distinct_names() {
     assert!(invalid.validate().is_err());
     assert!(!invalid.output.exists());
 }
+#[test]
+fn bundles_strip_symbols_unless_asked_not_to() {
+    let f = Fixture::new();
+    assert!(f.options().strip, "stripped by default");
+    let base = |extra: &[&str]| {
+        let mut args: Vec<String> = [
+            "--binary",
+            "b",
+            "--output",
+            "o.app",
+            "--name",
+            "N",
+            "--identifier",
+            "dev.volt.n",
+            "--version",
+            "1.0.0",
+            "--minimum-system-version",
+            "13.0",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        args.extend(extra.iter().map(|s| s.to_string()));
+        BundleOptions::parse(&args)
+    };
+    assert!(!base(&["--strip", "none"]).unwrap().strip);
+    assert!(base(&["--strip", "symbols"]).unwrap().strip);
+    assert!(base(&["--strip", "all"]).is_err());
+    assert!(base(&["--strip", "none", "--strip", "none"]).is_err());
+}

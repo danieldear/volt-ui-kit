@@ -280,6 +280,22 @@ the manual flags below.
 command line instead of opening a window. The links are signed and
 notarized with the app.
 
+`cargo volt bundle` strips the executable's symbol table, about a fifth of a
+Rust release binary (`strip = false` keeps it, for readable backtraces). For
+a smaller app still, give the package a size-tuned release profile:
+
+```toml
+[profile.release]
+opt-level = "s"        # optimise for size
+lto = true             # link-time optimisation across crates
+codegen-units = 1
+panic = "abort"        # no unwinding tables or landing pads
+strip = true
+```
+
+Together these took one app from 20.6 MB to 9.8 MB per architecture, for
+rendering about 3% slower and release builds a minute or two longer.
+
 ```sh
 cargo volt bundle                 # target/release/bundle/My App.app, signed ad hoc
 cargo volt bundle --universal     # one binary for Apple silicon and Intel

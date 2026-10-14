@@ -11,6 +11,10 @@
 - Bundles can give the executable other names (`aliases = ["md"]`, or
   `--alias md`): links in `Contents/MacOS` that ship a command-line tool
   inside the app, signed and notarized with it.
+- `cargo volt bundle` and `release` strip the bundled executable's symbol
+  table, about a fifth of a Rust release binary (`strip = false` or
+  `--strip none` keeps it). The packaging guide shows a size-tuned release
+  profile.
 - Shortcuts may use unshifted punctuation keys as well as letters and
   digits (`,` `.` `;` `'` `/` `[` `]` `\` `-` `=` `` ` ``), so apps can bind
   ⌘, for Settings, ⌘=/⌘− for zoom and ⌘[/⌘] for history.
