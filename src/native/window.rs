@@ -1085,7 +1085,9 @@ impl<C: 'static> App<C> {
         let now = Instant::now();
         let near = |p: [f32; 2]| (p[0] - at[0]).abs() < 5. && (p[1] - at[1]).abs() < 5.;
         let count = match self.last_click {
-            Some((when, p, n)) if now.duration_since(when) < Duration::from_millis(450) && near(p) => {
+            Some((when, p, n))
+                if now.duration_since(when) < Duration::from_millis(450) && near(p) =>
+            {
                 n.saturating_add(1).min(3)
             }
             _ => 1,

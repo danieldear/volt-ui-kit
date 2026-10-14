@@ -782,17 +782,24 @@ fn autofocus_takes_focus_once_and_escape_runs_on_cancel() {
     let mut a = Find::default();
     let (doc, mut h) = find_view(&a).build().unwrap().into_parts();
     let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     assert_eq!(r.focused(), None);
     let rebuild = |r: &mut Runtime, h: &mut _, a: &Find| {
         let (doc, next) = find_view(a).build().unwrap().into_parts();
-        r.replace_document(doc, &next, &Bindings::default()).unwrap();
+        r.replace_document(doc, &next, &Bindings::default())
+            .unwrap();
         *h = next;
-        r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+        r.layout(viewport, &Bindings::default(), &mut Metrics)
+            .unwrap();
     };
     a.open = true;
     rebuild(&mut r, &mut h, &a);
-    assert_eq!(r.focused(), Some("find"), "a new autofocus field takes focus");
+    assert_eq!(
+        r.focused(),
+        Some("find"),
+        "a new autofocus field takes focus"
+    );
     r.ime_commit("needle", &mut h, &mut a).unwrap();
     assert_eq!(a.query, "needle");
     // Moving focus away sticks: an existing field does not grab it back.
@@ -827,18 +834,22 @@ fn text_areas_hold_whole_documents_and_reflow_only_changed_lines() {
     assert!(a.text.len() > 200_000);
     let (doc, mut h) = doc_view(&a).build().unwrap().into_parts();
     let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     r.focus_next(false);
     assert_eq!(r.focused(), Some("source"));
-    r.editor_key(EditKey::DocumentEnd, false, &mut h, &mut a).unwrap();
+    r.editor_key(EditKey::DocumentEnd, false, &mut h, &mut a)
+        .unwrap();
     r.ime_commit("The end.", &mut h, &mut a).unwrap();
     assert!(a.text.ends_with("The end."));
     assert_eq!(a.text.len(), line.len() * 4000 + 8);
     // Rebuild with the new value, as an app does, and lay out again.
     let (doc, next) = doc_view(&a).build().unwrap().into_parts();
-    r.replace_document(doc, &next, &Bindings::default()).unwrap();
+    r.replace_document(doc, &next, &Bindings::default())
+        .unwrap();
     h = next;
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     assert!(r.editing_tab_indents());
     r.editor_key(EditKey::Undo, false, &mut h, &mut a).unwrap();
     assert!(!a.text.ends_with("The end."));
@@ -885,23 +896,34 @@ fn editors_report_selection_hand_over_keys_and_take_a_caret() {
     let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
     let settle = |r: &mut Runtime, h: &mut _, a: &mut Slash| {
         let (doc, next) = slash_view(a).build().unwrap().into_parts();
-        r.replace_document(doc, &next, &Bindings::default()).unwrap();
+        r.replace_document(doc, &next, &Bindings::default())
+            .unwrap();
         *h = next;
-        r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+        r.layout(viewport, &Bindings::default(), &mut Metrics)
+            .unwrap();
         r.dispatch_editor_selections(h, a).unwrap()
     };
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     assert!(r.dispatch_editor_selections(&mut h, &mut a).unwrap());
     assert_eq!(a.selection.map(|s| (s.start, s.end)), Some((0, 0)));
-    assert!(!r.dispatch_editor_selections(&mut h, &mut a).unwrap(), "reported once");
+    assert!(
+        !r.dispatch_editor_selections(&mut h, &mut a).unwrap(),
+        "reported once"
+    );
     r.focus_next(false);
-    r.editor_key(EditKey::DocumentEnd, false, &mut h, &mut a).unwrap();
+    r.editor_key(EditKey::DocumentEnd, false, &mut h, &mut a)
+        .unwrap();
     r.ime_commit("/", &mut h, &mut a).unwrap();
     assert!(a.menu);
     settle(&mut r, &mut h, &mut a);
     let s = a.selection.unwrap();
     assert_eq!((s.start, s.end, s.caret_at), (7, 7, 7));
-    assert!(s.caret[1] > 10., "the caret is on the second line: {:?}", s.caret);
+    assert!(
+        s.caret[1] > 10.,
+        "the caret is on the second line: {:?}",
+        s.caret
+    );
     // While the menu is open the arrows and Enter go to the app.
     r.editor_key(EditKey::Down, false, &mut h, &mut a).unwrap();
     r.editor_key(EditKey::Enter, false, &mut h, &mut a).unwrap();
@@ -914,7 +936,10 @@ fn editors_report_selection_hand_over_keys_and_take_a_caret() {
     settle(&mut r, &mut h, &mut a);
     assert_eq!(r.editor_selection("source"), Some((9, 9)));
     r.editor_key(EditKey::Enter, false, &mut h, &mut a).unwrap();
-    assert_eq!(a.text, "Hello\n## \n", "with the menu closed Enter edits again");
+    assert_eq!(
+        a.text, "Hello\n## \n",
+        "with the menu closed Enter edits again"
+    );
 }
 #[derive(Default)]
 struct Long {
@@ -945,25 +970,34 @@ fn editors_scroll_to_an_offset_report_their_top_line_and_check_colours() {
     };
     let (doc, mut h) = long_view(&a).build().unwrap().into_parts();
     let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     r.dispatch_editor_selections(&mut h, &mut a).unwrap();
     assert_eq!(a.seen_top, Some(0));
     let line_80 = a.text.find("line 80\n").unwrap();
     a.top = line_80 + 3;
     a.request = 1;
     let (doc, next) = long_view(&a).build().unwrap().into_parts();
-    r.replace_document(doc, &next, &Bindings::default()).unwrap();
+    r.replace_document(doc, &next, &Bindings::default())
+        .unwrap();
     h = next;
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     r.dispatch_editor_selections(&mut h, &mut a).unwrap();
     assert_eq!(a.seen_top, Some(line_80), "line 80 is at the top");
     // Wheel scrolling moves the reported top line too.
     assert!(r.scroll_at(20., 20., [0., 60.]));
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     r.dispatch_editor_selections(&mut h, &mut a).unwrap();
     assert!(a.seen_top.unwrap() > line_80);
     // Colour ranges must be ordered, inside the text and name a palette entry.
-    for ranges in [vec![(5, 4, 0)], vec![(0, 4, 2)], vec![(4, 8, 0), (2, 6, 0)], vec![(0, 999_999, 0)]] {
+    for ranges in [
+        vec![(5, 4, 0)],
+        vec![(0, 4, 2)],
+        vec![(4, 8, 0), (2, 6, 0)],
+        vec![(0, 999_999, 0)],
+    ] {
         let bad: Element<Long> = text_area("short text")
             .key("bad")
             .on_change(|_: &mut Long, _| {})

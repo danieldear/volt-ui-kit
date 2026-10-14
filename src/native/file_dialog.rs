@@ -60,7 +60,10 @@ pub fn available() -> bool {
     cfg!(all(feature = "native-desktop", target_os = "macos"))
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(all(feature = "native-desktop", target_os = "macos")), allow(dead_code))]
+#[cfg_attr(
+    not(all(feature = "native-desktop", target_os = "macos")),
+    allow(dead_code)
+)]
 enum Panel {
     OpenFile,
     OpenFolder,
@@ -77,7 +80,9 @@ pub fn open_folder(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileD
     show(options, Panel::OpenFolder)
 }
 /// Choose a file or a folder, as a combined Open… command does.
-pub fn open_file_or_folder(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
+pub fn open_file_or_folder(
+    options: &FileDialogOptions,
+) -> Result<Option<PathBuf>, FileDialogError> {
     options.validate()?;
     show(options, Panel::OpenEither)
 }

@@ -437,7 +437,12 @@ fn drop_zones_grow_to_fit_their_content_instead_of_clipping_it() {
         let (d, h) = zone(height).build().unwrap().into_parts();
         let mut rt = Runtime::new(d, &h, &Bindings::default()).unwrap();
         rt.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
-        rt.boxes().iter().find(|b| b.id == id).unwrap().bounds.bounds()
+        rt.boxes()
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap()
+            .bounds
+            .bounds()
     };
     let small = bounds(60., "drop");
     let browse = bounds(60., "drop-browse");

@@ -13,7 +13,13 @@ impl TextMetrics for Metrics {
     fn measure(&mut self, text: &str, size: f32, _: f32) -> [f32; 2] {
         [text.chars().count() as f32 * size * 0.5, size * 1.2]
     }
-    fn text_offset_at(&mut self, text: &str, r: [f32; 4], style: &TextStyle, p: [f32; 2]) -> Option<usize> {
+    fn text_offset_at(
+        &mut self,
+        text: &str,
+        r: [f32; 4],
+        style: &TextStyle,
+        p: [f32; 2],
+    ) -> Option<usize> {
         let char_w = style.size * 0.5;
         let n = ((p[0] - r[0]) / char_w).round().max(0.) as usize;
         Some(text.char_indices().nth(n).map_or(text.len(), |(i, _)| i))
@@ -28,7 +34,13 @@ impl TextMetrics for Metrics {
         let char_w = style.size * 0.5;
         let a = text[..range.start].chars().count() as f32;
         let b = text[..range.end].chars().count() as f32;
-        vec![[r[0] + a * char_w, r[1], (b - a) * char_w, style.size * 1.2, r[1] + style.size]]
+        vec![[
+            r[0] + a * char_w,
+            r[1],
+            (b - a) * char_w,
+            style.size * 1.2,
+            r[1] + style.size,
+        ]]
     }
 }
 
@@ -54,7 +66,12 @@ fn view(_: &App) -> Element<App> {
 }
 
 fn bounds(r: &Runtime, id: &str) -> [f32; 4] {
-    r.boxes().iter().find(|b| b.id == id).unwrap().bounds.bounds()
+    r.boxes()
+        .iter()
+        .find(|b| b.id == id)
+        .unwrap()
+        .bounds
+        .bounds()
 }
 
 #[test]
@@ -71,7 +88,11 @@ fn drag_selects_across_paragraphs_and_reports_the_text() {
     assert!(r.text_select_drag(b[0] + 7. * 6., b[1] + 5., &mut Metrics));
     assert!(r.text_select_release());
     r.dispatch_text_selection(&mut h, &mut app).unwrap();
-    assert_eq!(app.selected.last().unwrap(), "world\nSecond", "the marker is left out");
+    assert_eq!(
+        app.selected.last().unwrap(),
+        "world\nSecond",
+        "the marker is left out"
+    );
     assert_eq!(r.selected_text(), Some("world\nSecond"));
     // Reported once until it changes.
     assert!(!r.dispatch_text_selection(&mut h, &mut app).unwrap());
