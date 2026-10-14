@@ -343,6 +343,8 @@ pub struct RasterPainter {
     sf_text: String,
     sf_display: String,
     sf_mono: String,
+    /// The platform's colour emoji family, when installed.
+    emoji_family: Option<String>,
     /// Every installed family name, for CSS-style fallback lists.
     installed: std::collections::HashSet<String>,
     swash: SwashCache,
@@ -781,11 +783,15 @@ impl RasterPainter {
             "sans-serif",
         );
         let sf_mono = apple_family(&fonts, &["SF Mono", ".SF NS Mono"], "monospace");
-        let installed = fonts
+        let installed: std::collections::HashSet<String> = fonts
             .db()
             .faces()
             .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
             .collect();
+        let emoji_family = ["Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"]
+            .into_iter()
+            .find(|name| installed.contains(*name))
+            .map(str::to_owned);
         if std::env::var_os("VOLT_UI_TRACE").is_some() {
             eprintln!("VOLT_UI_FONTS system={system_family:?} sf_text={sf_text:?} sf_display={sf_display:?} sf_mono={sf_mono:?}");
         }
@@ -796,6 +802,7 @@ impl RasterPainter {
             sf_text,
             sf_display,
             sf_mono,
+            emoji_family,
             installed,
             swash: SwashCache::new(),
             #[cfg(feature = "native-gpu")]
@@ -955,11 +962,12 @@ impl RasterPainter {
                 crate::declarative::TextAlign::Justified => Some(cosmic_text::Align::Justified),
             };
             let fonts = &mut self.fonts;
+            let emoji = self.emoji_family.as_deref();
             let runs = &key.runs;
             // `prefix`: bytes of `value` that come from the original text (an
             // ellipsis may follow); runs are clipped to it.
             let mut shape = |buffer: &mut Buffer, value: &str, prefix: usize| {
-                if runs.is_empty() {
+                if runs.is_empty() && !has_emoji(value) {
                     buffer.set_text(fonts, value, &attrs, Shaping::Advanced);
                     if align.is_some() {
                         for line in &mut buffer.lines {
@@ -1005,6 +1013,7 @@ impl RasterPainter {
                     if at < value.len() {
                         spans.push((&value[at..], attrs.clone()));
                     }
+                    let spans = emoji_spans(spans, emoji);
                     buffer.set_rich_text(fonts, spans, &attrs, Shaping::Advanced, align);
                 }
                 buffer.shape_until_scroll(fonts, false);
@@ -2136,6 +2145,83 @@ fn configure_generic_families(fonts: &mut FontSystem) {
         }
     }
 }
+/// Whether `text` may hold emoji (a cheap test before splitting graphemes).
+fn has_emoji(text: &str) -> bool {
+    text.chars().any(|c| u32::from(c) >= 0x2300)
+}
+
+/// Whether a grapheme is shown as emoji: an emoji-presentation code point,
+/// a flag, or anything with the emoji variation selector (U+FE0F).
+fn is_emoji(grapheme: &str) -> bool {
+    if grapheme.contains('\u{FE0F}') {
+        return true;
+    }
+    let Some(c) = grapheme.chars().next() else {
+        return false;
+    };
+    matches!(u32::from(c),
+        0x1F300..=0x1F5FF | 0x1F600..=0x1F64F | 0x1F680..=0x1F6FF
+        | 0x1F900..=0x1F9FF | 0x1FA70..=0x1FAFF | 0x1F1E6..=0x1F1FF
+        | 0x1F004 | 0x1F0CF | 0x1F18E | 0x1F191..=0x1F19A | 0x1F201 | 0x1F21A
+        | 0x1F22F | 0x1F232..=0x1F23A | 0x1F250..=0x1F251
+        | 0x231A..=0x231B | 0x23E9..=0x23EC | 0x23F0 | 0x23F3 | 0x25FD..=0x25FE
+        | 0x2614..=0x2615 | 0x2648..=0x2653 | 0x267F | 0x2693 | 0x26A1
+        | 0x26AA..=0x26AB | 0x26BD..=0x26BE | 0x26C4..=0x26C5 | 0x26CE | 0x26D4
+        | 0x26EA | 0x26F2..=0x26F3 | 0x26F5 | 0x26FA | 0x26FD | 0x2705
+        | 0x270A..=0x270B | 0x2728 | 0x274C | 0x274E | 0x2753..=0x2755 | 0x2757
+        | 0x2795..=0x2797 | 0x27B0 | 0x27BF | 0x2B1B..=0x2B1C | 0x2B50 | 0x2B55)
+}
+
+/// Spans with every run of emoji graphemes in the colour emoji family at
+/// regular weight. Fallback alone prefers any installed font whose weight
+/// matches and that has an outline for the code point (a bold Nerd Font,
+/// say), so bold text could show a black-and-white emoji.
+fn emoji_spans<'a>(
+    spans: Vec<(&'a str, Attrs<'a>)>,
+    emoji: Option<&'a str>,
+) -> Vec<(&'a str, Attrs<'a>)> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let Some(family) = emoji else {
+        return spans;
+    };
+    let mut out = Vec::with_capacity(spans.len());
+    for (text, attrs) in spans {
+        if !has_emoji(text) {
+            out.push((text, attrs));
+            continue;
+        }
+        let emoji_attrs = attrs
+            .clone()
+            .family(Family::Name(family))
+            .weight(Weight::NORMAL)
+            .style(Style::Normal);
+        let mut start = 0;
+        let mut run: Option<bool> = None;
+        for (at, grapheme) in text.grapheme_indices(true) {
+            let this = is_emoji(grapheme);
+            if run.is_some_and(|r| r != this) {
+                let a = if run == Some(true) {
+                    emoji_attrs.clone()
+                } else {
+                    attrs.clone()
+                };
+                out.push((&text[start..at], a));
+                start = at;
+            }
+            run = Some(this);
+        }
+        if start < text.len() {
+            let a = if run == Some(true) {
+                emoji_attrs
+            } else {
+                attrs
+            };
+            out.push((&text[start..], a));
+        }
+    }
+    out
+}
+
 // Only fonts already discovered on the machine are used. No downloads,
 // private font paths, font bundling, global registration or font mutation.
 fn apple_family(fonts: &FontSystem, candidates: &[&str], fallback: &str) -> String {
@@ -4310,5 +4396,53 @@ mod damage_regression_tests {
                 "miter damage must include stroke joins (lines={lines})"
             );
         }
+    }
+}
+#[cfg(test)]
+mod emoji_tests {
+    use super::*;
+
+    #[test]
+    fn emoji_graphemes_get_their_own_regular_weight_spans() {
+        for e in ["🌐", "🚀", "✅", "👩‍💻", "🇮🇳", "1️⃣", "❤️", "⚡"] {
+            assert!(is_emoji(e), "{e}");
+        }
+        for t in ["a", "©", "→", "★", "─"] {
+            assert!(!is_emoji(t), "{t} keeps its text presentation");
+        }
+        let bold = Attrs::new().weight(Weight::BOLD);
+        let spans = emoji_spans(
+            vec![("🌐 Optional 🚀🚀 end", bold.clone())],
+            Some("Apple Color Emoji"),
+        );
+        let texts: Vec<&str> = spans.iter().map(|s| s.0).collect();
+        assert_eq!(texts, ["🌐", " Optional ", "🚀🚀", " end"]);
+        assert_eq!(spans[0].1.weight, Weight::NORMAL);
+        assert_eq!(spans[0].1.family, Family::Name("Apple Color Emoji"));
+        assert_eq!(spans[1].1.weight, Weight::BOLD);
+        // Without a colour emoji font nothing changes.
+        assert_eq!(emoji_spans(vec![("🌐", bold)], None).len(), 1);
+    }
+
+    #[test]
+    fn bold_emoji_shape_with_the_colour_emoji_font() {
+        let mut p = RasterPainter::new(Viewport::new(400., 100., 1.).unwrap());
+        let Some(family) = p.emoji_family.clone() else {
+            return; // No colour emoji font on this machine.
+        };
+        let fonts = &mut p.fonts;
+        let mut buffer = Buffer::new(fonts, Metrics::new(20., 24.));
+        let bold = Attrs::new().weight(Weight::BOLD);
+        buffer.set_rich_text(
+            fonts,
+            emoji_spans(vec![("🌐 Heading", bold.clone())], Some(&family)),
+            &bold,
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(fonts, false);
+        let glyph = buffer.layout_runs().next().unwrap().glyphs[0].clone();
+        let face = fonts.db().face(glyph.font_id).unwrap();
+        assert_eq!(face.families[0].0, family);
     }
 }
