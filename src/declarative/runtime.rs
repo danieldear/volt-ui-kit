@@ -4451,8 +4451,14 @@ fn place(
                         .and_then(|id| out.iter().find(|b| b.id == id))
                     {
                         let [ax, ay, aw, ah] = anchor.bounds.bounds();
-                        let _ = aw;
-                        pos[0] = ax.clamp(x, (x + w - size[0]).max(x));
+                        // Tooltips centre on their target; menus and
+                        // popovers align with its leading edge.
+                        let left = if options.kind == super::document::OverlayKind::Tooltip {
+                            ax + (aw - size[0]) * 0.5
+                        } else {
+                            ax
+                        };
+                        pos[0] = left.clamp(x, (x + w - size[0]).max(x));
                         let below = ay + ah + 4. * s;
                         pos[1] = if below + size[1] <= y + h {
                             below

@@ -17,6 +17,9 @@
   `file_dialog::open_file_or_folder` either.
 - Shortcuts match the key pressed without modifiers, so Shift+Cmd+] is
   `primary(']').shift(true)` and Option shortcuts work on every layout.
+- Tooltips fit their label instead of always being 240 px wide (long
+  labels still wrap at 240) and centre on their target; menus and
+  popovers keep aligning with the target's leading edge.
 - Icons: `Sidebar`, `FileText`, `Type` and `Columns`.
 - Text areas hold whole documents: multiline editors take up to 4 MiB
   (single-line fields stay at 8 KiB), reflow only the lines that changed,
