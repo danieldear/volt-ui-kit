@@ -23,6 +23,8 @@ pub(super) mod editing;
 #[cfg(feature = "rust-ui")]
 mod overlays;
 #[cfg(feature = "rust-ui")]
+mod selection;
+#[cfg(feature = "rust-ui")]
 pub(super) mod value_controls;
 /// Physical-pixel typography resolved from inherited document styles.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,6 +44,22 @@ pub struct TextStyle {
     pub no_wrap: bool,
     pub underline: bool,
     pub strikethrough: bool,
+    /// Rich text: styled byte ranges of the string, sorted and disjoint.
+    /// Empty for plain text.
+    pub runs: Vec<TextRun>,
+}
+/// One styled byte range of a rich text string. Unset fields inherit the
+/// text's own style. Colours are resolved when painting, not for layout.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextRun {
+    pub start: usize,
+    pub end: usize,
+    pub family: Option<String>,
+    pub weight: Option<u16>,
+    pub italic: Option<bool>,
+    /// Font size relative to the text; line spacing is unchanged.
+    pub scale: Option<f32>,
+    pub color: Option<[f32; 4]>,
 }
 impl Default for TextStyle {
     fn default() -> Self {
@@ -57,6 +75,7 @@ impl Default for TextStyle {
             no_wrap: false,
             underline: false,
             strikethrough: false,
+            runs: Vec::new(),
         }
     }
 }
@@ -76,6 +95,30 @@ pub trait TextMetrics {
     /// Existing adapters remain valid; styled adapters override this for typography.
     fn measure_styled(&mut self, text: &str, style: &TextStyle, max_width: f32) -> [f32; 2] {
         self.measure(text, style.size, max_width)
+    }
+    /// Rectangles covering a byte range of laid-out text, one per line, as
+    /// (x, line top, width, line height, baseline y). Used for rich text
+    /// backgrounds, decorations and link targets. Adapters without layout
+    /// access return none.
+    /// The byte offset in `text`, laid out in `bounds`, nearest to `point`
+    /// (for selecting text). Adapters without layout access return none.
+    fn text_offset_at(
+        &mut self,
+        _text: &str,
+        _bounds: [f32; 4],
+        _style: &TextStyle,
+        _point: [f32; 2],
+    ) -> Option<usize> {
+        None
+    }
+    fn text_range_rects(
+        &mut self,
+        _text: &str,
+        _bounds: [f32; 4],
+        _style: &TextStyle,
+        _range: std::ops::Range<usize>,
+    ) -> Vec<[f32; 5]> {
+        vec![]
     }
 }
 /// Paint adapters for the new runtime provide the same measurement and draw rules.
@@ -204,6 +247,14 @@ pub struct LayoutBox {
     pub(crate) on_text_changed: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_submit: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_cancel: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_selection: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_key: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_width: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -268,6 +319,12 @@ pub(crate) struct BoxExtras {
     /// Split dividers: painted only on hover/drag/focus (Rust UI builds).
     #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
     pub reveal_handle: bool,
+    /// Rich text spans (colours, backgrounds, decorations) for painting.
+    pub spans: Vec<super::extras::TextSpan>,
+    /// Rich text: handler for clicked links, and each link run's line
+    /// rectangles relative to the box origin (span index, [x, y, w, h]).
+    pub on_link: Option<String>,
+    pub links: Vec<(usize, [f32; 4])>,
 }
 #[derive(Clone)]
 struct ScrollbarCapture {
@@ -322,11 +379,18 @@ pub struct Runtime {
     document: Document,
     boxes: Vec<LayoutBox>,
     layout_boxes: Vec<LayoutBox>,
+    /// The last width reported to each `on_width` element, by id.
+    #[cfg(feature = "rust-ui")]
+    reported_widths: std::collections::HashMap<String, f32>,
     scrollbar_capture: Option<ScrollbarCapture>,
     focused: Option<String>,
     /// Focus arrived by keyboard (Tab, arrows, shortcuts), not a click.
     focus_visible: bool,
     hovered: Option<String>,
+    /// Rich text link under the pointer and the link being pressed:
+    /// (text box id, span index).
+    hovered_link: Option<(String, usize)>,
+    link_capture: Option<(String, usize)>,
     visual_hover: BTreeSet<String>,
     capture: Option<String>,
     keyboard: Option<String>,
@@ -335,6 +399,8 @@ pub struct Runtime {
     last_viewport: Option<[f32; 3]>,
     motion: RefCell<Motion>,
     scroll_offsets: BTreeMap<String, [f32; 2]>,
+    /// Variable-height lists: measured row heights per list key.
+    lazy_heights: BTreeMap<String, LazyHeights>,
     /// Last laid-out vertical extent of end-anchored scroll views.
     scroll_ends: BTreeMap<String, f32>,
     /// Resolved styles depend only on the document, scale and logical width,
@@ -370,6 +436,8 @@ pub struct Runtime {
     progress_clock: value_controls::ProgressClock,
     #[cfg(feature = "rust-ui")]
     overlays: overlays::OverlayState,
+    #[cfg(feature = "rust-ui")]
+    text_selection: selection::TextSelectionState,
 }
 impl Runtime {
     /// Native application shortcuts must not bypass modal/menu scope or IME.
@@ -387,10 +455,14 @@ impl Runtime {
             document,
             boxes: vec![],
             layout_boxes: vec![],
+            #[cfg(feature = "rust-ui")]
+            reported_widths: std::collections::HashMap::new(),
             scrollbar_capture: None,
             focused: None,
             focus_visible: false,
             hovered: None,
+            hovered_link: None,
+            link_capture: None,
             visual_hover: BTreeSet::new(),
             capture: None,
             keyboard: None,
@@ -399,6 +471,7 @@ impl Runtime {
             last_viewport: None,
             motion: RefCell::new(Motion::default()),
             scroll_offsets: BTreeMap::new(),
+            lazy_heights: BTreeMap::new(),
             scroll_ends: BTreeMap::new(),
             styles_cache: None,
             reuse: Reuse::default(),
@@ -425,6 +498,8 @@ impl Runtime {
             progress_clock: value_controls::ProgressClock::default(),
             #[cfg(feature = "rust-ui")]
             overlays: overlays::OverlayState::default(),
+            #[cfg(feature = "rust-ui")]
+            text_selection: Default::default(),
         };
         #[cfg(feature = "rust-ui")]
         let mut runtime = runtime;
@@ -432,6 +507,11 @@ impl Runtime {
         {
             runtime.reconcile_editors();
             runtime.sync_overlay_state();
+            if let Some(id) = Self::autofocus_target(None, runtime.document.root())
+                .filter(|id| runtime.scope_allows_id(id))
+            {
+                runtime.focused = Some(id);
+            }
         }
         Ok(runtime)
     }
@@ -591,6 +671,8 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         let composition = self.editor_composition_snapshot(&next);
         let scrollbar_capture = self.scrollbar_capture.clone();
+        #[cfg(feature = "rust-ui")]
+        let autofocus = Self::autofocus_target(Some(self.document.root()), next.root());
         let mut old = std::mem::replace(&mut self.document, next);
         self.reuse.prepare(
             &mut old,
@@ -609,6 +691,10 @@ impl Runtime {
         self.boxes.clear();
         self.layout_boxes.clear();
         self.cancel_input();
+        #[cfg(feature = "rust-ui")]
+        if let Some(id) = autofocus.filter(|id| self.scope_allows_id(id)) {
+            self.focused = Some(id);
+        }
         if let Some(capture) = scrollbar_capture {
             if find(self.document.root(), &capture.id).is_some_and(|n| {
                 n.surface.scroll.is_some()
@@ -715,6 +801,7 @@ impl Runtime {
             area,
             &[],
             &mut self.scroll_offsets,
+            &mut self.lazy_heights,
             values,
             metrics,
             self.scale,
@@ -739,6 +826,7 @@ impl Runtime {
                 area,
                 &[],
                 &mut self.scroll_offsets,
+                &mut self.lazy_heights,
                 values,
                 metrics,
                 self.scale,
@@ -758,6 +846,23 @@ impl Runtime {
         self.reuse.memo = memo;
         self.reuse.bindings = Some(values.clone());
         self.styles_cache = Some((style_key, styles));
+        // Rich text links: line rectangles relative to their box, so plain
+        // scrolling (which shifts boxes) keeps them aligned.
+        for b in boxes.iter_mut().filter(|b| b.ext.on_link.is_some()) {
+            let r = b.bounds.bounds();
+            let mut links = Vec::new();
+            for (i, span) in b.ext.spans.iter().enumerate() {
+                if span.link.is_none() {
+                    continue;
+                }
+                for [x, y, w, h, _] in
+                    metrics.text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+                {
+                    links.push((i, [x - r[0], y - r[1], w, h]));
+                }
+            }
+            b.ext.links = links;
+        }
         self.layout_boxes = boxes;
         self.boxes = self
             .layout_boxes
@@ -767,6 +872,8 @@ impl Runtime {
             .collect();
         #[cfg(feature = "rust-ui")]
         self.layout_editors(metrics);
+        #[cfg(feature = "rust-ui")]
+        self.refresh_text_selection(metrics);
         self.motion.get_mut().reconcile(&self.boxes);
         let valid = |id: &Option<String>| {
             id.as_ref().is_none_or(|id| {
@@ -1177,6 +1284,9 @@ impl Runtime {
         let hit = self
             .hit(x, y)
             .and_then(|id| self.boxes.iter().rposition(|b| b.id == id));
+        if hit.is_none() && self.link_at(x, y).is_some() {
+            return Cursor::Pointer;
+        }
         let Some(mut index) = hit.or_else(|| {
             self.boxes.iter().rposition(|b| {
                 self.scope_allows_id(&b.id)
@@ -1238,6 +1348,33 @@ impl Runtime {
                     && b.bounds.contains_corners(b.radii(self.scale), x, y)
             })
             .map(|b| b.id.clone())
+    }
+    /// The rich text link under the point, when the topmost box there is a
+    /// text with a link run at that position: (text box id, span index).
+    fn link_at(&self, x: f32, y: f32) -> Option<(String, usize)> {
+        let b = self.boxes.iter().rev().find(|b| {
+            self.scope_allows_id(&b.id)
+                && !self.portal_passthrough(&b.id)
+                && b.clip.contains(x, y)
+                && b.clip_regions.iter().all(|r| r.contains(x, y))
+                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+        })?;
+        let [bx, by, _, _] = b.bounds.bounds();
+        b.ext
+            .links
+            .iter()
+            .find(|(_, [lx, ly, w, h])| {
+                x >= bx + lx && x < bx + lx + w && y >= by + ly && y < by + ly + h
+            })
+            .map(|(span, _)| (b.id.clone(), *span))
+    }
+    /// The text box under the pointer's hovered link run, if any.
+    pub(crate) fn hovered_link_span(&self, id: &str) -> Option<usize> {
+        self.hovered_link
+            .as_ref()
+            .filter(|(box_id, _)| box_id == id)
+            .map(|(_, span)| *span)
     }
     fn visual_hover_at(&self, x: f32, y: f32, hit: Option<&str>) -> BTreeSet<String> {
         let mut result = BTreeSet::new();
@@ -1351,15 +1488,26 @@ impl Runtime {
         let editing_changed = false;
         let next = self.hit(x, y);
         let visual = self.visual_hover_at(x, y, next.as_deref());
-        let changed = editing_changed || next != self.hovered || visual != self.visual_hover;
+        let link = if next.is_none() {
+            self.link_at(x, y)
+        } else {
+            None
+        };
+        let changed = editing_changed
+            || next != self.hovered
+            || visual != self.visual_hover
+            || link != self.hovered_link;
         self.hovered = next;
+        self.hovered_link = link;
         self.visual_hover = visual;
         #[cfg(feature = "rust-ui")]
         let changed = self.tooltip_pointer(Some([x, y])) || changed;
         changed
     }
     pub fn pointer_leave(&mut self) -> bool {
-        let changed = self.hovered.take().is_some() || !self.visual_hover.is_empty();
+        let changed = self.hovered.take().is_some()
+            || !self.visual_hover.is_empty()
+            || self.hovered_link.take().is_some();
         self.visual_hover.clear();
         #[cfg(feature = "rust-ui")]
         let changed = self.tooltip_pointer(None) || changed;
@@ -1382,6 +1530,11 @@ impl Runtime {
         }
         let hover_changed = self.pointer_move(x, y);
         let hit = self.hit(x, y);
+        self.link_capture = if hit.is_none() {
+            self.link_at(x, y)
+        } else {
+            None
+        };
         let changed = hover_changed
             || self.capture != hit
             || self.focused != hit
@@ -1443,6 +1596,26 @@ impl Runtime {
                 changed: true,
                 activated: false,
             });
+        }
+        if let Some(link) = self.link_capture.take() {
+            let target = (self.link_at(x, y).as_ref() == Some(&link))
+                .then(|| self.boxes.iter().find(|b| b.id == link.0))
+                .flatten()
+                .and_then(|b| {
+                    Some((
+                        b.ext.on_link.clone()?,
+                        b.ext.spans.get(link.1)?.link.clone()?,
+                    ))
+                });
+            if let Some((name, target)) = target {
+                handlers
+                    .dispatch(&name, Event::Link(target), context)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: true,
+                });
+            }
         }
         let pressed = self.capture.take();
         let activated = if let Some(id) = pressed
@@ -1864,6 +2037,10 @@ impl Runtime {
             } else {
                 original
             };
+            #[cfg(feature = "rust-ui")]
+            if let Some(highlight) = self.paint_text_selection(p, ui, b) {
+                out.push(highlight);
+            }
             let batch = self.paint_one(p, ui, b, treatment.then_some(visual));
             #[cfg(feature = "rust-ui")]
             let mut batch = batch;
@@ -1871,7 +2048,13 @@ impl Runtime {
             if b.editor.is_some() && !batch.glyphs.is_empty() {
                 let glyphs = std::mem::take(&mut batch.glyphs);
                 out.push(batch);
-                let [x, y, w, h] = self.editor_inner(b);
+                let [x, mut y, w, mut h] = self.editor_inner(b);
+                // One line never scrolls vertically: clip to the field, not
+                // the line box, so descenders and accents are not cut.
+                if b.editor.as_ref().is_some_and(|e| !e.multiline) {
+                    let [_, by, _, bh] = b.bounds.bounds();
+                    (y, h) = (by, bh);
+                }
                 if let Some(inner) = Rect::new(x, y, w, h).and_then(|r| intersection(r, b.clip)) {
                     out.push(PaintBatch {
                         clip: inner,
@@ -1998,7 +2181,22 @@ impl Runtime {
                 }
                 paint_overrides(p, &mut shapes, r, &b.style, &b.ext, self.scale);
                 if b.kind == Kind::Text {
-                    p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
+                    if b.ext.spans.is_empty() {
+                        p.ui_text_styled(&mut glyphs, &b.text, r, &b.text_style, text_color);
+                    } else {
+                        let hovered = self.hovered_link_span(&b.id);
+                        paint_rich_text(
+                            p,
+                            &mut shapes,
+                            &mut glyphs,
+                            b,
+                            r,
+                            ui,
+                            text_color,
+                            self.scale,
+                            hovered,
+                        );
+                    }
                     let style = &b.text_style;
                     if style.underline || style.strikethrough {
                         let size = style.size;
@@ -2394,6 +2592,10 @@ impl From<f32> for RadiusSpec {
     }
 }
 impl LayoutBox {
+    /// The text the box shows (labels, paragraphs; empty for containers).
+    pub fn text(&self) -> &str {
+        &self.text
+    }
     fn radius_spec(&self, scale: f32) -> RadiusSpec {
         self.style.corners.map_or(
             RadiusSpec::Uniform(self.style.radius.unwrap_or(
@@ -2750,6 +2952,10 @@ struct ResolvedStyle {
     corner_rules: Option<[Rounding; 4]>,
     corners: Option<[f32; 4]>,
     depth: usize,
+    /// Inside a `.selectable(true)` container: text can be selected.
+    selectable: bool,
+    /// The selectable container's `on_select_text` handler.
+    select_handler: Option<String>,
 }
 /// Resolve once per layout, so measurement, allocation, placement, and hits agree.
 #[derive(Clone, Debug, PartialEq)]
@@ -2844,6 +3050,8 @@ impl ResolvedStyle {
 }
 #[derive(Clone, Default)]
 struct InheritedStyle {
+    selectable: bool,
+    select_handler: Option<String>,
     family: Option<String>,
     size: Option<f32>,
     weight: Option<u16>,
@@ -2879,6 +3087,12 @@ fn resolve_styles(
         text.size = Some(*size.resolve(logical_width));
     }
     text.color = n.style.color.clone().or(text.color);
+    if let Some(selectable) = n.ext.selectable {
+        text.selectable = selectable;
+    }
+    if n.on_select_text.is_some() {
+        text.select_handler = n.on_select_text.clone();
+    }
     let default_size = if matches!(n.kind, Kind::Button | Kind::Badge) {
         12.
     } else {
@@ -2907,6 +3121,20 @@ fn resolve_styles(
                 no_wrap: n.style.no_wrap.unwrap_or(false),
                 underline: n.style.underline.unwrap_or(false),
                 strikethrough: n.style.strikethrough.unwrap_or(false),
+                runs: n
+                    .ext
+                    .spans
+                    .iter()
+                    .map(|s| TextRun {
+                        start: s.start,
+                        end: s.end,
+                        family: s.family.clone(),
+                        weight: s.weight,
+                        italic: s.italic,
+                        scale: s.scale.map(|p| f32::from(p) / 100.),
+                        color: None,
+                    })
+                    .collect(),
             },
             color: text.color.as_deref().and_then(parse_color),
             background: n.style.background.as_deref().and_then(parse_color),
@@ -2921,10 +3149,71 @@ fn resolve_styles(
             corner_rules: n.style.corners,
             corners: None,
             depth,
+            selectable: text.selectable,
+            select_handler: text.select_handler.clone(),
         },
     );
     for child in &n.children {
         resolve_styles(child, &text, scale, logical_width, out, depth + 1);
+    }
+}
+/// Rich text: run colours, code backgrounds behind their ranges, glyphs,
+/// then per-run underline and strikethrough.
+#[allow(clippy::too_many_arguments)]
+fn paint_rich_text<P: DocumentPainter>(
+    p: &mut P,
+    shapes: &mut Vec<P::Shape>,
+    glyphs: &mut Vec<P::Glyph>,
+    b: &LayoutBox,
+    r: [f32; 4],
+    ui: &crate::UiTheme,
+    text_color: [f32; 4],
+    scale: f32,
+    hovered_link: Option<usize>,
+) {
+    let mut style = b.text_style.clone();
+    for (run, span) in style.runs.iter_mut().zip(&b.ext.spans) {
+        run.color = span.color.as_deref().and_then(|c| ui.resolve(c));
+    }
+    let size = style.size;
+    for span in &b.ext.spans {
+        let Some(background) = span.background.as_deref().and_then(|c| ui.resolve(c)) else {
+            continue;
+        };
+        // A chip slightly wider than its glyphs and inset from the line box.
+        let (pad, inset) = ((size * 0.2).round().max(scale), (size * 0.08).round());
+        for [x, top, w, h, _] in p.text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+        {
+            p.card_round(
+                shapes,
+                [x - pad, top + inset, w + 2. * pad, (h - 2. * inset).max(1.)],
+                (3. * scale).min(h * 0.5),
+                background,
+            );
+        }
+    }
+    p.ui_text_styled(glyphs, &b.text, r, &style, text_color);
+    let thickness = (size / 14.).max(scale).round().max(1.);
+    for (i, (run, span)) in style.runs.iter().zip(&b.ext.spans).enumerate() {
+        // Links underline while hovered.
+        let underline = span.underline || hovered_link == Some(i);
+        if !(underline || span.strikethrough) {
+            continue;
+        }
+        let color = run.color.unwrap_or(text_color);
+        for [x, _, w, _, baseline] in
+            p.text_range_rects(&b.text, r, &b.text_style, span.start..span.end)
+        {
+            for (on, y) in [
+                (underline, baseline + size * 0.14),
+                (span.strikethrough, baseline - size * 0.3),
+            ] {
+                if on && w > 0. {
+                    let y = y.round() + thickness * 0.5;
+                    p.card_line(shapes, [x, y], [x + w, y], thickness, color);
+                }
+            }
+        }
     }
 }
 fn text(n: &Node, values: &Bindings) -> String {
@@ -3674,6 +3963,53 @@ fn child_sizes(
     }
     (sizes, gap)
 }
+/// Row heights of one variable-height list: measured when mounted,
+/// estimated otherwise. Logical pixels.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LazyHeights {
+    count: usize,
+    generation: u64,
+    /// Negative: not measured yet.
+    measured: Vec<f32>,
+    /// Last jump-to-index request handled.
+    request: u32,
+}
+impl LazyHeights {
+    fn sync(&mut self, count: usize, generation: u64) {
+        if self.count != count || self.generation != generation || self.measured.len() != count {
+            self.count = count;
+            self.generation = generation;
+            self.measured = vec![-1.; count];
+        }
+    }
+    fn height(&self, i: usize, estimates: &[f32]) -> f32 {
+        match self.measured.get(i) {
+            Some(&h) if h >= 0. => h,
+            _ => estimates.get(i).copied().unwrap_or(0.),
+        }
+    }
+    /// Top of row `i` (or the total height for `i == count`) with `gap`
+    /// between rows.
+    fn top(&self, i: usize, estimates: &[f32], gap: f32) -> f32 {
+        (0..i.min(self.count))
+            .map(|j| self.height(j, estimates) + gap)
+            .sum()
+    }
+    fn total(&self, estimates: &[f32], gap: f32) -> f32 {
+        (self.top(self.count, estimates, gap) - gap).max(0.)
+    }
+    /// The row containing logical offset `y`.
+    fn index_at(&self, y: f32, estimates: &[f32], gap: f32) -> usize {
+        let mut top = 0.;
+        for i in 0..self.count {
+            top += self.height(i, estimates) + gap;
+            if top > y {
+                return i;
+            }
+        }
+        self.count.saturating_sub(1)
+    }
+}
 #[allow(clippy::too_many_arguments)]
 fn place(
     n: &Node,
@@ -3682,6 +4018,7 @@ fn place(
     effect_ancestor: Rect,
     regions: &[ClipRegion],
     offsets: &mut BTreeMap<String, [f32; 2]>,
+    lazy: &mut BTreeMap<String, LazyHeights>,
     v: &Bindings,
     m: &mut impl TextMetrics,
     s: f32,
@@ -3728,6 +4065,14 @@ fn place(
         on_text_changed: n.on_text_changed.clone(),
         #[cfg(feature = "rust-ui")]
         on_submit: n.on_submit.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_cancel: n.on_cancel.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_selection: n.on_selection.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_key: n.on_key.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_width: n.on_width.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate
@@ -3785,6 +4130,9 @@ fn place(
             pulse: None,
             label_inset: n.ext.label_inset,
             reveal_handle: n.ext.reveal_handle,
+            spans: n.ext.spans.clone(),
+            on_link: n.ext.on_link.clone(),
+            links: Vec::new(),
         },
     });
     let index = out.len() - 1;
@@ -3906,12 +4254,51 @@ fn place(
             content = [available[0], height];
         }
         if let Some(list) = &n.virtual_list {
-            content[1] = list.count as f32 * list.row_height * s;
+            match list.estimates.as_deref() {
+                None => content[1] = list.count as f32 * list.row_height * s,
+                Some(estimates) => {
+                    let gap_l = gap / s;
+                    let lz = lazy.entry(n.id.clone()).or_default();
+                    lz.sync(list.count, list.generation);
+                    // Measure the mounted rows; keep the first visible row
+                    // where it was if rows above it changed height.
+                    let current = offsets.get(&n.id).map(|o| o[1]);
+                    let anchor = current.map(|y| lz.index_at(y, estimates, gap_l));
+                    let before = anchor.map(|a| lz.top(a, estimates, gap_l));
+                    for (k, size) in sizes.iter().enumerate() {
+                        if let Some(slot) = lz.measured.get_mut(list.start + k) {
+                            *slot = size[1] / s;
+                        }
+                    }
+                    if let (Some(a), Some(before), Some(offset)) =
+                        (anchor, before, offsets.get_mut(&n.id))
+                    {
+                        offset[1] += lz.top(a, estimates, gap_l) - before;
+                    }
+                    if let Some((row, request)) = list.scroll_to_index {
+                        if request != lz.request {
+                            if request != 0 {
+                                let top = lz.top(row, estimates, gap_l);
+                                offsets.insert(n.id.clone(), [0., top]);
+                            }
+                            lz.request = request;
+                        }
+                    }
+                    content[1] = lz.total(estimates, gap_l) * s;
+                }
+            }
         }
         let offset = offsets.entry(n.id.clone()).or_insert_with(|| {
             n.virtual_list
                 .as_ref()
-                .map_or([0.; 2], |list| [0., list.start as f32 * list.row_height])
+                .map_or([0.; 2], |list| match list.estimates.as_deref() {
+                    None => [0., list.start as f32 * list.row_height],
+                    Some(estimates) => [
+                        0.,
+                        lazy.get(&n.id)
+                            .map_or(0., |lz| lz.top(list.start, estimates, gap / s)),
+                    ],
+                })
         });
         for a in 0..2 {
             let max = if axes[a] {
@@ -3927,6 +4314,38 @@ fn place(
             }
         }
         out[index].scroll_offset = *offset;
+    }
+    if let Some(list) = n.virtual_list.as_ref().filter(|l| l.estimates.is_some()) {
+        let estimates = list.estimates.as_deref().unwrap_or(&[]);
+        let measure = [available[0], 16_384. * s];
+        let (sizes, gap) = child_sizes(n, measure, v, m, s, memo, styles, child_natural);
+        let top = lazy
+            .get(&n.id)
+            .map_or(0., |lz| lz.top(list.start, estimates, gap / s));
+        let mut y = start[1] + top * s;
+        for (child, size) in n.children.iter().zip(sizes) {
+            if let Some(r) = Rect::new(start[0], y, available[0], size[1].max(1.)) {
+                place(
+                    child,
+                    r,
+                    child_clip,
+                    child_effect,
+                    &child_regions,
+                    offsets,
+                    lazy,
+                    v,
+                    m,
+                    s,
+                    out,
+                    memo,
+                    styles,
+                    child_natural,
+                    child_visible,
+                );
+            }
+            y += size[1] + gap;
+        }
+        return;
     }
     if let Some(list) = &n.virtual_list {
         for (row, child) in n.children.iter().enumerate() {
@@ -3944,6 +4363,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -3989,6 +4409,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -4039,8 +4460,14 @@ fn place(
                         .and_then(|id| out.iter().find(|b| b.id == id))
                     {
                         let [ax, ay, aw, ah] = anchor.bounds.bounds();
-                        let _ = aw;
-                        pos[0] = ax.clamp(x, (x + w - size[0]).max(x));
+                        // Tooltips centre on their target; menus and
+                        // popovers align with its leading edge.
+                        let left = if options.kind == super::document::OverlayKind::Tooltip {
+                            ax + (aw - size[0]) * 0.5
+                        } else {
+                            ax
+                        };
+                        pos[0] = left.clamp(x, (x + w - size[0]).max(x));
                         let below = ay + ah + 4. * s;
                         pos[1] = if below + size[1] <= y + h {
                             below
@@ -4059,6 +4486,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -4117,6 +4545,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    lazy,
                     v,
                     m,
                     s,
@@ -4191,6 +4620,7 @@ fn place(
                 child_effect,
                 &child_regions,
                 offsets,
+                lazy,
                 v,
                 m,
                 s,

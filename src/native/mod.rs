@@ -9,6 +9,7 @@ pub use commands::{
     CommandRegistry, Shortcut,
 };
 mod assets;
+pub mod clipboard;
 pub mod file_dialog;
 pub mod files;
 #[cfg(target_os = "macos")]
@@ -30,7 +31,7 @@ mod gpu_tests;
 mod messages;
 pub use messages::{UiSendError, UiSender};
 mod window;
-pub use raster::{register_font, Damage, RasterPainter};
+pub use raster::{font_families, register_font, Damage, RasterPainter};
 pub use window::{
     load_document, run, run_ui, run_ui_with_messages, run_ui_with_messages_and_theme,
     run_ui_with_options, run_ui_with_theme, run_with_options, NativeOptions, SurfaceOptions,

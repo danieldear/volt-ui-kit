@@ -604,3 +604,55 @@ fn nested_popover_traps_and_restores_parent_scope_before_modal_dismissal() {
     r.dismiss_overlay(&mut h, &mut a).unwrap();
     assert_eq!(a.clicks, 10);
 }
+#[test]
+fn tooltips_fit_their_label_wrap_long_ones_and_centre_on_the_target() {
+    let scale = 1.;
+    let tip = |label: &str| -> Element<App> {
+        vstack![tooltip(
+            label,
+            button("Target")
+                .key("target")
+                .width(80.)
+                .height(30.)
+                .on_click(|_: &mut App| {})
+        )
+        .key("tip")]
+        .key("root")
+        .padding(200., Edge::Left)
+        .padding(40., Edge::Top)
+        .into()
+    };
+    let card = |r: &Runtime| {
+        r.boxes()
+            .iter()
+            .find(|b| b.id == "tip-tooltip-content")
+            .map(|b| b.bounds.bounds())
+            .expect("tooltip shown")
+    };
+    let mut widths = Vec::new();
+    for label in [
+        "Back",
+        "A much longer explanation that will not fit on one line of a tooltip",
+    ] {
+        let (mut r, _) = mount(tip(label), scale);
+        let [cx, cy] = point(&r, "target");
+        r.pointer_move(cx, cy);
+        layout(&mut r, scale);
+        let [x, _, w, h] = card(&r);
+        assert!(
+            (x + w / 2. - cx).abs() < 1.,
+            "{label}: centred on {cx}, at {x} + {w}/2"
+        );
+        widths.push((w, h));
+    }
+    let (short, long) = (widths[0], widths[1]);
+    assert!(
+        short.0 < 80.,
+        "a short label gets a small tooltip: {short:?}"
+    );
+    // (These metrics do not wrap; the raster painter wraps the label inside.)
+    assert!(
+        (long.0 - 240.).abs() < 0.5,
+        "long labels stop at 240: {long:?}"
+    );
+}

@@ -28,6 +28,8 @@ pub struct DesktopCommand {
     pub id: String,
     pub label: String,
     pub enabled: bool,
+    /// A divider line between groups of commands; id and label are unused.
+    pub separator: bool,
 }
 impl DesktopCommand {
     pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
@@ -35,6 +37,16 @@ impl DesktopCommand {
             id: id.into(),
             label: label.into(),
             enabled: true,
+            separator: false,
+        }
+    }
+    /// A divider between groups of menu commands.
+    pub fn separator() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            enabled: false,
+            separator: true,
         }
     }
     pub fn enabled(mut self, value: bool) -> Self {
@@ -70,6 +82,8 @@ pub struct TrayConfig {
 #[derive(Clone, Debug)]
 pub struct DesktopConfig {
     pub app_name: String,
+    /// Commands in the application menu below About (Settings, for one).
+    pub app_commands: Vec<DesktopCommand>,
     pub menus: Vec<DesktopMenu>,
     pub tray: Option<TrayConfig>,
 }
@@ -77,9 +91,21 @@ impl DesktopConfig {
     pub fn new(app_name: impl Into<String>) -> Self {
         Self {
             app_name: app_name.into(),
+            app_commands: Vec::new(),
             menus: Vec::new(),
             tray: None,
         }
+    }
+    /// Commands for the application menu, below About.
+    pub fn app_menu(mut self, commands: impl IntoIterator<Item = DesktopCommand>) -> Self {
+        self.app_commands = commands.into_iter().collect();
+        self
+    }
+    fn all_commands(&self) -> impl Iterator<Item = &DesktopCommand> {
+        self.app_commands
+            .iter()
+            .chain(self.menus.iter().flat_map(|m| &m.commands))
+            .chain(self.tray.iter().flat_map(|t| &t.commands))
     }
     pub fn menu(mut self, menu: DesktopMenu) -> Self {
         self.menus.push(menu);
@@ -102,18 +128,15 @@ impl DesktopConfig {
         let total = self
             .menus
             .iter()
-            .try_fold(0usize, |n, m| n.checked_add(m.commands.len()))
+            .try_fold(self.app_commands.len(), |n, m| {
+                n.checked_add(m.commands.len())
+            })
             .and_then(|n| n.checked_add(self.tray.as_ref().map_or(0, |t| t.commands.len())));
         if total.is_none_or(|n| n > 512) {
             return Err("desktop command limit exceeded".into());
         }
         let mut ids = BTreeMap::new();
-        for item in self
-            .menus
-            .iter()
-            .flat_map(|m| &m.commands)
-            .chain(self.tray.iter().flat_map(|t| &t.commands))
-        {
+        for item in self.all_commands().filter(|c| !c.separator) {
             if item.id.is_empty()
                 || item.id.len() > 64
                 || !item
@@ -152,11 +175,8 @@ impl DesktopConfig {
         self.command_enabled(id) == Some(true)
     }
     pub(super) fn command_enabled(&self, id: &str) -> Option<bool> {
-        self.menus
-            .iter()
-            .flat_map(|m| &m.commands)
-            .chain(self.tray.iter().flat_map(|t| &t.commands))
-            .find(|c| c.id == id)
+        self.all_commands()
+            .find(|c| !c.separator && c.id == id)
             .map(|c| c.enabled)
     }
 }
@@ -185,6 +205,43 @@ pub(super) mod macos {
             self.menu.remove_for_nsapp();
         }
     }
+    /// Menu items (and separators) for `items`, with the registry's shortcuts.
+    fn append_commands(
+        menu: &Submenu,
+        items: &[DesktopCommand],
+        commands: &[crate::native::CommandInfo<'_>],
+        command_items: &mut Vec<CommandItem>,
+    ) -> Result<(), String> {
+        for command in items {
+            if command.separator {
+                menu.append(&PredefinedMenuItem::separator())
+                    .map_err(|e| e.to_string())?;
+                continue;
+            }
+            let item = MenuItem::with_id(
+                format!("volt-command-{}", command.id),
+                &command.label,
+                command.enabled,
+                None,
+            );
+            if let Some(shortcut) = commands
+                .iter()
+                .find(|c| c.id == command.id)
+                .and_then(|c| c.shortcut)
+            {
+                item.set_key_accelerator(Some(shortcut.menu_accelerator()))
+                    .map_err(|e| e.to_string())?;
+            }
+            menu.append(&item).map_err(|e| e.to_string())?;
+            command_items.push(CommandItem {
+                id: command.id.clone(),
+                item,
+                declared_enabled: command.enabled,
+                current_enabled: Cell::new(command.enabled),
+            });
+        }
+        Ok(())
+    }
     impl DesktopHost {
         pub fn install(
             config: &DesktopConfig,
@@ -200,6 +257,16 @@ pub(super) mod macos {
                 .append_items(&[
                     &PredefinedMenuItem::about(None, None),
                     &PredefinedMenuItem::separator(),
+                ])
+                .map_err(|e| e.to_string())?;
+            if !config.app_commands.is_empty() {
+                append_commands(&apple, &config.app_commands, commands, &mut command_items)?;
+                apple
+                    .append(&PredefinedMenuItem::separator())
+                    .map_err(|e| e.to_string())?;
+            }
+            apple
+                .append_items(&[
                     &PredefinedMenuItem::services(None),
                     &PredefinedMenuItem::separator(),
                     &PredefinedMenuItem::hide(None),
@@ -229,34 +296,18 @@ pub(super) mod macos {
             menu.append(&apple).map_err(|e| e.to_string())?;
             for group in &config.menus {
                 let sub = Submenu::new(&group.label, true);
-                for command in &group.commands {
-                    let item = MenuItem::with_id(
-                        format!("volt-command-{}", command.id),
-                        &command.label,
-                        command.enabled,
-                        None,
-                    );
-                    if let Some(shortcut) = commands
-                        .iter()
-                        .find(|c| c.id == command.id)
-                        .and_then(|c| c.shortcut)
-                    {
-                        item.set_key_accelerator(Some(shortcut.menu_accelerator()))
-                            .map_err(|e| e.to_string())?;
-                    }
-                    sub.append(&item).map_err(|e| e.to_string())?;
-                    command_items.push(CommandItem {
-                        id: command.id.clone(),
-                        item,
-                        declared_enabled: command.enabled,
-                        current_enabled: Cell::new(command.enabled),
-                    });
-                }
+                append_commands(&sub, &group.commands, commands, &mut command_items)?;
                 menu.append(&sub).map_err(|e| e.to_string())?;
             }
             let tray = if let Some(tray) = &config.tray {
                 let tray_menu = Menu::new();
                 for command in &tray.commands {
+                    if command.separator {
+                        tray_menu
+                            .append(&PredefinedMenuItem::separator())
+                            .map_err(|e| e.to_string())?;
+                        continue;
+                    }
                     let item = MenuItem::with_id(
                         format!("volt-command-{}", command.id),
                         &command.label,

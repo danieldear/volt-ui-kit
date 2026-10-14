@@ -445,6 +445,10 @@ fn run_host<C: 'static>(
         }));
     }
     event_loop.set_control_flow(ControlFlow::Wait);
+    let mut context = context;
+    if let Some(setup) = extensions.before_launch.take() {
+        setup(&mut context);
+    }
     let proxy = event_loop.create_proxy();
     let mut app = App {
         options,
@@ -478,6 +482,7 @@ fn run_host<C: 'static>(
         surface_size: None,
         trace: std::env::var("VOLT_UI_TRACE").is_ok_and(|value| value == "1"),
         pending_release: None,
+        last_click: None,
         painter: RasterPainter::new(Viewport::new(860., 640., 1.).unwrap()),
         pointer: None,
         modifiers: ModifiersState::empty(),
@@ -589,6 +594,8 @@ struct App<C> {
     surface_size: Option<[u32; 2]>,
     trace: bool,
     pending_release: Option<Instant>,
+    /// The last left press: when, where and its click count.
+    last_click: Option<(Instant, [f32; 2], u8)>,
     painter: RasterPainter,
     pointer: Option<[f32; 2]>,
     modifiers: ModifiersState,
@@ -806,10 +813,18 @@ impl<C: 'static> App<C> {
         // Viewport/resize changes can alter the visible virtual window too, not
         // just wheel input. Bound this corrective recomposition to one per layout.
         if !self.window_update_in_progress
-            && self
+            && (self
                 .runtime
                 .dispatch_virtual_windows(&mut self.handlers, &mut self.context)
                 .map_err(|e| e.to_string())?
+                | self
+                    .runtime
+                    .dispatch_editor_selections(&mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?
+                | self
+                    .runtime
+                    .dispatch_widths(&mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?)
         {
             self.window_update_in_progress = true;
             let result = self.after_input(InputOutcome {
@@ -886,12 +901,14 @@ impl<C: 'static> App<C> {
                 if (previous == WindowBackground::Opaque)
                     != (background == WindowBackground::Opaque)
                 {
-                    self.gpu = None;
-                    window.set_transparent(background != WindowBackground::Opaque);
-                    self.gpu = Some(super::gpu::GpuPresenter::new(
-                        window.clone(),
-                        background != WindowBackground::Opaque,
-                    )?);
+                    // Reconfigure in place: a new surface would leave the old
+                    // one's layer (and its last frame) behind the window.
+                    let transparent = background != WindowBackground::Opaque;
+                    window.set_transparent(transparent);
+                    if let Some(gpu) = self.gpu.as_mut() {
+                        gpu.set_transparent(transparent)?;
+                    }
+                    window.request_redraw();
                 }
                 self.sync_native_backdrop(&window);
             }
@@ -1037,7 +1054,16 @@ impl<C: 'static> App<C> {
         if !self.runtime.application_commands_allowed() {
             return Ok(false);
         }
-        let Key::Character(key) = &event.logical_key else {
+        // Match the key as typed without modifiers, so Shift+Cmd+] is `]`
+        // with shift (not `}`) and Option+Cmd+R is `r` on any layout.
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        let unmodified = {
+            use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+            event.key_without_modifiers()
+        };
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let unmodified = event.logical_key.clone();
+        let Key::Character(key) = &unmodified else {
             return Ok(false);
         };
         let mut chars = key.chars();
@@ -1059,6 +1085,73 @@ impl<C: 'static> App<C> {
             }
         }
         Ok(true)
+    }
+    /// Count clicks at about the same place in quick succession (1, 2, 3).
+    fn count_click(&mut self, at: [f32; 2]) -> u8 {
+        let now = Instant::now();
+        let near = |p: [f32; 2]| (p[0] - at[0]).abs() < 5. && (p[1] - at[1]).abs() < 5.;
+        let count = match self.last_click {
+            Some((when, p, n))
+                if now.duration_since(when) < Duration::from_millis(450) && near(p) =>
+            {
+                n.saturating_add(1).min(3)
+            }
+            _ => 1,
+        };
+        self.last_click = Some((now, at, count));
+        count
+    }
+    /// Redraw for a changed text selection and tell the application.
+    fn after_selection(&mut self) -> Result<(), String> {
+        let activated = self
+            .runtime
+            .dispatch_text_selection(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if activated {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
+        self.redraw();
+        Ok(())
+    }
+    /// Cmd/Ctrl+C copies and Cmd/Ctrl+A selects all selectable text when no
+    /// editor has focus.
+    fn selection_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
+        if self.runtime.editing_focus() {
+            return Ok(false);
+        }
+        let primary = if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        };
+        let Key::Character(c) = &event.logical_key else {
+            return Ok(false);
+        };
+        if !primary || self.modifiers.alt_key() || self.modifiers.shift_key() {
+            return Ok(false);
+        }
+        match c.to_lowercase().as_str() {
+            "c" => {
+                let Some(text) = self.runtime.selected_text() else {
+                    return Ok(false);
+                };
+                if let Err(error) = super::clipboard::set_text(text) {
+                    eprintln!("Volt UI: copy failed: {error}");
+                }
+                Ok(true)
+            }
+            "a" => {
+                if self.runtime.select_all_text(&mut self.painter) {
+                    self.after_selection()?;
+                    return Ok(true);
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
     }
     /// Route a key press to the focused text editor. Returns true when consumed.
     /// Tab and Escape stay with focus traversal and overlay dismissal.
@@ -1089,8 +1182,30 @@ impl<C: 'static> App<C> {
             }
             return Ok(true);
         }
+        if event.logical_key == Key::Named(NamedKey::Escape) {
+            let outcome = self
+                .runtime
+                .editor_cancel(&mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            if outcome.activated {
+                self.after_input(outcome)?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        if event.logical_key == Key::Named(NamedKey::Tab)
+            && !shift
+            && self.runtime.editing_tab_indents()
+        {
+            let outcome = self
+                .runtime
+                .text_input("    ", &mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            self.after_input(outcome)?;
+            return Ok(true);
+        }
         let outcome = match &event.logical_key {
-            Key::Named(NamedKey::Tab | NamedKey::Escape) => return Ok(false),
+            Key::Named(NamedKey::Tab) => return Ok(false),
             Key::Character(c) if command => match c.to_lowercase().as_str() {
                 "a" => {
                     if self.runtime.editor_select_all() {
@@ -1406,10 +1521,12 @@ impl<C: 'static> App<C> {
                 return Ok(());
             }
             Some(Ok(super::gpu::PresentStatus::Lost)) => {
-                // Release the old device/surface first, then try a fresh one.
-                self.gpu = None;
+                // A fresh device and renderer on the window's existing surface.
                 let transparent = self.options.background != WindowBackground::Opaque;
-                match super::gpu::GpuPresenter::new(w.clone(), transparent) {
+                let Some(old) = self.gpu.take() else {
+                    return Ok(());
+                };
+                match old.recreate(transparent) {
                     Ok(gpu) => {
                         eprintln!("Volt UI: GPU renderer recreated ({})", gpu.adapter_name);
                         self.gpu = Some(gpu);
@@ -1840,6 +1957,16 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                     }
                     self.pointer = Some([position.x as f32, position.y as f32]);
+                    if self.runtime.text_selecting() {
+                        if self.runtime.text_select_drag(
+                            position.x as f32,
+                            position.y as f32,
+                            &mut self.painter,
+                        ) {
+                            self.redraw();
+                        }
+                        return Ok(());
+                    }
                     // Outcome-aware moves keep slider drags and text selection live.
                     let outcome = self
                         .runtime
@@ -1966,11 +2093,29 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                             &mut self.context,
                                         )
                                         .map_err(|e| e.to_string())?;
+                                    // A press on plain text selects it: one
+                                    // click places, two pick a word, three
+                                    // the paragraph; Shift extends.
+                                    let clicks = self.count_click([x, y]);
+                                    let selected = self.runtime.press_was_free()
+                                        && self.runtime.text_select_press(
+                                            x,
+                                            y,
+                                            clicks,
+                                            self.modifiers.shift_key(),
+                                            &mut self.painter,
+                                        );
                                     self.after_input(outcome)?;
+                                    if selected {
+                                        self.after_selection()?;
+                                    }
                                 }
                                 self.redraw();
                             }
                             ElementState::Released => {
+                                if self.runtime.text_select_release() {
+                                    self.after_selection()?;
+                                }
                                 let outcome = self
                                     .runtime
                                     .pointer_up_outcome(x, y, &mut self.handlers, &mut self.context)
@@ -2038,6 +2183,9 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     if event.state == ElementState::Pressed
                         && self.command_keyboard(event_loop, &event)?
                     {
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
                         return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.editor_keyboard(&event)? {

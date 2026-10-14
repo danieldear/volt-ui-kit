@@ -419,3 +419,65 @@ fn drop_zone_receives_files_under_the_pointer_or_as_the_only_zone() {
         .unwrap();
     assert_eq!(app.other, 1);
 }
+#[test]
+fn drop_zones_grow_to_fit_their_content_instead_of_clipping_it() {
+    let zone = |height: f32| -> Element<usize> {
+        vstack![drop_zone()
+            .key("drop")
+            .title("Drop a Markdown file")
+            .description(".md, .markdown or .txt")
+            .height(height)
+            .on_drop(|n: &mut usize, _| *n += 1)
+            .on_browse(|n: &mut usize| *n += 10)]
+        .key("root")
+        .into()
+    };
+    let vp = Viewport::new(500., 600., 1.).unwrap();
+    let bounds = |height: f32, id: &str| {
+        let (d, h) = zone(height).build().unwrap().into_parts();
+        let mut rt = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        rt.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
+        rt.boxes()
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap()
+            .bounds
+            .bounds()
+    };
+    let small = bounds(60., "drop");
+    let browse = bounds(60., "drop-browse");
+    assert!(small[3] > 60., "a too-small height is a minimum: {small:?}");
+    assert!(
+        browse[1] + browse[3] <= small[1] + small[3] - 15.,
+        "the Browse button sits inside the zone's padding: {browse:?} in {small:?}"
+    );
+    assert_eq!(bounds(240., "drop")[3], 240., "a roomy height is kept");
+}
+#[test]
+fn containers_report_their_width_after_layout_when_it_changes() {
+    let page: Element<Vec<f32>> = vstack![text("drawing")]
+        .key("page")
+        .padding(20., Edge::Horizontal)
+        .width_fraction(1.)
+        .on_width(|seen: &mut Vec<f32>, w| seen.push(w))
+        .into();
+    let (d, mut h) = page.build().unwrap().into_parts();
+    let mut rt = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    let mut seen: Vec<f32> = Vec::new();
+    let at =
+        |width: f32, rt: &mut Runtime, h: &mut Handlers<'static, Vec<f32>>, seen: &mut Vec<f32>| {
+            let vp = Viewport::new(width * 2., 400., 2.).unwrap();
+            rt.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
+            rt.dispatch_widths(h, seen).unwrap()
+        };
+    assert!(at(500., &mut rt, &mut h, &mut seen), "first layout reports");
+    assert!(
+        !at(500., &mut rt, &mut h, &mut seen),
+        "same width: no report"
+    );
+    assert!(
+        at(320., &mut rt, &mut h, &mut seen),
+        "a resize reports again"
+    );
+    assert_eq!(seen, [500., 320.], "logical points, padding included");
+}

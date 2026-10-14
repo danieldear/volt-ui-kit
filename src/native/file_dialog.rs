@@ -59,33 +59,58 @@ impl std::error::Error for FileDialogError {}
 pub fn available() -> bool {
     cfg!(all(feature = "native-desktop", target_os = "macos"))
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(all(feature = "native-desktop", target_os = "macos")),
+    allow(dead_code)
+)]
+enum Panel {
+    OpenFile,
+    OpenFolder,
+    OpenEither,
+    Save,
+}
 pub fn open_file(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
     options.validate()?;
-    show(options, false)
+    show(options, Panel::OpenFile)
+}
+/// Choose a folder, for example a workspace to browse.
+pub fn open_folder(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
+    options.validate()?;
+    show(options, Panel::OpenFolder)
+}
+/// Choose a file or a folder, as a combined Open… command does.
+pub fn open_file_or_folder(
+    options: &FileDialogOptions,
+) -> Result<Option<PathBuf>, FileDialogError> {
+    options.validate()?;
+    show(options, Panel::OpenEither)
 }
 pub fn save_file(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDialogError> {
     options.validate()?;
-    show(options, true)
+    show(options, Panel::Save)
 }
 #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
-fn show(_: &FileDialogOptions, _: bool) -> Result<Option<PathBuf>, FileDialogError> {
+fn show(_: &FileDialogOptions, _: Panel) -> Result<Option<PathBuf>, FileDialogError> {
     Err(FileDialogError::Unsupported)
 }
 #[cfg(all(feature = "native-desktop", target_os = "macos"))]
-fn show(options: &FileDialogOptions, save: bool) -> Result<Option<PathBuf>, FileDialogError> {
+fn show(options: &FileDialogOptions, kind: Panel) -> Result<Option<PathBuf>, FileDialogError> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSModalResponseCancel, NSModalResponseOK, NSOpenPanel, NSSavePanel};
     use objc2_foundation::NSString;
     let mtm = MainThreadMarker::new().ok_or(FileDialogError::WrongThread)?;
     let open;
     let panel;
-    let p: &NSSavePanel = if save {
+    let p: &NSSavePanel = if kind == Panel::Save {
         panel = NSSavePanel::savePanel(mtm);
         &panel
     } else {
+        let folders = kind != Panel::OpenFile;
         open = NSOpenPanel::openPanel(mtm);
-        open.setCanChooseDirectories(false);
-        open.setCanChooseFiles(true);
+        open.setCanChooseDirectories(folders);
+        open.setCanChooseFiles(kind != Panel::OpenFolder);
+        open.setCanCreateDirectories(kind == Panel::OpenFolder);
         open.setAllowsMultipleSelection(false);
         &open
     };

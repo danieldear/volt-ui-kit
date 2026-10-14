@@ -75,6 +75,14 @@ pub enum Icon {
     Send,
     Palette,
     Upload2,
+    /// A window with a leading sidebar, for show/hide sidebar buttons.
+    Sidebar,
+    /// A page with lines of text.
+    FileText,
+    /// A capital T, for typography settings.
+    Type,
+    /// A window split into two panes, for split views.
+    Columns,
 }
 
 /// Stroked SVG path data and filled path data for each glyph.
@@ -204,6 +212,13 @@ fn paths(icon: Icon) -> (&'static [&'static str], &'static [&'static str]) {
         Moon => (&["M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"], &[]),
         Image => (&["M4 5h16v14H4z", "M4 16l5-5l4 4l2.5-2.5L20 17"], &["M15.5 7.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3z"]),
         File => (&["M13.5 3.5H6.5v17h11V7.5z", "M13.5 3.5v4h4"], &[]),
+        FileText => (
+            &["M13.5 3.5H6.5v17h11V7.5z", "M13.5 3.5v4h4", "M9.5 12h5", "M9.5 15.5h5"],
+            &[],
+        ),
+        Sidebar => (&["M4.5 5.5h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z", "M9.5 5.5v13"], &[]),
+        Type => (&["M5 7.5V5h14v2.5", "M12 5v14", "M9 19h6"], &[]),
+        Columns => (&["M4.5 5.5h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z", "M12 5.5v13"], &[]),
         Folder => (&["M3.5 6.5h6l2 2.5h9v10h-17z"], &[]),
         Filter => (&["M4 5h16l-6.5 7.5V19l-3-1.5v-5z"], &[]),
         Refresh => (&["M19.5 12a7.5 7.5 0 1 1-2.2-5.3", "M19.5 4.5v4h-4"], &[]),
@@ -358,7 +373,7 @@ impl<C> From<IconElement> for Element<C> {
     }
 }
 /// Every glyph, for galleries and tests.
-pub const ALL_ICONS: [Icon; 65] = {
+pub const ALL_ICONS: [Icon; 69] = {
     use Icon::*;
     [
         Search,
@@ -426,6 +441,10 @@ pub const ALL_ICONS: [Icon; 65] = {
         Send,
         Palette,
         Upload2,
+        Sidebar,
+        FileText,
+        Type,
+        Columns,
     ]
 };
 #[cfg(test)]

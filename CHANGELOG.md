@@ -2,6 +2,117 @@
 
 ## Unreleased
 
+- `cargo volt bundle` reads the app from `[package.metadata.volt.bundle]`
+  in Cargo.toml and builds it (`--universal` for Apple silicon and Intel).
+  Bundles can declare document types (by UTI or extension), imported UTIs,
+  a category and a copyright. New `cargo volt release`: Developer ID
+  signing with the hardened runtime, notarization and stapling, and a
+  signed, notarized disk image; `--dry-run` prints each step.
+- Bundles can give the executable other names (`aliases = ["md"]`, or
+  `--alias md`): links in `Contents/MacOS` that ship a command-line tool
+  inside the app, signed and notarized with it.
+- `cargo volt bundle` and `release` strip the bundled executable's symbol
+  table, about a fifth of a Rust release binary (`strip = false` or
+  `--strip none` keeps it). The packaging guide shows a size-tuned release
+  profile.
+- Shortcuts may use unshifted punctuation keys as well as letters and
+  digits (`,` `.` `;` `'` `/` `[` `]` `\` `-` `=` `` ` ``), so apps can bind
+  ⌘, for Settings, ⌘=/⌘− for zoom and ⌘[/⌘] for history.
+- Native menus: `DesktopCommand::separator()` divides a menu into groups,
+  and `DesktopConfig::app_menu([..])` adds commands (such as Settings…)
+  to the application menu below About.
+- Text fields: `.autofocus(true)` takes keyboard focus when the field first
+  appears (a find bar opening, say) without stealing it back on later
+  rebuilds, and `.on_cancel(f)` runs when Escape is pressed in the field.
+  Single-line fields no longer clip descenders of typed or placeholder text.
+- `native::font_families()` lists installed font families for font
+  pickers; `file_dialog::open_folder` chooses a folder and
+  `file_dialog::open_file_or_folder` either.
+- Shortcuts match the key pressed without modifiers, so Shift+Cmd+] is
+  `primary(']').shift(true)` and Option shortcuts work on every layout.
+- Tooltips fit their label instead of always being 240 px wide (long
+  labels still wrap at 240) and centre on their target; menus and
+  popovers keep aligning with the target's leading edge.
+- `cargo volt bundle` and `release` embed app extensions declared under
+  `[[package.metadata.volt.bundle.extensions]]` (a Quick Look preview, for
+  example): another binary of the package in `Contents/PlugIns/NAME.appex`
+  with its own `Info.plist`, stripped, and signed in the app sandbox before
+  the app, ad hoc or with Developer ID.
+- Fixed: emoji in bold (or other non-regular) text could show as a
+  black-and-white outline. Font fallback prefers any installed font with a
+  matching weight that has the code point, such as a bold Nerd Font, over
+  the regular-only colour emoji font. Emoji graphemes now always use the
+  platform's colour emoji font (Apple Color Emoji, Segoe UI Emoji or Noto
+  Color Emoji) when it is installed.
+- Fixed: after a double-click selected a word in selectable text, the
+  slightest pointer movement before release shrank the selection to the
+  pointer. Double- and triple-click drags now extend by whole words or
+  paragraphs from the first one, in either direction, as macOS does.
+- Containers take `.on_width(|state, width| ..)`: called after layout with
+  the container's width in logical points whenever it changes, so content
+  can adapt to the room it really has (a drawing scaled to fit, tighter
+  margins in a narrow pane). Hosts recompose once after a report.
+- Fixed: switching a window between opaque and translucent (for example
+  with `background_from_state`) left the previous frame showing through
+  translucent areas. Each switch made a new GPU surface, and on macOS every
+  surface adds a Metal layer to the window that stays behind, frozen. The
+  surface is now reconfigured in place, and a lost device reuses it.
+- Drop zones treat `.height(..)` as a minimum and grow to fit their icon,
+  title, hint and button instead of squeezing them together.
+- Icons: `Sidebar`, `FileText`, `Type` and `Columns`.
+- Text areas hold whole documents: multiline editors take up to 4 MiB
+  (single-line fields stay at 8 KiB), reflow only the lines that changed,
+  and open with the caret at the top. `native::files` reads and saves up
+  to the same limit.
+- Selectable text: `.selectable(true)` on a container lets its text be
+  selected with the pointer across paragraphs (double-click a word,
+  triple-click a paragraph, Shift-click to extend), with Cmd/Ctrl+A to
+  select all and Cmd/Ctrl+C to copy; `.selectable(false)` opts a subtree
+  out. `.on_select_text(|app, text| ..)` reports the selection. Selections
+  are anchored to keyed text boxes. New `TextMetrics::text_offset_at` hit
+  test; hosts call `Runtime::dispatch_text_selection` after input.
+  `LayoutBox::text()` exposes a box's text.
+- `Application::before_launch(|app| ..)` runs once the native event loop
+  and application object exist, before the run loop starts, for platform
+  integration that launch events need (receiving Finder's open requests).
+- Editor hooks for writing tools: `.on_selection(|app, sel| ..)` reports
+  the selection with the caret's and the editor's rectangles after layout
+  (hosts call `Runtime::dispatch_editor_selections`); `.on_keys([..], f)`
+  hands chosen keys (arrows, Enter) to the app instead of editing;
+  `.select(range, request)` places the selection; `.tab_indents(true)`
+  makes Tab insert four spaces. Selections also report the first visible
+  line (`top`), `.scroll_to_offset(byte, request)` scrolls an editor, and
+  `.highlights(palette, ranges)` colours byte ranges (syntax highlighting)
+  without changing layout.
+- `lazy_list(count, |row| ..)`: a scrolling column of variable-height rows
+  that builds only the rows near the viewport, so documents and feeds of
+  any length stay within the element budget. Rows are measured as they
+  mount (estimates stand in for the rest), the visible row stays put when
+  rows above it are measured, and `.scroll_to_row(row, request)` jumps to
+  rows that are not built yet. Windows are reported through
+  `on_window_change`, as for `virtual_list`.
+- GPU text on macOS now uses font-smoothing-style stem darkening (outline
+  dilation matching CoreText) so it no longer reads thin and light next to
+  native apps, and is hinted on displays below 1.5x.
+  `VOLT_UI_TEXT_DARKENING=0` turns the darkening off.
+- `native::clipboard::{set_text, text}` for plain-text copy and paste.
+
+- Rich text: `rich_text([span(..), ..])` lays out one paragraph of styled
+  runs (weight, italic, font family, colour, rounded background, underline,
+  strikethrough; `.code()` for inline code). It wraps, aligns and truncates
+  as a single text, in both renderers. Font changes go through cosmic-text
+  rich shaping; colours are applied per glyph when drawing, so colour-only
+  runs share the plain text's shaped layout. New painter hook
+  `DocumentPainter::ui_text_range_rects` returns per-line rectangles for a
+  byte range (backgrounds and decorations use it). Catalog has a Rich text
+  page.
+- Rich text links and sizes: `span(..).link(target)` with
+  `Text::on_link(|app, target| ..)` (pointer cursor, hover underline, click
+  reported through the new `Event::Link`), and `span(..).size(scale)` for
+  relative font size on the paragraph's line spacing; `.code()` now uses
+  0.88×. The range-rectangle hook moved to `TextMetrics::text_range_rects`
+  so layout can compute link targets.
+
 - GPU stack upgraded from Vello 0.6 / wgpu 26 to **Vello 0.11 / wgpu 30**
   (guillotiere 0.7, matching Vello's atlas allocator). The minimum Rust
   version rises from 1.87 to **1.89**, which Vello 0.11 requires; generated

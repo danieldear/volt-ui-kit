@@ -12,6 +12,26 @@ pub enum EventKind {
     ContextRequested,
     WindowChanged,
     FilesDropped,
+    /// A link inside rich text was clicked.
+    Link,
+    /// An editor's selection or caret moved.
+    SelectionChanged,
+    /// A key an editor hands to the application instead of editing.
+    Key,
+}
+/// An editor's selection: byte offsets into its text, `start <= end`, and
+/// the caret's rectangle in logical window coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextSelection {
+    pub start: usize,
+    pub end: usize,
+    /// The end the caret is at (the other end is the anchor).
+    pub caret_at: usize,
+    pub caret: [f32; 4],
+    /// The editor's box, so popups can open above the caret near its bottom.
+    pub bounds: [f32; 4],
+    /// Byte offset where the first visible line starts (follows scrolling).
+    pub top: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -31,6 +51,18 @@ pub enum Event {
     },
     /// Files dragged from the system onto a drop zone (never empty).
     FilesDropped(Vec<std::path::PathBuf>),
+    /// The target of the rich text link that was clicked.
+    Link(String),
+    SelectionChanged {
+        start: usize,
+        end: usize,
+        caret_at: usize,
+        caret_bits: [u32; 4],
+        bounds_bits: [u32; 4],
+        top: usize,
+    },
+    #[cfg(feature = "rust-ui")]
+    Key(runtime::editing::EditKey),
 }
 impl Event {
     pub fn kind(&self) -> EventKind {
@@ -42,6 +74,10 @@ impl Event {
             Self::ContextRequested { .. } => EventKind::ContextRequested,
             Self::WindowChanged { .. } => EventKind::WindowChanged,
             Self::FilesDropped(_) => EventKind::FilesDropped,
+            Self::Link(_) => EventKind::Link,
+            Self::SelectionChanged { .. } => EventKind::SelectionChanged,
+            #[cfg(feature = "rust-ui")]
+            Self::Key(_) => EventKind::Key,
         }
     }
 }
@@ -189,6 +225,70 @@ impl<'a, C> Handlers<'a, C> {
             }),
         )
     }
+    pub fn on_link(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, String) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::Link,
+            Box::new(move |ctx, event| {
+                if let Event::Link(target) = event {
+                    f(ctx, target);
+                }
+            }),
+        )
+    }
+    pub fn on_selection_changed(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, TextSelection) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::SelectionChanged,
+            Box::new(move |ctx, event| {
+                if let Event::SelectionChanged {
+                    start,
+                    end,
+                    caret_at,
+                    caret_bits,
+                    bounds_bits,
+                    top,
+                } = event
+                {
+                    f(
+                        ctx,
+                        TextSelection {
+                            start,
+                            end,
+                            caret_at,
+                            caret: caret_bits.map(f32::from_bits),
+                            bounds: bounds_bits.map(f32::from_bits),
+                            top,
+                        },
+                    );
+                }
+            }),
+        )
+    }
+    #[cfg(feature = "rust-ui")]
+    pub fn on_key(
+        &mut self,
+        name: &str,
+        mut f: impl FnMut(&mut C, runtime::editing::EditKey) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert(
+            name,
+            EventKind::Key,
+            Box::new(move |ctx, event| {
+                if let Event::Key(key) = event {
+                    f(ctx, key);
+                }
+            }),
+        )
+    }
     pub fn on_files_dropped(
         &mut self,
         name: &str,
@@ -315,13 +415,13 @@ pub use effects::{Ambient, Animation, Easing, Glow, Interaction, Shadow, Transit
 mod motion;
 mod runtime;
 pub use document::{
-    Align, Bindings, Document, DocumentError, Flow, Kind, Node, Rounding, Scroll, Scrollbars, Tone,
-    Value,
+    Align, Bindings, Document, DocumentError, EditorHighlights, Flow, Kind, Node, Rounding, Scroll,
+    Scrollbars, Tone, Value,
 };
 pub use responsive::{responsive, Breakpoint, Direction, Responsive};
 pub use runtime::{
     ButtonState, DocumentPainter, InputOutcome, LayoutBox, PaintBatch, Runtime, SelectionKey,
-    TextMetrics, TextStyle,
+    TextMetrics, TextRun, TextStyle,
 };
 
 #[cfg(feature = "rust-ui")]

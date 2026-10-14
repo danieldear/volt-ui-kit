@@ -2,6 +2,15 @@
 use super::*;
 use unicode_segmentation::UnicodeSegmentation;
 pub(super) const MAX_TEXT: usize = 8192;
+use super::super::document::MAX_EDITOR_TEXT;
+/// The most text an editor may hold.
+pub(super) fn text_limit(multiline: bool) -> usize {
+    if multiline {
+        MAX_EDITOR_TEXT
+    } else {
+        MAX_TEXT
+    }
+}
 const MAX_UNDO: usize = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditKey {
@@ -53,17 +62,49 @@ pub(super) struct EditorState {
     follow_caret: bool,
     layout_scale: f32,
     drag: bool,
+    limit: usize,
+    /// The last selection reported to `on_selection`, and the last applied
+    /// `select` request.
+    reported: Option<Reported>,
+    select_request: u32,
+    /// The last applied `scroll_to` request and a scroll still to apply.
+    scroll_request: u32,
+    scroll_target: Option<usize>,
+    /// Wrapped rows of each hard line from the last reflow, so typing in a
+    /// long document only reshapes the lines that changed.
+    lines: LineCache,
+}
+/// A reported selection: start, end, caret, caret rect and editor bounds
+/// (rects as bits, for exact comparison).
+type Reported = (usize, usize, usize, [u32; 4], [u32; 4], usize);
+#[derive(Clone, Default)]
+struct LineCache {
+    width: f32,
+    style: Option<TextStyle>,
+    lines: std::collections::HashMap<String, std::rc::Rc<LineLayout>>,
+}
+/// One hard line's rows and caret stops, relative to the line.
+struct LineLayout {
+    rows: Vec<(usize, usize, String, f32)>,
+    /// (byte offset in the line, x, row within the line)
+    positions: Vec<(usize, f32, usize)>,
 }
 impl EditorState {
-    fn new(text: String) -> Self {
-        let caret = text.len();
+    /// Fields start with the caret after their text; documents (multiline
+    /// editors) start at the top.
+    fn new(text: String, limit: usize, multiline: bool) -> Self {
+        let caret = if multiline { 0 } else { text.len() };
         Self {
             text,
             caret,
             anchor: caret,
             follow_caret: true,
+            limit,
             ..Default::default()
         }
+    }
+    pub(super) fn dragging(&self) -> bool {
+        self.drag
     }
     fn range(&self) -> std::ops::Range<usize> {
         self.caret.min(self.anchor)..self.caret.max(self.anchor)
@@ -86,7 +127,7 @@ impl EditorState {
     }
     fn replace(&mut self, text: &str) -> bool {
         let range = self.range();
-        if self.text.len() - range.len() + text.len() > MAX_TEXT {
+        if self.text.len() - range.len() + text.len() > self.limit {
             return false;
         }
         if range.is_empty() && text.is_empty() {
@@ -206,100 +247,143 @@ fn caret_position(positions: &[(usize, [f32; 2])], at: usize, upstream: bool) ->
 }
 /// Wrap at whitespace when possible, with grapheme fallback for a long token.
 /// Each segment is shaped again independently, exactly as it is drawn.
+/// With a cache, unchanged hard lines reuse their previous rows.
 fn visual_rows(
     text: &str,
     options: &super::super::document::EditorOptions,
     style: &TextStyle,
     width: f32,
     metrics: &mut impl TextMetrics,
+    mut cache: Option<&mut LineCache>,
 ) -> (Vec<VisualRow>, Vec<(usize, [f32; 2])>) {
     let mut rows = Vec::new();
     let mut positions = Vec::new();
     let mut base = 0;
     let line_height = editor_line_height(style);
-    let row_style = editor_row_style(style);
+    if let Some(c) = cache.as_deref_mut() {
+        if c.width != width || c.style.as_ref() != Some(style) || options.password {
+            c.lines.clear();
+            c.width = width;
+            c.style = Some(style.clone());
+        }
+    }
+    let mut kept = std::collections::HashMap::new();
     for hard_line in text.split('\n') {
-        let mut start = 0;
-        loop {
-            let remainder = &hard_line[start..];
-            let points = boundaries(remainder);
-            let display = if options.password {
-                "•".repeat(remainder.graphemes(true).count())
-            } else {
-                remainder.to_string()
-            };
-            let display_points = boundaries(&display);
-            let advances = metrics.line_advances(&display, &row_style, &display_points);
-            let mut end = remainder.len();
-            if options.soft_wrap && advances.last().copied().unwrap_or(0.) > width {
-                let fitting = advances
-                    .iter()
-                    .enumerate()
-                    .take_while(|(_, x)| **x <= width)
-                    .last()
-                    .map_or(1, |(i, _)| i.max(1));
-                end = points[fitting.min(points.len() - 1)];
-                if !options.password {
-                    let whitespace = remainder[..end]
-                        .grapheme_indices(true)
-                        .filter(|(_, g)| g.chars().all(char::is_whitespace))
-                        .map(|(i, g)| i + g.len())
-                        .next_back();
-                    if let Some(space) = whitespace {
-                        end = space;
-                    }
+        let cached = cache
+            .as_deref_mut()
+            .filter(|_| !options.password)
+            .and_then(|c| c.lines.remove(hard_line));
+        let line = cached.unwrap_or_else(|| {
+            std::rc::Rc::new(line_rows(hard_line, options, style, width, metrics))
+        });
+        let first_row = rows.len();
+        for &(at, x, row) in &line.positions {
+            positions.push((base + at, [x, (first_row + row) as f32 * line_height]));
+        }
+        for (start, end, display, x) in &line.rows {
+            rows.push(VisualRow {
+                start: base + start,
+                end: base + end,
+                text: display.clone(),
+                x: *x,
+            });
+        }
+        if cache.is_some() && !options.password {
+            kept.insert(hard_line.to_owned(), line);
+        }
+        base += hard_line.len() + 1;
+    }
+    if let Some(c) = cache {
+        c.lines = kept;
+    }
+    (rows, positions)
+}
+
+/// The rows of one hard line, relative to its start.
+fn line_rows(
+    hard_line: &str,
+    options: &super::super::document::EditorOptions,
+    style: &TextStyle,
+    width: f32,
+    metrics: &mut impl TextMetrics,
+) -> LineLayout {
+    let row_style = editor_row_style(style);
+    let mut out = LineLayout {
+        rows: Vec::new(),
+        positions: Vec::new(),
+    };
+    let mut start = 0;
+    loop {
+        let remainder = &hard_line[start..];
+        let points = boundaries(remainder);
+        let display = if options.password {
+            "•".repeat(remainder.graphemes(true).count())
+        } else {
+            remainder.to_string()
+        };
+        let display_points = boundaries(&display);
+        let advances = metrics.line_advances(&display, &row_style, &display_points);
+        let mut end = remainder.len();
+        if options.soft_wrap && advances.last().copied().unwrap_or(0.) > width {
+            let fitting = advances
+                .iter()
+                .enumerate()
+                .take_while(|(_, x)| **x <= width)
+                .last()
+                .map_or(1, |(i, _)| i.max(1));
+            end = points[fitting.min(points.len() - 1)];
+            if !options.password {
+                let whitespace = remainder[..end]
+                    .grapheme_indices(true)
+                    .filter(|(_, g)| g.chars().all(char::is_whitespace))
+                    .map(|(i, g)| i + g.len())
+                    .next_back();
+                if let Some(space) = whitespace {
+                    end = space;
                 }
             }
-            let mut segment = &remainder[..end];
-            let mut display = if options.password {
+        }
+        let mut segment = &remainder[..end];
+        let mut display = if options.password {
+            "•".repeat(segment.graphemes(true).count())
+        } else {
+            segment.to_string()
+        };
+        let mut points = boundaries(segment);
+        let mut advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
+        // Shaping a segment can differ from the original line's contextual width.
+        while options.soft_wrap
+            && advances.last().copied().unwrap_or(0.) > width
+            && points.len() > 2
+        {
+            end = points[points.len() - 2];
+            segment = &remainder[..end];
+            display = if options.password {
                 "•".repeat(segment.graphemes(true).count())
             } else {
                 segment.to_string()
             };
-            let mut points = boundaries(segment);
-            let mut advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
-            // Shaping a segment can differ from the original line's contextual width.
-            while options.soft_wrap
-                && advances.last().copied().unwrap_or(0.) > width
-                && points.len() > 2
-            {
-                end = points[points.len() - 2];
-                segment = &remainder[..end];
-                display = if options.password {
-                    "•".repeat(segment.graphemes(true).count())
-                } else {
-                    segment.to_string()
-                };
-                points = boundaries(segment);
-                advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
-            }
-            let y = rows.len() as f32 * line_height;
-            let free = (width - advances.iter().copied().fold(0_f32, f32::max)).max(0.);
-            let x = match style.align {
-                super::super::extras::TextAlign::Center => free * 0.5,
-                super::super::extras::TextAlign::End => free,
-                _ => 0., // Editable rows do not expand inter-word spacing.
-            };
-            for (i, at) in points.iter().enumerate() {
-                positions.push((
-                    base + start + at,
-                    [x + advances.get(i).copied().unwrap_or(0.), y],
-                ));
-            }
-            rows.push(VisualRow {
-                start: base + start,
-                end: base + start + end,
-                text: display,
-                x,
-            });
-            start += end;
-            if start >= hard_line.len() {
-                break;
-            }
+            points = boundaries(segment);
+            advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
         }
-        base += hard_line.len() + 1;
+        let row = out.rows.len();
+        let free = (width - advances.iter().copied().fold(0_f32, f32::max)).max(0.);
+        let x = match style.align {
+            super::super::extras::TextAlign::Center => free * 0.5,
+            super::super::extras::TextAlign::End => free,
+            _ => 0., // Editable rows do not expand inter-word spacing.
+        };
+        for (i, at) in points.iter().enumerate() {
+            out.positions
+                .push((start + at, x + advances.get(i).copied().unwrap_or(0.), row));
+        }
+        out.rows.push((start, start + end, display, x));
+        start += end;
+        if start >= hard_line.len() {
+            break;
+        }
     }
-    (rows, positions)
+    out
 }
 
 impl Runtime {
@@ -312,6 +396,14 @@ impl Runtime {
     }
     pub fn editing_focus(&self) -> bool {
         self.editable_box().is_some()
+    }
+    /// The focused editor takes Tab as indentation.
+    pub fn editing_tab_indents(&self) -> bool {
+        self.editable_box().is_some_and(|b| {
+            b.editor
+                .as_ref()
+                .is_some_and(|e| e.multiline && e.tab_indents && !e.read_only)
+        })
     }
     pub fn editing_ime_allowed(&self) -> bool {
         self.editable_box()
@@ -379,9 +471,12 @@ impl Runtime {
             if n.editor.is_some() {
                 ids.insert(n.id.clone());
                 let value = n.text.clone().unwrap_or_default();
+                let multiline = n.editor.as_ref().is_some_and(|e| e.multiline);
+                let limit = text_limit(multiline);
                 let e = map
                     .entry(n.id.clone())
-                    .or_insert_with(|| EditorState::new(value.clone()));
+                    .or_insert_with(|| EditorState::new(value.clone(), limit, multiline));
+                e.limit = limit;
                 if e.text != value {
                     e.text = value;
                     e.caret = boundary(&e.text, e.caret);
@@ -391,6 +486,24 @@ impl Runtime {
                     e.redo.clear();
                     e.preedit.clear();
                     e.follow_caret = true;
+                }
+                if let Some((at, request)) = n.editor.as_ref().and_then(|o| o.scroll_to) {
+                    if request != e.scroll_request {
+                        e.scroll_request = request;
+                        e.scroll_target = Some(at);
+                        e.follow_caret = false;
+                    }
+                }
+                // After the text is current, so the range is in it.
+                if let Some((start, end, request)) = n.editor.as_ref().and_then(|o| o.select) {
+                    if request != e.select_request {
+                        e.select_request = request;
+                        e.anchor = boundary(&e.text, start.min(e.text.len()));
+                        e.caret = boundary(&e.text, end.min(e.text.len()));
+                        e.upstream = false;
+                        e.preedit.clear();
+                        e.follow_caret = true;
+                    }
                 }
             }
             for c in &n.children {
@@ -415,8 +528,16 @@ impl Runtime {
                     let [_, _, width, height] = inner_geometry(b, self.scale);
                     let width = width.max(self.scale);
                     let height = height.max(line_height);
-                    let (rows, positions) =
-                        visual_rows(&e.text, options, &b.text_style, width, metrics);
+                    let mut cache = std::mem::take(&mut e.lines);
+                    let (rows, positions) = visual_rows(
+                        &e.text,
+                        options,
+                        &b.text_style,
+                        width,
+                        metrics,
+                        Some(&mut cache),
+                    );
+                    e.lines = cache;
                     e.positions = positions;
                     if e.preedit.is_empty() {
                         e.rows = rows;
@@ -428,7 +549,7 @@ impl Runtime {
                         let mut display = e.text.clone();
                         display.replace_range(range.clone(), &e.preedit);
                         let (rows, positions) =
-                            visual_rows(&display, options, &b.text_style, width, metrics);
+                            visual_rows(&display, options, &b.text_style, width, metrics, None);
                         let cursor = e.preedit_cursor.map_or(e.preedit.len(), |(_, end)| end);
                         e.paint_caret = caret_position(
                             &positions,
@@ -449,6 +570,13 @@ impl Runtime {
                     } else {
                         (max_x - width + 2. * self.scale).max(0.)
                     };
+                    if let Some(at) = e.scroll_target.take() {
+                        let row = e
+                            .rows
+                            .iter()
+                            .position(|r| at < r.end || r.end == e.text.len());
+                        e.offset[1] = row.unwrap_or(0) as f32 * line_height;
+                    }
                     e.offset[0] = e.offset[0].clamp(0., max_x);
                     e.offset[1] = e.offset[1].clamp(0., (max_y - height).max(0.));
                     let pos = e.paint_caret;
@@ -507,7 +635,7 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         ctx: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
-        if text.len() > MAX_TEXT {
+        if text.len() > MAX_EDITOR_TEXT {
             return Ok(InputOutcome::default());
         }
         let Some(b) = self.editable_box() else {
@@ -543,6 +671,96 @@ impl Runtime {
             })
         }
     }
+    /// Report editors' selections that changed since the last report, with
+    /// the caret's rectangle from this layout. Hosts call this after layout;
+    /// returns whether any application callback ran.
+    pub fn dispatch_editor_selections<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        ctx: &mut C,
+    ) -> Result<bool, DocumentError> {
+        let mut events = Vec::new();
+        for b in &self.layout_boxes {
+            let (Some(name), Some(e)) = (&b.on_selection, self.editors.get_mut().get_mut(&b.id))
+            else {
+                continue;
+            };
+            let [x, y, _, _] = inner_geometry(b, self.scale);
+            let line = editor_line_height(&b.text_style);
+            let caret = [
+                (x + e.paint_caret[0] - e.offset[0]) / self.scale,
+                (y + e.paint_caret[1] - e.offset[1]) / self.scale,
+                1.,
+                line / self.scale,
+            ];
+            let range = e.range();
+            let bounds = b.bounds.bounds().map(|v| v / self.scale);
+            let top_row = (e.offset[1] / line.max(1.)).floor() as usize;
+            let top = e.rows.get(top_row).map_or(0, |r| r.start);
+            let report = (
+                range.start,
+                range.end,
+                e.caret,
+                caret.map(f32::to_bits),
+                bounds.map(f32::to_bits),
+                top,
+            );
+            if e.reported != Some(report) {
+                e.reported = Some(report);
+                events.push((
+                    name.clone(),
+                    Event::SelectionChanged {
+                        start: report.0,
+                        end: report.1,
+                        caret_at: report.2,
+                        caret_bits: report.3,
+                        bounds_bits: report.4,
+                        top: report.5,
+                    },
+                ));
+            }
+        }
+        let any = !events.is_empty();
+        for (name, event) in events {
+            handlers
+                .dispatch(&name, event, ctx)
+                .map_err(|e| DocumentError(e.to_string()))?;
+        }
+        Ok(any)
+    }
+    /// Escape in the focused field: runs its `on_cancel` callback if any.
+    pub fn editor_cancel<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        ctx: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        let Some(name) = self.editable_box().and_then(|b| b.on_cancel.clone()) else {
+            return Ok(InputOutcome::default());
+        };
+        handlers
+            .dispatch(&name, Event::Activate, ctx)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        Ok(InputOutcome {
+            changed: true,
+            activated: true,
+        })
+    }
+    /// The first enabled `autofocus` field in `next` that `previous` lacks.
+    pub(super) fn autofocus_target(previous: Option<&Node>, next: &Node) -> Option<String> {
+        fn has(node: &Node, id: &str) -> bool {
+            node.id == id || node.children.iter().any(|c| has(c, id))
+        }
+        fn first<'a>(node: &'a Node, previous: Option<&Node>) -> Option<&'a str> {
+            if node.enabled
+                && node.editor.as_ref().is_some_and(|e| e.autofocus)
+                && previous.is_none_or(|p| !has(p, &node.id))
+            {
+                return Some(&node.id);
+            }
+            node.children.iter().find_map(|c| first(c, previous))
+        }
+        first(next, previous).map(str::to_owned)
+    }
     pub fn editor_key<C>(
         &mut self,
         key: EditKey,
@@ -555,6 +773,15 @@ impl Runtime {
         };
         let options = b.editor.as_ref().unwrap().clone();
         let id = b.id.clone();
+        if let Some(name) = b.on_key.clone().filter(|_| options.keys.contains(&key)) {
+            handlers
+                .dispatch(&name, Event::Key(key), ctx)
+                .map_err(|e| DocumentError(e.to_string()))?;
+            return Ok(InputOutcome {
+                changed: true,
+                activated: true,
+            });
+        }
         let submit = b.on_submit.clone();
         let interaction_changed = self.reveal_focus(&id) | self.cancel_pointer_captures();
         let enter_submits = !options.multiline || (options.enter_submits && !shift);
@@ -741,6 +968,7 @@ impl Runtime {
         if b.editor.as_ref().unwrap().read_only || text.len() > MAX_TEXT {
             return false;
         };
+        // (A composition is one run of typing; it never needs a document's room.)
         let id = b.id.clone();
         let e = self.editors.get_mut().get_mut(&id).unwrap();
         let changed = e.preedit != text || e.preedit_cursor != cursor;
@@ -1081,19 +1309,61 @@ impl Runtime {
             }
         }
         if e.text.is_empty() && e.preedit.is_empty() {
+            // Laid out like the first typed row, so descenders are not cut
+            // and the placeholder sits exactly where typing begins.
+            // Multiline placeholders wrap in the field instead.
+            let (rect, style) = if options.multiline {
+                (inner, b.text_style.clone())
+            } else {
+                (
+                    [inner[0], inner[1] - e.offset[1], inner[2], line_height],
+                    editor_row_style(&b.text_style),
+                )
+            };
             p.ui_text_styled(
                 &mut glyphs,
                 &options.placeholder,
-                inner,
-                &b.text_style,
+                rect,
+                &style,
                 tint(c.muted),
             );
         } else {
             let row_style = editor_row_style(&b.text_style);
+            // Colour ranges become colour-only runs: they share the plain
+            // row's shaping, so ink still matches carets and selections.
+            let highlights = options.highlights.as_deref().filter(|_| !options.password);
+            let palette: Vec<Option<[f32; 4]>> = highlights
+                .map(|h| h.palette.iter().map(|c| ui.resolve(c).map(tint)).collect())
+                .unwrap_or_default();
             for (row, line) in e.rows.iter().enumerate() {
                 let top = inner[1] + row as f32 * line_height - e.offset[1];
                 if top + line_height <= inner[1] || top >= inner[1] + inner[3] {
                     continue;
+                }
+                let mut style = std::borrow::Cow::Borrowed(&row_style);
+                if let Some(h) = highlights {
+                    let first = h.ranges.partition_point(|r| r.1 <= line.start);
+                    let runs: Vec<TextRun> = h.ranges[first..]
+                        .iter()
+                        .take_while(|r| r.0 < line.end)
+                        .filter_map(|&(start, end, color)| {
+                            let color = palette.get(usize::from(color)).copied().flatten()?;
+                            let start = start.max(line.start) - line.start;
+                            let end = end.min(line.end) - line.start;
+                            (start < end
+                                && line.text.is_char_boundary(start)
+                                && line.text.is_char_boundary(end))
+                            .then_some(TextRun {
+                                start,
+                                end,
+                                color: Some(color),
+                                ..TextRun::default()
+                            })
+                        })
+                        .collect();
+                    if !runs.is_empty() {
+                        style.to_mut().runs = runs;
+                    }
                 }
                 // Same independently-shaped segments and widths used by visual_rows.
                 p.ui_text_styled(
@@ -1105,7 +1375,7 @@ impl Runtime {
                         1_000_000.,
                         line_height,
                     ],
-                    &row_style,
+                    &style,
                     tint(b.style.color.unwrap_or(c.text)),
                 );
             }

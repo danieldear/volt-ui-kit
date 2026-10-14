@@ -281,7 +281,7 @@ impl Runtime {
     ) -> Result<InputOutcome, DocumentError> {
         match value {
             AccessValue::Text(text) => {
-                if text.len() > editing::MAX_TEXT {
+                if text.len() > crate::declarative::document::MAX_EDITOR_TEXT {
                     return Ok(InputOutcome::default());
                 }
                 let Some(multiline) = self
@@ -293,7 +293,8 @@ impl Runtime {
                     return Ok(InputOutcome::default());
                 };
                 let sanitized = editing::sanitize(&text, multiline);
-                if sanitized.len() > editing::MAX_TEXT || (!text.is_empty() && sanitized.is_empty())
+                if sanitized.len() > editing::text_limit(multiline)
+                    || (!text.is_empty() && sanitized.is_empty())
                 {
                     return Ok(InputOutcome::default());
                 }

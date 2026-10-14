@@ -365,6 +365,57 @@ fn render_frame(
 fn straight_rgba(pixmap: &tiny_skia::Pixmap) -> Vec<u8> {
     unpremultiply(pixmap.data()).into_owned()
 }
+/// The pipeline that copies Vello's straight-alpha output to the surface,
+/// encoded for the surface's alpha mode.
+fn present_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+    backend: wgpu::Backend,
+    alpha: wgpu::CompositeAlphaMode,
+) -> wgpu::RenderPipeline {
+    let post = present_straight_alpha(backend, alpha);
+    if std::env::var_os("VOLT_UI_TRACE").is_some() {
+        eprintln!(
+            "VOLT_UI_SURFACE alpha_mode={alpha:?} pixel_encoding={}",
+            if post { "straight" } else { "premultiplied" }
+        );
+    }
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(shader_source(post).into()),
+    });
+    let pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipe_layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
 pub(super) enum PresentStatus {
     Presented,
     Retry,
@@ -388,6 +439,9 @@ pub(super) struct GpuPresenter {
     encoder: GpuSceneEncoder,
     textures: TextureImages,
     lost: Arc<AtomicBool>,
+    /// What the surface supports, for switching opacity in place.
+    alpha_modes: Vec<wgpu::CompositeAlphaMode>,
+    backend: wgpu::Backend,
     pub adapter_name: String,
 }
 impl GpuPresenter {
@@ -396,6 +450,27 @@ impl GpuPresenter {
         let surface = instance
             .create_surface(window.clone())
             .map_err(|e| e.to_string())?;
+        Self::on_surface(window, transparent, instance, surface)
+    }
+    /// A fresh device and renderer drawing to this presenter's surface, after
+    /// the device was lost. On macOS every new surface adds a Metal layer to
+    /// the window that outlives it, frozen on its last frame and visible
+    /// through any transparency, so a window keeps its one surface.
+    pub fn recreate(self, transparent: bool) -> Result<Self, String> {
+        let Self {
+            instance,
+            window,
+            surface,
+            ..
+        } = self;
+        Self::on_surface(window, transparent, instance, surface)
+    }
+    fn on_surface(
+        window: Arc<Window>,
+        transparent: bool,
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+    ) -> Result<Self, String> {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             ..Default::default()
@@ -454,48 +529,7 @@ impl GpuPresenter {
                 count: None,
             }],
         });
-        let post = present_straight_alpha(info.backend, alpha);
-        if std::env::var_os("VOLT_UI_TRACE").is_some() {
-            eprintln!(
-                "VOLT_UI_SURFACE alpha_mode={alpha:?} pixel_encoding={}",
-                if post { "straight" } else { "premultiplied" }
-            );
-        }
-        let shader = shader_source(post);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(shader.into()),
-        });
-        let pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipe_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = present_pipeline(&device, &layout, format, info.backend, alpha);
         let renderer = vello::Renderer::new(
             &device,
             vello::RendererOptions {
@@ -521,8 +555,36 @@ impl GpuPresenter {
             encoder: GpuSceneEncoder::default(),
             textures: TextureImages::default(),
             lost,
+            alpha_modes: caps.alpha_modes,
+            backend: info.backend,
             adapter_name,
         })
+    }
+    /// Switch between an opaque and a transparent window by reconfiguring
+    /// the surface in place; see [`GpuPresenter::recreate`] for why a new
+    /// surface is never made for this.
+    pub fn set_transparent(&mut self, transparent: bool) -> Result<(), String> {
+        let alpha = if transparent {
+            alpha_mode(&self.alpha_modes)
+                .ok_or("compositor does not advertise transparent alpha support")?
+        } else {
+            wgpu::CompositeAlphaMode::Opaque
+        };
+        if alpha == self.config.alpha_mode {
+            return Ok(());
+        }
+        self.config.alpha_mode = alpha;
+        self.pipeline = present_pipeline(
+            &self.device,
+            &self.layout,
+            self.config.format,
+            self.backend,
+            alpha,
+        );
+        // The next frame reconfigures the surface with the new alpha mode.
+        self.texture = None;
+        self.bind_group = None;
+        Ok(())
     }
     /// Encode with GPU-resident images from this presenter's registry.
     fn encode(
@@ -624,7 +686,13 @@ impl GpuPresenter {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                return Ok(PresentStatus::Retry);
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                // Only a lost surface is replaced (it leaves its layer behind
+                // on macOS; see `recreate`).
                 self.surface = self
                     .instance
                     .create_surface(self.window.clone())

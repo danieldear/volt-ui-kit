@@ -260,3 +260,134 @@ fn executable_is_named_after_the_app_in_safe_ascii() {
         )));
     }
 }
+// Aliases are symbolic links, which bundles support only on Unix.
+#[cfg(unix)]
+#[test]
+fn aliases_link_to_the_executable_and_must_be_plain_distinct_names() {
+    let f = Fixture::new();
+    let mut options = f.options();
+    options.aliases = vec!["md".into(), "notes-cli".into()];
+    assemble(&options).unwrap();
+    let macos = options.output.join("Contents/MacOS");
+    for alias in ["md", "notes-cli"] {
+        let link = macos.join(alias);
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        // Relative, so the bundle can be moved or copied.
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from(options.executable_name())
+        );
+        assert_eq!(fs::read(&link).unwrap(), fs::read(&options.binary).unwrap());
+    }
+    let mut invalid = f.options();
+    invalid.output = f.0.join("Other.app");
+    for aliases in [vec!["../md"], vec!["md md"], vec![""], vec!["md", "MD"]] {
+        invalid.aliases = aliases.into_iter().map(String::from).collect();
+        assert!(invalid.validate().is_err(), "{:?}", invalid.aliases);
+    }
+    // An alias may not replace the executable itself.
+    invalid.name = "Notes".into();
+    invalid.aliases = vec!["notes".into()];
+    assert!(invalid.validate().is_err());
+    invalid.aliases = (0..9).map(|i| format!("a{i}")).collect();
+    assert!(invalid.validate().is_err());
+    assert!(!invalid.output.exists());
+}
+#[test]
+fn bundles_strip_symbols_unless_asked_not_to() {
+    let f = Fixture::new();
+    assert!(f.options().strip, "stripped by default");
+    let base = |extra: &[&str]| {
+        let mut args: Vec<String> = [
+            "--binary",
+            "b",
+            "--output",
+            "o.app",
+            "--name",
+            "N",
+            "--identifier",
+            "dev.volt.n",
+            "--version",
+            "1.0.0",
+            "--minimum-system-version",
+            "13.0",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        args.extend(extra.iter().map(|s| s.to_string()));
+        BundleOptions::parse(&args)
+    };
+    assert!(!base(&["--strip", "none"]).unwrap().strip);
+    assert!(base(&["--strip", "symbols"]).unwrap().strip);
+    assert!(base(&["--strip", "all"]).is_err());
+    assert!(base(&["--strip", "none", "--strip", "none"]).is_err());
+}
+#[test]
+fn app_extensions_go_into_plugins_with_their_own_plist() {
+    use serde_json::json;
+    let f = Fixture::new();
+    let mut options = f.options();
+    let binary = f.0.join("preview");
+    fs::write(&binary, [0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0]).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut attributes = serde_json::Map::new();
+    attributes.insert("QLIsDataBasedPreview".into(), json!(true));
+    attributes.insert(
+        "QLSupportedContentTypes".into(),
+        json!(["net.daringfireball.markdown"]),
+    );
+    let extension = AppExtension {
+        name: "Notes Preview".into(),
+        identifier: "dev.volt.notes.preview".into(),
+        binary,
+        point: "com.apple.quicklook.preview".into(),
+        principal_class: "NotesPreviewProvider".into(),
+        attributes,
+    };
+    options.extensions.push(extension.clone());
+    assemble(&options).unwrap();
+    let appex = options
+        .output
+        .join("Contents/PlugIns/Notes Preview.appex/Contents");
+    assert!(appex.join("MacOS/Notes Preview").is_file());
+    let plist = fs::read_to_string(appex.join("Info.plist")).unwrap();
+    for needle in [
+        "<key>CFBundlePackageType</key><string>XPC!</string>",
+        "<key>CFBundleIdentifier</key><string>dev.volt.notes.preview</string>",
+        "<key>NSExtensionPointIdentifier</key><string>com.apple.quicklook.preview</string>",
+        "<key>NSExtensionPrincipalClass</key><string>NotesPreviewProvider</string>",
+        "<key>QLIsDataBasedPreview</key><true/>",
+        "<key>QLSupportedContentTypes</key><array><string>net.daringfireball.markdown</string></array>",
+    ] {
+        assert!(plist.contains(needle), "missing {needle}\n{plist}");
+    }
+    assert!(EXTENSION_ENTITLEMENTS.contains("com.apple.security.app-sandbox"));
+    // Identifiers extend the app's; class names are plain identifiers.
+    let mut bad = f.options();
+    bad.output = f.0.join("Bad.app");
+    for e in [
+        AppExtension {
+            identifier: "com.other.preview".into(),
+            ..extension.clone()
+        },
+        AppExtension {
+            principal_class: "Not A Class".into(),
+            ..extension.clone()
+        },
+        AppExtension {
+            name: "../escape".into(),
+            ..extension.clone()
+        },
+    ] {
+        bad.extensions = vec![e];
+        assert!(bad.validate().is_err());
+    }
+    assert!(!bad.output.exists());
+}
