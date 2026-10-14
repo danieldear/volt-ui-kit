@@ -280,6 +280,25 @@ the manual flags below.
 command line instead of opening a window. The links are signed and
 notarized with the app.
 
+App extensions, such as a Quick Look preview, are other binaries of the
+package. Each goes into `Contents/PlugIns/NAME.appex` with its own
+`Info.plist` and is signed in the app sandbox before the app:
+
+```toml
+[[package.metadata.volt.bundle.extensions]]
+name = "My App Preview"
+identifier = "com.example.myapp.preview"   # extends the app's identifier
+binary = "myapp-preview"                   # a [[bin]] of this package
+point = "com.apple.quicklook.preview"      # NSExtensionPointIdentifier
+principal-class = "MyAppPreviewProvider"   # the Objective-C class it defines
+[package.metadata.volt.bundle.extensions.attributes]
+QLIsDataBasedPreview = true
+QLSupportedContentTypes = ["net.daringfireball.markdown"]
+```
+
+The binary defines the principal class and hands control to
+`NSExtensionMain`; the attributes become `NSExtensionAttributes`.
+
 `cargo volt bundle` strips the executable's symbol table, about a fifth of a
 Rust release binary (`strip = false` keeps it, for readable backtraces). For
 a smaller app still, give the package a size-tuned release profile:

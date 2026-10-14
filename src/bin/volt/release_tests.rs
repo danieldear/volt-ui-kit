@@ -11,6 +11,7 @@ fn metadata(bundle: serde_json::Value) -> serde_json::Value {
             "manifest_path": "/work/notes/Cargo.toml",
             "targets": [
                 {"name": "notes", "kind": ["bin"]},
+                {"name": "notes-preview", "kind": ["bin"]},
                 {"name": "notes", "kind": ["lib"]}
             ],
             "metadata": {"volt": {"bundle": bundle}}
@@ -186,4 +187,57 @@ fn identities_and_notary_results_are_read_strictly() {
         .to_string();
     assert!(invalid.contains("Invalid") && invalid.contains("notarytool log abc"));
     assert!(accepted("not json").is_err());
+}
+
+#[test]
+fn app_extensions_are_built_merged_and_signed_before_the_app() {
+    let mut bundle = markdown_bundle();
+    bundle["extensions"] = json!([{
+        "name": "Notes Preview",
+        "identifier": "dev.example.notes.preview",
+        "binary": "notes-preview",
+        "point": "com.apple.quicklook.preview",
+        "principal-class": "NotesPreviewProvider",
+        "attributes": {"QLIsDataBasedPreview": true}
+    }]);
+    let m = manifest_from_json(&metadata(bundle.clone()), None).unwrap();
+    let o = options_from_manifest(&m, "/out/notes-universal".into(), "/out/N.app".into()).unwrap();
+    assert_eq!(
+        o.extensions[0].binary,
+        Path::new("/out/notes-preview-universal")
+    );
+    let o = options_from_manifest(&m, "/t/release/notes".into(), "/out/N.app".into()).unwrap();
+    assert_eq!(
+        o.extensions[0].binary,
+        Path::new("/t/release/notes-preview")
+    );
+    let args: Vec<String> = ["--universal"].map(String::from).to_vec();
+    let release = ReleaseOptions::parse(&args, true).unwrap();
+    let joined: Vec<String> = plan(&m, &release, "Notes Pro", Some("ABC123"), None)
+        .into_iter()
+        .filter_map(|s| match s {
+            Step::Run { program, args, .. } => Some(format!("{program} {}", args.join(" "))),
+            _ => None,
+        })
+        .collect();
+    let joined = joined.join("\n");
+    assert!(
+        joined.contains("--bin notes --bin notes-preview"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("notes-preview-universal"),
+        "both binaries are merged"
+    );
+    let appex = joined
+        .find("--entitlements /work/target/release/bundle/extension.entitlements /work/target/release/bundle/Notes Pro.app/Contents/PlugIns/Notes Preview.appex")
+        .expect("the extension is signed in the sandbox");
+    let app = joined
+        .find("--sign ABC123 /work/target/release/bundle/Notes Pro.app\n")
+        .expect("then the app");
+    assert!(appex < app);
+    // An extension binary must be a bin target.
+    bundle["extensions"][0]["binary"] = json!("missing");
+    let m = manifest_from_json(&metadata(bundle), None).unwrap();
+    assert!(options_from_manifest(&m, "/b/notes".into(), "/o/N.app".into()).is_err());
 }

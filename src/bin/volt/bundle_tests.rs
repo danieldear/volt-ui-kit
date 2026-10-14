@@ -323,3 +323,69 @@ fn bundles_strip_symbols_unless_asked_not_to() {
     assert!(base(&["--strip", "all"]).is_err());
     assert!(base(&["--strip", "none", "--strip", "none"]).is_err());
 }
+#[test]
+fn app_extensions_go_into_plugins_with_their_own_plist() {
+    use serde_json::json;
+    let f = Fixture::new();
+    let mut options = f.options();
+    let binary = f.0.join("preview");
+    fs::write(&binary, [0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0]).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut attributes = serde_json::Map::new();
+    attributes.insert("QLIsDataBasedPreview".into(), json!(true));
+    attributes.insert(
+        "QLSupportedContentTypes".into(),
+        json!(["net.daringfireball.markdown"]),
+    );
+    let extension = AppExtension {
+        name: "Notes Preview".into(),
+        identifier: "dev.volt.notes.preview".into(),
+        binary,
+        point: "com.apple.quicklook.preview".into(),
+        principal_class: "NotesPreviewProvider".into(),
+        attributes,
+    };
+    options.extensions.push(extension.clone());
+    assemble(&options).unwrap();
+    let appex = options
+        .output
+        .join("Contents/PlugIns/Notes Preview.appex/Contents");
+    assert!(appex.join("MacOS/Notes Preview").is_file());
+    let plist = fs::read_to_string(appex.join("Info.plist")).unwrap();
+    for needle in [
+        "<key>CFBundlePackageType</key><string>XPC!</string>",
+        "<key>CFBundleIdentifier</key><string>dev.volt.notes.preview</string>",
+        "<key>NSExtensionPointIdentifier</key><string>com.apple.quicklook.preview</string>",
+        "<key>NSExtensionPrincipalClass</key><string>NotesPreviewProvider</string>",
+        "<key>QLIsDataBasedPreview</key><true/>",
+        "<key>QLSupportedContentTypes</key><array><string>net.daringfireball.markdown</string></array>",
+    ] {
+        assert!(plist.contains(needle), "missing {needle}\n{plist}");
+    }
+    assert!(EXTENSION_ENTITLEMENTS.contains("com.apple.security.app-sandbox"));
+    // Identifiers extend the app's; class names are plain identifiers.
+    let mut bad = f.options();
+    bad.output = f.0.join("Bad.app");
+    for e in [
+        AppExtension {
+            identifier: "com.other.preview".into(),
+            ..extension.clone()
+        },
+        AppExtension {
+            principal_class: "Not A Class".into(),
+            ..extension.clone()
+        },
+        AppExtension {
+            name: "../escape".into(),
+            ..extension.clone()
+        },
+    ] {
+        bad.extensions = vec![e];
+        assert!(bad.validate().is_err());
+    }
+    assert!(!bad.output.exists());
+}
