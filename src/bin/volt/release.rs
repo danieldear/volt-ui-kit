@@ -29,6 +29,7 @@ icon = \"assets/AppIcon.icns\"          # relative to Cargo.toml
 minimum-system-version = \"13.0\"
 category = \"public.app-category.productivity\"
 copyright = \"© 2026 Example\"
+aliases = [\"myapp\"]                   # Contents/MacOS/myapp links to the executable
 [[package.metadata.volt.bundle.document-types]]
 name = \"Markdown Document\"
 role = \"Editor\"                       # Editor, Viewer, Shell, None
@@ -85,7 +86,11 @@ pub fn manifest_from_json(json: &Value, manifest_path: Option<&Path>) -> io::Res
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|t| t["kind"].as_array().is_some_and(|k| k.iter().any(|k| k == "bin")))
+        .filter(|t| {
+            t["kind"]
+                .as_array()
+                .is_some_and(|k| k.iter().any(|k| k == "bin"))
+        })
         .filter_map(|t| t["name"].as_str())
         .collect();
     let name = string(&package["name"], "package name")?;
@@ -133,7 +138,11 @@ fn optional(v: &Value, key: &str) -> io::Result<Option<String>> {
 }
 
 /// Bundle options from the metadata, for `binary`, written to `output`.
-pub fn options_from_manifest(m: &Manifest, binary: PathBuf, output: PathBuf) -> io::Result<BundleOptions> {
+pub fn options_from_manifest(
+    m: &Manifest,
+    binary: PathBuf,
+    output: PathBuf,
+) -> io::Result<BundleOptions> {
     let b = &m.metadata;
     let path = |p: String| m.dir.join(p);
     let document_types = b["document-types"]
@@ -157,7 +166,8 @@ pub fn options_from_manifest(m: &Manifest, binary: PathBuf, output: PathBuf) -> 
         .flatten()
         .map(|t| {
             Ok(ImportedType {
-                identifier: optional(t, "identifier")?.ok_or_else(|| error("imported type needs an identifier"))?,
+                identifier: optional(t, "identifier")?
+                    .ok_or_else(|| error("imported type needs an identifier"))?,
                 description: optional(t, "description")?.unwrap_or_default(),
                 conforms_to: strings(t, "conforms-to")?,
                 extensions: strings(t, "extensions")?,
@@ -193,6 +203,7 @@ pub fn options_from_manifest(m: &Manifest, binary: PathBuf, output: PathBuf) -> 
         copyright: optional(b, "copyright")?,
         document_types,
         imported_types,
+        aliases: strings(b, "aliases")?,
     })
 }
 
@@ -244,7 +255,11 @@ impl ReleaseOptions {
 /// One step of a build or release.
 #[derive(Debug, PartialEq)]
 pub enum Step {
-    Run { what: &'static str, program: String, args: Vec<String> },
+    Run {
+        what: &'static str,
+        program: String,
+        args: Vec<String>,
+    },
     /// Assemble and check the .app (in process).
     Bundle,
     /// Replace a previous output under the target directory.
@@ -271,14 +286,27 @@ fn file_stem(name: &str) -> String {
 }
 
 /// The steps for `bundle` (no identity) or `release`, in order.
-pub fn plan(m: &Manifest, o: &ReleaseOptions, name: &str, identity: Option<&str>, profile: Option<&str>) -> Vec<Step> {
+pub fn plan(
+    m: &Manifest,
+    o: &ReleaseOptions,
+    name: &str,
+    identity: Option<&str>,
+    profile: Option<&str>,
+) -> Vec<Step> {
     let out = out_dir(m);
     let app = out.join(format!("{name}.app"));
     let manifest = m.dir.join("Cargo.toml");
     let manifest = manifest.to_string_lossy();
     let mut steps = Vec::new();
     let build = |target: Option<&str>| {
-        let mut args = vec!["build", "--release", "--bin", m.bin.as_str(), "--manifest-path", &manifest];
+        let mut args = vec![
+            "build",
+            "--release",
+            "--bin",
+            m.bin.as_str(),
+            "--manifest-path",
+            &manifest,
+        ];
         if let Some(t) = target {
             args.extend(["--target", t]);
         }
@@ -287,13 +315,25 @@ pub fn plan(m: &Manifest, o: &ReleaseOptions, name: &str, identity: Option<&str>
     if o.universal {
         steps.push(build(Some("aarch64-apple-darwin")));
         steps.push(build(Some("x86_64-apple-darwin")));
-        let arm = m.target_dir.join("aarch64-apple-darwin/release").join(&m.bin);
-        let intel = m.target_dir.join("x86_64-apple-darwin/release").join(&m.bin);
+        let arm = m
+            .target_dir
+            .join("aarch64-apple-darwin/release")
+            .join(&m.bin);
+        let intel = m
+            .target_dir
+            .join("x86_64-apple-darwin/release")
+            .join(&m.bin);
         let fat = out.join(format!("{}-universal", m.bin));
         steps.push(run(
             "merge Apple silicon and Intel binaries",
             "/usr/bin/lipo",
-            &["-create", "-output", &fat.to_string_lossy(), &arm.to_string_lossy(), &intel.to_string_lossy()],
+            &[
+                "-create",
+                "-output",
+                &fat.to_string_lossy(),
+                &arm.to_string_lossy(),
+                &intel.to_string_lossy(),
+            ],
         ));
     } else {
         steps.push(build(None));
@@ -304,13 +344,27 @@ pub fn plan(m: &Manifest, o: &ReleaseOptions, name: &str, identity: Option<&str>
         return steps;
     };
     let app_s = app.to_string_lossy().into_owned();
-    let mut sign = vec!["--force", "--options", "runtime", "--timestamp", "--sign", identity];
-    let entitlements = o.entitlements.as_ref().map(|e| e.to_string_lossy().into_owned());
+    let mut sign = vec![
+        "--force",
+        "--options",
+        "runtime",
+        "--timestamp",
+        "--sign",
+        identity,
+    ];
+    let entitlements = o
+        .entitlements
+        .as_ref()
+        .map(|e| e.to_string_lossy().into_owned());
     if let Some(e) = &entitlements {
         sign.extend(["--entitlements", e.as_str()]);
     }
     sign.push(&app_s);
-    steps.push(run("sign with Developer ID and the hardened runtime", "/usr/bin/codesign", &sign));
+    steps.push(run(
+        "sign with Developer ID and the hardened runtime",
+        "/usr/bin/codesign",
+        &sign,
+    ));
     steps.push(run(
         "verify the signature",
         "/usr/bin/codesign",
@@ -326,7 +380,11 @@ pub fn plan(m: &Manifest, o: &ReleaseOptions, name: &str, identity: Option<&str>
             &["-c", "-k", "--sequesterRsrc", "--keepParent", &app_s, &zip],
         ));
         steps.push(notarize(&zip, profile));
-        steps.push(run("staple the ticket to the app", "/usr/bin/xcrun", &["stapler", "staple", &app_s]));
+        steps.push(run(
+            "staple the ticket to the app",
+            "/usr/bin/xcrun",
+            &["stapler", "staple", &app_s],
+        ));
         steps.push(run(
             "check Gatekeeper accepts the app",
             "/usr/sbin/spctl",
@@ -347,7 +405,19 @@ pub fn plan(m: &Manifest, o: &ReleaseOptions, name: &str, identity: Option<&str>
         steps.push(run(
             "build the disk image",
             "/usr/bin/hdiutil",
-            &["create", "-volname", name, "-srcfolder", &stage.to_string_lossy(), "-fs", "HFS+", "-format", "UDZO", "-ov", &dmg_s],
+            &[
+                "create",
+                "-volname",
+                name,
+                "-srcfolder",
+                &stage.to_string_lossy(),
+                "-fs",
+                "HFS+",
+                "-format",
+                "UDZO",
+                "-ov",
+                &dmg_s,
+            ],
         ));
         steps.push(Step::Remove(stage));
         steps.push(run(
@@ -357,11 +427,23 @@ pub fn plan(m: &Manifest, o: &ReleaseOptions, name: &str, identity: Option<&str>
         ));
         if let Some(profile) = profile.filter(|_| o.notarize) {
             steps.push(notarize(&dmg_s, profile));
-            steps.push(run("staple the ticket to the image", "/usr/bin/xcrun", &["stapler", "staple", &dmg_s]));
+            steps.push(run(
+                "staple the ticket to the image",
+                "/usr/bin/xcrun",
+                &["stapler", "staple", &dmg_s],
+            ));
             steps.push(run(
                 "check Gatekeeper accepts the image",
                 "/usr/sbin/spctl",
-                &["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose", &dmg_s],
+                &[
+                    "--assess",
+                    "--type",
+                    "open",
+                    "--context",
+                    "context:primary-signature",
+                    "--verbose",
+                    &dmg_s,
+                ],
             ));
         }
     }
@@ -372,7 +454,16 @@ fn notarize(path: &str, profile: &str) -> Step {
     run(
         "notarize with Apple (waits for the result)",
         "/usr/bin/xcrun",
-        &["notarytool", "submit", path, "--keychain-profile", profile, "--wait", "--output-format", "json"],
+        &[
+            "notarytool",
+            "submit",
+            path,
+            "--keychain-profile",
+            profile,
+            "--wait",
+            "--output-format",
+            "json",
+        ],
     )
 }
 
@@ -394,7 +485,8 @@ pub fn developer_id(listing: &str) -> io::Result<String> {
 
 /// `notarytool submit --output-format json` must report Accepted.
 pub fn accepted(output: &str) -> io::Result<()> {
-    let json: Value = serde_json::from_str(output.trim()).map_err(|_| error("unreadable notarytool output"))?;
+    let json: Value =
+        serde_json::from_str(output.trim()).map_err(|_| error("unreadable notarytool output"))?;
     match json["status"].as_str() {
         Some("Accepted") => Ok(()),
         status => Err(error(format!(
@@ -418,13 +510,22 @@ fn read_manifest(path: Option<&Path>) -> io::Result<Manifest> {
             String::from_utf8_lossy(&out.stderr)
         )));
     }
-    let json: Value = serde_json::from_slice(&out.stdout).map_err(|_| error("unreadable cargo metadata"))?;
+    let json: Value =
+        serde_json::from_slice(&out.stdout).map_err(|_| error("unreadable cargo metadata"))?;
     manifest_from_json(&json, path)
 }
 
-fn execute(step: &Step, m: &Manifest, bundle_options: &mut Option<BundleOptions>) -> io::Result<()> {
+fn execute(
+    step: &Step,
+    m: &Manifest,
+    bundle_options: &mut Option<BundleOptions>,
+) -> io::Result<()> {
     match step {
-        Step::Run { what, program, args } => {
+        Step::Run {
+            what,
+            program,
+            args,
+        } => {
             eprintln!("  → {what}");
             let output = Command::new(program).args(args).output()?;
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -443,7 +544,9 @@ fn execute(step: &Step, m: &Manifest, bundle_options: &mut Option<BundleOptions>
         Step::Remove(path) => {
             // Only ever remove outputs this tool writes.
             if !path.starts_with(out_dir(m)) {
-                return Err(error("refusing to remove a path outside target/release/bundle"));
+                return Err(error(
+                    "refusing to remove a path outside target/release/bundle",
+                ));
             }
             match fs::symlink_metadata(path) {
                 Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
@@ -454,13 +557,18 @@ fn execute(step: &Step, m: &Manifest, bundle_options: &mut Option<BundleOptions>
         }
         Step::Bundle => {
             eprintln!("  → assemble and check the app");
-            let options = bundle_options.take().ok_or_else(|| error("bundle options missing"))?;
+            let options = bundle_options
+                .take()
+                .ok_or_else(|| error("bundle options missing"))?;
             bundle::run(options)
         }
         Step::Stage { dir, app } => {
             fs::create_dir_all(dir)?;
             let name = app.file_name().ok_or_else(|| error("app has no name"))?;
-            let copy = Command::new("/usr/bin/ditto").arg(app).arg(dir.join(name)).status()?;
+            let copy = Command::new("/usr/bin/ditto")
+                .arg(app)
+                .arg(dir.join(name))
+                .status()?;
             if !copy.success() {
                 return Err(error("could not stage the app for the disk image"));
             }
@@ -474,7 +582,9 @@ fn execute(step: &Step, m: &Manifest, bundle_options: &mut Option<BundleOptions>
 /// `cargo volt bundle` and `cargo volt release` from Cargo.toml metadata.
 pub fn main(args: &[String], release: bool) -> io::Result<()> {
     if !cfg!(target_os = "macos") {
-        return Err(error("cargo volt bundle and release currently support macOS only"));
+        return Err(error(
+            "cargo volt bundle and release currently support macOS only",
+        ));
     }
     let o = ReleaseOptions::parse(args, release)?;
     let m = read_manifest(o.manifest_path.as_deref())?;
@@ -490,15 +600,22 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
     // A release is signed with Developer ID instead of ad hoc.
     options.sign = !release;
     let identity = if release {
-        Some(match o.identity.clone().or_else(|| std::env::var("VOLT_SIGNING_IDENTITY").ok()).or_else(|| optional(&m.metadata, "signing-identity").ok().flatten()) {
-            Some(id) => id,
-            None => {
-                let listing = Command::new("/usr/bin/security")
-                    .args(["find-identity", "-v", "-p", "codesigning"])
-                    .output()?;
-                developer_id(&String::from_utf8_lossy(&listing.stdout))?
-            }
-        })
+        Some(
+            match o
+                .identity
+                .clone()
+                .or_else(|| std::env::var("VOLT_SIGNING_IDENTITY").ok())
+                .or_else(|| optional(&m.metadata, "signing-identity").ok().flatten())
+            {
+                Some(id) => id,
+                None => {
+                    let listing = Command::new("/usr/bin/security")
+                        .args(["find-identity", "-v", "-p", "codesigning"])
+                        .output()?;
+                    developer_id(&String::from_utf8_lossy(&listing.stdout))?
+                }
+            },
+        )
     } else {
         None
     };
@@ -516,10 +633,18 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
     if o.dry_run {
         for step in &steps {
             match step {
-                Step::Run { what, program, args } => println!("# {what}\n{program} {}", args.join(" ")),
+                Step::Run {
+                    what,
+                    program,
+                    args,
+                } => println!("# {what}\n{program} {}", args.join(" ")),
                 Step::Bundle => println!("# assemble and check {}", options.output.display()),
                 Step::Remove(p) => println!("# remove {}", p.display()),
-                Step::Stage { dir, app } => println!("# stage {} with an Applications link in {}", app.display(), dir.display()),
+                Step::Stage { dir, app } => println!(
+                    "# stage {} with an Applications link in {}",
+                    app.display(),
+                    dir.display()
+                ),
             }
         }
         return Ok(());

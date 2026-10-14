@@ -11,6 +11,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 const MAX_BINARY: u64 = 1024 * 1024 * 1024;
+const MAX_ALIASES: usize = 8;
 const MAX_RESOURCE: u64 = 64 * 1024 * 1024;
 const USAGE_KEYS: &[&str] = &[
     "NSCameraUsageDescription",
@@ -27,7 +28,7 @@ const USAGE_KEYS: &[&str] = &[
     "NSAppleEventsUsageDescription",
     "NSSpeechRecognitionUsageDescription",
 ];
-pub const HELP: &str = "cargo volt bundle --binary PATH --output PATH.app --name NAME --identifier REVERSE.DNS.ID --version X.Y.Z --minimum-system-version X.Y[.Z]\n  [--build-number N[.N[.N]]] [--resource FILE ...] [--icon FILE.icns]\n  [--usage NSCameraUsageDescription=TEXT ...] [--sign ad-hoc|none]\nmacOS only; prebuilt Mach-O, system dylibs only, no overwrite; local ad-hoc signing is NOT notarization";
+pub const HELP: &str = "cargo volt bundle --binary PATH --output PATH.app --name NAME --identifier REVERSE.DNS.ID --version X.Y.Z --minimum-system-version X.Y[.Z]\n  [--build-number N[.N[.N]]] [--resource FILE ...] [--icon FILE.icns] [--alias NAME ...]\n  [--usage NSCameraUsageDescription=TEXT ...] [--sign ad-hoc|none]\nmacOS only; prebuilt Mach-O, system dylibs only, no overwrite; local ad-hoc signing is NOT notarization";
 
 /// A file type the app opens: `CFBundleDocumentTypes` entry. Content types
 /// name system or imported UTIs; extensions claim types macOS has no UTI for
@@ -74,12 +75,17 @@ pub struct BundleOptions {
     pub copyright: Option<String>,
     pub document_types: Vec<DocumentType>,
     pub imported_types: Vec<ImportedType>,
+    /// Other names for the executable, as links beside it in
+    /// `Contents/MacOS`: a command-line entry point (`md`, say) that the
+    /// binary recognises by the name it was run as.
+    pub aliases: Vec<String>,
 }
 impl BundleOptions {
     pub fn parse(args: &[String]) -> io::Result<Self> {
         let mut fields = std::collections::HashMap::new();
         let mut resources = Vec::new();
         let mut usage = Vec::new();
+        let mut aliases = Vec::new();
         let mut i = 0;
         while i < args.len() {
             let flag = args[i].as_str();
@@ -92,6 +98,12 @@ impl BundleOptions {
                         return Err(error("at most 64 resources"));
                     }
                     resources.push(PathBuf::from(value));
+                }
+                "--alias" => {
+                    if aliases.len() >= MAX_ALIASES {
+                        return Err(error(format!("at most {MAX_ALIASES} aliases")));
+                    }
+                    aliases.push(value.clone());
                 }
                 "--usage" => {
                     let (key, text) = value
@@ -158,6 +170,7 @@ impl BundleOptions {
             copyright: None,
             document_types: Vec::new(),
             imported_types: Vec::new(),
+            aliases,
         })
     }
     /// The executable file name, shown by Activity Monitor and crash reports:
@@ -274,6 +287,19 @@ impl BundleOptions {
         if let Some(copyright) = &self.copyright {
             text(copyright, 256)?;
         }
+        let executable = self.executable_name();
+        let mut names = HashSet::new();
+        for alias in &self.aliases {
+            if self.aliases.len() > MAX_ALIASES
+                || !extension(alias)
+                || alias.eq_ignore_ascii_case(&executable)
+                || !names.insert(alias.to_ascii_lowercase())
+            {
+                return Err(error(
+                    "aliases are distinct plain names (letters, digits, - and _) other than the executable's",
+                ));
+            }
+        }
         if self.document_types.len() > 32 || self.imported_types.len() > 32 {
             return Err(error("at most 32 document and 32 imported types"));
         }
@@ -307,7 +333,9 @@ impl BundleOptions {
                 ));
             }
             if d.icon.as_ref().is_some_and(|i| !icons.contains(i)) {
-                return Err(error("document type icon must be the bundle icon or a resource"));
+                return Err(error(
+                    "document type icon must be the bundle icon or a resource",
+                ));
             }
         }
         for t in &self.imported_types {
@@ -405,13 +433,17 @@ fn uti(value: &str) -> bool {
     value.len() <= 128
         && value.contains('.')
         && value.split('.').all(|p| {
-            !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            !p.is_empty()
+                && p.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })
 }
 fn extension(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 16
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 fn array(xml: &mut String, key: &str, values: &[String]) {
     if values.is_empty() {
@@ -535,6 +567,18 @@ pub fn assemble(options: &BundleOptions) -> io::Result<()> {
         MAX_BINARY,
         true,
     )?;
+    for alias in &options.aliases {
+        // Relative, so the link survives the bundle being moved or copied.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            options.executable_name(),
+            contents.join("MacOS").join(alias),
+        )?;
+        #[cfg(not(unix))]
+        return Err(error(format!(
+            "executable aliases need symbolic links: {alias}"
+        )));
+    }
     for source in options.resources.iter().chain(options.icon.iter()) {
         copy(
             source,

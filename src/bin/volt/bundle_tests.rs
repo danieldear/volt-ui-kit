@@ -260,3 +260,37 @@ fn executable_is_named_after_the_app_in_safe_ascii() {
         )));
     }
 }
+#[test]
+fn aliases_link_to_the_executable_and_must_be_plain_distinct_names() {
+    let f = Fixture::new();
+    let mut options = f.options();
+    options.aliases = vec!["md".into(), "notes-cli".into()];
+    assemble(&options).unwrap();
+    let macos = options.output.join("Contents/MacOS");
+    for alias in ["md", "notes-cli"] {
+        let link = macos.join(alias);
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        // Relative, so the bundle can be moved or copied.
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from(options.executable_name())
+        );
+        assert_eq!(fs::read(&link).unwrap(), fs::read(&options.binary).unwrap());
+    }
+    let mut invalid = f.options();
+    invalid.output = f.0.join("Other.app");
+    for aliases in [vec!["../md"], vec!["md md"], vec![""], vec!["md", "MD"]] {
+        invalid.aliases = aliases.into_iter().map(String::from).collect();
+        assert!(invalid.validate().is_err(), "{:?}", invalid.aliases);
+    }
+    // An alias may not replace the executable itself.
+    invalid.name = "Notes".into();
+    invalid.aliases = vec!["notes".into()];
+    assert!(invalid.validate().is_err());
+    invalid.aliases = (0..9).map(|i| format!("a{i}")).collect();
+    assert!(invalid.validate().is_err());
+    assert!(!invalid.output.exists());
+}
