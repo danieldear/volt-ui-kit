@@ -74,6 +74,18 @@ fn document_types_and_imported_types_reach_the_info_plist() {
         o.document_types[1].rank, "Default",
         "rank defaults to Default"
     );
+    assert!(o.strip, "stripped by default");
+    for (value, strip) in [
+        (json!(false), Some(false)),
+        (json!(true), Some(true)),
+        (json!("yes"), None),
+    ] {
+        let mut bundle = markdown_bundle();
+        bundle["strip"] = value;
+        let m = manifest_from_json(&metadata(bundle), None).unwrap();
+        let o = options_from_manifest(&m, "/bin/notes".into(), "/out/N.app".into());
+        assert_eq!(o.ok().map(|o| o.strip), strip);
+    }
     let xml = o.plist();
     for needle in [
         "<key>CFBundleDocumentTypes</key>",

@@ -28,7 +28,7 @@ const USAGE_KEYS: &[&str] = &[
     "NSAppleEventsUsageDescription",
     "NSSpeechRecognitionUsageDescription",
 ];
-pub const HELP: &str = "cargo volt bundle --binary PATH --output PATH.app --name NAME --identifier REVERSE.DNS.ID --version X.Y.Z --minimum-system-version X.Y[.Z]\n  [--build-number N[.N[.N]]] [--resource FILE ...] [--icon FILE.icns] [--alias NAME ...]\n  [--usage NSCameraUsageDescription=TEXT ...] [--sign ad-hoc|none]\nmacOS only; prebuilt Mach-O, system dylibs only, no overwrite; local ad-hoc signing is NOT notarization";
+pub const HELP: &str = "cargo volt bundle --binary PATH --output PATH.app --name NAME --identifier REVERSE.DNS.ID --version X.Y.Z --minimum-system-version X.Y[.Z]\n  [--build-number N[.N[.N]]] [--resource FILE ...] [--icon FILE.icns] [--alias NAME ...] [--strip symbols|none]\n  [--usage NSCameraUsageDescription=TEXT ...] [--sign ad-hoc|none]\nmacOS only; prebuilt Mach-O, system dylibs only, no overwrite; local ad-hoc signing is NOT notarization";
 
 /// A file type the app opens: `CFBundleDocumentTypes` entry. Content types
 /// name system or imported UTIs; extensions claim types macOS has no UTI for
@@ -70,6 +70,10 @@ pub struct BundleOptions {
     pub icon: Option<PathBuf>,
     pub usage: Vec<(String, String)>,
     pub sign: bool,
+    /// Strip the bundled executable's symbol table (the input binary is left
+    /// alone). Symbols are about a fifth of a Rust release binary; without
+    /// them, panics and crash reports show addresses instead of names.
+    pub strip: bool,
     /// `LSApplicationCategoryType`, e.g. `public.app-category.productivity`.
     pub category: Option<String>,
     pub copyright: Option<String>,
@@ -122,7 +126,8 @@ impl BundleOptions {
                 | "--minimum-system-version"
                 | "--build-number"
                 | "--icon"
-                | "--sign" => {
+                | "--sign"
+                | "--strip" => {
                     if fields.insert(flag, value.clone()).is_some() {
                         return Err(error(format!("duplicate {flag}")));
                     }
@@ -154,6 +159,11 @@ impl BundleOptions {
                 ))
             }
         };
+        let strip = match fields.remove("--strip").as_deref().unwrap_or("symbols") {
+            "symbols" => true,
+            "none" => false,
+            _ => return Err(error("--strip must be symbols or none")),
+        };
         Ok(Self {
             binary,
             output,
@@ -166,6 +176,7 @@ impl BundleOptions {
             icon: fields.remove("--icon").map(PathBuf::from),
             usage,
             sign,
+            strip,
             category: None,
             copyright: None,
             document_types: Vec::new(),
@@ -705,6 +716,10 @@ pub fn run(options: BundleOptions) -> io::Result<()> {
             .output
             .join("Contents/MacOS")
             .join(options.executable_name());
+        if options.strip {
+            // Before any signing: strip keeps the linker's ad-hoc signature valid.
+            tool("/usr/bin/strip", &[], &executable)?;
+        }
         tool(
             "/usr/bin/plutil",
             &["-lint"],

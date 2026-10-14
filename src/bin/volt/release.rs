@@ -30,6 +30,7 @@ minimum-system-version = \"13.0\"
 category = \"public.app-category.productivity\"
 copyright = \"© 2026 Example\"
 aliases = [\"myapp\"]                   # Contents/MacOS/myapp links to the executable
+strip = false                         # keep symbol names (stripped by default)
 [[package.metadata.volt.bundle.document-types]]
 name = \"Markdown Document\"
 role = \"Editor\"                       # Editor, Viewer, Shell, None
@@ -199,6 +200,11 @@ pub fn options_from_manifest(
         icon: optional(b, "icon")?.map(path),
         usage,
         sign: true,
+        strip: match &b["strip"] {
+            Value::Null => true,
+            Value::Bool(strip) => *strip,
+            _ => return Err(error("strip must be true or false")),
+        },
         category: optional(b, "category")?,
         copyright: optional(b, "copyright")?,
         document_types,
@@ -556,10 +562,13 @@ fn execute(
             }
         }
         Step::Bundle => {
-            eprintln!("  → assemble and check the app");
             let options = bundle_options
                 .take()
                 .ok_or_else(|| error("bundle options missing"))?;
+            eprintln!(
+                "  → assemble{} and check the app",
+                if options.strip { ", strip" } else { "" }
+            );
             bundle::run(options)
         }
         Step::Stage { dir, app } => {
@@ -638,7 +647,11 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
                     program,
                     args,
                 } => println!("# {what}\n{program} {}", args.join(" ")),
-                Step::Bundle => println!("# assemble and check {}", options.output.display()),
+                Step::Bundle => println!(
+                    "# assemble{} and check {}",
+                    if options.strip { ", strip" } else { "" },
+                    options.output.display()
+                ),
                 Step::Remove(p) => println!("# remove {}", p.display()),
                 Step::Stage { dir, app } => println!(
                     "# stage {} with an Applications link in {}",
