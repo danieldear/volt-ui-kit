@@ -820,6 +820,10 @@ impl<C: 'static> App<C> {
                 | self
                     .runtime
                     .dispatch_editor_selections(&mut self.handlers, &mut self.context)
+                    .map_err(|e| e.to_string())?
+                | self
+                    .runtime
+                    .dispatch_widths(&mut self.handlers, &mut self.context)
                     .map_err(|e| e.to_string())?)
         {
             self.window_update_in_progress = true;

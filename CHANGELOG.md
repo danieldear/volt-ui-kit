@@ -33,6 +33,10 @@
 - Tooltips fit their label instead of always being 240 px wide (long
   labels still wrap at 240) and centre on their target; menus and
   popovers keep aligning with the target's leading edge.
+- Containers take `.on_width(|state, width| ..)`: called after layout with
+  the container's width in logical points whenever it changes, so content
+  can adapt to the room it really has (a drawing scaled to fit, tighter
+  margins in a narrow pane). Hosts recompose once after a report.
 - Fixed: switching a window between opaque and translucent (for example
   with `background_from_state`) left the previous frame showing through
   translucent areas. Each switch made a new GPU surface, and on macOS every
