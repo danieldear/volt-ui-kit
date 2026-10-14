@@ -253,6 +253,8 @@ pub struct LayoutBox {
     pub(crate) on_selection: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_key: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_width: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -377,6 +379,9 @@ pub struct Runtime {
     document: Document,
     boxes: Vec<LayoutBox>,
     layout_boxes: Vec<LayoutBox>,
+    /// The last width reported to each `on_width` element, by id.
+    #[cfg(feature = "rust-ui")]
+    reported_widths: std::collections::HashMap<String, f32>,
     scrollbar_capture: Option<ScrollbarCapture>,
     focused: Option<String>,
     /// Focus arrived by keyboard (Tab, arrows, shortcuts), not a click.
@@ -450,6 +455,8 @@ impl Runtime {
             document,
             boxes: vec![],
             layout_boxes: vec![],
+            #[cfg(feature = "rust-ui")]
+            reported_widths: std::collections::HashMap::new(),
             scrollbar_capture: None,
             focused: None,
             focus_visible: false,
@@ -4064,6 +4071,8 @@ fn place(
         on_selection: n.on_selection.clone(),
         #[cfg(feature = "rust-ui")]
         on_key: n.on_key.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_width: n.on_width.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate

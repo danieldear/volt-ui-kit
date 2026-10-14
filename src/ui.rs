@@ -355,6 +355,8 @@ pub struct Element<C> {
     callback: Option<Callback<C>>,
     /// Selectable containers: the selected text changed.
     select_text: Option<ChangeText<C>>,
+    /// Containers: the laid-out width changed.
+    width: Option<ChangeNumber<C>>,
     validation_error: Option<String>,
 }
 impl<C> Element<C> {
@@ -371,6 +373,7 @@ impl<C> Element<C> {
             children: vec![],
             callback: None,
             select_text: None,
+            width: None,
             validation_error: None,
         }
     }
@@ -408,6 +411,7 @@ impl<C: 'static> Element<C> {
                 children,
                 callback,
                 select_text,
+                width,
                 validation_error,
             } = element;
             if let Some(message) = validation_error {
@@ -422,6 +426,13 @@ impl<C: 'static> Element<C> {
                     .on_text_changed(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_select_text = Some(name);
+            }
+            if let Some(f) = width {
+                let name = format!("rust-width-{}", *count);
+                handlers
+                    .on_value_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_width = Some(name);
             }
             if let Some(callback) = callback {
                 let name = format!("rust-action-{}", *count);
@@ -976,6 +987,14 @@ macro_rules! container_modifiers {
             /// selection changes (empty when it is cleared).
             pub fn on_select_text(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
                 self.0.select_text = Some(Box::new(f));
+                self
+            }
+            /// Called with the container's laid-out width in logical points
+            /// (whole points) after layout, whenever it changes: for content
+            /// that adapts to the room it gets, such as a drawing scaled to
+            /// fit. The host recomposes once after such a report.
+            pub fn on_width(mut self, f: impl FnMut(&mut C, f32) + 'static) -> Self {
+                self.0.width = Some(Box::new(f));
                 self
             }
             /// Logical inner spacing. The last setter affecting an edge wins,
