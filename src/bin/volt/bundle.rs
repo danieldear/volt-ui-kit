@@ -29,6 +29,33 @@ const USAGE_KEYS: &[&str] = &[
 ];
 pub const HELP: &str = "cargo volt bundle --binary PATH --output PATH.app --name NAME --identifier REVERSE.DNS.ID --version X.Y.Z --minimum-system-version X.Y[.Z]\n  [--build-number N[.N[.N]]] [--resource FILE ...] [--icon FILE.icns]\n  [--usage NSCameraUsageDescription=TEXT ...] [--sign ad-hoc|none]\nmacOS only; prebuilt Mach-O, system dylibs only, no overwrite; local ad-hoc signing is NOT notarization";
 
+/// A file type the app opens: `CFBundleDocumentTypes` entry. Content types
+/// name system or imported UTIs; extensions claim types macOS has no UTI for
+/// (Launch Services ignores extensions when content types are present, so
+/// give one or the other).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DocumentType {
+    pub name: String,
+    /// Editor, Viewer, Shell or None.
+    pub role: String,
+    /// Owner, Default, Alternate or None.
+    pub rank: String,
+    pub content_types: Vec<String>,
+    pub extensions: Vec<String>,
+    /// An `.icns` file in the bundle's resources, by file name.
+    pub icon: Option<String>,
+}
+
+/// A type the app declares for others' files: `UTImportedTypeDeclarations`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ImportedType {
+    pub identifier: String,
+    pub description: String,
+    pub conforms_to: Vec<String>,
+    pub extensions: Vec<String>,
+    pub mime_type: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct BundleOptions {
     pub binary: PathBuf,
@@ -42,6 +69,11 @@ pub struct BundleOptions {
     pub icon: Option<PathBuf>,
     pub usage: Vec<(String, String)>,
     pub sign: bool,
+    /// `LSApplicationCategoryType`, e.g. `public.app-category.productivity`.
+    pub category: Option<String>,
+    pub copyright: Option<String>,
+    pub document_types: Vec<DocumentType>,
+    pub imported_types: Vec<ImportedType>,
 }
 impl BundleOptions {
     pub fn parse(args: &[String]) -> io::Result<Self> {
@@ -122,6 +154,10 @@ impl BundleOptions {
             icon: fields.remove("--icon").map(PathBuf::from),
             usage,
             sign,
+            category: None,
+            copyright: None,
+            document_types: Vec::new(),
+            imported_types: Vec::new(),
         })
     }
     /// The executable file name, shown by Activity Monitor and crash reports:
@@ -230,6 +266,70 @@ impl BundleOptions {
             }
             text(value, 4096)?;
         }
+        if let Some(category) = &self.category {
+            if !category.starts_with("public.app-category.") || !uti(category) {
+                return Err(error("category must be a public.app-category.* identifier"));
+            }
+        }
+        if let Some(copyright) = &self.copyright {
+            text(copyright, 256)?;
+        }
+        if self.document_types.len() > 32 || self.imported_types.len() > 32 {
+            return Err(error("at most 32 document and 32 imported types"));
+        }
+        let icons: Vec<String> = self
+            .resources
+            .iter()
+            .chain(self.icon.iter())
+            .filter_map(|p| p.file_name()?.to_str().map(str::to_owned))
+            .collect();
+        for d in &self.document_types {
+            text(&d.name, 128)?;
+            if !["Editor", "Viewer", "Shell", "None"].contains(&d.role.as_str())
+                || !["Owner", "Default", "Alternate", "None"].contains(&d.rank.as_str())
+            {
+                return Err(error(
+                    "document type role must be Editor/Viewer/Shell/None and rank Owner/Default/Alternate/None",
+                ));
+            }
+            if d.content_types.is_empty() == d.extensions.is_empty() {
+                return Err(error(
+                    "a document type lists content types or extensions (Launch Services ignores extensions beside content types)",
+                ));
+            }
+            if d.content_types.len() > 64
+                || d.extensions.len() > 64
+                || !d.content_types.iter().all(|t| uti(t))
+                || !d.extensions.iter().all(|e| extension(e))
+            {
+                return Err(error(
+                    "document type content types must be UTIs and extensions plain ASCII",
+                ));
+            }
+            if d.icon.as_ref().is_some_and(|i| !icons.contains(i)) {
+                return Err(error("document type icon must be the bundle icon or a resource"));
+            }
+        }
+        for t in &self.imported_types {
+            text(&t.description, 256)?;
+            if !uti(&t.identifier)
+                || t.conforms_to.is_empty()
+                || t.conforms_to.len() > 16
+                || !t.conforms_to.iter().all(|c| uti(c))
+                || t.extensions.is_empty()
+                || t.extensions.len() > 64
+                || !t.extensions.iter().all(|e| extension(e))
+                || t.mime_type.as_ref().is_some_and(|m| {
+                    m.len() > 128
+                        || !m.contains('/')
+                        || m.chars().any(|c| c.is_whitespace() || c.is_control())
+                })
+            {
+                return Err(error(
+                    "imported type needs a UTI, conformances, extensions and an optional MIME type",
+                ));
+            }
+        }
         Ok(())
     }
     pub fn plist(&self) -> String {
@@ -258,9 +358,70 @@ impl BundleOptions {
         for (key, value) in &self.usage {
             entry(&mut xml, key, value);
         }
+        if let Some(category) = &self.category {
+            entry(&mut xml, "LSApplicationCategoryType", category);
+        }
+        if let Some(copyright) = &self.copyright {
+            entry(&mut xml, "NSHumanReadableCopyright", copyright);
+        }
+        if !self.document_types.is_empty() {
+            xml.push_str("<key>CFBundleDocumentTypes</key><array>\n");
+            for d in &self.document_types {
+                xml.push_str("<dict>\n");
+                entry(&mut xml, "CFBundleTypeName", &d.name);
+                entry(&mut xml, "CFBundleTypeRole", &d.role);
+                entry(&mut xml, "LSHandlerRank", &d.rank);
+                if let Some(icon) = &d.icon {
+                    entry(&mut xml, "CFBundleTypeIconFile", icon);
+                }
+                array(&mut xml, "LSItemContentTypes", &d.content_types);
+                array(&mut xml, "CFBundleTypeExtensions", &d.extensions);
+                xml.push_str("</dict>\n");
+            }
+            xml.push_str("</array>\n");
+        }
+        if !self.imported_types.is_empty() {
+            xml.push_str("<key>UTImportedTypeDeclarations</key><array>\n");
+            for t in &self.imported_types {
+                xml.push_str("<dict>\n");
+                entry(&mut xml, "UTTypeIdentifier", &t.identifier);
+                entry(&mut xml, "UTTypeDescription", &t.description);
+                array(&mut xml, "UTTypeConformsTo", &t.conforms_to);
+                xml.push_str("<key>UTTypeTagSpecification</key><dict>\n");
+                array(&mut xml, "public.filename-extension", &t.extensions);
+                if let Some(mime) = &t.mime_type {
+                    entry(&mut xml, "public.mime-type", mime);
+                }
+                xml.push_str("</dict>\n</dict>\n");
+            }
+            xml.push_str("</array>\n");
+        }
         xml.push_str("<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n");
         xml
     }
+}
+/// A uniform type identifier: dotted ASCII letters, digits, `-` and `_`.
+fn uti(value: &str) -> bool {
+    value.len() <= 128
+        && value.contains('.')
+        && value.split('.').all(|p| {
+            !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+}
+fn extension(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 16
+        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+fn array(xml: &mut String, key: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+    xml.push_str(&format!("<key>{}</key><array>", escape(key)));
+    for v in values {
+        xml.push_str(&format!("<string>{}</string>", escape(v)));
+    }
+    xml.push_str("</array>\n");
 }
 fn text(value: &str, limit: usize) -> io::Result<()> {
     if value.trim().is_empty() || value.len() > limit || value.chars().any(char::is_control) {

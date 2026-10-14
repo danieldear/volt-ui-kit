@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `cargo volt bundle` reads the app from `[package.metadata.volt.bundle]`
+  in Cargo.toml and builds it (`--universal` for Apple silicon and Intel).
+  Bundles can declare document types (by UTI or extension), imported UTIs,
+  a category and a copyright. New `cargo volt release`: Developer ID
+  signing with the hardened runtime, notarization and stapling, and a
+  signed, notarized disk image; `--dry-run` prints each step.
 - Shortcuts may use unshifted punctuation keys as well as letters and
   digits (`,` `.` `;` `'` `/` `[` `]` `\` `-` `=` `` ` ``), so apps can bind
   ⌘, for Settings, ⌘=/⌘− for zoom and ⌘[/⌘] for history.
