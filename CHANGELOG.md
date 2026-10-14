@@ -33,6 +33,12 @@
 - Tooltips fit their label instead of always being 240 px wide (long
   labels still wrap at 240) and centre on their target; menus and
   popovers keep aligning with the target's leading edge.
+- Fixed: emoji in bold (or other non-regular) text could show as a
+  black-and-white outline. Font fallback prefers any installed font with a
+  matching weight that has the code point, such as a bold Nerd Font, over
+  the regular-only colour emoji font. Emoji graphemes now always use the
+  platform's colour emoji font (Apple Color Emoji, Segoe UI Emoji or Noto
+  Color Emoji) when it is installed.
 - Fixed: after a double-click selected a word in selectable text, the
   slightest pointer movement before release shrank the selection to the
   pointer. Double- and triple-click drags now extend by whole words or
