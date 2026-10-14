@@ -68,6 +68,8 @@ pub struct State {
     pub dash_quarter: Option<usize>,
     /// Charts page: the selected column in the interactive demo.
     pub chart_pick: Option<usize>,
+    /// Rich text page: the last link target clicked.
+    pub last_link: Option<String>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -127,6 +129,7 @@ impl Default for State {
             dash_month: None,
             dash_quarter: None,
             chart_pick: None,
+            last_link: None,
         }
     }
 }
@@ -1197,6 +1200,173 @@ pagination(app.page, 20).on_change(|app: &mut App, p| app.page = p)"#,
                 "image_view(Option<&Image>, w, h)",
                 "An image or a placeholder.",
             ),
+        ],
+    }
+}
+
+// -------------------------------------------------------------- Rich text
+
+pub fn rich_text_doc(app: &App) -> Doc {
+    let runs = rich_text([
+        span("Rich text mixes "),
+        span("bold").bold(),
+        span(", "),
+        span("italic").italic(),
+        span(", "),
+        span("inline code").code(),
+        span(", "),
+        span("colour").color(ColorToken::Primary),
+        span(", "),
+        span("highlights").background(ColorToken::Warning.alpha(30)),
+        span(", "),
+        span("underline").underline(),
+        span(" and "),
+        span("strikethrough").strikethrough(),
+        span(" in one paragraph."),
+    ])
+    .font_size(15.)
+    .line_height(1.6)
+    .width(560.);
+    let paragraph = |align: TextAlign, lines: u16| {
+        rich_text([
+            span("Layout treats the whole paragraph as one text: "),
+            span("runs wrap across lines").bold(),
+            span(", keep their styles where they break, and "),
+            span("max_lines").code(),
+            span(" truncates with an ellipsis after the last run that fits. "),
+            span("Alignment").italic(),
+            span(" applies to every line."),
+        ])
+        .font_size(14.)
+        .line_height(1.55)
+        .text_align(align)
+        .max_lines(lines)
+        .width(260.)
+    };
+    let wrapping = hstack![
+        paragraph(TextAlign::Start, 0),
+        paragraph(TextAlign::Center, 0),
+        paragraph(TextAlign::Start, 2),
+    ]
+    .gap(24., Axis::Horizontal)
+    .wrap(true);
+    let links = vstack![
+        rich_text([
+            span("Links are runs too: read the "),
+            span("getting started guide").link("docs/getting-started.md"),
+            span(", browse the "),
+            span("components").link("docs/components.md"),
+            span(" or open "),
+            span("the repository").link("https://github.com/danieldear/volt-ui-kit"),
+            span(". They underline on hover and report their target."),
+        ])
+        .key("rich-links-text")
+        .font_size(15.)
+        .line_height(1.6)
+        .on_link(|app: &mut App, target| app.kit.last_link = Some(target)),
+        muted(match &app.kit.last_link {
+            Some(target) => format!("Clicked: {target}"),
+            None => "Click a link.".into(),
+        }),
+    ]
+    .gap(10., Axis::Vertical)
+    .width(560.);
+    let markdown = vstack![
+        text("Install").font_size(20.).font_weight(700),
+        rich_text([
+            span("Add "),
+            span("volt-ui-kit").code(),
+            span(" with the "),
+            span("native-gpu").code(),
+            span(" feature, then call "),
+            span("Application::new").code(),
+            span(". The "),
+            span("Getting started").bold(),
+            span(" guide walks through a first window; "),
+            span("nothing else is required").italic(),
+            span("."),
+        ])
+        .font_size(15.)
+        .line_height(1.6),
+        rich_text([
+            span("Note: ").bold().color(ColorToken::Info),
+            span("the minimum Rust version is now "),
+            span("1.89").bold(),
+            span(" (it was "),
+            span("1.87").strikethrough().color(ColorToken::Muted),
+            span(")."),
+        ])
+        .font_size(14.),
+    ]
+    .gap(10., Axis::Vertical)
+    .width(560.);
+    Doc {
+        sections: vec![
+            section(
+                "rich-runs",
+                "Styled runs",
+                "Each span can change weight, slant, font, colour, background or decoration. Unset properties inherit the text's style.",
+                runs,
+                r#"rich_text([
+    span("Rich text mixes "),
+    span("bold").bold(),
+    span("inline code").code(),
+    span("colour").color(ColorToken::Primary),
+    span("highlights").background(ColorToken::Warning.alpha(30)),
+    span("strikethrough").strikethrough(),
+])
+.font_size(15.)
+.line_height(1.6)"#,
+            ),
+            section(
+                "rich-wrapping",
+                "Wrapping, alignment and truncation",
+                "The paragraph wraps as one text: start-aligned, centred, and cut to two lines.",
+                wrapping,
+                r#"rich_text([span("Layout treats "), span("runs wrap").bold(), span("max_lines").code()])
+    .text_align(TextAlign::Center)
+    .max_lines(2)
+    .width(260.)"#,
+            ),
+            section(
+                "rich-links",
+                "Links",
+                "Give a run a target with .link(..) and handle clicks on the text with .on_link(..).",
+                links,
+                r#"rich_text([
+    span("Read the "),
+    span("guide").link("docs/getting-started.md"),
+    span(" or "),
+    span("the repository").link("https://github.com/danieldear/volt-ui-kit"),
+])
+.on_link(|app: &mut App, target| app.open(target))"#,
+            ),
+            section(
+                "rich-markdown",
+                "Inline Markdown",
+                "The building block for rendering Markdown paragraphs: code spans, emphasis and notes.",
+                markdown,
+                r#"rich_text([
+    span("Add "),
+    span("volt-ui-kit").code(),
+    span(", then call "),
+    span("Application::new").code(),
+    span("; "),
+    span("nothing else is required").italic(),
+])"#,
+            ),
+        ],
+        api: vec![
+            ("rich_text(spans)", "One wrapping paragraph from spans; takes every text modifier."),
+            ("span(text)", "A run; plain strings convert too."),
+            (".bold() / .weight(w)", "Weight 700, or 100–900 in steps of 100."),
+            (".italic()", "Italic style."),
+            (".code()", "Monospace on a subtle rounded background."),
+            (".family(name)", "Any installed family, or monospace / serif / sans-serif."),
+            (".color(c) / .background(c)", "Hex or theme tokens; backgrounds are rounded chips."),
+            (".underline() / .strikethrough()", "Decorations in the run's colour."),
+            (".link(target) + .on_link(f)", "Clickable runs: pointer cursor, hover underline, target reported to f."),
+            (".size(scale)", "Font size relative to the text; .code() uses 0.88."),
         ],
     }
 }

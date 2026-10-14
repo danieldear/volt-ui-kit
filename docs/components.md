@@ -41,6 +41,40 @@ actions.build()?;
 - `button_bar![..]` groups actions; `.joined(true)` makes a segmented strip.
   `toolbar![..]` lays out a horizontal application toolbar.
 
+## Rich text
+
+`rich_text` lays out one paragraph made of differently styled runs. It wraps,
+aligns and truncates as a single text and takes every text modifier:
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let note: Element<()> = rich_text([
+    span("Run "),
+    span("cargo test").code(),
+    span(" before you "),
+    span("push").bold(),
+    span(", or CI will fail.").color(ColorToken::Error),
+])
+.font_size(15.)
+.line_height(1.6)
+.max_lines(3)
+.into();
+note.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+- A span can set `.bold()` or `.weight(w)`, `.italic()`, `.family(name)`,
+  `.size(scale)`, `.color(c)`, `.background(c)` (a rounded chip),
+  `.underline()` and `.strikethrough()`. `.code()` is monospace at 0.88× on a
+  subtle background. Unset properties inherit the text's style.
+- `.link(target)` makes a run a link: primary colour, pointer cursor and an
+  underline on hover. `.on_link(|app, target| ..)` on the text receives the
+  target of the link that was clicked. Keyboard focus for links is not
+  available yet.
+- Colours apply when drawing, so a colour change never reshapes the text.
+- Runs keep their styles where lines break; `max_lines` ends with an ellipsis.
+- Up to 1,024 spans per text, within the usual 8 KiB of text.
+
 ## Navigation and tabs
 
 ```rust

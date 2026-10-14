@@ -7,8 +7,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-/// Current lightweight text editor limit; oversized files are rejected, never truncated.
-pub const MAX_TEXT_FILE_BYTES: usize = 8192;
+/// The multiline editor's limit (4 MiB); oversized files are rejected, never truncated.
+pub const MAX_TEXT_FILE_BYTES: usize = 4 * 1024 * 1024;
 /// Replacement is always explicit. Matching detects an external edit before commit,
 /// but cannot eliminate another process's race between the check and rename.
 #[derive(Clone, Copy, Debug)]
@@ -45,7 +45,7 @@ pub fn read_text_file(path: &Path) -> io::Result<String> {
     if bytes.len() > MAX_TEXT_FILE_BYTES {
         return Err(error(
             io::ErrorKind::InvalidData,
-            "text file exceeds the 8 KiB editor limit",
+            "text file exceeds the 4 MiB editor limit",
         ));
     }
     String::from_utf8(bytes)
@@ -68,7 +68,7 @@ pub fn save_text_file(path: &Path, text: &str, policy: SavePolicy<'_>) -> io::Re
     if text.len() > MAX_TEXT_FILE_BYTES {
         return Err(error(
             io::ErrorKind::InvalidInput,
-            "text exceeds the 8 KiB editor limit",
+            "text exceeds the 4 MiB editor limit",
         ));
     }
     if path.file_name().is_none() {

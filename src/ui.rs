@@ -258,12 +258,17 @@ type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
 type ContextCallback<C> = Box<dyn FnMut(&mut C, [f32; 2])>;
 type WindowCallback<C> = Box<dyn FnMut(&mut C, std::ops::Range<usize>)>;
 type FilesCallback<C> = Box<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>;
+type SelectionCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::TextSelection)>;
+type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
     Text {
         change: Option<ChangeText<C>>,
         submit: Option<Click<C>>,
+        cancel: Option<Click<C>>,
+        selection: Option<SelectionCallback<C>>,
+        key: Option<KeyCallback<C>>,
     },
     Number(ChangeNumber<C>),
     Range {
@@ -274,6 +279,7 @@ enum Callback<C> {
     Context(ContextCallback<C>),
     Window(WindowCallback<C>),
     Files(FilesCallback<C>),
+    Link(ChangeText<C>),
 }
 mod bars;
 mod charts;
@@ -282,10 +288,12 @@ mod dates;
 mod dialogs;
 mod disclosure;
 mod display;
+mod rich_text;
 pub use charts::{
     area_chart, candlestick_chart, donut_chart, nice_ticks, short_number, stacked_bar_chart,
     AreaChart, Candle, CandlestickChart, DonutChart, StackedBarChart,
 };
+pub use rich_text::{rich_text, span, Span};
 mod forms;
 pub use disclosure::{
     accordion, collapsible, command, command_palette, drawer, toaster, Accordion, Collapsible,
@@ -321,8 +329,9 @@ pub use bars::{
     SelectionControl, Tab, TabItem, TabPlacement, Tabs, Toolbar,
 };
 pub use data::{
-    data_item, table, table_column, table_row, tree_node, tree_view, virtual_list, DataItem,
-    SortDirection, Table, TableColumn, TableRow, TreeNode, TreeView, VirtualList,
+    data_item, lazy_list, table, table_column, table_row, tree_node, tree_view, virtual_list,
+    DataItem, LazyList, SortDirection, Table, TableColumn, TableRow, TreeNode, TreeView,
+    VirtualList,
 };
 pub use dialogs::{dialog, Dialog};
 pub use inputs::{text_area, text_field, TextInput};
@@ -344,6 +353,10 @@ pub struct Element<C> {
     auto_id: bool,
     children: Vec<Element<C>>,
     callback: Option<Callback<C>>,
+    /// Selectable containers: the selected text changed.
+    select_text: Option<ChangeText<C>>,
+    /// Containers: the laid-out width changed.
+    width: Option<ChangeNumber<C>>,
     validation_error: Option<String>,
 }
 impl<C> Element<C> {
@@ -359,6 +372,8 @@ impl<C> Element<C> {
             auto_id: true,
             children: vec![],
             callback: None,
+            select_text: None,
+            width: None,
             validation_error: None,
         }
     }
@@ -395,6 +410,8 @@ impl<C: 'static> Element<C> {
                 auto_id,
                 children,
                 callback,
+                select_text,
+                width,
                 validation_error,
             } = element;
             if let Some(message) = validation_error {
@@ -402,6 +419,20 @@ impl<C: 'static> Element<C> {
             }
             if auto_id {
                 node.id = path.clone();
+            }
+            if let Some(f) = select_text {
+                let name = format!("rust-select-{}", *count);
+                handlers
+                    .on_text_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_select_text = Some(name);
+            }
+            if let Some(f) = width {
+                let name = format!("rust-width-{}", *count);
+                handlers
+                    .on_value_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_width = Some(name);
             }
             if let Some(callback) = callback {
                 let name = format!("rust-action-{}", *count);
@@ -418,7 +449,27 @@ impl<C: 'static> Element<C> {
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.on_toggle_changed = Some(name);
                     }
-                    Callback::Text { change, submit } => {
+                    Callback::Text {
+                        change,
+                        submit,
+                        cancel,
+                        selection,
+                        key,
+                    } => {
+                        if let Some(f) = selection {
+                            let action = format!("{name}-selection");
+                            handlers
+                                .on_selection_changed(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_selection = Some(action);
+                        }
+                        if let Some(f) = key {
+                            let action = format!("{name}-key");
+                            handlers
+                                .on_key(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_key = Some(action);
+                        }
                         if let Some(f) = change {
                             let action = format!("{name}-change");
                             handlers
@@ -432,6 +483,13 @@ impl<C: 'static> Element<C> {
                                 .on_activate(&action, f)
                                 .map_err(|e| DocumentError(e.to_string()))?;
                             node.on_submit = Some(action);
+                        }
+                        if let Some(f) = cancel {
+                            let action = format!("{name}-cancel");
+                            handlers
+                                .on_activate(&action, f)
+                                .map_err(|e| DocumentError(e.to_string()))?;
+                            node.on_cancel = Some(action);
                         }
                     }
                     Callback::Number(f) => {
@@ -477,6 +535,12 @@ impl<C: 'static> Element<C> {
                             .on_files_dropped(&name, f)
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.on_files_dropped = Some(name);
+                    }
+                    Callback::Link(f) => {
+                        handlers
+                            .on_link(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        node.ext.on_link = Some(name);
                     }
                     Callback::Dismiss(f) => {
                         handlers
@@ -630,6 +694,9 @@ macro_rules! modifiers {
             pub fn truncate(mut self) -> Self { self.$($field)*.style.max_lines = Some(1); self }
             /// Keep text on one line; overflow is clipped (`whitespace-nowrap`).
             pub fn no_wrap(mut self, value: bool) -> Self { self.$($field)*.style.no_wrap = Some(value); self }
+            /// Text inside can be selected with the pointer and copied
+            /// (inherited); `false` opts a subtree out, e.g. list markers.
+            pub fn selectable(mut self, value: bool) -> Self { self.$($field)*.ext.selectable = Some(value); self }
             pub fn underline(mut self, value: bool) -> Self { self.$($field)*.style.underline = Some(value); self }
             pub fn strikethrough(mut self, value: bool) -> Self { self.$($field)*.style.strikethrough = Some(value); self }
             /// Upper-case the text and label (`uppercase`).
@@ -916,6 +983,20 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// Selectable containers: called with the selected text when the
+            /// selection changes (empty when it is cleared).
+            pub fn on_select_text(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
+                self.0.select_text = Some(Box::new(f));
+                self
+            }
+            /// Called with the container's laid-out width in logical points
+            /// (whole points) after layout, whenever it changes: for content
+            /// that adapts to the room it gets, such as a drawing scaled to
+            /// fit. The host recomposes once after such a report.
+            pub fn on_width(mut self, f: impl FnMut(&mut C, f32) + 'static) -> Self {
+                self.0.width = Some(Box::new(f));
+                self
+            }
             /// Logical inner spacing. The last setter affecting an edge wins,
             /// replacing that edge's entire responsive rule set, not merging it.
             pub fn padding(
@@ -1042,6 +1123,7 @@ modifiers!(ContextMenu, [T], [0.node], [0.auto_id]);
 modifiers!(Popover, [0.node], [0.auto_id]);
 modifiers!(Tooltip, [0.node], [0.auto_id]);
 modifiers!(VirtualList, [T, F], [0.node], [0.auto_id]);
+modifiers!(LazyList, [F], [0.node], [0.auto_id]);
 modifiers!(Table, [T, K], [0.node], [0.auto_id]);
 modifiers!(TreeView, [T], [0.node], [0.auto_id]);
 modifiers!(Progress, [0.node], [0.auto_id]);
@@ -1073,21 +1155,21 @@ pub mod prelude {
     pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
     pub use super::{
         badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
-        divider, grid, hstack, loading, menu, menu_item, menu_separator, menu_submenu, navigation,
-        navigation_item, panel, popover, progress, progress_indeterminate, range_slider,
-        responsive, row, segmented_control, select, select_item, separator, slider, spacer,
-        spinner, split, stack, tab, tab_bar, tab_item, table, table_column, table_row, tabs, text,
-        text_area, text_field, toggle, toolbar, tooltip, tree_node, tree_view, virtual_list,
-        vstack, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage, BorderStyle,
-        Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu, ControlSize,
-        Corner, CornerSet, Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge, Edges,
-        Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image, ImageFit, ImagePosition,
-        Interaction, Justify, Menu, MenuItem, Navigation, NavigationItem, NavigationPlacement,
-        Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem,
-        SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle, SplitPane, Tab,
-        TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode,
-        Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
-        VisualStyle,
+        divider, grid, hstack, lazy_list, loading, menu, menu_item, menu_separator, menu_submenu,
+        navigation, navigation_item, panel, popover, progress, progress_indeterminate,
+        range_slider, responsive, row, segmented_control, select, select_item, separator, slider,
+        spacer, spinner, split, stack, tab, tab_bar, tab_item, table, table_column, table_row,
+        tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node, tree_view,
+        virtual_list, vstack, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage,
+        BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
+        ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge,
+        Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image, ImageFit,
+        ImagePosition, Interaction, Justify, LazyList, Menu, MenuItem, Navigation, NavigationItem,
+        NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
+        Select, SelectItem, SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle,
+        SplitPane, Tab, TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextAlign,
+        TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme,
+        VectorPath, VirtualList, VisualStyle,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
@@ -1098,4 +1180,5 @@ pub mod prelude {
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
+    pub use super::{rich_text, span, Span};
 }

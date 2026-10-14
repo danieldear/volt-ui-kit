@@ -39,8 +39,11 @@ pub(super) struct DevState<C> {
 pub(super) fn dev_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("VOLT_DEV_STATE").map(std::path::PathBuf::from)
 }
+pub(super) type LaunchHook<C> = Box<dyn FnOnce(&mut C)>;
 pub(super) struct HostExtensions<C> {
     pub renderer: Option<RendererPreference>,
+    /// Platform setup to run once the native application object exists.
+    pub before_launch: Option<LaunchHook<C>>,
     pub desktop: Option<super::system::DesktopConfig>,
     pub command: Option<CommandCallback<C>>,
     pub commands: CommandRegistry<C>,
@@ -58,6 +61,7 @@ impl<C> Default for HostExtensions<C> {
     fn default() -> Self {
         Self {
             renderer: None,
+            before_launch: None,
             desktop: None,
             command: None,
             commands: CommandRegistry::new(),
@@ -197,7 +201,8 @@ impl<C: 'static> Application<C> {
     /// Derive the window background from application state after UI updates.
     /// This changes the root clear only, never text/control opacity. Invalid
     /// updates are rejected; the previous surface configuration remains active.
-    /// Switching between opaque and translucent modes recreates the GPU surface.
+    /// Switching between opaque and translucent modes reconfigures the GPU
+    /// surface in place.
     pub fn background_from_state(
         mut self,
         background: impl Fn(&C) -> WindowBackground + 'static,
@@ -258,6 +263,14 @@ impl<C: 'static> Application<C> {
         let (sender, pump) = messages::channel(update);
         initialize(&mut self.context, sender);
         self.messages = Some(pump);
+        self
+    }
+    /// Run `setup` once the native event loop and application object exist,
+    /// just before the run loop starts: the place for platform integration
+    /// that must be in place for launch events, such as receiving the files
+    /// Finder asks the app to open.
+    pub fn before_launch(mut self, setup: impl FnOnce(&mut C) + 'static) -> Self {
+        self.extensions.before_launch = Some(Box::new(setup));
         self
     }
     /// Optional native menus/tray. Requires `native-desktop` on macOS.

@@ -272,6 +272,19 @@ pub struct Node {
     pub(crate) on_text_changed: Option<String>,
     #[serde(skip)]
     pub(crate) on_submit: Option<String>,
+    /// Escape while the field has focus.
+    #[serde(skip)]
+    pub(crate) on_cancel: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_selection: Option<String>,
+    /// Selected read-only text changed (selectable containers).
+    #[serde(skip)]
+    pub(crate) on_select_text: Option<String>,
+    /// Reports the laid-out width when it changes.
+    #[serde(skip)]
+    pub(crate) on_width: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_key: Option<String>,
     #[serde(skip)]
     pub(crate) slider: Option<SliderProps>,
     #[serde(skip)]
@@ -339,7 +352,30 @@ pub(crate) struct EditorOptions {
     pub enter_submits: bool,
     /// Extra logical inset (leading, trailing) for icons inside the field.
     pub inset: [f32; 2],
+    /// Take keyboard focus when the field first appears.
+    pub autofocus: bool,
+    /// Multiline only: Tab indents instead of moving focus.
+    pub tab_indents: bool,
+    /// Keys the application handles instead of the editor.
+    #[cfg(feature = "rust-ui")]
+    pub keys: Vec<super::runtime::editing::EditKey>,
+    /// Select `start..end` (caret at `end`) when the request number changes.
+    pub select: Option<(usize, usize, u32)>,
+    /// Scroll so the line holding this byte is at the top, when the request
+    /// number changes.
+    pub scroll_to: Option<(usize, u32)>,
+    /// Text colours by byte range, e.g. syntax highlighting.
+    pub highlights: Option<std::sync::Arc<EditorHighlights>>,
 }
+/// Coloured byte ranges for an editor: sorted, non-overlapping ranges that
+/// each name a colour in `palette` (theme tokens or hex).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditorHighlights {
+    pub palette: Vec<String>,
+    pub ranges: Vec<(usize, usize, u8)>,
+}
+/// Text a multiline editor may hold: whole documents, not just fields.
+pub(crate) const MAX_EDITOR_TEXT: usize = 4 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SliderProps {
     pub value: f32,
@@ -378,7 +414,16 @@ pub(crate) struct VirtualListProps {
     pub row_height: f32,
     pub overscan: usize,
     pub on_window_change: Option<String>,
+    /// Variable-height rows: an estimated logical height per row (one per
+    /// row). Mounted rows are measured; estimates stand in for the rest.
+    pub estimates: Option<std::sync::Arc<[f32]>>,
+    /// Bumped by the app when row contents change; resets measurements.
+    pub generation: u64,
+    /// Scroll so row `.0` is at the top whenever `.1` changes.
+    pub scroll_to_index: Option<(usize, u32)>,
 }
+/// Most rows a variable-height list mounts at once.
+pub(crate) const MAX_LAZY_WINDOW: usize = 256;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
 pub(crate) struct SplitProps {
@@ -503,6 +548,11 @@ impl Node {
             editor: None,
             on_text_changed: None,
             on_submit: None,
+            on_cancel: None,
+            on_selection: None,
+            on_select_text: None,
+            on_width: None,
+            on_key: None,
             slider: None,
             overlay: None,
             on_context: None,
@@ -730,6 +780,11 @@ impl Document {
                 (&n.on_toggle_changed, EventKind::ToggleChanged),
                 (&n.on_text_changed, EventKind::TextChanged),
                 (&n.on_submit, EventKind::Activate),
+                (&n.on_cancel, EventKind::Activate),
+                (&n.on_selection, EventKind::SelectionChanged),
+                (&n.on_select_text, EventKind::TextChanged),
+                (&n.on_width, EventKind::ValueChanged),
+                (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
             ] {
@@ -1073,10 +1128,27 @@ fn check_node(
             "accessible label must be nonempty, control-free and at most 8 KiB",
         ));
     }
-    if n.text.as_ref().is_some_and(|v| v.len() > 8192)
+    let text_limit = if n.editor.as_ref().is_some_and(|e| e.multiline) {
+        MAX_EDITOR_TEXT
+    } else {
+        8192
+    };
+    if n.text.as_ref().is_some_and(|v| v.len() > text_limit)
         || n.label.as_ref().is_some_and(|v| v.len() > 8192)
     {
         return Err(error(path, "text exceeds 8 KiB limit"));
+    }
+    if !n.ext.spans.is_empty()
+        && (n.kind != Kind::Text
+            || !super::extras::TextSpan::validate_all(
+                &n.ext.spans,
+                n.text.as_deref().unwrap_or(""),
+            ))
+    {
+        return Err(error(
+            path,
+            "rich text spans must be sorted, disjoint, on character boundaries of literal text, at most 1024, with valid styles",
+        ));
     }
     if matches!(n.kind, Kind::Text | Kind::Badge) && (n.text.is_some() == n.bind_text.is_some()) {
         return Err(error(
@@ -1107,6 +1179,30 @@ fn check_node(
                 "invalid editable text role or missing on_change",
             ));
         }
+        if let Some(h) = &editor.highlights {
+            let len = n.text.as_ref().map_or(0, String::len);
+            let mut last = 0;
+            let ordered = h.ranges.iter().all(|&(start, end, color)| {
+                let ok = start >= last
+                    && start < end
+                    && end <= len
+                    && usize::from(color) < h.palette.len();
+                last = end;
+                ok
+            });
+            if h.ranges.len() > 200_000
+                || h.palette.len() > 64
+                || !ordered
+                || h.palette
+                    .iter()
+                    .any(|c| parse_color(c).is_none() && crate::ColorToken::parse(c).is_none())
+            {
+                return Err(error(
+                    path,
+                    "editor highlights must be ordered, disjoint ranges inside the text with palette colours",
+                ));
+            }
+        }
     }
     if let Some(slider) = &n.slider {
         if n.kind != Kind::Panel
@@ -1136,10 +1232,25 @@ fn check_node(
         }
     }
     if let Some(list) = &n.virtual_list {
+        let variable = list.estimates.as_ref().is_some_and(|e| {
+            e.len() == list.count
+                && e.iter()
+                    .all(|h| h.is_finite() && (1. ..=100_000.).contains(h))
+        });
+        if list.estimates.is_some() && !variable {
+            return Err(error(
+                path,
+                "variable list needs one finite estimate (1–100000) per row",
+            ));
+        }
+        let max_window = if variable { MAX_LAZY_WINDOW } else { 96 };
         if n.kind != Kind::Panel
             || list.start > list.end
             || list.end > list.count
-            || list.end - list.start > 96
+            || list.end - list.start > max_window
+            || list
+                .scroll_to_index
+                .is_some_and(|(i, _)| i >= list.count.max(1))
             || list.overscan > 16
             || list.count > 10_000_000
             || !list.row_height.is_finite()
@@ -1213,6 +1324,11 @@ fn check_node(
         &n.on_toggle_changed,
         &n.on_text_changed,
         &n.on_submit,
+        &n.on_cancel,
+        &n.on_selection,
+        &n.on_select_text,
+        &n.on_width,
+        &n.on_key,
         &n.on_context,
         &n.on_files_dropped,
     ]
