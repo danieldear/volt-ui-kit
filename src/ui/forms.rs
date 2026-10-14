@@ -1233,6 +1233,8 @@ impl<C> DropZone<C> {
         self.multiple = value;
         self
     }
+    /// The zone's minimum height; it grows to fit its icon, text and
+    /// Browse button rather than clipping them.
     pub fn height(mut self, value: f32) -> Self {
         self.height = value;
         self
@@ -1306,7 +1308,7 @@ impl<C: 'static> From<DropZone<C>> for Element<C> {
         let (extensions, multiple) = (d.extensions, d.multiple);
         let mut zone = vstack(copy)
             .key(key)
-            .height(d.height)
+            .min_height(d.height)
             .flow(Flow::Center)
             .gap(8., Axis::Vertical)
             .padding(16., Edge::All)

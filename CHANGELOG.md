@@ -26,6 +26,8 @@
 - Tooltips fit their label instead of always being 240 px wide (long
   labels still wrap at 240) and centre on their target; menus and
   popovers keep aligning with the target's leading edge.
+- Drop zones treat `.height(..)` as a minimum and grow to fit their icon,
+  title, hint and button instead of squeezing them together.
 - Icons: `Sidebar`, `FileText`, `Type` and `Columns`.
 - Text areas hold whole documents: multiline editors take up to 4 MiB
   (single-line fields stay at 8 KiB), reflow only the lines that changed,
