@@ -33,6 +33,10 @@
 - Tooltips fit their label instead of always being 240 px wide (long
   labels still wrap at 240) and centre on their target; menus and
   popovers keep aligning with the target's leading edge.
+- Fixed: after a double-click selected a word in selectable text, the
+  slightest pointer movement before release shrank the selection to the
+  pointer. Double- and triple-click drags now extend by whole words or
+  paragraphs from the first one, in either direction, as macOS does.
 - Containers take `.on_width(|state, width| ..)`: called after layout with
   the container's width in logical points whenever it changes, so content
   can adapt to the room it really has (a drawing scaled to fit, tighter
