@@ -3,7 +3,7 @@
 //! notarization, stapling and a signed disk image. Every external step is a
 //! program with arguments (no shell); `--dry-run` prints them.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
-use super::bundle::{self, BundleOptions, DocumentType, ImportedType};
+use super::bundle::{self, AppExtension, BundleOptions, DocumentType, ImportedType};
 use super::error;
 use serde_json::Value;
 use std::{
@@ -35,7 +35,14 @@ strip = false                         # keep symbol names (stripped by default)
 name = \"Markdown Document\"
 role = \"Editor\"                       # Editor, Viewer, Shell, None
 rank = \"Default\"                      # Owner, Default, Alternate, None
-content-types = [\"net.daringfireball.markdown\"]   # or: extensions = [\"mdown\"]";
+content-types = [\"net.daringfireball.markdown\"]   # or: extensions = [\"mdown\"]
+[[package.metadata.volt.bundle.extensions]]   # app extensions, e.g. Quick Look
+name = \"My App Preview\"
+identifier = \"com.example.myapp.preview\"
+binary = \"myapp-preview\"                 # another [[bin]] of the package
+point = \"com.apple.quicklook.preview\"
+principal-class = \"MyAppPreviewProvider\"
+attributes = { QLIsDataBasedPreview = true, QLSupportedContentTypes = [\"net.daringfireball.markdown\"] }";
 
 /// The package and its bundle metadata, from `cargo metadata`.
 #[derive(Debug)]
@@ -45,6 +52,8 @@ pub struct Manifest {
     pub package: String,
     pub version: String,
     pub bin: String,
+    /// Every bin target, for app extensions' binaries.
+    pub bins: Vec<String>,
     pub metadata: Value,
 }
 
@@ -111,6 +120,7 @@ pub fn manifest_from_json(json: &Value, manifest_path: Option<&Path>) -> io::Res
         package: name,
         version: string(&package["version"], "version")?,
         bin,
+        bins: bins.iter().map(|b| (*b).to_owned()).collect(),
         metadata,
     })
 }
@@ -139,6 +149,16 @@ fn optional(v: &Value, key: &str) -> io::Result<Option<String>> {
 }
 
 /// Bundle options from the metadata, for `binary`, written to `output`.
+/// The bin targets of `extensions` in the bundle metadata.
+fn extension_bins(m: &Manifest) -> Vec<String> {
+    m.metadata["extensions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["binary"].as_str().map(str::to_owned))
+        .collect()
+}
+
 pub fn options_from_manifest(
     m: &Manifest,
     binary: PathBuf,
@@ -176,6 +196,43 @@ pub fn options_from_manifest(
             })
         })
         .collect::<io::Result<Vec<_>>>()?;
+    // Extension binaries sit beside the app's (merged ones carry the same suffix).
+    let universal = binary
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy() == format!("{}-universal", m.bin));
+    let extensions = b["extensions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| {
+            let bin =
+                optional(e, "binary")?.ok_or_else(|| error("app extension needs a binary"))?;
+            if !m.bins.contains(&bin) {
+                return Err(error(format!(
+                    "app extension binary {bin} is not a bin target"
+                )));
+            }
+            let file = if universal {
+                format!("{bin}-universal")
+            } else {
+                bin
+            };
+            Ok(AppExtension {
+                name: optional(e, "name")?.ok_or_else(|| error("app extension needs a name"))?,
+                identifier: optional(e, "identifier")?
+                    .ok_or_else(|| error("app extension needs an identifier"))?,
+                binary: binary.with_file_name(file),
+                point: optional(e, "point")?.ok_or_else(|| error("app extension needs a point"))?,
+                principal_class: optional(e, "principal-class")?
+                    .ok_or_else(|| error("app extension needs a principal-class"))?,
+                attributes: match &e["attributes"] {
+                    Value::Null => serde_json::Map::new(),
+                    Value::Object(map) => map.clone(),
+                    _ => return Err(error("app extension attributes must be a table")),
+                },
+            })
+        })
+        .collect::<io::Result<Vec<_>>>()?;
     let usage = match &b["usage"] {
         Value::Null => Vec::new(),
         Value::Object(map) => map
@@ -210,6 +267,7 @@ pub fn options_from_manifest(
         document_types,
         imported_types,
         aliases: strings(b, "aliases")?,
+        extensions,
     })
 }
 
@@ -304,15 +362,13 @@ pub fn plan(
     let manifest = m.dir.join("Cargo.toml");
     let manifest = manifest.to_string_lossy();
     let mut steps = Vec::new();
+    let extension_bins = extension_bins(m);
     let build = |target: Option<&str>| {
-        let mut args = vec![
-            "build",
-            "--release",
-            "--bin",
-            m.bin.as_str(),
-            "--manifest-path",
-            &manifest,
-        ];
+        let mut args = vec!["build", "--release", "--bin", m.bin.as_str()];
+        for bin in &extension_bins {
+            args.extend(["--bin", bin.as_str()]);
+        }
+        args.extend(["--manifest-path", &manifest]);
         if let Some(t) = target {
             args.extend(["--target", t]);
         }
@@ -321,26 +377,22 @@ pub fn plan(
     if o.universal {
         steps.push(build(Some("aarch64-apple-darwin")));
         steps.push(build(Some("x86_64-apple-darwin")));
-        let arm = m
-            .target_dir
-            .join("aarch64-apple-darwin/release")
-            .join(&m.bin);
-        let intel = m
-            .target_dir
-            .join("x86_64-apple-darwin/release")
-            .join(&m.bin);
-        let fat = out.join(format!("{}-universal", m.bin));
-        steps.push(run(
-            "merge Apple silicon and Intel binaries",
-            "/usr/bin/lipo",
-            &[
-                "-create",
-                "-output",
-                &fat.to_string_lossy(),
-                &arm.to_string_lossy(),
-                &intel.to_string_lossy(),
-            ],
-        ));
+        for bin in std::iter::once(&m.bin).chain(&extension_bins) {
+            let arm = m.target_dir.join("aarch64-apple-darwin/release").join(bin);
+            let intel = m.target_dir.join("x86_64-apple-darwin/release").join(bin);
+            let fat = out.join(format!("{bin}-universal"));
+            steps.push(run(
+                "merge Apple silicon and Intel binaries",
+                "/usr/bin/lipo",
+                &[
+                    "-create",
+                    "-output",
+                    &fat.to_string_lossy(),
+                    &arm.to_string_lossy(),
+                    &intel.to_string_lossy(),
+                ],
+            ));
+        }
     } else {
         steps.push(build(None));
     }
@@ -350,6 +402,30 @@ pub fn plan(
         return steps;
     };
     let app_s = app.to_string_lossy().into_owned();
+    // Nested code is signed first: each app extension in the app sandbox.
+    let entitlements_file = out.join("extension.entitlements");
+    let entitlements_file = entitlements_file.to_string_lossy();
+    for e in m.metadata["extensions"].as_array().into_iter().flatten() {
+        let Some(name) = e["name"].as_str() else {
+            continue;
+        };
+        let appex = app.join("Contents/PlugIns").join(format!("{name}.appex"));
+        steps.push(run(
+            "sign the app extension in the app sandbox",
+            "/usr/bin/codesign",
+            &[
+                "--force",
+                "--options",
+                "runtime",
+                "--timestamp",
+                "--sign",
+                identity,
+                "--entitlements",
+                &entitlements_file,
+                &appex.to_string_lossy(),
+            ],
+        ));
+    }
     let mut sign = vec![
         "--force",
         "--options",

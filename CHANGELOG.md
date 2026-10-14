@@ -33,6 +33,11 @@
 - Tooltips fit their label instead of always being 240 px wide (long
   labels still wrap at 240) and centre on their target; menus and
   popovers keep aligning with the target's leading edge.
+- `cargo volt bundle` and `release` embed app extensions declared under
+  `[[package.metadata.volt.bundle.extensions]]` (a Quick Look preview, for
+  example): another binary of the package in `Contents/PlugIns/NAME.appex`
+  with its own `Info.plist`, stripped, and signed in the app sandbox before
+  the app, ad hoc or with Developer ID.
 - Fixed: emoji in bold (or other non-regular) text could show as a
   black-and-white outline. Font fallback prefers any installed font with a
   matching weight that has the code point, such as a bold Nerd Font, over

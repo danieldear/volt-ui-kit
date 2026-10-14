@@ -57,6 +57,114 @@ pub struct ImportedType {
     pub mime_type: Option<String>,
 }
 
+/// An app extension inside the app (`Contents/PlugIns/NAME.appex`), such as
+/// a Quick Look preview. Its executable is another binary of the package and
+/// runs in the app sandbox.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppExtension {
+    pub name: String,
+    /// Must extend the app's identifier: `com.example.app.preview`.
+    pub identifier: String,
+    pub binary: PathBuf,
+    /// `NSExtensionPointIdentifier`, e.g. `com.apple.quicklook.preview`.
+    pub point: String,
+    /// The Objective-C class the system instantiates.
+    pub principal_class: String,
+    /// `NSExtensionAttributes`.
+    pub attributes: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Entitlements every app extension is signed with: the app sandbox.
+pub const EXTENSION_ENTITLEMENTS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>com.apple.security.app-sandbox</key><true/>\n</dict></plist>\n";
+
+impl AppExtension {
+    pub fn bundle_name(&self) -> String {
+        format!("{}.appex", self.name)
+    }
+    pub fn executable_name(&self) -> String {
+        sanitized(&self.name)
+    }
+    fn plist(&self, app: &BundleOptions) -> String {
+        let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n");
+        for (key, value) in [
+            ("CFBundleInfoDictionaryVersion", "6.0"),
+            ("CFBundlePackageType", "XPC!"),
+            ("CFBundleExecutable", &self.executable_name()),
+            ("CFBundleName", &self.name),
+            ("CFBundleDisplayName", &self.name),
+            ("CFBundleIdentifier", &self.identifier),
+            ("CFBundleShortVersionString", &app.version),
+            ("CFBundleVersion", &app.build),
+            ("LSMinimumSystemVersion", &app.minimum),
+        ] {
+            entry(&mut xml, key, value);
+        }
+        xml.push_str("<key>NSExtension</key><dict>\n");
+        entry(&mut xml, "NSExtensionPointIdentifier", &self.point);
+        entry(&mut xml, "NSExtensionPrincipalClass", &self.principal_class);
+        xml.push_str("<key>NSExtensionAttributes</key>");
+        plist_value(
+            &mut xml,
+            &serde_json::Value::Object(self.attributes.clone()),
+        );
+        xml.push_str("\n</dict>\n</dict></plist>\n");
+        xml
+    }
+}
+
+/// A JSON value (from Cargo.toml metadata) as a plist value.
+fn plist_value(xml: &mut String, v: &serde_json::Value) {
+    use serde_json::Value;
+    match v {
+        Value::Bool(true) => xml.push_str("<true/>"),
+        Value::Bool(false) | Value::Null => xml.push_str("<false/>"),
+        Value::Number(n) if n.is_i64() || n.is_u64() => {
+            xml.push_str(&format!("<integer>{n}</integer>"))
+        }
+        Value::Number(n) => xml.push_str(&format!("<real>{n}</real>")),
+        Value::String(s) => xml.push_str(&format!("<string>{}</string>", escape(s))),
+        Value::Array(items) => {
+            xml.push_str("<array>");
+            for item in items {
+                plist_value(xml, item);
+            }
+            xml.push_str("</array>");
+        }
+        Value::Object(map) => {
+            xml.push_str("<dict>");
+            for (key, value) in map {
+                xml.push_str(&format!("<key>{}</key>", escape(key)));
+                plist_value(xml, value);
+            }
+            xml.push_str("</dict>");
+        }
+    }
+}
+
+/// Plist attributes from metadata: no nulls, bounded depth, size and text.
+fn plist_attributes_valid(v: &serde_json::Value, depth: usize, budget: &mut usize) -> bool {
+    use serde_json::Value;
+    if depth > 4 || *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    match v {
+        Value::Null => false,
+        Value::Bool(_) | Value::Number(_) => true,
+        Value::String(s) => s.len() <= 1024,
+        Value::Array(items) => items
+            .iter()
+            .all(|i| plist_attributes_valid(i, depth + 1, budget)),
+        Value::Object(map) => map.iter().all(|(k, v)| {
+            !k.is_empty()
+                && k.len() <= 128
+                && k.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-')
+                && plist_attributes_valid(v, depth + 1, budget)
+        }),
+    }
+}
+
 #[derive(Debug)]
 pub struct BundleOptions {
     pub binary: PathBuf,
@@ -83,6 +191,8 @@ pub struct BundleOptions {
     /// `Contents/MacOS`: a command-line entry point (`md`, say) that the
     /// binary recognises by the name it was run as.
     pub aliases: Vec<String>,
+    /// App extensions in `Contents/PlugIns`.
+    pub extensions: Vec<AppExtension>,
 }
 impl BundleOptions {
     pub fn parse(args: &[String]) -> io::Result<Self> {
@@ -182,22 +292,18 @@ impl BundleOptions {
             document_types: Vec::new(),
             imported_types: Vec::new(),
             aliases,
+            extensions: Vec::new(),
         })
     }
     /// The executable file name, shown by Activity Monitor and crash reports:
     /// the app name reduced to ASCII letters, digits, spaces, `-` and `_`.
     pub fn executable_name(&self) -> String {
-        let name: String = self
-            .name
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_'))
-            .collect();
-        let name = name.trim();
-        if name.is_empty() {
-            "VoltApp".into()
-        } else {
-            name.into()
-        }
+        sanitized(&self.name)
+    }
+    /// Where app extensions are signed from: their sandbox entitlements,
+    /// next to the app.
+    pub fn extension_entitlements(&self) -> PathBuf {
+        self.output.with_file_name("extension.entitlements")
     }
     pub fn validate(&self) -> io::Result<()> {
         text(&self.name, 128)?;
@@ -297,6 +403,37 @@ impl BundleOptions {
         }
         if let Some(copyright) = &self.copyright {
             text(copyright, 256)?;
+        }
+        if self.extensions.len() > 8 {
+            return Err(error("at most 8 app extensions"));
+        }
+        let mut seen = HashSet::new();
+        for e in &self.extensions {
+            text(&e.name, 64)?;
+            let mut budget = 256;
+            let class_ok = !e.principal_class.is_empty()
+                && e.principal_class.len() <= 128
+                && e.principal_class
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_');
+            if e.name.contains(['/', ':'])
+                || e.executable_name().is_empty()
+                || !uti(&e.identifier)
+                || !e.identifier.starts_with(&format!("{}.", self.identifier))
+                || !uti(&e.point)
+                || !class_ok
+                || !plist_attributes_valid(
+                    &serde_json::Value::Object(e.attributes.clone()),
+                    0,
+                    &mut budget,
+                )
+                || !seen.insert(e.identifier.clone())
+                || !seen.insert(e.name.clone())
+            {
+                return Err(error(
+                    "app extensions need a distinct name, an identifier extending the app's, an extension point, an Objective-C class name and plist attributes",
+                ));
+            }
         }
         let executable = self.executable_name();
         let mut names = HashSet::new();
@@ -466,6 +603,19 @@ fn array(xml: &mut String, key: &str, values: &[String]) {
     }
     xml.push_str("</array>\n");
 }
+/// A name reduced to ASCII letters, digits, spaces, `-` and `_`.
+fn sanitized(name: &str) -> String {
+    let name: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .collect();
+    let name = name.trim();
+    if name.is_empty() {
+        "VoltApp".into()
+    } else {
+        name.into()
+    }
+}
 fn text(value: &str, limit: usize) -> io::Result<()> {
     if value.trim().is_empty() || value.len() > limit || value.chars().any(char::is_control) {
         return Err(error(
@@ -589,6 +739,20 @@ pub fn assemble(options: &BundleOptions) -> io::Result<()> {
         return Err(error(format!(
             "executable aliases need symbolic links: {alias}"
         )));
+    }
+    for e in &options.extensions {
+        let dir = contents
+            .join("PlugIns")
+            .join(e.bundle_name())
+            .join("Contents");
+        fs::create_dir_all(dir.join("MacOS"))?;
+        copy(
+            &e.binary,
+            &dir.join("MacOS").join(e.executable_name()),
+            MAX_BINARY,
+            true,
+        )?;
+        fs::write(dir.join("Info.plist"), e.plist(options))?;
     }
     for source in options.resources.iter().chain(options.icon.iter()) {
         copy(
@@ -716,9 +880,34 @@ pub fn run(options: BundleOptions) -> io::Result<()> {
             .output
             .join("Contents/MacOS")
             .join(options.executable_name());
+        let plugins = options.output.join("Contents/PlugIns");
+        let extension_executables: Vec<PathBuf> = options
+            .extensions
+            .iter()
+            .map(|e| {
+                plugins
+                    .join(e.bundle_name())
+                    .join("Contents/MacOS")
+                    .join(e.executable_name())
+            })
+            .collect();
         if options.strip {
             // Before any signing: strip keeps the linker's ad-hoc signature valid.
-            tool("/usr/bin/strip", &[], &executable)?;
+            for path in std::iter::once(&executable).chain(&extension_executables) {
+                tool("/usr/bin/strip", &[], path)?;
+            }
+        }
+        for (e, path) in options.extensions.iter().zip(&extension_executables) {
+            validate_headers(&tool("/usr/bin/otool", &["-hv"], path)?)?;
+            validate_libraries(&tool("/usr/bin/otool", &["-L"], path)?)?;
+            tool(
+                "/usr/bin/plutil",
+                &["-lint"],
+                &plugins.join(e.bundle_name()).join("Contents/Info.plist"),
+            )?;
+        }
+        if !options.extensions.is_empty() {
+            fs::write(options.extension_entitlements(), EXTENSION_ENTITLEMENTS)?;
         }
         tool(
             "/usr/bin/plutil",
@@ -732,6 +921,16 @@ pub fn run(options: BundleOptions) -> io::Result<()> {
             &options.minimum,
         )?;
         if options.sign {
+            // Nested code first: each extension with its sandbox entitlements.
+            let entitlements = options.extension_entitlements();
+            let entitlements = entitlements.to_string_lossy();
+            for e in &options.extensions {
+                tool(
+                    "/usr/bin/codesign",
+                    &["--force", "--sign", "-", "--entitlements", &entitlements],
+                    &plugins.join(e.bundle_name()),
+                )?;
+            }
             tool(
                 "/usr/bin/codesign",
                 &["--force", "--sign", "-"],
