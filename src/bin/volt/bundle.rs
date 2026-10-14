@@ -728,14 +728,16 @@ pub fn assemble(options: &BundleOptions) -> io::Result<()> {
         MAX_BINARY,
         true,
     )?;
+    // Relative links, so they survive the bundle being moved or copied.
+    #[cfg(unix)]
     for alias in &options.aliases {
-        // Relative, so the link survives the bundle being moved or copied.
-        #[cfg(unix)]
         std::os::unix::fs::symlink(
             options.executable_name(),
             contents.join("MacOS").join(alias),
         )?;
-        #[cfg(not(unix))]
+    }
+    #[cfg(not(unix))]
+    if let Some(alias) = options.aliases.first() {
         return Err(error(format!(
             "executable aliases need symbolic links: {alias}"
         )));

@@ -260,6 +260,8 @@ fn executable_is_named_after_the_app_in_safe_ascii() {
         )));
     }
 }
+// Aliases are symbolic links, which bundles support only on Unix.
+#[cfg(unix)]
 #[test]
 fn aliases_link_to_the_executable_and_must_be_plain_distinct_names() {
     let f = Fixture::new();

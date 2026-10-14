@@ -7,7 +7,8 @@ mod bundle;
 mod bundle_tests;
 #[path = "volt/release.rs"]
 mod release;
-#[cfg(test)]
+// Releases are macOS-only; the tests compare macOS paths.
+#[cfg(all(test, target_os = "macos"))]
 #[path = "volt/release_tests.rs"]
 mod release_tests;
 use std::{
