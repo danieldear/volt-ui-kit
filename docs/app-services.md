@@ -253,6 +253,7 @@ minimum-system-version = "13.0"
 category = "public.app-category.productivity"
 copyright = "© 2026 Example"
 notary-profile = "myapp"              # optional; see below
+aliases = ["myapp"]                   # optional; see below
 
 # Files the app opens. Content types name system UTIs; extensions claim
 # types macOS has no UTI for. Give one or the other per entry.
@@ -271,6 +272,13 @@ extensions = ["mdown", "mkd"]
 `imported-types` declares UTIs for formats no app on the system defines,
 and `resources`, `usage` (privacy descriptions) and `build-number` work as
 the manual flags below.
+
+`aliases` adds other names for the executable, as links beside it in
+`Contents/MacOS`. Use one to ship a command-line tool inside the app: link
+`/usr/local/bin/myapp` to `My App.app/Contents/MacOS/myapp`, and have
+`main` check the name it was run as (`std::env::args().next()`) to run the
+command line instead of opening a window. The links are signed and
+notarized with the app.
 
 ```sh
 cargo volt bundle                 # target/release/bundle/My App.app, signed ad hoc

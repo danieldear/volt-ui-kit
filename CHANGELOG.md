@@ -8,6 +8,9 @@
   a category and a copyright. New `cargo volt release`: Developer ID
   signing with the hardened runtime, notarization and stapling, and a
   signed, notarized disk image; `--dry-run` prints each step.
+- Bundles can give the executable other names (`aliases = ["md"]`, or
+  `--alias md`): links in `Contents/MacOS` that ship a command-line tool
+  inside the app, signed and notarized with it.
 - Shortcuts may use unshifted punctuation keys as well as letters and
   digits (`,` `.` `;` `'` `/` `[` `]` `\` `-` `=` `` ` ``), so apps can bind
   ⌘, for Settings, ⌘=/⌘− for zoom and ⌘[/⌘] for history.
