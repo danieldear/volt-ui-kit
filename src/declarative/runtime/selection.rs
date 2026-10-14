@@ -11,6 +11,10 @@ pub(super) struct TextSelectionState {
     anchor: Option<(String, usize)>,
     focus: Option<(String, usize)>,
     dragging: bool,
+    /// What the press selected (box, start, end) and its unit: 1 for
+    /// characters, 2 for words, 3 for paragraphs. Drags extend by the unit.
+    pivot: Option<(String, usize, usize)>,
+    unit: u8,
     /// The selected text as of the last change; kept when rows scroll away.
     text: String,
     /// The text last reported to the application.
@@ -113,9 +117,12 @@ impl Runtime {
         let s = &mut self.text_selection;
         if extend && s.anchor.is_some() {
             s.focus = Some((id, at));
+            s.unit = 1;
         } else {
             s.anchor = Some((id.clone(), start));
-            s.focus = Some((id, end));
+            s.focus = Some((id.clone(), end));
+            s.pivot = Some((id, start, end));
+            s.unit = clicks.clamp(1, 3);
         }
         s.dragging = true;
         self.refresh_text_selection(m);
@@ -130,10 +137,38 @@ impl Runtime {
         let Some(b) = self.selectable_near(x, y) else {
             return false;
         };
-        let focus = (b.id.clone(), Self::offset_in(b, x, y, m));
-        if self.text_selection.focus.as_ref() == Some(&focus) {
+        let at = Self::offset_in(b, x, y, m);
+        let s = &self.text_selection;
+        let (anchor, focus) = match (s.unit, &s.pivot) {
+            // A double- or triple-click drag keeps what the press selected
+            // and adds whole words (or paragraphs) toward the pointer.
+            (unit @ (2 | 3), Some((pivot, start, end))) => {
+                let (from, to) = if unit == 2 {
+                    word_at(&b.text, at)
+                } else {
+                    (0, b.text.len())
+                };
+                let index = |id: &str| self.boxes.iter().position(|b| b.id == id);
+                let before = match (index(&b.id), index(pivot)) {
+                    (Some(i), Some(p)) => (i, at) < (p, *start),
+                    _ => false,
+                };
+                if before {
+                    ((pivot.clone(), *end), (b.id.clone(), from))
+                } else {
+                    let to = if b.id == *pivot { to.max(*end) } else { to };
+                    ((pivot.clone(), *start), (b.id.clone(), to))
+                }
+            }
+            _ => match &s.anchor {
+                Some(anchor) => (anchor.clone(), (b.id.clone(), at)),
+                None => return false,
+            },
+        };
+        if s.anchor.as_ref() == Some(&anchor) && s.focus.as_ref() == Some(&focus) {
             return false;
         }
+        self.text_selection.anchor = Some(anchor);
         self.text_selection.focus = Some(focus);
         self.refresh_text_selection(m);
         true
@@ -153,6 +188,7 @@ impl Runtime {
         let had = s.anchor.is_some();
         s.anchor = None;
         s.focus = None;
+        s.pivot = None;
         s.dragging = false;
         s.text.clear();
         s.rects.clear();

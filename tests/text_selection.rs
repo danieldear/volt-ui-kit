@@ -132,3 +132,35 @@ fn selection_highlights_paint_behind_the_selected_runs() {
     r.layout(v, &Bindings::default(), &mut Metrics).unwrap();
     assert_eq!(r.selected_text(), Some("Hello"));
 }
+
+#[test]
+fn double_click_drags_extend_by_whole_words() {
+    let (doc, h) = view(&App::default()).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(400., 300., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    let b = bounds(&r, "b");
+    let y = b[1] + 5.;
+    // Double-click inside "paragraph", then the pointer wobbles within it:
+    // the whole word stays selected (it used to shrink to the pointer).
+    r.text_select_press(b[0] + 7. * 9., y, 2, false, &mut Metrics);
+    r.text_select_drag(b[0] + 7. * 11., y, &mut Metrics);
+    assert_eq!(r.selected_text(), Some("paragraph"));
+    // Dragging back over "Second" takes whole words back to it.
+    r.text_select_drag(b[0] + 7. * 2., y, &mut Metrics);
+    assert_eq!(r.selected_text(), Some("Second paragraph"));
+    r.text_select_release();
+    // Triple-click drags extend by whole paragraphs.
+    let a = bounds(&r, "a");
+    r.text_select_press(a[0] + 7. * 2., a[1] + 5., 3, false, &mut Metrics);
+    r.text_select_drag(b[0] + 7. * 3., y, &mut Metrics);
+    assert_eq!(r.selected_text(), Some("Hello world\nSecond paragraph"));
+    // A single click still extends character by character.
+    r.text_select_press(b[0] + 7. * 2., y, 1, false, &mut Metrics);
+    r.text_select_drag(b[0] + 7. * 4., y, &mut Metrics);
+    assert_eq!(r.selected_text(), Some("co"));
+}
