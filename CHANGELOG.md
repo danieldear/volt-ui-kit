@@ -33,6 +33,11 @@
 - Tooltips fit their label instead of always being 240 px wide (long
   labels still wrap at 240) and centre on their target; menus and
   popovers keep aligning with the target's leading edge.
+- Fixed: switching a window between opaque and translucent (for example
+  with `background_from_state`) left the previous frame showing through
+  translucent areas. Each switch made a new GPU surface, and on macOS every
+  surface adds a Metal layer to the window that stays behind, frozen. The
+  surface is now reconfigured in place, and a lost device reuses it.
 - Drop zones treat `.height(..)` as a minimum and grow to fit their icon,
   title, hint and button instead of squeezing them together.
 - Icons: `Sidebar`, `FileText`, `Type` and `Columns`.

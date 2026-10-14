@@ -897,12 +897,14 @@ impl<C: 'static> App<C> {
                 if (previous == WindowBackground::Opaque)
                     != (background == WindowBackground::Opaque)
                 {
-                    self.gpu = None;
-                    window.set_transparent(background != WindowBackground::Opaque);
-                    self.gpu = Some(super::gpu::GpuPresenter::new(
-                        window.clone(),
-                        background != WindowBackground::Opaque,
-                    )?);
+                    // Reconfigure in place: a new surface would leave the old
+                    // one's layer (and its last frame) behind the window.
+                    let transparent = background != WindowBackground::Opaque;
+                    window.set_transparent(transparent);
+                    if let Some(gpu) = self.gpu.as_mut() {
+                        gpu.set_transparent(transparent)?;
+                    }
+                    window.request_redraw();
                 }
                 self.sync_native_backdrop(&window);
             }
@@ -1515,10 +1517,12 @@ impl<C: 'static> App<C> {
                 return Ok(());
             }
             Some(Ok(super::gpu::PresentStatus::Lost)) => {
-                // Release the old device/surface first, then try a fresh one.
-                self.gpu = None;
+                // A fresh device and renderer on the window's existing surface.
                 let transparent = self.options.background != WindowBackground::Opaque;
-                match super::gpu::GpuPresenter::new(w.clone(), transparent) {
+                let Some(old) = self.gpu.take() else {
+                    return Ok(());
+                };
+                match old.recreate(transparent) {
                     Ok(gpu) => {
                         eprintln!("Volt UI: GPU renderer recreated ({})", gpu.adapter_name);
                         self.gpu = Some(gpu);
