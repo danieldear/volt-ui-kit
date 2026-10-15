@@ -69,7 +69,8 @@ impl Runtime {
         if let Some(b) = self.selectable_at(x, y) {
             return Some(b);
         }
-        let visible = |b: &&LayoutBox| selectable(b) && b.layout_visible;
+        let visible =
+            |b: &&LayoutBox| selectable(b) && b.layout_visible && self.scope_allows_id(&b.id);
         self.boxes
             .iter()
             .rev()
@@ -195,10 +196,18 @@ impl Runtime {
         had
     }
 
+    /// A newly opened/closed modal owns a different input scope. Do not carry
+    /// a copy buffer or send the old scope's clear callback into the new one.
+    pub(super) fn cancel_text_selection_scope(&mut self) {
+        self.clear_text_selection();
+        self.text_selection.reported = Some(String::new());
+    }
+
     /// Select all selectable text currently laid out.
     pub fn select_all_text(&mut self, m: &mut impl TextMetrics) -> bool {
-        let first = self.boxes.iter().find(|b| selectable(b));
-        let last = self.boxes.iter().rev().find(|b| selectable(b));
+        let allowed = |b: &&LayoutBox| selectable(b) && self.scope_allows_id(&b.id);
+        let first = self.boxes.iter().find(allowed);
+        let last = self.boxes.iter().rev().find(allowed);
         let (Some(first), Some(last)) = (first, last) else {
             return false;
         };
@@ -225,6 +234,10 @@ impl Runtime {
             self.text_selection.rects.clear();
             return;
         };
+        if !self.selection_scope_allows_id(&anchor.0) || !self.selection_scope_allows_id(&focus.0) {
+            self.cancel_text_selection_scope();
+            return;
+        }
         let ((start_box, start_at), (end_box, end_at)) = if (a, anchor.1) <= (f, focus.1) {
             ((a, anchor.1), (f, focus.1))
         } else {
@@ -239,7 +252,7 @@ impl Runtime {
             .take(end_box + 1)
             .skip(start_box)
         {
-            if !selectable(b) {
+            if !selectable(b) || !self.selection_scope_allows_id(&b.id) {
                 continue;
             }
             let from = if i == start_box {
@@ -286,8 +299,16 @@ impl Runtime {
             .text_selection
             .anchor
             .as_ref()
-            .and_then(|(id, _)| self.boxes.iter().find(|b| b.id == *id))
-            .or_else(|| self.boxes.iter().find(|b| b.style.select_handler.is_some()))
+            .and_then(|(id, _)| {
+                self.boxes
+                    .iter()
+                    .find(|b| b.id == *id && self.scope_allows_id(&b.id))
+            })
+            .or_else(|| {
+                self.boxes
+                    .iter()
+                    .find(|b| b.style.select_handler.is_some() && self.scope_allows_id(&b.id))
+            })
             .and_then(|b| b.style.select_handler.clone());
         self.text_selection.reported = Some(text.clone());
         let Some(name) = handler else {

@@ -217,6 +217,7 @@ struct LazyOptions<C, F> {
     scroll_to: Option<(usize, u32)>,
     on_window: Option<WindowCallback<C>>,
 }
+const MAX_LAZY_ROWS: usize = 1_000_000;
 /// See [`LazyList`]. `row(i)` builds row `i`; give each row a stable key.
 pub fn lazy_list<C, F: FnMut(usize) -> Element<C>>(count: usize, row: F) -> LazyList<C, F> {
     let mut e = Element::new(Kind::Panel);
@@ -254,7 +255,14 @@ impl<C, F> LazyList<C, F> {
     /// An estimated height per row; better estimates keep the scroll bar
     /// steadier while rows are first measured.
     pub fn estimates(mut self, heights: impl IntoIterator<Item = f32>) -> Self {
-        self.1.estimates = Some(heights.into_iter().collect());
+        // One extra value is sufficient to reject excess input, even an
+        // infinite iterator. Invalid counts must not drive an allocation.
+        if self.1.count > MAX_LAZY_ROWS {
+            self.0.validation_error = Some("lazy list count exceeds bounds".into());
+            return self;
+        }
+        let limit = self.1.count + 1;
+        self.1.estimates = Some(heights.into_iter().take(limit).collect());
         self
     }
     /// The rows to build, as last reported by `on_window_change`.
@@ -294,22 +302,31 @@ impl<C: 'static, F: FnMut(usize) -> Element<C>> From<LazyList<C, F>> for Element
     fn from(mut list: LazyList<C, F>) -> Self {
         let count = list.1.count;
         let window = list.1.window.clone().unwrap_or(0..count.min(32));
-        let estimates: Vec<f32> = list
-            .1
-            .estimates
-            .take()
-            .unwrap_or_else(|| vec![list.1.estimate; count]);
         let error = if list.0.auto_id {
             Some("lazy list requires a stable .key(...)")
         } else if list.1.on_window.is_none() {
             Some("lazy list requires on_window_change")
-        } else if count > 1_000_000 || list.1.overscan > 16 || estimates.len() != count {
+        } else if count > MAX_LAZY_ROWS || list.1.overscan > 16 {
             Some("lazy list count, overscan or estimates exceed bounds")
         } else if window.start > window.end
             || window.end > count
             || window.len() > crate::declarative::document::MAX_LAZY_WINDOW
         {
             Some("lazy list window must be ordered, in range and at most 256 rows")
+        } else if match list.1.estimates.as_ref() {
+            Some(estimates) => {
+                estimates.len() != count
+                    || estimates
+                        .iter()
+                        .any(|h| !h.is_finite() || !(1. ..=100_000.).contains(h))
+            }
+            None => {
+                count > 0
+                    && (!list.1.estimate.is_finite()
+                        || !(1. ..=100_000.).contains(&list.1.estimate))
+            }
+        } {
+            Some("variable list needs one finite estimate (1–100000) per row")
         } else {
             None
         };
@@ -317,6 +334,11 @@ impl<C: 'static, F: FnMut(usize) -> Element<C>> From<LazyList<C, F>> for Element
             list.0.validation_error = Some(error.into());
             return list.0;
         }
+        let estimates = list
+            .1
+            .estimates
+            .take()
+            .unwrap_or_else(|| vec![list.1.estimate; count]);
         for index in window.clone() {
             let row = (list.1.factory)(index);
             if row.auto_id {

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Harden four reviewed paths without changing public APIs or dependencies:
+  metadata-driven bundles reject path-component names and validate inputs
+  before replacing a direct output; cleanup cannot traverse parent directories
+  or intermediate symlinks. Read-only selection/copy respects the active modal
+  and is cleared on scope changes. Lazy lists validate counts/estimates before
+  allocation or row construction and bound estimate iterators. Long editor
+  lines use bounded wrapping work and indexed native caret advances, retaining
+  shaped cluster, Unicode, alignment and password behavior. Add regression
+  tests, including the 4 MiB editor boundary.
+
 - `cargo volt bundle` reads the app from `[package.metadata.volt.bundle]`
   in Cargo.toml and builds it (`--universal` for Apple silicon and Intel).
   Bundles can declare document types (by UTI or extension), imported UTIs,

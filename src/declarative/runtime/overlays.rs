@@ -214,7 +214,22 @@ impl Runtime {
                 None
             };
         }
+        let selection_scope_changed = self
+            .overlays
+            .scopes
+            .iter()
+            .rev()
+            .find(|s| s.options.kind == OverlayKind::Modal)
+            .map(|s| s.id.as_str())
+            != next
+                .iter()
+                .rev()
+                .find(|s| s.options.kind == OverlayKind::Modal)
+                .map(|s| s.id.as_str());
         self.overlays.scopes = next;
+        if selection_scope_changed {
+            self.cancel_text_selection_scope();
+        }
         if removed || added {
             self.overlays.outside_capture = None;
             self.overlays.restore_pending = restore;
@@ -475,6 +490,16 @@ impl Runtime {
         self.overlays
             .scopes
             .last()
+            .is_none_or(|scope| scope.ids.contains(id))
+    }
+    /// Copy menus may coexist with a read-only selection. A modal, however,
+    /// must never expose a selection belonging to content behind that modal.
+    pub(super) fn selection_scope_allows_id(&self, id: &str) -> bool {
+        self.overlays
+            .scopes
+            .iter()
+            .rev()
+            .find(|scope| scope.options.kind == OverlayKind::Modal)
             .is_none_or(|scope| scope.ids.contains(id))
     }
     pub(super) fn overlay_active(&self) -> bool {
