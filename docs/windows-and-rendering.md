@@ -118,6 +118,25 @@ VOLT_UI_TRACE=1 cargo run --release --features native-gpu --example catalog -- -
 Trace timings start when the host handles an event and end when the frame is
 handed to the OS; they do not include display scan-out.
 
+### Headless scene-budget checks
+
+With `native-gpu`, `native::estimate_gpu_scene(&mut painter, &batches)` uses
+the GPU scene encoder to report estimated lines, segments and any exceeded
+encoder budget **without creating a graphics adapter**. This suits CI and
+diagnostics on machines without GPU drivers. Estimates do not prove device
+residency, GPU execution or presentation.
+
+The Catalog's editor-page budget regression runs this way on every platform.
+Actual GPU readback remains a separate, explicit acceptance test:
+
+```sh
+cargo test --locked --all-features --example catalog \
+  actual_gpu_editor_heavy_pages -- --ignored --nocapture
+```
+
+That command requires a working GPU adapter and fails rather than silently
+skipping when one is unavailable.
+
 ## Resource limits
 
 | Resource | Limit |

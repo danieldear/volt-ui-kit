@@ -27,6 +27,36 @@ use vello::{
     Scene,
 };
 
+/// CPU-side scene admission diagnostics, without a GPU adapter or readback.
+/// These estimates use the same encoder as GPU drawing; they are not evidence
+/// that a device can render/present the scene or that assets fit GPU residency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuSceneEstimate {
+    /// Estimated flattened lines in the scene.
+    pub lines: u64,
+    /// Estimated Vello path segments in the scene.
+    pub segments: u64,
+    /// First fixed encoder budget exceeded, if any.
+    pub over_budget: Option<&'static str>,
+}
+
+/// Encode retained drawing commands for budget checks without creating a GPU.
+/// Images use CPU-memory resources; device limits, residency, GPU execution and
+/// presentation still require explicit hardware tests. Available with `native-gpu`.
+pub fn estimate_gpu_scene(
+    painter: &mut RasterPainter,
+    batches: &[PaintBatch<Shape, Glyph>],
+) -> Result<GpuSceneEstimate, String> {
+    let mut encoder = GpuSceneEncoder::default();
+    encoder.encode_with(batches, painter, None)?;
+    let stats = encoder.stats();
+    Ok(GpuSceneEstimate {
+        lines: stats.lines_estimate,
+        segments: stats.segments_estimate,
+        over_budget: stats.over_budget,
+    })
+}
+
 #[derive(Default, Debug, Clone, Copy)]
 pub(super) struct SceneStats {
     /// Conservative estimate of Vello blend-spill slots this scene needs.

@@ -2366,7 +2366,7 @@ fn shaped_line_advances(
     let mut result = vec![0.; offsets.len()];
     let mut active = BinaryHeap::new();
     let mut next = 0;
-    let mut ends: Option<Vec<usize>> = None;
+    let mut ends: Option<Vec<(usize, f32)>> = None;
     let mut cluster_points: Option<(usize, usize, Vec<usize>)> = None;
     for query in queries {
         visit();
@@ -2413,9 +2413,11 @@ fn shaped_line_advances(
                 g.x + advance
             };
         } else {
-            // Endpoints not covered by a cluster use the first visual glyph
-            // ending there, just as the previous lookup did. Build this index
-            // lazily, normally only for the final caret stop.
+            // Keep the first visual direction at an endpoint, but include all
+            // glyphs sharing that endpoint in that direction. Segoe's emoji
+            // fallback can represent one ZWJ cluster with several glyphs;
+            // using only its first glyph strands the final caret inside it.
+            // Build each endpoint once, keeping repeated queries bounded.
             let ends = ends.get_or_insert_with(|| {
                 let mut indices: Vec<usize> = (0..glyphs.len()).collect();
                 indices.sort_unstable_by_key(|i| {
@@ -2423,10 +2425,36 @@ fn shaped_line_advances(
                     (glyphs[*i].end, *i)
                 });
                 indices
+                    .chunk_by(|a, b| glyphs[*a].end == glyphs[*b].end)
+                    .map(|group| {
+                        let first = &glyphs[group[0]];
+                        let rtl = first.level.is_rtl();
+                        let edge = group
+                            .iter()
+                            .filter_map(|i| {
+                                visit();
+                                let g = &glyphs[*i];
+                                (g.level == first.level).then_some(if rtl {
+                                    g.x
+                                } else {
+                                    g.x + g.w
+                                })
+                            })
+                            .fold(
+                                if rtl {
+                                    f32::INFINITY
+                                } else {
+                                    f32::NEG_INFINITY
+                                },
+                                |a, b| if rtl { a.min(b) } else { a.max(b) },
+                            );
+                        (first.end, edge)
+                    })
+                    .collect()
             });
-            let index = ends.partition_point(|i| glyphs[*i].end < at);
-            if let Some(g) = ends.get(index).map(|i| &glyphs[*i]).filter(|g| g.end == at) {
-                result[query] = if g.level.is_rtl() { g.x } else { g.x + g.w };
+            let index = ends.partition_point(|(end, _)| *end < at);
+            if let Some((_, edge)) = ends.get(index).filter(|(end, _)| *end == at) {
+                result[query] = *edge;
             }
         }
     }
@@ -4576,6 +4604,28 @@ mod scaled_image_tests {
 mod editor_metric_tests {
     use super::*;
     #[test]
+    fn multi_glyph_cluster_endpoint_includes_the_whole_cluster() {
+        let mut p = RasterPainter::new(Viewport::new(200., 100., 1.).unwrap());
+        let key = p.key("x", &default_style(14.), 1_000_000.);
+        let glyph = p.text[&key].0.layout_runs().next().unwrap().glyphs[0].clone();
+        let value = "👨‍👩‍👧‍👦";
+        let glyphs: Vec<_> = (0..4)
+            .map(|i| {
+                let mut g = glyph.clone();
+                g.start = 0;
+                g.end = value.len();
+                g.x = i as f32 * 12.;
+                g.w = 12.;
+                g
+            })
+            .collect();
+        let offsets = [value.len(), 0, value.len()];
+        assert_eq!(
+            shaped_line_advances(value, &glyphs, &offsets, || {}),
+            vec![48., 0., 48.]
+        );
+    }
+    #[test]
     fn unwrapped_caret_lookup_has_a_bounded_operation_count() {
         let mut p = RasterPainter::new(Viewport::new(600., 200., 1.).unwrap());
         let key = p.key("x", &default_style(14.), 1_000_000.);
@@ -4645,11 +4695,15 @@ mod editor_metric_tests {
                             };
                         }
                     }
-                    run.glyphs.iter().find(|g| g.end == at).map_or(0., |g| {
-                        if g.level.is_rtl() {
-                            g.x
+                    run.glyphs.iter().find(|g| g.end == at).map_or(0., |first| {
+                        let edges = run
+                            .glyphs
+                            .iter()
+                            .filter(|g| g.end == at && g.level == first.level);
+                        if first.level.is_rtl() {
+                            edges.map(|g| g.x).fold(f32::INFINITY, f32::min)
                         } else {
-                            g.x + g.w
+                            edges.map(|g| g.x + g.w).fold(f32::NEG_INFINITY, f32::max)
                         }
                     })
                 })
@@ -4682,7 +4736,11 @@ mod editor_metric_tests {
             let width = painter.measure_styled(value, &style, 1_000_000.)[0];
             assert_eq!(advances.len(), offsets.len());
             assert!(advances.iter().all(|x| x.is_finite() && *x >= 0.));
-            assert!((advances.last().unwrap() - width).abs() < 0.1);
+            assert!(
+                (advances.last().unwrap() - width).abs() < 0.1,
+                "{scale}x: final caret {:?}, shaped width {width}, stops {advances:?}",
+                advances.last()
+            );
             assert_eq!(
                 painter.text_cache_misses, 1,
                 "one shaped line, not one prefix buffer per grapheme"

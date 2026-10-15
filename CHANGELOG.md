@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Include every glyph sharing a cluster endpoint when placing the final caret,
+  fixing multi-glyph emoji fallback on Windows while preserving indexed lookup,
+  unsorted/repeated offsets and first visual-direction priority.
+
+- Make Catalog scene-budget regressions adapter-independent using the same
+  encoder as GPU drawing. Keep actual editor-page readback as an explicit GPU
+  acceptance test; headless CI no longer requires graphics drivers for budget
+  assertions. Expose CPU-only scene estimates under `native-gpu`.
+
 - Keep plain and rich text in the requested font family when an exact weight
   is unavailable, rather than falling back to an unrelated face. Cover sparse
   font inventories, inherited run weights and macOS without optional SF font
