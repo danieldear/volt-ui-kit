@@ -1,0 +1,7 @@
+# Maintainer review routing; enforcement is configured in branch protection.
+* @danieldear
+/.github/ @danieldear
+/scripts/ @danieldear
+/src/native/ @danieldear
+/src/bin/ @danieldear
+/SECURITY.md @danieldear

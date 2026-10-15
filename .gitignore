@@ -2,3 +2,15 @@
 .DS_Store
 
 /work/
+
+# Local configuration and signing credentials (never distribution assets).
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+__pycache__/
