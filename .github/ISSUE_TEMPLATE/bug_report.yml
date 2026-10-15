@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a reproducible toolkit problem, without secrets or personal data.
+body:
+  - type: markdown
+    attributes:
+      value: For vulnerabilities, use the Security policy instead of this public form.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include expected and observed behavior and a small Rust example or Catalog steps.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Toolkit version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, Rust version, Cargo features, renderer and display scale.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Remove paths, document contents, usernames, tokens and any other personal information before sharing logs or images.

@@ -218,6 +218,44 @@ fn fingerprint(path: &Path, hash: &mut u64) -> io::Result<()> {
     }
     Ok(())
 }
+/// A new, non-reused handoff directory. Atomic creation rejects pre-existing
+/// paths (including symlinks); Unix permissions keep saved state owner-only.
+struct DevHandoff(PathBuf);
+impl DevHandoff {
+    fn create_at(path: PathBuf) -> io::Result<Self> {
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&path)?;
+        Ok(Self(path))
+    }
+    fn new(base: &Path) -> io::Result<Self> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| error("system clock is before the Unix epoch"))?
+            .as_nanos();
+        for attempt in 0..16 {
+            let path = base.join(format!("volt-dev-{}-{stamp}-{attempt}", std::process::id()));
+            match Self::create_at(path) {
+                Ok(directory) => return Ok(directory),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(error(
+            "could not create a fresh private dev handoff directory",
+        ))
+    }
+}
+impl Drop for DevHandoff {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 struct Running(Option<Child>);
 impl Running {
     fn stop(&mut self) {
@@ -270,13 +308,13 @@ fn rebuild(root: &Path) -> io::Result<Option<PathBuf>> {
 }
 fn dev(root: &Path) -> io::Result<()> {
     let root = root.canonicalize()?;
+    // Declare before Running: stop/reap the child before removing its state.
+    let handoff_guard = DevHandoff::new(&std::env::temp_dir())?;
+    let handoff = &handoff_guard.0;
     let mut running = Running(None);
     let mut last = None;
     // Apps that opt in with `Application::dev_state` save their state and
     // window frame here when asked to restart, and restore them on launch.
-    let handoff = std::env::temp_dir().join(format!("volt-dev-{}", std::process::id()));
-    fs::create_dir_all(&handoff)?;
-    let _ = fs::remove_file(handoff.join("restart"));
     loop {
         let mut hash = 0xcbf29ce484222325;
         // Only source/manifests/config, never generated logs/assets/target.
@@ -308,7 +346,7 @@ fn dev(root: &Path) -> io::Result<()> {
                 running.0 = Some(
                     Command::new(binary)
                         .current_dir(&root)
-                        .env("VOLT_DEV_STATE", &handoff)
+                        .env("VOLT_DEV_STATE", handoff)
                         .spawn()?,
                 );
             } else {
@@ -357,6 +395,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dev_handoff_is_fresh_private_and_removed_on_drop() {
+        let directory = DevHandoff::new(&std::env::temp_dir()).unwrap();
+        let path = directory.0.clone();
+        let second = DevHandoff::new(&std::env::temp_dir()).unwrap();
+        assert_ne!(path, second.0);
+        fs::write(path.join("state.json"), "private test state").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
+        }
+        drop(directory);
+        assert!(!path.exists());
+        assert!(second.0.is_dir());
+    }
+    #[test]
+    fn dev_handoff_never_reuses_existing_directory_or_file() {
+        let parent = DevHandoff::new(&std::env::temp_dir()).unwrap();
+        let directory = parent.0.join("existing");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("sentinel"), "retained").unwrap();
+        assert!(DevHandoff::create_at(directory.clone()).is_err());
+        assert_eq!(
+            fs::read_to_string(directory.join("sentinel")).unwrap(),
+            "retained"
+        );
+        let file = parent.0.join("file");
+        fs::write(&file, "retained").unwrap();
+        assert!(DevHandoff::create_at(file.clone()).is_err());
+        assert_eq!(fs::read_to_string(file).unwrap(), "retained");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn dev_handoff_refuses_symlink_without_touching_target() {
+        let parent = DevHandoff::new(&std::env::temp_dir()).unwrap();
+        let victim = parent.0.join("target");
+        fs::create_dir(&victim).unwrap();
+        fs::write(victim.join("sentinel"), "retained").unwrap();
+        let link = parent.0.join("link");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        assert!(DevHandoff::create_at(link).is_err());
+        assert_eq!(
+            fs::read_to_string(victim.join("sentinel")).unwrap(),
+            "retained"
+        );
+    }
     #[test]
     fn every_template_uses_application_and_does_not_claim_a_backend() {
         for kind in ["minimal", "navigation", "mail", "settings", "agent"] {

@@ -1,5 +1,7 @@
 # Volt UI Kit guides
 
+Start at the [HTML landing page](index.html), or read the guides below.
+
 1. [Getting started](getting-started.md): install, features, your first window, templates and platform support.
 2. [Building interfaces](building-uis.md): state and callbacks, keys, layout, responsive design, layers and scrolling.
 3. [Components](components.md): buttons, navigation, fields, forms, menus, lists, tables, charts and icons.
@@ -14,3 +16,7 @@ the [roadmap](../ROADMAP.md) and the [changelog](../CHANGELOG.md).
 
 Every Rust example in these guides is compiled and run as a doctest
 (`cargo test --all-features --doc`), so the code here matches the current API.
+
+Maintainers: [public-release checklist](public-release.md). Distributors: [third-party notes](third-party.md).
+
+Repository maintenance: [low-disk Git identity correction](git-identity.md).
