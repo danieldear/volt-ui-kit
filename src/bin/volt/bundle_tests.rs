@@ -5,6 +5,15 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn explicit_output_keeps_display_names_independent_from_paths() {
+    let f = Fixture::new();
+    let mut options = f.options();
+    options.name = "Notes / Tools".into();
+    assert!(options.validate().is_ok());
+    assert!(!options.executable_name().contains('/'));
+}
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {

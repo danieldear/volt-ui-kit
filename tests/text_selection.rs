@@ -164,3 +164,179 @@ fn double_click_drags_extend_by_whole_words() {
     r.text_select_drag(b[0] + 7. * 4., y, &mut Metrics);
     assert_eq!(r.selected_text(), Some("co"));
 }
+
+#[derive(Default)]
+struct ModalApp {
+    open: bool,
+    nested: bool,
+    background_reports: Vec<String>,
+    dialog_reports: Vec<String>,
+}
+fn modal_view(app: &ModalApp) -> Element<ModalApp> {
+    zstack![
+        vstack![text("BEHIND MODAL").key("background-text")]
+            .selectable(true)
+            .on_select_text(|a: &mut ModalApp, t| a.background_reports.push(t)),
+        dialog(
+            vstack![
+                text("MODAL CONTENT").key("dialog-text"),
+                dialog(text("NESTED CONTENT").key("nested-text"))
+                    .key("nested")
+                    .open(app.nested)
+                    .on_dismiss(|a: &mut ModalApp| a.nested = false),
+            ]
+            .selectable(true)
+            .on_select_text(|a: &mut ModalApp, t| a.dialog_reports.push(t))
+        )
+        .key("modal")
+        .open(app.open)
+        .on_dismiss(|a: &mut ModalApp| a.open = false),
+    ]
+    .into()
+}
+fn install_modal(
+    r: &mut Runtime,
+    h: &mut volt_ui_kit::declarative::Handlers<'static, ModalApp>,
+    a: &ModalApp,
+) {
+    let (d, next) = modal_view(a).build().unwrap().into_parts();
+    r.replace_document(d, &next, &Bindings::default()).unwrap();
+    *h = next;
+    r.layout(
+        Viewport::new(600., 400., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+}
+
+#[test]
+fn select_all_and_drag_stay_in_the_topmost_modal_scope() {
+    let mut a = ModalApp {
+        open: true,
+        ..Default::default()
+    };
+    let (d, mut h) = modal_view(&a).build().unwrap().into_parts();
+    let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(600., 400., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    assert!(r.select_all_text(&mut Metrics));
+    assert_eq!(r.selected_text(), Some("MODAL CONTENT"));
+    r.dispatch_text_selection(&mut h, &mut a).unwrap();
+    assert!(a.background_reports.is_empty());
+    assert_eq!(a.dialog_reports, ["MODAL CONTENT"]);
+    let b = bounds(&r, "dialog-text");
+    r.text_select_press(b[0], b[1] + 5., 1, false, &mut Metrics);
+    r.text_select_drag(0., 0., &mut Metrics);
+    r.text_select_release();
+    assert!(!r.selected_text().unwrap_or("").contains("BEHIND"));
+    a.nested = true;
+    install_modal(&mut r, &mut h, &a);
+    assert_eq!(
+        r.selected_text(),
+        None,
+        "opening a modal must invalidate outside selection"
+    );
+    r.select_all_text(&mut Metrics);
+    assert_eq!(r.selected_text(), Some("NESTED CONTENT"));
+    a.nested = false;
+    a.open = false;
+    install_modal(&mut r, &mut h, &a);
+    assert_eq!(
+        r.selected_text(),
+        None,
+        "removed modal content cannot still be copied"
+    );
+    r.select_all_text(&mut Metrics);
+    assert_eq!(r.selected_text(), Some("BEHIND MODAL"));
+}
+
+#[test]
+fn old_background_selection_cannot_be_copied_or_dispatched_under_a_modal() {
+    let mut a = ModalApp::default();
+    let (d, mut h) = modal_view(&a).build().unwrap().into_parts();
+    let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(600., 400., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    r.select_all_text(&mut Metrics);
+    a.open = true;
+    let (d, next) = modal_view(&a).build().unwrap().into_parts();
+    r.replace_document(d, &next, &Bindings::default()).unwrap();
+    h = next;
+    assert_eq!(
+        r.selected_text(),
+        None,
+        "scope isolation must hold even before relayout"
+    );
+    r.dispatch_text_selection(&mut h, &mut a).unwrap();
+    assert!(a.background_reports.is_empty());
+    assert!(a.dialog_reports.iter().all(String::is_empty));
+}
+
+#[test]
+fn copy_popups_keep_the_authorized_selection_including_inside_a_dialog() {
+    fn view(open: bool, in_dialog: bool) -> Element<App> {
+        let content: Element<App> = vstack![
+            vstack![text("Selected text").key("copy-text")]
+                .selectable(true)
+                .on_select_text(|a: &mut App, t| a.selected.push(t)),
+            button("Menu").key("copy-anchor").on_click(|_: &mut App| {}),
+            popover(button("Copy").key("copy-action").on_click(|_: &mut App| {}))
+                .key("copy-popup")
+                .anchor("copy-anchor")
+                .open(open)
+                .on_dismiss(|_: &mut App| {}),
+        ]
+        .into();
+        if in_dialog {
+            zstack![
+                text("Behind dialog").key("behind").selectable(true),
+                dialog(content)
+                    .key("copy-dialog")
+                    .open(true)
+                    .on_dismiss(|_: &mut App| {})
+            ]
+            .into()
+        } else {
+            content
+        }
+    }
+    for in_dialog in [false, true] {
+        let mut app = App::default();
+        let (d, mut h) = view(false, in_dialog).build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        let viewport = Viewport::new(600., 400., 1.).unwrap();
+        r.layout(viewport, &Bindings::default(), &mut Metrics)
+            .unwrap();
+        r.select_all_text(&mut Metrics);
+        assert_eq!(r.selected_text(), Some("Selected text"));
+        r.dispatch_text_selection(&mut h, &mut app).unwrap();
+        for open in [true, false] {
+            let (d, next) = view(open, in_dialog).build().unwrap().into_parts();
+            r.replace_document(d, &next, &Bindings::default()).unwrap();
+            h = next;
+            assert_eq!(
+                r.selected_text(),
+                Some("Selected text"),
+                "opening a Copy popup must not discard its input"
+            );
+            r.layout(viewport, &Bindings::default(), &mut Metrics)
+                .unwrap();
+            assert_eq!(r.selected_text(), Some("Selected text"));
+            if open {
+                assert!(!r.select_all_text(&mut Metrics));
+            }
+            assert_eq!(r.selected_text(), Some("Selected text"));
+            r.dispatch_text_selection(&mut h, &mut app).unwrap();
+        }
+        assert_eq!(app.selected, ["Selected text"]);
+    }
+}
