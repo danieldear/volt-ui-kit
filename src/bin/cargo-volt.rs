@@ -223,12 +223,14 @@ fn fingerprint(path: &Path, hash: &mut u64) -> io::Result<()> {
 struct DevHandoff(PathBuf);
 impl DevHandoff {
     fn create_at(path: PathBuf) -> io::Result<Self> {
-        let mut builder = fs::DirBuilder::new();
+        let builder = fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
             builder.mode(0o700);
-        }
+            builder
+        };
         builder.create(&path)?;
         Ok(Self(path))
     }
