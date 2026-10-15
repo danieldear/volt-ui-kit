@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="State, typed callbacks, layout, layers and responsive composition."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Building interfaces — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.ttf" as="font" type="font/ttf" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.4 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html" aria-current="page">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html" aria-current="page">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Building interfaces</div><div class="reference-title"><p>Guide</p><h1>Building interfaces</h1><div class="reference-description">State, typed callbacks, layout, layers and responsive composition.</div></div><article class="guide-article"><p>Everything in this guide is ordinary Rust: no markup language, macros beyond
+simple child lists, or code generation.</p>
+<h2 id="the-model">The model</h2>
+<div class="reference-code"><div>text<span>Source</span></div><pre tabindex="0" role="region" aria-label="text"><code>App state ──view(&amp;App)──▶ Element&lt;App&gt; ──build()──▶ validated tree + closures
+    ▲                                                     │
+    │                                        layout · paint · input
+    │                                                     │
+    └──────────── callback(&amp;mut App) ◀── click, key, change, message</code></pre></div><ul>
+<li><strong><code>view</code> is a function of state.</strong> The host calls it once at start and again
+after each dispatched callback, background message batch or command. Hover,
+scrolling, resizing and animation frames do not call it.</li>
+<li><strong>The whole tree is recomposed</strong>, then validated and installed atomically.
+Layout reuses the measurements of nodes that did not change, so recomposing a
+large screen stays cheap.</li>
+<li><strong>State lives in your type.</strong> Components are controlled: a text field shows
+<code>app.draft</code> and reports edits through <code>on_change</code>; nothing hides its own copy.</li>
+</ul>
+<h2 id="callbacks">Callbacks</h2>
+<p>Callbacks are closures or functions that take <code>&amp;mut App</code> plus the event&#39;s value:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+
+#[derive(Default)]
+struct App { count: usize, preview: bool, items: Vec&lt;(u64, String)&gt; }
+
+fn reset(app: &amp;mut App) {
+    app.count = 0;
+}
+
+fn controls(app: &amp;App) -&gt; Element&lt;App&gt; {
+    let rows: Vec&lt;Element&lt;App&gt;&gt; = app
+        .items
+        .iter()
+        .map(|(id, title)| {
+            let id = *id;
+            hstack![
+                text(title.clone()),
+                spacer(),
+                button(&quot;Remove&quot;)
+                    .key(format!(&quot;remove-{id}&quot;))
+                    .on_click(move |app: &amp;mut App| app.items.retain(|(i, _)| *i != id)),
+            ]
+            .key(format!(&quot;row-{id}&quot;))
+            .into()
+        })
+        .collect();
+    vstack![
+        button(&quot;Add&quot;).key(&quot;add&quot;).on_click(|app: &amp;mut App| app.count += 1),
+        button(&quot;Reset&quot;).key(&quot;reset&quot;).enabled(app.count &gt; 0).on_click(reset),
+        toggle(&quot;Preview&quot;, app.preview)
+            .key(&quot;preview&quot;)
+            .on_change(|app: &amp;mut App, on| app.preview = on),
+        vstack(rows).gap(4., Axis::Vertical),
+    ]
+    .gap(8., Axis::Vertical)
+    .into()
+}
+controls(&amp;App::default()).build()?;</code></pre></div><ul>
+<li>Captures must be owned (<code>&#39;static</code>). Capture an ID with <code>move</code>, not a reference
+into the view; capturing the ID (not the index) keeps a click pointed at the
+right row after the list changes.</li>
+<li>Callbacks run synchronously on the UI thread. Start slow work on a thread and
+report back with a <a href="../guides/app-services.html#background-work">background message</a>.</li>
+<li>Wrong callback signatures fail to compile. A missing callback on an
+interactive control fails at <code>build()</code>.</li>
+</ul>
+<h2 id="composition">Composition</h2>
+<p>Reusable pieces are functions that return <code>Element&lt;App&gt;</code>. Conditionals and loops
+are plain Rust; annotate the type when branches return different builders:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+struct App { saved: bool }
+fn status(app: &amp;App) -&gt; Element&lt;App&gt; {
+    if app.saved {
+        badge(&quot;Saved&quot;).into()
+    } else {
+        text(&quot;Unsaved changes&quot;).color(ColorToken::Warning).into()
+    }
+}
+status(&amp;App { saved: true }).build()?;</code></pre></div><p><code>vstack!</code>, <code>hstack!</code>, <code>zstack!</code>, <code>stack!</code>, <code>panel!</code> (and <code>column!</code>/<code>row!</code>)
+accept a list of children of any element type. The functions with the same
+names accept an iterator of <code>Element&lt;App&gt;</code>.</p>
+<p>When you glob-import the prelude, also import <code>column</code> explicitly
+(<code>use volt_ui_kit::ui::{column, prelude::*};</code>); otherwise it clashes with the
+standard library&#39;s <code>column!</code> macro. <code>vstack!</code> has no such clash.</p>
+<h2 id="keys-and-identity">Keys and identity</h2>
+<p><code>.key(&quot;...&quot;)</code> gives an element a stable, globally unique identity. Keys keep
+focus, text selection, scroll position, pressed state and animations attached
+to the right element across recomposition.</p>
+<ul>
+<li>Keys are 1–128 ASCII letters, digits, <code>_</code> or <code>-</code>. Duplicates fail at <code>build()</code>.</li>
+<li>Unkeyed elements get structural IDs, which are fine for static content but
+not for lists that insert, remove or reorder. Key those rows and controls.</li>
+<li>Focus survives recomposition when its key still names the same kind of
+enabled control; otherwise it is cleared.</li>
+</ul>
+<h2 id="layout">Layout</h2>
+<h3 id="stacks-and-containers">Stacks and containers</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Builder</th><th scope="col">Arrangement</th></tr></thead><tbody><tr><td><code>vstack!</code> / <code>column!</code></td><td>Children top to bottom</td></tr><tr><td><code>hstack!</code> / <code>row!</code></td><td>Children left to right</td></tr><tr><td><code>stack!</code></td><td>Vertical by default; <code>.direction(..)</code> takes a fixed or responsive direction</td></tr><tr><td><code>zstack!</code></td><td>Children on top of each other, first is backmost</td></tr><tr><td><code>panel!</code></td><td>A padded vertical surface</td></tr><tr><td><code>grid(children)</code></td><td><code>.columns(3)</code> or <code>.min_column_width(220.)</code>; children can <code>.column_span(2)</code></td></tr></tbody></table></div><h3 id="spacing">Spacing</h3>
+<p>Padding takes edges; gaps take axes. Both accept one selector or a list:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let card: Element&lt;()&gt; = vstack![text(&quot;Title&quot;), text(&quot;Body&quot;)]
+    .padding(24., Edge::Horizontal)
+    .padding(16., [Edge::Top, Edge::Bottom])
+    .gap(8., Axis::Vertical)
+    .into();
+card.build()?;</code></pre></div><p><code>Edge::All</code> and <code>Axis::Both</code> set everything. The last setter for an edge wins.
+Gaps go between children only; use padding for outer space. Padding and gap do
+not inherit into nested containers.</p>
+<h3 id="placement-and-sizing">Placement and sizing</h3>
+<ul>
+<li><code>.flow(Flow::Center)</code> places the children as a group anywhere in the
+container: <code>TopLeft</code>, <code>Top</code>, <code>TopRight</code>, <code>Left</code>, <code>Center</code>, <code>Right</code>,
+<code>BottomLeft</code>, <code>Bottom</code>, <code>BottomRight</code>. It needs spare space to move into.</li>
+<li><code>.align(Align::Start | Center | End | Stretch)</code> aligns children on the cross axis.</li>
+<li><code>.justify(Justify::SpaceBetween)</code> distributes children on the main axis
+(<code>Start</code>, <code>Center</code>, <code>End</code>, <code>SpaceBetween</code>, <code>SpaceAround</code>, <code>SpaceEvenly</code>).</li>
+<li><code>.width(..)</code>, <code>.height(..)</code>, <code>.min_width(..)</code>, <code>.max_width(..)</code> (and heights),
+<code>.width_fraction(0.5)</code>, <code>.aspect_ratio(16. / 9.)</code> and <code>.fill_width()</code>.</li>
+<li><code>.flex(1.)</code> shares the remaining main-axis space by weight.</li>
+<li><code>spacer()</code> is invisible flexible space; <code>divider()</code> is a one-pixel line.</li>
+<li><code>.wrap(true)</code> on a row wraps children onto new lines.</li>
+</ul>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let toolbar: Element&lt;()&gt; = hstack![
+    text(&quot;Title&quot;).font_weight(600),
+    spacer(),
+    badge(&quot;Live&quot;).rounded(Rounding::Full),
+]
+.gap(12., Axis::Horizontal)
+.padding(12., Edge::All)
+.into();
+toolbar.build()?;</code></pre></div><p>All sizes are logical pixels; the host scales them for the display.</p>
+<h2 id="responsive-layout">Responsive layout</h2>
+<p>Any spacing, the direction of <code>stack!</code>, visibility, width and font size can
+change with the window width:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let screen: Element&lt;()&gt; = stack![
+    panel![text(&quot;Navigation&quot;)].width(200.),
+    panel![text(&quot;Content&quot;)].flex(1.),
+]
+.direction(responsive(Direction::Vertical).at(Breakpoint::Md, Direction::Horizontal))
+.padding(responsive(12.).at(Breakpoint::Md, 24.), Edge::All)
+.gap(responsive(8.).at(Breakpoint::Lg, 24.), Axis::Both)
+.into();
+screen.build()?;</code></pre></div><p>Rules are mobile-first minimum widths: the base value applies everywhere and the
+largest matching breakpoint wins. Named breakpoints are <code>Sm</code> 640, <code>Md</code> 768,
+<code>Lg</code> 1024, <code>Xl</code> 1280 and <code>Xxl</code> 1536 logical pixels; <code>Breakpoint::MinWidth(700.)</code>
+sets your own. Rules read the window width, not the parent&#39;s width. Resizing
+re-resolves them during layout without calling <code>view</code>.</p>
+<p><code>.visible(responsive(false).at(Breakpoint::Md, true))</code> hides an element below a
+width; a hidden element takes no space and receives no input or focus.</p>
+<h2 id="layers">Layers</h2>
+<p><code>zstack!</code> overlaps children. Each layer is placed independently (centred unless
+you set <code>.flow(..)</code>), and the stack is as large as its largest child. Clicks go
+to the topmost enabled interactive layer; decorative layers let clicks through.
+A <code>zstack!</code> is not a modal barrier: use a <a href="../guides/components.html#fields-value-controls-and-dialogs">dialog</a>
+when content behind must be blocked.</p>
+<h2 id="scrolling">Scrolling</h2>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let rows = (0..100).map(|i| text(format!(&quot;Row {i}&quot;)).height(32.).into());
+let list: Element&lt;()&gt; = vstack![
+    text(&quot;Fixed header&quot;).height(40.),
+    vstack(rows).key(&quot;rows&quot;).flex(1.).scroll(Scroll::Auto),
+]
+.into();
+list.build()?;</code></pre></div><ul>
+<li>Modes: <code>Vertical</code>, <code>Horizontal</code>, <code>Both</code>, <code>Auto</code> (scrolls only the axes that
+overflow). Give a scroll view a height, width or flex share so it has a viewport.</li>
+<li>Wheel and trackpad input scroll the innermost view and pass the rest to its
+ancestors. Shift-wheel scrolls horizontally.</li>
+<li>Offsets are kept per key across recomposition. Scrollbars are thin, draggable
+overlays; <code>.scrollbars(Scrollbars::Hidden)</code> hides them but keeps scrolling.</li>
+<li><code>.scroll_to(key, request)</code> brings the child with <code>key</code> to the top whenever
+<code>request</code> changes; bump a counter in a callback to scroll again.</li>
+<li>Keyboard focus scrolls offscreen controls into view.</li>
+<li>An empty overlay above a scroll view can pass wheel events through with
+<code>.scroll_passthrough(true)</code>.</li>
+</ul>
+<p>For thousands of rows, use <a href="../guides/components.html#large-lists"><code>virtual_list</code></a> so only
+the visible rows are built.</p>
+<h2 id="validation-and-limits">Validation and limits</h2>
+<p><code>build()</code> checks the whole tree before it is installed: unique keys, connected
+callbacks, valid colours and sizes, and these limits:</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Limit</th><th scope="col">Value</th></tr></thead><tbody><tr><td>Elements per tree</td><td>4,096 (virtual lists do not count unmounted rows)</td></tr><tr><td>Nesting depth</td><td>48</td></tr><tr><td>Text per element</td><td>8 KiB</td></tr><tr><td>Font size / weight</td><td>8–96 / 100–900 in steps of 100</td></tr><tr><td>Corner radius / border width</td><td>0–256 / 0–16</td></tr><tr><td>Sizes and spacing</td><td>0–16,384 logical pixels</td></tr></tbody></table></div><p>If a later <code>view</code> produces an invalid tree, the host prints the error, keeps the
+last valid screen and recovers on the next valid update. State that a callback
+already changed is not rolled back.</p>
+<h2 id="custom-hosts">Custom hosts</h2>
+<p>Without <code>native</code>, <code>rust-ui</code> gives you the builders and <code>declarative::Runtime</code>:
+build an element, then call <code>Runtime::new</code> or <code>replace_document</code> and route
+pointer, keyboard, scroll and text input into the runtime yourself. The native
+host in <code>src/native/window.rs</code> is the reference implementation.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/building-uis.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#the-model">The model</a><a href="#callbacks">Callbacks</a><a href="#composition">Composition</a><a href="#keys-and-identity">Keys and identity</a><a href="#layout">Layout</a><a href="#stacks-and-containers">Stacks and containers</a><a href="#spacing">Spacing</a><a href="#placement-and-sizing">Placement and sizing</a><a href="#responsive-layout">Responsive layout</a><a href="#layers">Layers</a><a href="#scrolling">Scrolling</a><a href="#validation-and-limits">Validation and limits</a><a href="#custom-hosts">Custom hosts</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

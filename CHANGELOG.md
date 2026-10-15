@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Include every glyph sharing a cluster endpoint when placing the final caret,
+  fixing multi-glyph emoji fallback on Windows while preserving indexed lookup,
+  unsorted/repeated offsets and first visual-direction priority.
+
+- Make Catalog scene-budget regressions adapter-independent using the same
+  encoder as GPU drawing. Keep actual editor-page readback as an explicit GPU
+  acceptance test; headless CI no longer requires graphics drivers for budget
+  assertions. Expose CPU-only scene estimates under `native-gpu`.
+
+- Keep plain and rich text in the requested font family when an exact weight
+  is unavailable, rather than falling back to an unrelated face. Cover sparse
+  font inventories, inherited run weights and macOS without optional SF font
+  installs. Include Catalog test metadata in Cargo source packages.
+
+- Expand the landing page into a static documentation portal: 50 Catalog pages,
+  115 toolkit-rendered example previews, Rust usage excerpts/API notes and eight
+  HTML guides. Add an explicit offline Catalog exporter, repeatable site
+  generation and manifest/coverage/link regression tests.
+
+- Redesign the documentation landing page with self-hosted OFL display
+  typography, a native Catalog composition and keyboard-accessible CSS-only
+  palette, corner and shadow studies. Keep the site script-free and update
+  static-asset packaging and license notices for the local font.
+
 - Add a reusable, preview-first Git identity correction tool. It rewrites only
   selected branch commit metadata, reuses all trees/blobs and keeps zero-copy
   backup refs. Local rewrite, lease-protected push and local restore are

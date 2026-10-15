@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Window chrome, GPU drawing, transparency and desktop blur."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Windows and rendering — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.ttf" as="font" type="font/ttf" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.4 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html" aria-current="page">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html" aria-current="page">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Windows and rendering</div><div class="reference-title"><p>Guide</p><h1>Windows and rendering</h1><div class="reference-description">Window chrome, GPU drawing, transparency and desktop blur.</div></div><article class="guide-article"><h2 id="configuring-the-window">Configuring the window</h2>
+<p><code>Application</code> holds the window settings. Everything is validated before the
+window opens.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{
+    native::{Application, RendererPreference, WindowBackground, WindowChrome},
+    ui::prelude::*,
+    ThemeMode,
+};
+
+#[derive(Default)]
+struct App;
+
+fn view(_: &amp;App) -&gt; Element&lt;App&gt; {
+    vstack![
+        hstack![text(&quot;My app&quot;).font_weight(600)]
+            .height(60.)
+            .padding(100., Edge::Left)
+            .align(Align::Center)
+            .drag_region(true),
+        text(&quot;Content&quot;),
+    ]
+    .into()
+}
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Application::new(&quot;My app&quot;, App, view)
+        .size(1100, 760)
+        .theme(ThemeMode::System)
+        .chrome(WindowChrome::Overlay)
+        .background(WindowBackground::Blur { opacity: 0.8 })
+        .renderer(RendererPreference::Auto)
+        .run()
+}</code></pre></div><h2 id="title-bar-and-chrome">Title bar and chrome</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowChrome</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Native</code> (default)</td><td>The platform&#39;s standard title bar.</td></tr><tr><td><code>Overlay</code></td><td>macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar.</td></tr><tr><td><code>CompactOverlay</code></td><td>The same with the shorter, older macOS title bar geometry.</td></tr><tr><td><code>Borderless</code></td><td>No system decorations; you supply the window controls.</td></tr></tbody></table></div><p>Mark your header with <code>.drag_region(true)</code> so the window can be dragged by it.
+Buttons and other controls inside the header still receive clicks.</p>
+<h2 id="transparency-and-blur">Transparency and blur</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowBackground</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Opaque</code> (default)</td><td>A solid window.</td></tr><tr><td><code>Transparent { opacity }</code></td><td>The window&#39;s background is see-through; content stays opaque.</td></tr><tr><td><code>Blur { opacity }</code></td><td>macOS: the public system material (<code>NSVisualEffectView</code>) blurs the desktop behind the window. Requires <code>native-gpu</code> and a decorated window.</td></tr><tr><td><code>CompositorBlur { opacity }</code></td><td>A stronger blur through winit&#39;s compositor request. On macOS this uses a private API, so it is not App Store safe.</td></tr></tbody></table></div><ul>
+<li><code>opacity</code> applies only to the window background. Text and controls keep their
+own opacity; give your root a translucent or no background to let the blur show.</li>
+<li><code>.background_from_state(|app| WindowBackground::..)</code> changes the background
+from your state, and <code>UiTheme::with_background_color(..)</code> tints it.</li>
+<li>Blur is a request to the OS. Windows and X11 have no equivalent, and
+Reduce Transparency switches the macOS blur to an opaque background.</li>
+<li>The window blur shows what is behind the window. Blurring the app&#39;s own
+content behind a panel is not supported yet.</li>
+</ul>
+<h2 id="gpu-and-software-drawing">GPU and software drawing</h2>
+<p>With <code>native-gpu</code>, each window draws through <strong>Vello</strong> on wgpu (Metal on macOS,
+DX12 on Windows, Vulkan on Linux). Without it, or when the GPU cannot be used,
+the host draws with <strong>tiny-skia</strong> on the CPU. Both produce the same layout,
+text and hit areas.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>RendererPreference</code></th><th scope="col">Behaviour</th></tr></thead><tbody><tr><td><code>Auto</code> (default)</td><td>GPU when compiled and available; falls back to software on errors.</td></tr><tr><td><code>GpuRequired</code></td><td>Returns an error instead of falling back.</td></tr><tr><td><code>Software</code></td><td>Always draws on the CPU.</td></tr></tbody></table></div><p>The <code>VOLT_UI_RENDERER=auto|gpu|software</code> environment variable does the same for
+apps that use <code>run_ui</code> instead of <code>Application</code>.</p>
+<p>Why Vello? Metal, DX12 and Vulkan are the low-level graphics APIs; Vello is a
+2D renderer that runs on top of them through wgpu. It turns paths, text,
+gradients, clips and blends into GPU compute work, so the kit has one drawing
+path on every platform instead of three hand-written ones.</p>
+<p>What still runs on the CPU: your callbacks and <code>view</code>, layout, text shaping and
+encoding the scene. Layout reuses the measurements of unchanged nodes, and text
+shaping is cached.</p>
+<h3 id="large-scenes">Large scenes</h3>
+<p>Vello works within fixed-size GPU buffers. The kit estimates each frame&#39;s cost
+before drawing it, splits very large frames into up to 16 horizontal strips, and
+draws a frame in software only when it cannot fit. Images are admitted up to
+96 MiB of unique pixels per frame.</p>
+<h2 id="performance-and-diagnostics">Performance and diagnostics</h2>
+<ul>
+<li>A settled window draws nothing and uses no timers. Animations request frames
+only while they run.</li>
+<li><code>VOLT_UI_TRACE=1</code> prints per-frame timings (layout, paint, GPU encode and
+present, text cache misses), GPU scene statistics (shapes, glyphs, layers,
+estimated buffer use) and the font and surface setup. It never logs your
+application&#39;s text.</li>
+<li>Many examples accept <code>--bench N</code> and <code>--snapshot out.png --size 1200x800 --scale 2</code>
+for repeatable timing and headless screenshots.</li>
+</ul>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>VOLT_UI_TRACE=1 cargo run --release --features native-gpu --example catalog -- --page dashboard</code></pre></div><p>Trace timings start when the host handles an event and end when the frame is
+handed to the OS; they do not include display scan-out.</p>
+<h3 id="headless-scene-budget-checks">Headless scene-budget checks</h3>
+<p>With <code>native-gpu</code>, <code>native::estimate_gpu_scene(&amp;mut painter, &amp;batches)</code> uses
+the GPU scene encoder to report estimated lines, segments and any exceeded
+encoder budget <strong>without creating a graphics adapter</strong>. This suits CI and
+diagnostics on machines without GPU drivers. Estimates do not prove device
+residency, GPU execution or presentation.</p>
+<p>The Catalog&#39;s editor-page budget regression runs this way on every platform.
+Actual GPU readback remains a separate, explicit acceptance test:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo test --locked --all-features --example catalog \
+  actual_gpu_editor_heavy_pages -- --ignored --nocapture</code></pre></div><p>That command requires a working GPU adapter and fails rather than silently
+skipping when one is unavailable.</p>
+<h2 id="resource-limits">Resource limits</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Resource</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>Window framebuffer</td><td>64 megapixels</td></tr><tr><td>GPU image cache</td><td>64 MiB</td></tr><tr><td>GPU glyph cache</td><td>16 MiB / 4,096 glyphs</td></tr><tr><td>Opacity layer depth / clip depth</td><td>24 / 48</td></tr><tr><td>Shadow work per frame (software)</td><td>16 megapixels; extra shadows are skipped and counted</td></tr></tbody></table></div><p>These bound the kit&#39;s own caches. GPU drivers, Vello&#39;s internal buffers and the
+OS compositor use additional memory.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#configuring-the-window">Configuring the window</a><a href="#title-bar-and-chrome">Title bar and chrome</a><a href="#transparency-and-blur">Transparency and blur</a><a href="#gpu-and-software-drawing">GPU and software drawing</a><a href="#large-scenes">Large scenes</a><a href="#performance-and-diagnostics">Performance and diagnostics</a><a href="#headless-scene-budget-checks">Headless scene-budget checks</a><a href="#resource-limits">Resource limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

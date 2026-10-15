@@ -1,0 +1,2410 @@
+[
+  {
+    "api": [],
+    "group": "Getting started",
+    "sections": [],
+    "slug": "introduction",
+    "summary": "Native desktop components for Rust, declared as ordinary functions of your state.",
+    "title": "Introduction"
+  },
+  {
+    "api": [
+      [
+        "ColorToken::alpha(percent)",
+        "A role at 0..=100% opacity, e.g. \"@primary/15\"."
+      ],
+      [
+        "Palette::with_accent(rgba)",
+        "Set primary/accent and pick contrasting foregrounds."
+      ],
+      [
+        "UiTheme::from_palette(palette)",
+        "Build a theme from a fully custom palette."
+      ],
+      [
+        "run_ui_with_theme(options, state, view, theme)",
+        "Derive the theme from application state."
+      ],
+      [
+        "Catalog: --background / --window-opacity",
+        "Independent background opacity and tint; foreground stays opaque. Select Material or Compositor in the sidebar."
+      ]
+    ],
+    "group": "Getting started",
+    "sections": [
+      {
+        "code": "text(\"Saved\").color(ColorToken::Success)\npanel![...].background(ColorToken::Base200).border_color(ColorToken::Border)",
+        "height": 209,
+        "id": "theme-roles",
+        "image": "theming-theme-roles.png",
+        "note": "Components draw with roles, not literal colours, so one palette restyles everything.",
+        "title": "Semantic roles",
+        "width": 1000
+      },
+      {
+        "code": "fn theme(app: &App, system: ThemeMode) -> UiTheme {\n    let base = if app.dark { Palette::dark() } else { Palette::light() };\n    UiTheme::from_palette(base.with_accent([0.15, 0.39, 0.92, 1.]))\n}\nnative::run_ui_with_theme(options, app, view, theme)?;",
+        "height": 200,
+        "id": "theme-pick",
+        "image": "theming-theme-pick.png",
+        "note": "Try a colour and a mode; this whole site re-themes live.",
+        "title": "Accent and mode",
+        "width": 1000
+      },
+      {
+        "code": "panel![...].background(ColorToken::Primary.alpha(15)) // \"@primary/15\"",
+        "height": 200,
+        "id": "theme-alpha",
+        "image": "theming-theme-alpha.png",
+        "note": "Any role at an opacity, still resolved from the active theme.",
+        "title": "Translucent tokens",
+        "width": 1000
+      },
+      {
+        "code": "cargo run --release --features native-gpu --example catalog -- \\\n    --page theming --theme dark --background blur --window-opacity 0.86\n# --background transparent: alpha without a blur request\n# --background opaque: solid window; software fallback\n# blur/material: public AppKit material; compositor: opt-in private macOS blur.",
+        "height": 274,
+        "id": "theme-window",
+        "image": "theming-theme-window.png",
+        "note": "The preview shows surface alpha, not desktop blur. Native GPU windows can request transparency/OS blur; text stays opaque. Software falls back to opaque.",
+        "title": "Window surfaces",
+        "width": 1000
+      }
+    ],
+    "slug": "theming",
+    "summary": "Semantic colour roles, light and dark palettes, accents and translucent tokens.",
+    "title": "Theming"
+  },
+  {
+    "api": [
+      [
+        "Palette::light() / ::dark()",
+        "Built-in starting points."
+      ],
+      [
+        "palette.set(ColorToken::…, rgba)",
+        "Change one of the 22 roles."
+      ],
+      [
+        "Palette::to_json / from_json(text, &base)",
+        "Theme files; partial files override only listed roles."
+      ],
+      [
+        "UiTheme::from_palette(palette)",
+        "Use it for a window."
+      ],
+      [
+        "contrast_ratio(a, b)",
+        "WCAG ratio; 4.5 for body text (AA), 3 for large."
+      ],
+      [
+        "ColorToken::ALL / .content_pair()",
+        "Every role and the role drawn on it."
+      ]
+    ],
+    "group": "Getting started",
+    "sections": [
+      {
+        "code": "let mut palette = Palette::light();\npalette.set(ColorToken::Primary, parse_hex(\"#7C3AED\").unwrap());\npalette.set(ColorToken::PrimaryContent, parse_hex(\"#FFFFFF\").unwrap());\nlet theme = UiTheme::from_palette(palette);",
+        "height": 960,
+        "id": "theme-roles",
+        "image": "theme-editor-theme-roles.png",
+        "note": "Pick a role, then a colour. The whole Catalog updates live; contrast is checked against the role drawn on top.",
+        "title": "Colour roles",
+        "width": 1000
+      },
+      {
+        "code": "button(\"Primary\").variant(ButtonVariant::Primary)\nbadge(\"Success\").background(ColorToken::Success).color(ColorToken::SuccessContent)",
+        "height": 270,
+        "id": "theme-preview",
+        "image": "theme-editor-theme-preview.png",
+        "note": "Components drawn with every role.",
+        "title": "Preview",
+        "width": 1000
+      },
+      {
+        "code": "let palette = Palette::from_json(include_str!(\"brand.json\"), &Palette::light())?;\nlet json = palette.to_json(); // save or share",
+        "height": 354,
+        "id": "theme-file",
+        "image": "theme-editor-theme-file.png",
+        "note": "Themes are plain JSON: every role as hex. Missing roles keep the base palette.",
+        "title": "Export & import",
+        "width": 1000
+      }
+    ],
+    "slug": "theme-editor",
+    "summary": "Edit every colour role for light and dark, check contrast, export JSON.",
+    "title": "Theme editor"
+  },
+  {
+    "api": [
+      [
+        ".accessible_label(name)",
+        "Nonempty, control-free name, up to 8 KiB; does not alter painted text."
+      ],
+      [
+        "Tabs / segmented / select / table / tree",
+        "Automatic roles and selected state; tree items also expose expansion."
+      ],
+      [
+        "Runtime::accessibility_focus(key)",
+        "Focus and reveal a mounted enabled control in the current modal scope."
+      ],
+      [
+        "Runtime::accessibility_reveal(key)",
+        "Reveal without changing keyboard focus."
+      ],
+      [
+        "Runtime::accessibility_scroll(key, [dx, dy], …)",
+        "Page a viewport; each direction is -1, 0 or 1. Virtual windows dispatch normally."
+      ],
+      [
+        "Platform acceptance",
+        "VoiceOver/Narrator/Orca and unmounted virtual-row navigation still require validation/work."
+      ]
+    ],
+    "group": "Getting started",
+    "sections": [
+      {
+        "code": "text_field(&app.name).accessible_label(\"Profile name\").placeholder(\"Your full name\")\nbutton(\"\").accessible_label(\"Show notifications\").on_click(show_notifications)\ntab_bar(items).selected(app.tab).on_select(select_tab)\nsegmented_control(options).selected(app.level).on_select(select_level)",
+        "height": 240,
+        "id": "access-names",
+        "image": "accessibility-access-names.png",
+        "note": "Try Tab, arrow keys and the icon action. Password values remain withheld.",
+        "title": "Names and selection",
+        "width": 1000
+      },
+      {
+        "code": "vstack(actions).key(\"actions\").accessible_label(\"Scrollable actions\")\n    .height(156.).scroll(Scroll::Vertical)\n// Runtime::accessibility_focus(key) reveals a mounted off-screen control.\n// Native AccessKit routes ScrollUp/Down/Left/Right and ScrollIntoView.",
+        "height": 220,
+        "id": "access-scroll",
+        "image": "accessibility-access-scroll.png",
+        "note": "Tab or an assistive focus request reveals mounted actions below the viewport. Scroll actions target this container only.",
+        "title": "Scroll and focus reveal",
+        "width": 1000
+      }
+    ],
+    "slug": "accessibility",
+    "summary": "Named controls, semantic selection and mounted scroll/focus reveal.",
+    "title": "Accessibility"
+  },
+  {
+    "api": [
+      [
+        "vstack! / hstack! / zstack! / stack!",
+        "Vertical, horizontal, layered and responsive stacks."
+      ],
+      [
+        ".gap(value, Axis)",
+        "Space between children on one or both axes."
+      ],
+      [
+        ".padding(value, Edge)",
+        "Inner space on any combination of edges."
+      ],
+      [
+        ".flow(Flow)",
+        "Place content: corners, edges or centre."
+      ],
+      [
+        ".align(Align)",
+        "Cross-axis alignment, including Stretch."
+      ],
+      [
+        "spacer()",
+        "Flexible space that pushes siblings apart."
+      ],
+      [
+        "responsive(v).at(Breakpoint, v)",
+        "A value that changes with window width."
+      ]
+    ],
+    "group": "Getting started",
+    "sections": [
+      {
+        "code": "vstack![a, b, c].gap(8., Axis::Vertical)\nhstack![left, spacer(), right]\nzstack![background, badge(\"On top\")]",
+        "height": 200,
+        "id": "layout-stacks",
+        "image": "layout-layout-stacks.png",
+        "note": "vstack, hstack with a spacer, and a zstack drawing back to front.",
+        "title": "Stacks and layers",
+        "width": 1000
+      },
+      {
+        "code": "panel![badge(\"Center\")].height(90.).flow(Flow::Center)",
+        "height": 200,
+        "id": "layout-flow",
+        "image": "layout-layout-flow.png",
+        "note": "Place content anywhere inside a container with flow.",
+        "title": "Placement",
+        "width": 1000
+      },
+      {
+        "code": "stack![sidebar, content]\n    .direction(responsive(Direction::Vertical).at(Breakpoint::Lg, Direction::Horizontal))",
+        "height": 200,
+        "id": "layout-responsive",
+        "image": "layout-layout-responsive.png",
+        "note": "Stacks switch direction at breakpoints; resize the window past 1024px.",
+        "title": "Responsive direction",
+        "width": 1000
+      }
+    ],
+    "slug": "layout",
+    "summary": "Stacks, layers, spacing, alignment and responsive direction.",
+    "title": "Layout"
+  },
+  {
+    "api": [
+      [
+        "grid(children)",
+        ".columns(n) / .min_column_width(px); child .column_span(n)"
+      ],
+      [
+        ".wrap(true) / .justify(Justify::…)",
+        "Row wrapping and distribution."
+      ],
+      [
+        ".min_width / .max_width / .width_fraction / .aspect_ratio",
+        "Sizing constraints."
+      ],
+      [
+        ".text_align / .line_height / .max_lines / .truncate",
+        "Text layout."
+      ],
+      [
+        ".uppercase / .letter_spacing / .underline / .strikethrough",
+        "Text style."
+      ],
+      [
+        ".background_gradient(Gradient::linear | radial)",
+        "Gradient fills."
+      ],
+      [
+        ".border_style / .border_sides",
+        "Dashed, dotted and single-side borders."
+      ],
+      [
+        ".offset / .ambient / .cursor",
+        "Motion and pointer affordances."
+      ],
+      [
+        "tokens::{space, radius, text_size, shadow, motion}",
+        "Design scales."
+      ]
+    ],
+    "group": "Getting started",
+    "sections": [
+      {
+        "code": "grid(tiles).columns(3).gap(10., Axis::Both)\nvstack![wide].column_span(2)",
+        "height": 200,
+        "id": "util-grid",
+        "image": "utilities-util-grid.png",
+        "note": "Fixed or auto-fit columns; children can span several.",
+        "title": "Grid",
+        "width": 1000
+      },
+      {
+        "code": "hstack(badges).wrap(true).gap(8., Axis::Both)",
+        "height": 200,
+        "id": "util-wrap",
+        "image": "utilities-util-wrap.png",
+        "note": "Items flow onto the next line when the row is full.",
+        "title": "Wrapping rows",
+        "width": 1000
+      },
+      {
+        "code": "hstack(items).justify(Justify::SpaceBetween)",
+        "height": 216,
+        "id": "util-justify",
+        "image": "utilities-util-justify.png",
+        "note": "Distribute free space along the main axis.",
+        "title": "Justify",
+        "width": 1000
+      },
+      {
+        "code": "text(..).uppercase().letter_spacing(0.12)\ntext(..).text_align(TextAlign::Center).line_height(1.6)\ntext(..).truncate()",
+        "height": 200,
+        "id": "util-type",
+        "image": "utilities-util-type.png",
+        "note": "Alignment, line height, truncation, case, tracking and decoration.",
+        "title": "Typography",
+        "width": 1000
+      },
+      {
+        "code": "vstack![].background_gradient(Gradient::linear(135., [(0., \"#6366F1\"), (1., \"#EC4899\")]))\nvstack![].border_style(BorderStyle::Dashed)\nvstack![].border_sides(Sides::BOTTOM)",
+        "height": 200,
+        "id": "util-style",
+        "image": "utilities-util-style.png",
+        "note": "Linear and radial gradients, dashed borders and single sides.",
+        "title": "Gradients and borders",
+        "width": 1000
+      },
+      {
+        "code": "vstack![..].ambient(Ambient::float(0., -6.).period_ms(2400))\nbutton(..).hover_style(|s| s.offset(0., -3.).shadow(volt_ui_kit::ui::tokens::shadow::md()))",
+        "height": 200,
+        "id": "util-motion",
+        "image": "utilities-util-motion.png",
+        "note": "Float, spin and pulse loops; offsets animate on hover without moving hit targets.",
+        "title": "Ambient motion and hover lift",
+        "width": 1000
+      }
+    ],
+    "slug": "utilities",
+    "summary": "Grid, wrapping, justify, typography, gradients, borders and motion.",
+    "title": "Utilities"
+  },
+  {
+    "api": [
+      [
+        "icon(Icon::…)",
+        "A vector glyph element (default 20 px)."
+      ],
+      [
+        ".size(px) / .color(c) / .stroke(w)",
+        "Scale, colour and line weight."
+      ],
+      [
+        ".accessible_label(text)",
+        "Announce a meaningful icon."
+      ],
+      [
+        "ALL_ICONS",
+        "Every glyph, for galleries and pickers."
+      ],
+      [
+        "SvgIcon::parse(markup) / ::load(path)",
+        "Any SVG icon or drawing."
+      ],
+      [
+        "svg_icon(&svg)",
+        ".size / .color / .stroke / .keep_colors(true)"
+      ],
+      [
+        "IconSet::from_dir(path)",
+        "A folder of .svg files, by name: set.icon(\"arrow-left\")."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "icon(Icon::Search)",
+        "height": 937,
+        "id": "icons-gallery",
+        "image": "icons-icons-gallery.png",
+        "note": "Original drawings on a 24-unit grid. They follow the theme's text colour.",
+        "title": "Gallery",
+        "width": 1000
+      },
+      {
+        "code": "let star = SvgIcon::parse(include_str!(\"star.svg\"))?;\nsvg_icon(&star).size(24.).color(ColorToken::Primary)\n\n// A whole icon-set folder, by file name:\nlet (lucide, _skipped) = IconSet::from_dir(\"assets/lucide\")?;\nlucide.icon(\"arrow-left\").unwrap().size(16.)",
+        "height": 340,
+        "id": "icons-custom",
+        "image": "icons-icons-custom.png",
+        "note": "Load any icon set or drawing. Icons follow the theme colour; multi-colour art can keep its colours.",
+        "title": "Your own SVG icons",
+        "width": 1000
+      },
+      {
+        "code": "icon(Icon::Bolt).size(32.).color(ColorToken::Primary)\nicon(Icon::Settings).size(32.).stroke(1.)",
+        "height": 200,
+        "id": "icons-style",
+        "image": "icons-icons-style.png",
+        "note": "Icons scale crisply and take any colour token or hex value.",
+        "title": "Size, colour and stroke",
+        "width": 1000
+      }
+    ],
+    "slug": "icons",
+    "summary": "A built-in, theme-aware vector icon set.",
+    "title": "Icons"
+  },
+  {
+    "api": [
+      [
+        "rich_text(spans)",
+        "One wrapping paragraph from spans; takes every text modifier."
+      ],
+      [
+        "span(text)",
+        "A run; plain strings convert too."
+      ],
+      [
+        ".bold() / .weight(w)",
+        "Weight 700, or 100–900 in steps of 100."
+      ],
+      [
+        ".italic()",
+        "Italic style."
+      ],
+      [
+        ".code()",
+        "Monospace on a subtle rounded background."
+      ],
+      [
+        ".family(name)",
+        "Any installed family, or monospace / serif / sans-serif."
+      ],
+      [
+        ".color(c) / .background(c)",
+        "Hex or theme tokens; backgrounds are rounded chips."
+      ],
+      [
+        ".underline() / .strikethrough()",
+        "Decorations in the run's colour."
+      ],
+      [
+        ".link(target) + .on_link(f)",
+        "Clickable runs: pointer cursor, hover underline, target reported to f."
+      ],
+      [
+        ".size(scale)",
+        "Font size relative to the text; .code() uses 0.88."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "rich_text([\n    span(\"Rich text mixes \"),\n    span(\"bold\").bold(),\n    span(\"inline code\").code(),\n    span(\"colour\").color(ColorToken::Primary),\n    span(\"highlights\").background(ColorToken::Warning.alpha(30)),\n    span(\"strikethrough\").strikethrough(),\n])\n.font_size(15.)\n.line_height(1.6)",
+        "height": 200,
+        "id": "rich-runs",
+        "image": "rich-text-rich-runs.png",
+        "note": "Each span can change weight, slant, font, colour, background or decoration. Unset properties inherit the text's style.",
+        "title": "Styled runs",
+        "width": 1000
+      },
+      {
+        "code": "rich_text([span(\"Layout treats \"), span(\"runs wrap\").bold(), span(\"max_lines\").code()])\n    .text_align(TextAlign::Center)\n    .max_lines(2)\n    .width(260.)",
+        "height": 200,
+        "id": "rich-wrapping",
+        "image": "rich-text-rich-wrapping.png",
+        "note": "The paragraph wraps as one text: start-aligned, centred, and cut to two lines.",
+        "title": "Wrapping, alignment and truncation",
+        "width": 1000
+      },
+      {
+        "code": "rich_text([\n    span(\"Read the \"),\n    span(\"guide\").link(\"docs/getting-started.md\"),\n    span(\" or \"),\n    span(\"the repository\").link(\"https://github.com/danieldear/volt-ui-kit\"),\n])\n.on_link(|app: &mut App, target| app.open(target))",
+        "height": 200,
+        "id": "rich-links",
+        "image": "rich-text-rich-links.png",
+        "note": "Give a run a target with .link(..) and handle clicks on the text with .on_link(..).",
+        "title": "Links",
+        "width": 1000
+      },
+      {
+        "code": "rich_text([\n    span(\"Add \"),\n    span(\"volt-ui-kit\").code(),\n    span(\", then call \"),\n    span(\"Application::new\").code(),\n    span(\"; \"),\n    span(\"nothing else is required\").italic(),\n])",
+        "height": 200,
+        "id": "rich-markdown",
+        "image": "rich-text-rich-markdown.png",
+        "note": "The building block for rendering Markdown paragraphs: code spans, emphasis and notes.",
+        "title": "Inline Markdown",
+        "width": 1000
+      }
+    ],
+    "slug": "rich-text",
+    "summary": "One paragraph with bold, italic, code, colour and decorated runs.",
+    "title": "Rich text"
+  },
+  {
+    "api": [
+      [
+        "badge(text)",
+        "A compact, non-interactive label."
+      ],
+      [
+        ".tone(Tone)",
+        "Body, Muted, Accent or Title colouring."
+      ],
+      [
+        ".rounded(Rounding::Full)",
+        "Pill shape."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "badge(\"Success\")\n    .background(ColorToken::Success.alpha(15))\n    .color(ColorToken::Success)",
+        "height": 200,
+        "id": "badge-tones",
+        "image": "badge-badge-tones.png",
+        "note": "Semantic colours with translucent backgrounds.",
+        "title": "Tones",
+        "width": 1000
+      },
+      {
+        "code": "badge(\"New\").rounded(Rounding::Full)\n    .background(ColorToken::Primary).color(ColorToken::PrimaryContent)",
+        "height": 200,
+        "id": "badge-pill",
+        "image": "badge-badge-pill.png",
+        "note": "Fully rounded for counts and labels.",
+        "title": "Pill",
+        "width": 1000
+      }
+    ],
+    "slug": "badge",
+    "summary": "A short status or count, set in a compact pill.",
+    "title": "Badge"
+  },
+  {
+    "api": [
+      [
+        "button(label)",
+        "A clickable control; needs .on_click(...)."
+      ],
+      [
+        ".variant(ButtonVariant)",
+        "Neutral, Primary, Soft, Outline, Ghost or Danger."
+      ],
+      [
+        ".size(ControlSize)",
+        "Small, Medium or Large."
+      ],
+      [
+        ".disclosure(open)",
+        "Trailing chevron for menus and popups."
+      ],
+      [
+        ".label_align(Align)",
+        "Start, centre or end."
+      ],
+      [
+        ".enabled(bool)",
+        "Disable interaction and dim the button."
+      ],
+      [
+        ".key(id)",
+        "Stable identity for focus, animation and tests."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "button(\"Primary\").variant(ButtonVariant::Primary).on_click(save)\nbutton(\"Soft\").variant(ButtonVariant::Soft)\nbutton(\"Outline\").variant(ButtonVariant::Outline)\nbutton(\"Ghost\").variant(ButtonVariant::Ghost)\nbutton(\"Delete\").variant(ButtonVariant::Danger)",
+        "height": 200,
+        "id": "button-variants",
+        "image": "button-button-variants.png",
+        "note": "Emphasis presets built from theme tokens.",
+        "title": "Variants",
+        "width": 1000
+      },
+      {
+        "code": "button(\"Small\").size(ControlSize::Small)\nbutton(\"Large\").size(ControlSize::Large)",
+        "height": 200,
+        "id": "button-sizes",
+        "image": "button-button-sizes.png",
+        "note": "28, 36 and 44 pixels tall with matching type.",
+        "title": "Sizes",
+        "width": 1000
+      },
+      {
+        "code": "button(if app.liked { \"Liked\" } else { \"Like\" })\n    .variant(if app.liked { ButtonVariant::Primary } else { ButtonVariant::Outline })\n    .animation(Animation::ease_out().duration_ms(180))\n    .on_click(|app: &mut App| app.liked = !app.liked)\nbutton(\"Sort by date\").disclosure(false)",
+        "height": 200,
+        "id": "button-states",
+        "image": "button-button-states.png",
+        "note": "Disabled, toggled with animation, disclosure and label alignment.",
+        "title": "States",
+        "width": 1000
+      }
+    ],
+    "slug": "button",
+    "summary": "Triggers an action. Six variants, three sizes and a disclosure style.",
+    "title": "Button"
+  },
+  {
+    "api": [
+      [
+        "button_bar![...]",
+        "A horizontal group of buttons."
+      ],
+      [
+        ".joined(true)",
+        "Fuse into one control with seams."
+      ],
+      [
+        ".rounded(r) / .rounded_on(r, corners)",
+        "Outer corner radius of the group."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "button_bar![\n    button(\"Years\").on_click(years),\n    button(\"Months\").on_click(months),\n    button(\"Days\").on_click(days),\n].joined(true)",
+        "height": 200,
+        "id": "group-joined",
+        "image": "button-group-group-joined.png",
+        "note": "Inner corners square off; 1px seams divide the segments.",
+        "title": "Joined",
+        "width": 1000
+      },
+      {
+        "code": "button_bar![copy, paste].gap(8., Axis::Horizontal)",
+        "height": 200,
+        "id": "group-spaced",
+        "image": "button-group-group-spaced.png",
+        "note": "The same group with a gap.",
+        "title": "Spaced",
+        "width": 1000
+      }
+    ],
+    "slug": "button-group",
+    "summary": "Related actions joined into one divided control.",
+    "title": "Button group"
+  },
+  {
+    "api": [
+      [
+        "toolbar![...]",
+        "A centred horizontal row with 8px gaps."
+      ],
+      [
+        "spacer()",
+        "Push following items to the far edge."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "toolbar![\n    button(\"Back\").variant(ButtonVariant::Ghost).size(ControlSize::Small).on_click(back),\n    spacer(),\n    badge(\"Draft\"),\n    button(\"Publish\").variant(ButtonVariant::Primary).on_click(publish),\n]",
+        "height": 200,
+        "id": "toolbar",
+        "image": "toolbar-toolbar.png",
+        "note": "Ghost actions on the left, primary actions on the right.",
+        "title": "Toolbar",
+        "width": 1000
+      }
+    ],
+    "slug": "toolbar",
+    "summary": "A horizontal row of actions with flexible spacing.",
+    "title": "Toolbar"
+  },
+  {
+    "api": [
+      [
+        "segmented_control([(value, label), ...])",
+        "Typed values, one selected."
+      ],
+      [
+        ".selected(value) / .on_select(f)",
+        "Controlled selection."
+      ],
+      [
+        ".enabled(bool)",
+        "Disable every option."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "segmented_control([(0, \"Day\"), (1, \"Week\"), (2, \"Month\")])\n    .selected(app.range)\n    .on_select(|app: &mut App, v| app.range = v)",
+        "height": 200,
+        "id": "seg-basic",
+        "image": "segmented-control-seg-basic.png",
+        "note": "Arrow keys move the selection; the selected item is never re-sent.",
+        "title": "Segmented control",
+        "width": 1000
+      },
+      {
+        "code": "segmented_control([(0, \"List\"), (1, \"Grid\")])\n    .height(28.).font_size(12.).rounded(Rounding::Full)",
+        "height": 200,
+        "id": "seg-pill",
+        "image": "segmented-control-seg-pill.png",
+        "note": "Compact and fully rounded.",
+        "title": "Pill",
+        "width": 1000
+      }
+    ],
+    "slug": "segmented-control",
+    "summary": "Pick one of a few mutually exclusive options.",
+    "title": "Segmented control"
+  },
+  {
+    "api": [
+      [
+        "tabs([tab(value, label, content), ...])",
+        "A tab strip and the active content."
+      ],
+      [
+        ".placement(TabPlacement::Bottom)",
+        "Put the strip below the content."
+      ],
+      [
+        "tab_bar([tab_item(...)])",
+        "The strip alone, for custom content."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "tabs([\n    tab(0, \"Account\", account_page(app)),\n    tab(1, \"Password\", password_page(app)),\n    tab(2, \"Billing\", billing_page(app)).enabled(false),\n])\n.selected(app.tab)\n.on_select(|app: &mut App, t| app.tab = t)",
+        "height": 200,
+        "id": "tabs",
+        "image": "tabs-tabs.png",
+        "note": "Content for inactive tabs is never built.",
+        "title": "Tabs",
+        "width": 1000
+      }
+    ],
+    "slug": "tabs",
+    "summary": "Switch between views; only the active page is mounted.",
+    "title": "Tabs"
+  },
+  {
+    "api": [
+      [
+        "navigation(items)",
+        "Controlled, typed destinations"
+      ],
+      [
+        ".placement(Sidebar | Rail | Bottom)",
+        "Vertical or horizontal destination layout"
+      ],
+      [
+        ".selected(value).on_select(callback)",
+        "Application owns routing and state"
+      ],
+      [
+        ".key(...)",
+        "Stable group and item identities are required"
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "navigation([\n    navigation_item(Page::Inbox, \"Inbox\").key(\"inbox\"),\n    navigation_item(Page::Sent, \"Sent\").key(\"sent\"),\n]).key(\"navigation\").selected(app.page)\n  .placement(NavigationPlacement::Sidebar)\n  .on_select(|app: &mut App, page| app.page = page)\n// Use Rail or Bottom; compose independently with ordinary stacks/panels.",
+        "height": 534,
+        "id": "navigation-layouts",
+        "image": "navigation-navigation-layouts.png",
+        "note": "All three previews share controlled app state. These are independent components, not a mandatory application shell.",
+        "title": "Navigation, your layout",
+        "width": 1000
+      }
+    ],
+    "slug": "navigation",
+    "summary": "Independent controlled destination navigation: sidebar, rail and bottom placement.",
+    "title": "Navigation"
+  },
+  {
+    "api": [
+      [
+        "checkbox(label, checked)",
+        "Controlled: pass state, update it in on_change."
+      ],
+      [
+        ".accent_color(token)",
+        "Colour of the checked box."
+      ],
+      [
+        ".enabled(bool)",
+        "Disable interaction."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "checkbox(\"Accept terms and conditions\", app.terms)\n    .on_change(|app: &mut App, checked| app.terms = checked)",
+        "height": 200,
+        "id": "checkbox",
+        "image": "checkbox-checkbox.png",
+        "note": "Space toggles a focused checkbox.",
+        "title": "Checkbox",
+        "width": 1000
+      }
+    ],
+    "slug": "checkbox",
+    "summary": "Toggle an option on or off, with a label.",
+    "title": "Checkbox"
+  },
+  {
+    "api": [
+      [
+        "toggle(label, on)",
+        "A controlled switch."
+      ],
+      [
+        ".accent_color(token)",
+        "Colour when on."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "toggle(\"Airplane mode\", app.airplane)\n    .on_change(|app: &mut App, on| app.airplane = on)",
+        "height": 200,
+        "id": "switch",
+        "image": "switch-switch.png",
+        "note": "Use for settings that apply immediately.",
+        "title": "Switch",
+        "width": 1000
+      }
+    ],
+    "slug": "switch",
+    "summary": "An on/off setting that takes effect immediately.",
+    "title": "Switch"
+  },
+  {
+    "api": [
+      [
+        "text_field(value)",
+        "Controlled single-line input."
+      ],
+      [
+        ".on_change(f) / .on_submit(f)",
+        "Text edits and Enter."
+      ],
+      [
+        ".placeholder(text)",
+        "Hint shown while empty."
+      ],
+      [
+        ".password(true) / .read_only(true)",
+        "Masked or selectable-only text."
+      ],
+      [
+        "Shortcuts",
+        "Cmd/Ctrl A, C, X, V, Z; word and line navigation; IME."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "let valid = app.email.is_empty() || app.email.contains('@');\ntext_field(&app.email)\n    .placeholder(\"you@example.com\")\n    .border_color(if valid { ColorToken::Border } else { ColorToken::Error })\n    .on_change(|app: &mut App, v| app.email = v)",
+        "height": 218,
+        "id": "tf-label",
+        "image": "text-field-tf-label.png",
+        "note": "Validation is plain Rust: derive styles from state.",
+        "title": "With label and help",
+        "width": 1000
+      },
+      {
+        "code": "text_field(&app.password).password(true)\ntext_field(version).read_only(true)\ntext_field(\"Disabled\").enabled(false)",
+        "height": 200,
+        "id": "tf-modes",
+        "image": "text-field-tf-modes.png",
+        "note": "Passwords are never copied or exposed to screen readers.",
+        "title": "Password, read-only and disabled",
+        "width": 1000
+      }
+    ],
+    "slug": "text-field",
+    "summary": "Single-line text entry with placeholder, password and read-only modes.",
+    "title": "Text field"
+  },
+  {
+    "api": [
+      [
+        "text_area(value)",
+        "Controlled multi-line input."
+      ],
+      [
+        ".soft_wrap(true)",
+        "Wrap long lines to the width."
+      ],
+      [
+        ".height(px)",
+        "Visible height; content scrolls inside."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "text_area(&app.bio)\n    .soft_wrap(true)\n    .height(120.)\n    .on_change(|app: &mut App, v| app.bio = v)",
+        "height": 228,
+        "id": "text-area",
+        "image": "text-area-text-area.png",
+        "note": "Soft-wrapped multi-line editing with a live count.",
+        "title": "Text area",
+        "width": 1000
+      }
+    ],
+    "slug": "text-area",
+    "summary": "Multi-line text with soft wrap, selection, undo and IME.",
+    "title": "Text area"
+  },
+  {
+    "api": [
+      [
+        "slider(value)",
+        "Controlled value in its range (default 0..=1)."
+      ],
+      [
+        ".range(min..=max) / .step(s)",
+        "Bounds and snapping."
+      ],
+      [
+        ".enabled(bool)",
+        "Disable interaction."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "slider(app.volume).on_change(|app: &mut App, v| app.volume = v)",
+        "height": 200,
+        "id": "slider",
+        "image": "slider-slider.png",
+        "note": "Drag, click the track, or use arrow, Page and Home/End keys.",
+        "title": "Slider",
+        "width": 1000
+      },
+      {
+        "code": "slider(app.price).range(0.0..=200.0).step(10.)",
+        "height": 200,
+        "id": "slider-step",
+        "image": "slider-slider-step.png",
+        "note": "Values snap to the step.",
+        "title": "Range and step",
+        "width": 1000
+      }
+    ],
+    "slug": "slider",
+    "summary": "Choose a value from a continuous or stepped range.",
+    "title": "Slider"
+  },
+  {
+    "api": [
+      [
+        "select(items)",
+        "A trigger and a popup list; requires .key(...)."
+      ],
+      [
+        "select_item(value, label)",
+        "A typed option; .enabled(false) to disable."
+      ],
+      [
+        ".open(bool) / .on_open_change(f)",
+        "Controlled open state."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "select(fruits.iter().enumerate().map(|(i, f)| select_item(i, *f)))\n    .key(\"fruit\")\n    .selected(app.fruit)\n    .open(app.fruit_open)\n    .on_select(|app: &mut App, v| app.fruit = v)\n    .on_open_change(|app: &mut App, open| app.fruit_open = open)",
+        "height": 200,
+        "id": "select",
+        "image": "select-select.png",
+        "note": "Escape or a click outside closes it; arrow keys move through options.",
+        "title": "Select",
+        "width": 1000
+      },
+      {
+        "code": "select_item(1, \"Mountain (UTC−7)\").enabled(false)",
+        "height": 200,
+        "id": "select-disabled",
+        "image": "select-select-disabled.png",
+        "note": "Disabled options are skipped by keyboard and pointer.",
+        "title": "Disabled options",
+        "width": 1000
+      },
+      {
+        "code": "// Few options, no typing:\nselect(sizes).key(\"size\").selected(app.size)\n// Many options, type to filter:\ncombobox(countries, &app.country_search)\n    .key(\"country\")\n    .state(|app: &mut App| &mut app.country_search)\n    .on_select(|app: &mut App, c| app.country = Some(c))",
+        "height": 200,
+        "id": "select-vs-combobox",
+        "image": "select-select-vs-combobox.png",
+        "note": "Same field look, different jobs. Select: a short fixed list, picked by click or arrow keys. Combobox: a long list you search by typing.",
+        "title": "Select or combobox?",
+        "width": 1000
+      }
+    ],
+    "slug": "select",
+    "summary": "Choose one option from a dropdown list.",
+    "title": "Select"
+  },
+  {
+    "api": [
+      [
+        "CalendarDate::new(y, m, d)",
+        "A validated civil date; add_days, add_months, weekday."
+      ],
+      [
+        "calendar(y, m)",
+        ".selected / .range / .bounds / .monday_first"
+      ],
+      [
+        "date_picker(value, &state)",
+        "Popover calendar; state keeps open/month."
+      ],
+      [
+        "date_range_picker(range, &state)",
+        "DateRange { start, end } with days()."
+      ],
+      [
+        "time_picker(TimeOfDay)",
+        ".twelve_hour(bool) / .minute_step(n)"
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "calendar(year, month)\n    .key(\"cal\")\n    .selected(app.date)\n    .on_select(|app: &mut App, d| app.date = Some(d))\n    .on_month_change(|app: &mut App, y, m| app.month = (y, m))",
+        "height": 353,
+        "id": "date-calendar",
+        "image": "date-time-date-calendar.png",
+        "note": "A month grid with keyboard-reachable days, today marker and paging.",
+        "title": "Calendar",
+        "width": 1000
+      },
+      {
+        "code": "date_picker(app.date, &app.picker)\n    .key(\"due\")\n    .state(|app: &mut App| &mut app.picker)\n    .on_change(|app: &mut App, d| app.date = Some(d))",
+        "height": 200,
+        "id": "date-picker",
+        "image": "date-time-date-picker.png",
+        "note": "A field that opens a calendar popover.",
+        "title": "Date picker",
+        "width": 1000
+      },
+      {
+        "code": "date_range_picker(app.range, &app.range_picker)\n    .key(\"trip\")\n    .state(|app: &mut App| &mut app.range_picker)\n    .on_change(|app: &mut App, r| app.range = r)",
+        "height": 200,
+        "id": "date-range",
+        "image": "date-time-date-range.png",
+        "note": "Two months side by side; the first click sets the start.",
+        "title": "Date range",
+        "width": 1000
+      },
+      {
+        "code": "time_picker(app.time).key(\"alarm\").twelve_hour(true).minute_step(5)",
+        "height": 200,
+        "id": "time-picker",
+        "image": "date-time-time-picker.png",
+        "note": "Hour and minute steppers with an optional AM/PM switch.",
+        "title": "Time picker",
+        "width": 1000
+      }
+    ],
+    "slug": "date-time",
+    "summary": "Calendars, date and range pickers, and a time picker.",
+    "title": "Date & time"
+  },
+  {
+    "api": [
+      [
+        "radio_group(items)",
+        ".selected / .descriptions / .horizontal / .on_select"
+      ],
+      [
+        "number_input(v)",
+        ".range / .step / .decimals / .suffix / .on_change"
+      ],
+      [
+        "combobox(items, &state)",
+        ".state(accessor) / .selected / .on_select"
+      ],
+      [
+        "tag_input(&tags, &state)",
+        ".max_tags / .placeholder / .on_change"
+      ],
+      [
+        "range_slider(lo, hi)",
+        ".range / .step / .on_change(lo, hi)"
+      ],
+      [
+        "color_picker(hex)",
+        ".swatches / .on_change(#RRGGBB); Hsl helpers"
+      ],
+      [
+        "otp_input(code, len)",
+        ".on_change / .on_complete"
+      ],
+      [
+        "rating(n)",
+        ".max / .size / .on_change"
+      ],
+      [
+        "form_field(label, control)",
+        ".description / .error / .required"
+      ],
+      [
+        "text_field(..).leading_icon / .trailing_action",
+        "Adornments inside the field."
+      ],
+      [
+        "drop_zone()",
+        ".accept / .multiple / .on_browse / .on_drop"
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "radio_group([(0, \"Hobby\"), (1, \"Pro\"), (2, \"Team\")])\n    .key(\"plan\")\n    .selected(app.plan)\n    .on_select(|app: &mut App, p| app.plan = p)",
+        "height": 208,
+        "id": "form-radio",
+        "image": "form-inputs-form-radio.png",
+        "note": "Mutually exclusive options with optional descriptions.",
+        "title": "Radio group",
+        "width": 1000
+      },
+      {
+        "code": "number_input(app.weight).range(0., 20.).step(0.5).decimals(1).suffix(\" kg\")",
+        "height": 200,
+        "id": "form-number",
+        "image": "form-inputs-form-number.png",
+        "note": "Steppers clamp to the range; typed values are parsed and rounded.",
+        "title": "Number input",
+        "width": 1000
+      },
+      {
+        "code": "combobox(items, &app.combo)\n    .key(\"framework\")\n    .selected(app.framework)\n    .state(|app: &mut App| &mut app.combo)\n    .on_select(|app: &mut App, v| app.framework = Some(v))",
+        "height": 200,
+        "id": "form-combobox",
+        "image": "form-inputs-form-combobox.png",
+        "note": "Type to filter, click or press Enter to choose.",
+        "title": "Combobox",
+        "width": 1000
+      },
+      {
+        "code": "tag_input(&app.tags, &app.draft)\n    .key(\"tags\")\n    .state(|app: &mut App| &mut app.draft)\n    .on_change(|app: &mut App, tags| app.tags = tags)",
+        "height": 200,
+        "id": "form-tags",
+        "image": "form-inputs-form-tags.png",
+        "note": "Enter adds the draft; × removes a tag; duplicates are ignored.",
+        "title": "Tag input",
+        "width": 1000
+      },
+      {
+        "code": "range_slider(lo, hi).range(0. ..=200.).step(5.)\n    .on_change(|app: &mut App, lo, hi| app.price = (lo, hi))",
+        "height": 200,
+        "id": "form-range",
+        "image": "form-inputs-form-range.png",
+        "note": "Two thumbs; a press grabs the nearer one and they never cross.",
+        "title": "Range slider",
+        "width": 1000
+      },
+      {
+        "code": "color_picker(app.colour.clone()).key(\"colour\").on_change(|app: &mut App, hex| app.colour = hex)",
+        "height": 310,
+        "id": "form-colour",
+        "image": "form-inputs-form-colour.png",
+        "note": "Swatches, hue/saturation/lightness sliders and a hex field.",
+        "title": "Colour picker",
+        "width": 1000
+      },
+      {
+        "code": "otp_input(app.code.clone(), 6).key(\"otp\")\n    .on_change(|app: &mut App, c| app.code = c)\n    .on_complete(|app: &mut App, _| app.verified = true)",
+        "height": 200,
+        "id": "form-otp",
+        "image": "form-inputs-form-otp.png",
+        "note": "One field behind six boxes, so paste and backspace just work.",
+        "title": "One-time code",
+        "width": 1000
+      },
+      {
+        "code": "rating(app.stars).key(\"stars\").on_change(|app: &mut App, n| app.stars = n)",
+        "height": 200,
+        "id": "form-rating",
+        "image": "form-inputs-form-rating.png",
+        "note": "Click a star; click the current rating again to clear. Read-only without a handler.",
+        "title": "Rating",
+        "width": 1000
+      },
+      {
+        "code": "form_field(\"Email\", text_field(&app.email).leading_icon(Icon::Mail))\n    .key(\"email\")\n    .required(true)\n    .error(validate(&app.email))",
+        "height": 236,
+        "id": "form-field",
+        "image": "form-inputs-form-field.png",
+        "note": "Labels, descriptions, required marks and errors around any control.",
+        "title": "Form fields and adornments",
+        "width": 1000
+      },
+      {
+        "code": "drop_zone().key(\"drop\").accept([\"png\", \"jpg\"])\n    .on_drop(|app: &mut App, paths| app.files = paths)",
+        "height": 240,
+        "id": "form-drop",
+        "image": "form-inputs-form-drop.png",
+        "note": "Native drag and drop. Extensions filter what is accepted.",
+        "title": "Drop zone",
+        "width": 1000
+      }
+    ],
+    "slug": "form-inputs",
+    "summary": "Radio groups, steppers, comboboxes, tags, ranges, colours, codes, ratings and drops.",
+    "title": "Form inputs"
+  },
+  {
+    "api": [
+      [
+        "dialog(content)",
+        "A modal card above the window; requires .key(...)."
+      ],
+      [
+        ".title(text)",
+        "Heading for the card."
+      ],
+      [
+        ".open(bool) / .on_dismiss(f)",
+        "Controlled visibility."
+      ],
+      [
+        ".backdrop_dismiss(false) / .escape_dismiss(false)",
+        "Require an explicit choice."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "dialog(vstack![\n    text_field(&app.name).on_change(|app: &mut App, v| app.name = v),\n    button(\"Save changes\").variant(ButtonVariant::Primary).on_click(close),\n])\n.key(\"edit\")\n.title(\"Edit profile\")\n.open(app.dialog_open)\n.on_dismiss(|app: &mut App| app.dialog_open = false)",
+        "height": 600,
+        "id": "dialog",
+        "image": "dialog-dialog.png",
+        "note": "Focus is trapped inside and restored when it closes. Escape and the backdrop dismiss it.",
+        "title": "Dialog",
+        "width": 1000
+      }
+    ],
+    "slug": "dialog",
+    "summary": "A modal card that captures focus until dismissed.",
+    "title": "Dialog"
+  },
+  {
+    "api": [
+      [
+        "menu(label, items)",
+        "A disclosure trigger and popup actions."
+      ],
+      [
+        "menu_item(value, label)",
+        ".enabled(false), .danger(true)."
+      ],
+      [
+        "menu_separator()",
+        "A divider between groups."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "menu(\"Options\", [\n    menu_item(0, \"New file\"),\n    menu_item(2, \"Share\").enabled(false),\n    menu_separator(),\n    menu_item(3, \"Delete\").danger(true),\n])\n.open(app.menu_open)\n.on_action(|app: &mut App, id| run(app, id))\n.on_open_change(|app: &mut App, open| app.menu_open = open)",
+        "height": 200,
+        "id": "menu",
+        "image": "menu-menu.png",
+        "note": "Separators, disabled items and a destructive action.",
+        "title": "Menu",
+        "width": 1000
+      }
+    ],
+    "slug": "menu",
+    "summary": "A list of actions opened from a trigger.",
+    "title": "Menu"
+  },
+  {
+    "api": [
+      [
+        "context_menu(target, items)",
+        "Right-click actions for a subtree."
+      ],
+      [
+        ".position([x, y]) / .on_context_open(f)",
+        "Where it opened, in logical pixels."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "context_menu(surface, [menu_item(0, \"Back\"), menu_item(1, \"Reload\")])\n    .key(\"ctx\")\n    .open(app.context_open)\n    .position(app.context_at)\n    .on_context_open(|app: &mut App, at| { app.context_at = at; app.context_open = true; })\n    .on_open_change(|app: &mut App, open| app.context_open = open)",
+        "height": 232,
+        "id": "context",
+        "image": "context-menu-context.png",
+        "note": "Opens at the pointer; the application owns its position.",
+        "title": "Context menu",
+        "width": 1000
+      }
+    ],
+    "slug": "context-menu",
+    "summary": "Actions for a surface, opened with a right click.",
+    "title": "Context menu"
+  },
+  {
+    "api": [
+      [
+        "popover(content)",
+        "An anchored card; requires .key(...)."
+      ],
+      [
+        ".anchor(key)",
+        "The element it attaches to."
+      ],
+      [
+        ".open(bool) / .on_dismiss(f)",
+        "Controlled visibility."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "button(\"Dimensions\").key(\"trigger\").disclosure(app.open).on_click(toggle)\npopover(vstack![title, width_slider, height_slider])\n    .key(\"dimensions\")\n    .anchor(\"trigger\")\n    .open(app.open)\n    .on_dismiss(|app: &mut App| app.open = false)",
+        "height": 200,
+        "id": "popover",
+        "image": "popover-popover.png",
+        "note": "Interactive content anchored to its trigger.",
+        "title": "Popover",
+        "width": 1000
+      }
+    ],
+    "slug": "popover",
+    "summary": "Rich content anchored to a trigger.",
+    "title": "Popover"
+  },
+  {
+    "api": [
+      [
+        "tooltip(text, target)",
+        "Help shown on hover or focus; requires .key(...)."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "tooltip(\"Add to library\", button(\"Hover me\").on_click(add))\n    .key(\"add-tip\")",
+        "height": 200,
+        "id": "tooltip",
+        "image": "tooltip-tooltip.png",
+        "note": "Non-interactive help; no callback or timer needed.",
+        "title": "Tooltip",
+        "width": 1000
+      }
+    ],
+    "slug": "tooltip",
+    "summary": "Short help shown on hover or keyboard focus.",
+    "title": "Tooltip"
+  },
+  {
+    "api": [
+      [
+        "collapsible(title, content)",
+        ".open / .on_toggle"
+      ],
+      [
+        "accordion(sections)",
+        ".expanded / .multiple / .on_change"
+      ],
+      [
+        "drawer(content)",
+        ".side / .size / .title / .open / .on_dismiss"
+      ],
+      [
+        "toaster(&toasts)",
+        ".position / .on_dismiss / .on_action; Toast::new(id, title)"
+      ],
+      [
+        "command_palette(commands, &state)",
+        ".state / .on_run; command(v, label)"
+      ],
+      [
+        "menu_item(..).checked / .shortcut / .icon",
+        "Rich menu rows."
+      ],
+      [
+        "menu_submenu(key, label, items)",
+        "With menu .submenu(..) / .on_submenu(..)."
+      ],
+      [
+        "hover_card(content, target)",
+        "A noninteractive rich preview."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "collapsible(\"What is Volt UI?\", body).key(\"about\").open(app.open)\n    .on_toggle(|app: &mut App, open| app.open = open)",
+        "height": 200,
+        "id": "disc-collapsible",
+        "image": "overlays-disc-collapsible.png",
+        "note": "One section that shows or hides its content.",
+        "title": "Collapsible",
+        "width": 1000
+      },
+      {
+        "code": "accordion([(\"Is it accessible?\", answer), ...])\n    .key(\"faq\")\n    .expanded(app.faq.clone())\n    .on_change(|app: &mut App, open| app.faq = open)",
+        "height": 216,
+        "id": "disc-accordion",
+        "image": "overlays-disc-accordion.png",
+        "note": "Stacked sections; one open at a time unless .multiple(true).",
+        "title": "Accordion",
+        "width": 1000
+      },
+      {
+        "code": "drawer(body).key(\"prefs\").title(\"Preferences\").side(DrawerSide::Right)\n    .open(app.drawer)\n    .on_dismiss(|app: &mut App| app.drawer = false)",
+        "height": 200,
+        "id": "disc-drawer",
+        "image": "overlays-disc-drawer.png",
+        "note": "A modal panel attached to a window edge.",
+        "title": "Drawer",
+        "width": 1000
+      },
+      {
+        "code": "zstack![page, toaster(&app.toasts)\n    .on_dismiss(|app: &mut App, id| app.toasts.retain(|t| t.id != id))]",
+        "height": 344,
+        "id": "disc-toaster",
+        "image": "overlays-disc-toaster.png",
+        "note": "Non-modal notifications stacked in a corner; the page stays usable.",
+        "title": "Toaster",
+        "width": 1000
+      },
+      {
+        "code": "command_palette([command(\"new\", \"New file\").group(\"File\").shortcut(\"⌘N\")], &app.palette)\n    .state(|app: &mut App| &mut app.palette)\n    .on_run(|app: &mut App, c| run(app, c))",
+        "height": 200,
+        "id": "disc-palette",
+        "image": "overlays-disc-palette.png",
+        "note": "Type to search; prefix, substring, keyword and fuzzy matches. Enter runs.",
+        "title": "Command palette",
+        "width": 1000
+      },
+      {
+        "code": "menu_item(\"wrap\", \"Word wrap\").checked(app.wrap).shortcut(\"⌥Z\")\nmenu_submenu(\"panels\", \"Panels\", [menu_item(\"explorer\", \"Explorer\")])",
+        "height": 200,
+        "id": "disc-menu",
+        "image": "overlays-disc-menu.png",
+        "note": "Check items, icons, shortcut hints and drill-down submenus.",
+        "title": "Menu items",
+        "width": 1000
+      },
+      {
+        "code": "hover_card(profile_preview, text(\"@ada\")).key(\"ada\")",
+        "height": 200,
+        "id": "disc-hover",
+        "image": "overlays-disc-hover.png",
+        "note": "A rich preview shown while the target is hovered or focused.",
+        "title": "Hover card",
+        "width": 1000
+      }
+    ],
+    "slug": "overlays",
+    "summary": "Collapsibles, accordions, drawers, toasts, a command palette and rich menus.",
+    "title": "Overlays"
+  },
+  {
+    "api": [
+      [
+        "progress(0.0..=1.0)",
+        "A determinate bar."
+      ],
+      [
+        "progress_indeterminate()",
+        "Animated activity bar."
+      ],
+      [
+        ".period_ms(ms)",
+        "Animation period."
+      ],
+      [
+        ".fill_width()",
+        "Use the parent's width."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "progress(app.done).fill_width()",
+        "height": 200,
+        "id": "progress",
+        "image": "progress-progress.png",
+        "note": "Drive it from any state; here, the slider.",
+        "title": "Determinate",
+        "width": 1000
+      },
+      {
+        "code": "progress_indeterminate().fill_width()",
+        "height": 200,
+        "id": "progress-busy",
+        "image": "progress-progress-busy.png",
+        "note": "Animates while work is under way; settles with reduced motion.",
+        "title": "Indeterminate",
+        "width": 1000
+      }
+    ],
+    "slug": "progress",
+    "summary": "Shows how far a task has come, or that it is under way.",
+    "title": "Progress"
+  },
+  {
+    "api": [
+      [
+        "spinner()",
+        "A 20px activity indicator."
+      ],
+      [
+        "loading(label)",
+        "A spinner with a label."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "spinner()\nloading(\"Loading projects…\")",
+        "height": 200,
+        "id": "spinner",
+        "image": "spinner-spinner.png",
+        "note": "For short, indeterminate waits.",
+        "title": "Spinner and loading",
+        "width": 1000
+      }
+    ],
+    "slug": "spinner",
+    "summary": "Indicates indeterminate work in a small space.",
+    "title": "Spinner"
+  },
+  {
+    "api": [
+      [
+        "toaster(&toasts)",
+        "A corner stack; layer it last in a zstack."
+      ],
+      [
+        "Toast::new(id, title)",
+        ".description / .tone(Severity::…) / .action(label)"
+      ],
+      [
+        ".position(ToastPosition::…)",
+        "Top or bottom; left, centre or right."
+      ],
+      [
+        ".on_dismiss / .on_action",
+        "Remove the toast or run its action."
+      ],
+      [
+        "Timing",
+        "Remove toasts from a worker via UiSender for auto-dismiss."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "zstack![\n    page,\n    toaster(&app.toasts)\n        .on_dismiss(|app: &mut App, id| app.toasts.retain(|t| t.id != id)),\n]\n// elsewhere:\napp.toasts.push(Toast::new(id, \"Changes saved\").tone(Severity::Success));",
+        "height": 200,
+        "id": "toast",
+        "image": "toast-toast.png",
+        "note": "These buttons use the catalog's own toaster: a non-modal stack in the corner; the page stays usable.",
+        "title": "Toast",
+        "width": 1000
+      }
+    ],
+    "slug": "toast",
+    "summary": "A brief notification that confirms an action.",
+    "title": "Toast"
+  },
+  {
+    "api": [
+      [
+        "panel![...]",
+        "A padded surface (12px by default)."
+      ],
+      [
+        "divider()",
+        "A horizontal rule."
+      ],
+      [
+        ".shadow(Shadow) / .rounded(r)",
+        "Elevation and shape."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "vstack![header, form, divider(), actions]\n    .padding(24., Edge::All)\n    .background(ColorToken::Base100)\n    .border_color(ColorToken::Border).border_width(1.)\n    .rounded(12.)\n    .shadow(Shadow::new().blur(10.).offset(0., 2.))",
+        "height": 305,
+        "id": "card",
+        "image": "card-card.png",
+        "note": "Any container becomes a card with a surface, border, radius and shadow.",
+        "title": "Card",
+        "width": 1000
+      }
+    ],
+    "slug": "card",
+    "summary": "A padded surface that groups related content.",
+    "title": "Card"
+  },
+  {
+    "api": [
+      [
+        ".scroll(Scroll::Vertical | Horizontal | Both | Auto)",
+        "Opt-in overflow scrolling."
+      ],
+      [
+        ".anchor_end(true)",
+        "Follow growth only while the reader is at the end; scroll up to release."
+      ],
+      [
+        "text_area(...).submit_on_enter(true)",
+        "Enter submits; Shift+Enter inserts a newline; Cmd/Ctrl+Enter still submits."
+      ],
+      [
+        ".scrollbars(Scrollbars::Hidden)",
+        "Hide indicators, keep scrolling."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "vstack(tags).height(220.).scroll(Scroll::Vertical)",
+        "height": 297,
+        "id": "scroll-v",
+        "image": "scroll-area-scroll-v.png",
+        "note": "Wheel, trackpad and draggable scrollbars.",
+        "title": "Vertical",
+        "width": 1000
+      },
+      {
+        "code": "hstack(items).scroll(Scroll::Horizontal).scrollbars(Scrollbars::Hidden)",
+        "height": 200,
+        "id": "scroll-h",
+        "image": "scroll-area-scroll-h.png",
+        "note": "Scrollbars can be hidden without losing scrolling.",
+        "title": "Horizontal, hidden bars",
+        "width": 1000
+      },
+      {
+        "code": "vstack(lines).scroll(Scroll::Vertical).anchor_end(true)\ntext_area(&app.draft).submit_on_enter(true)\n    .on_change(|app: &mut App, value| app.draft = value)\n    .on_submit(App::append_log)",
+        "height": 350,
+        "id": "scroll-follow",
+        "image": "scroll-area-scroll-follow.png",
+        "note": "A bounded live log. Scroll up to read history; return to the end to follow new events. The multiline composer uses Rust submission callbacks.",
+        "title": "Follow the newest event",
+        "width": 1000
+      }
+    ],
+    "slug": "scroll-area",
+    "summary": "Opt-in vertical, horizontal or nested scrolling.",
+    "title": "Scroll area"
+  },
+  {
+    "api": [
+      [
+        ".rounded(12.) / .rounded(0.)",
+        "Rounded by default; explicit square corners retain the same sorting, selection and scrolling."
+      ],
+      [
+        "table(columns, rows)",
+        "Up to 8 columns and 96 rows; requires .key(...)."
+      ],
+      [
+        "table_column(value, label).width(px)",
+        "Minimum width; wider tables grow columns proportionally. Sortable unless .sortable(false)."
+      ],
+      [
+        "table_row(value, cells).key(id)",
+        "A typed row."
+      ],
+      [
+        "table_column(...).align(Align::Start | Center | End)",
+        "Align header and values together; End for amounts."
+      ],
+      [
+        ".width(px).height(px)",
+        "Bounded viewports scroll on either axis rather than cut off columns."
+      ],
+      [
+        ".sort(column, direction) / .sort_by(compare)",
+        "Sorted view; custom ordering."
+      ],
+      [
+        ".selected(value) / .on_select(f) / .on_sort(f)",
+        "Controlled selection and sorting."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "table(columns, rows)\n.key(\"invoices\")\n.rounded(12.) // default outer corners\n.selected(app.row)\n.on_select(|app: &mut App, row| app.row = Some(row))\n.on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))",
+        "height": 424,
+        "id": "table",
+        "image": "table-table.png",
+        "note": "12px outer corners. Sort a header or select a row; the frame stays intact.",
+        "title": "Rounded table",
+        "width": 1000
+      },
+      {
+        "code": "table(columns, rows)\n.key(\"invoices-square\")\n.rounded(0.) // square outer frame and inset rows\n.selected(app.row)\n.on_select(|app: &mut App, row| app.row = Some(row))\n.on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))",
+        "height": 424,
+        "id": "table-square",
+        "image": "table-table-square.png",
+        "note": "The same working component with 0px corners, not a static mockup.",
+        "title": "Square table",
+        "width": 1000
+      }
+    ],
+    "slug": "table",
+    "summary": "Rows and columns with sorting and selection.",
+    "title": "Table"
+  },
+  {
+    "api": [
+      [
+        "tree_view(roots)",
+        "Up to 128 keyed nodes."
+      ],
+      [
+        "tree_node(value, label).key(id).children([...])",
+        "A node and its children."
+      ],
+      [
+        ".expanded(values) / .on_expand(f)",
+        "Controlled expansion."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "tree_view([\n    tree_node(1, \"src\").key(\"src\").children([tree_node(3, \"lib.rs\").key(\"lib\")]),\n    tree_node(6, \"Cargo.toml\").key(\"cargo\"),\n])\n.key(\"files\")\n.expanded(app.expanded.clone())\n.selected(app.file)\n.on_select(|app: &mut App, f| app.file = Some(f))\n.on_expand(|app: &mut App, id, open| set_expanded(app, id, open))",
+        "height": 394,
+        "id": "tree",
+        "image": "tree-view-tree.png",
+        "note": "Expand folders and select files with pointer or keyboard.",
+        "title": "Tree view",
+        "width": 1000
+      }
+    ],
+    "slug": "tree-view",
+    "summary": "Hierarchical items that expand and collapse.",
+    "title": "Tree view"
+  },
+  {
+    "api": [
+      [
+        "virtual_list(count, row_height, factory)",
+        "Fixed-height rows built on demand."
+      ],
+      [
+        ".window(range) / .on_window_change(f)",
+        "Which rows are mounted."
+      ],
+      [
+        ".overscan(n)",
+        "Extra rows above and below."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "virtual_list(10_000, 36., |i| data_item(i, format!(\"Record {i:05}\")).key(format!(\"rec-{i}\")))\n    .key(\"records\")\n    .height(260.)\n    .window(app.window.clone())\n    .on_window_change(|app: &mut App, w| app.window = w)\n    .on_select(|app: &mut App, i| app.record = Some(i))",
+        "height": 352,
+        "id": "virtual",
+        "image": "virtual-list-virtual.png",
+        "note": "Only the visible window and a little overscan are composed.",
+        "title": "10,000 rows",
+        "width": 1000
+      }
+    ],
+    "slug": "virtual-list",
+    "summary": "Thousands of rows; only the visible window is built.",
+    "title": "Virtual list"
+  },
+  {
+    "api": [
+      [
+        "split(first, second)",
+        "Two panes and a draggable handle."
+      ],
+      [
+        ".axis(Direction::Vertical)",
+        "Stack panes vertically."
+      ],
+      [
+        ".ratio(r) / .on_resize(f)",
+        "Controlled divider position."
+      ],
+      [
+        ".min_first(px) / .min_second(px)",
+        "Minimum pane sizes."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "split(sidebar, content)\n    .ratio(app.split)\n    .min_first(120.).min_second(160.)\n    .on_resize(|app: &mut App, r| app.split = r)",
+        "height": 290,
+        "id": "split",
+        "image": "split-pane-split.png",
+        "note": "The application owns the ratio.",
+        "title": "Split pane",
+        "width": 1000
+      }
+    ],
+    "slug": "split-pane",
+    "summary": "Two panes divided by a draggable handle.",
+    "title": "Split pane"
+  },
+  {
+    "api": [
+      [
+        "canvas(|c| { ... })",
+        "Retained vector drawing in logical pixels."
+      ],
+      [
+        "VectorPath::new().move_to().line_to().cubic_to().close()",
+        "Build any path."
+      ],
+      [
+        ".transformed([a, b, c, d, tx, ty])",
+        "Affine transform."
+      ],
+      [
+        "c.fill(path, colour) / c.stroke(path, colour, width)",
+        "Paint a path."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "canvas(|c| {\n    c.fill(area, ColorToken::Primary.alpha(14));\n    c.stroke(line, ColorToken::Primary, 2.5);\n})\n.width(360.).height(160.)",
+        "height": 224,
+        "id": "canvas-chart",
+        "image": "canvas-canvas-chart.png",
+        "note": "Paths, fills and translucent tokens; the closure runs once per composition.",
+        "title": "Chart",
+        "width": 1000
+      },
+      {
+        "code": "c.fill(VectorPath::circle(40., 40., 32.), ColorToken::Primary);\nc.stroke(VectorPath::ellipse(210., 40., 40., 26.), ColorToken::BaseContent, 2.);",
+        "height": 200,
+        "id": "canvas-shapes",
+        "image": "canvas-canvas-shapes.png",
+        "note": "Circles, rectangles, ellipses and arbitrary paths.",
+        "title": "Shapes",
+        "width": 1000
+      }
+    ],
+    "slug": "canvas",
+    "summary": "Retained vector paths: fills, strokes and transforms.",
+    "title": "Canvas"
+  },
+  {
+    "api": [
+      [
+        "native::load_image(path) / decode_image(bytes)",
+        "Bounded PNG/JPEG decoding."
+      ],
+      [
+        "Image::from_rgba(w, h, pixels)",
+        "Images from generated pixels."
+      ],
+      [
+        ".background_image(image.background().fit(f).position(p).opacity(o))",
+        "Fit, position and opacity."
+      ],
+      [
+        ".clip(Clip::Rounded | Circle | Path(p))",
+        "Clip content and hit testing."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "vstack![].background_image(image.clone().background().fit(ImageFit::Cover))",
+        "height": 200,
+        "id": "image-fit",
+        "image": "image-image-fit.png",
+        "note": "Cover, contain or tile any decoded image.",
+        "title": "Fit",
+        "width": 1000
+      },
+      {
+        "code": ".clip(Clip::Circle)\n.clip(Clip::Path(diamond))",
+        "height": 200,
+        "id": "image-clip",
+        "image": "image-image-clip.png",
+        "note": "Circles, rounded rectangles and arbitrary paths.",
+        "title": "Clipping",
+        "width": 1000
+      }
+    ],
+    "slug": "image",
+    "summary": "Image backgrounds with fit, position, opacity and clipping.",
+    "title": "Image"
+  },
+  {
+    "api": [
+      [
+        "avatar(name)",
+        ".image / .size / .presence / .square; avatar_group(list, max)"
+      ],
+      [
+        "alert(title)",
+        ".severity / .description / .action / .on_close"
+      ],
+      [
+        "skeleton(w, h) / skeleton_text(lines, w)",
+        "Pulsing placeholders."
+      ],
+      [
+        "kbd(keys)",
+        "A key cap."
+      ],
+      [
+        "breadcrumb(items) / pagination(page, pages)",
+        "Navigation aids."
+      ],
+      [
+        "steps(labels, current) / timeline(items)",
+        "Progress and history."
+      ],
+      [
+        "empty_state(icon, title, text, actions)",
+        "Nothing-here views."
+      ],
+      [
+        "stat(label, value)",
+        ".delta(text, positive) / .hint"
+      ],
+      [
+        "carousel(slides, index)",
+        ".height / .wrap_around / .on_change"
+      ],
+      [
+        "image_view(Option<&Image>, w, h)",
+        "An image or a placeholder."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "avatar(\"Ada Lovelace\").size(48.).presence(Presence::Online)\navatar_group(people.map(avatar), 4)",
+        "height": 200,
+        "id": "show-avatar",
+        "image": "data-display-show-avatar.png",
+        "note": "Pictures or initials on a colour derived from the name, with presence.",
+        "title": "Avatar",
+        "width": 1000
+      },
+      {
+        "code": "alert(\"Build failed\").severity(Severity::Error).description(..)\n    .on_close(|app: &mut App| app.alert = false)",
+        "height": 366,
+        "id": "show-alert",
+        "image": "data-display-show-alert.png",
+        "note": "Inline callouts in four severities, with actions or a close button.",
+        "title": "Alert",
+        "width": 1000
+      },
+      {
+        "code": "skeleton(220., 14.)\nskeleton_text(3, 320.)",
+        "height": 200,
+        "id": "show-skeleton",
+        "image": "data-display-show-skeleton.png",
+        "note": "Pulsing placeholders while content loads.",
+        "title": "Skeleton",
+        "width": 1000
+      },
+      {
+        "code": "kbd(\"⌘K\")",
+        "height": 200,
+        "id": "show-kbd",
+        "image": "data-display-show-kbd.png",
+        "note": "Key caps for shortcuts in text and menus.",
+        "title": "Keyboard keys",
+        "width": 1000
+      },
+      {
+        "code": "breadcrumb([(\"home\", \"Home\"), (\"docs\", \"Docs\")]).on_select(..)\npagination(app.page, 20).on_change(|app: &mut App, p| app.page = p)",
+        "height": 200,
+        "id": "show-nav",
+        "image": "data-display-show-nav.png",
+        "note": "Where you are, and how to move through pages.",
+        "title": "Breadcrumb and pagination",
+        "width": 1000
+      },
+      {
+        "code": "steps([\"Account\", \"Shipping\", \"Payment\", \"Review\"], app.step)",
+        "height": 200,
+        "id": "show-steps",
+        "image": "data-display-show-steps.png",
+        "note": "Progress through a multi-step flow.",
+        "title": "Steps",
+        "width": 1000
+      },
+      {
+        "code": "timeline([TimelineItem::new(\"Order placed\").time(\"9:41\").icon(Icon::Check)])",
+        "height": 1600,
+        "id": "show-timeline",
+        "image": "data-display-show-timeline.png",
+        "note": "Events joined by a rail.",
+        "title": "Timeline",
+        "width": 1000
+      },
+      {
+        "code": "empty_state(Icon::Inbox, \"No messages yet\", \"…\", [compose_button])",
+        "height": 303,
+        "id": "show-empty",
+        "image": "data-display-show-empty.png",
+        "note": "A friendly placeholder for views with nothing to show.",
+        "title": "Empty state",
+        "width": 1000
+      },
+      {
+        "code": "stat(\"Revenue\", \"$48,210\").delta(\"12.5%\", true).hint(\"vs last month\")",
+        "height": 200,
+        "id": "show-stat",
+        "image": "data-display-show-stat.png",
+        "note": "Key metrics with change indicators.",
+        "title": "Stat",
+        "width": 1000
+      },
+      {
+        "code": "carousel(slides, app.slide).key(\"hero\").on_change(|app: &mut App, i| app.slide = i)",
+        "height": 302,
+        "id": "show-carousel",
+        "image": "data-display-show-carousel.png",
+        "note": "One slide at a time, with arrows and dots.",
+        "title": "Carousel",
+        "width": 1000
+      }
+    ],
+    "slug": "data-display",
+    "summary": "Avatars, alerts, skeletons, breadcrumbs, pagination, steps and more.",
+    "title": "Data display"
+  },
+  {
+    "api": [
+      [
+        "sparkline(values, w, h)",
+        "Trend line with a soft fill."
+      ],
+      [
+        "bar_chart(bars, w, h)",
+        "(label, value) pairs; negative values hang below zero."
+      ],
+      [
+        "line_chart(series, w, h)",
+        "(name, values) series in theme colours."
+      ],
+      [
+        ".key(k) / .selected(i) / .on_select(f)",
+        "Area, candlestick, donut, stacked bars: tooltips, keyboard and click selection."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "stacked_bar_chart([\"Q1\", \"Q2\", \"Q3\", \"Q4\"], series)\n    .key(\"revenue\")                 // tooltips + focusable points\n    .selected(app.quarter)\n    .on_select(|app: &mut App, i| app.quarter = Some(i))",
+        "height": 328,
+        "id": "chart-interactive",
+        "image": "charts-chart-interactive.png",
+        "note": "Give a chart a key for value tooltips on hover or focus; add selected/on_select for clicks. Area, candlestick, donut and stacked-bar charts all work this way.",
+        "title": "Interactive charts",
+        "width": 1000
+      },
+      {
+        "code": "sparkline(&visits, 180., 44.)",
+        "height": 200,
+        "id": "chart-spark",
+        "image": "charts-chart-spark.png",
+        "note": "A compact trend beside a number.",
+        "title": "Sparkline",
+        "width": 1000
+      },
+      {
+        "code": "bar_chart([(\"Mon\", 32.), (\"Tue\", 45.), ...], 560., 220.)",
+        "height": 284,
+        "id": "chart-bar",
+        "image": "charts-chart-bar.png",
+        "note": "Labelled bars from zero with light gridlines.",
+        "title": "Bar chart",
+        "width": 1000
+      },
+      {
+        "code": "line_chart([(\"Desktop\", desktop), (\"Mobile\", mobile)], 560., 220.)",
+        "height": 284,
+        "id": "chart-line",
+        "image": "charts-chart-line.png",
+        "note": "Several series on one scale, with a legend.",
+        "title": "Line chart",
+        "width": 1000
+      }
+    ],
+    "slug": "charts",
+    "summary": "Sparklines, bar charts and line charts drawn with vector paths.",
+    "title": "Charts"
+  },
+  {
+    "api": [
+      [
+        ".shadow(Shadow) / .glow(Glow) / .opacity(o)",
+        "Paint-only effects."
+      ],
+      [
+        ".hover_style / .pressed_style / .focus_style",
+        "Style patches per interaction."
+      ],
+      [
+        ".animate_on(Interaction, Animation)",
+        "Easing for state changes."
+      ],
+      [
+        ".animation(Animation)",
+        "Animate appearance changes for the same key."
+      ],
+      [
+        ".transition(Transition::fade())",
+        "Fade on enter and exit."
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": ".shadow(Shadow::new().color(\"#00000022\").blur(18.).offset(0., 6.))",
+        "height": 200,
+        "id": "fx-shadow",
+        "image": "effects-motion-fx-shadow.png",
+        "note": "Analytic shadows on the GPU, blurred masks in software.",
+        "title": "Elevation",
+        "width": 1000
+      },
+      {
+        "code": "button(\"Hover for glow\")\n    .hover_style(|s| s.glow(Glow::new().color(ColorToken::Primary.alpha(60)).blur(14.)))\n    .animate_on(Interaction::Hover, Animation::ease_out().duration_ms(180))",
+        "height": 200,
+        "id": "fx-states",
+        "image": "effects-motion-fx-states.png",
+        "note": "Hover, press and focus styles with their own easing.",
+        "title": "Interaction states",
+        "width": 1000
+      },
+      {
+        "code": "if app.reveal {\n    message.key(\"message\").transition(Transition::fade().duration_ms(260))\n}",
+        "height": 200,
+        "id": "fx-transition",
+        "image": "effects-motion-fx-transition.png",
+        "note": "Keyed elements fade when they appear and leave; reduced motion settles instantly.",
+        "title": "Transitions",
+        "width": 1000
+      }
+    ],
+    "slug": "effects-motion",
+    "summary": "Shadows, glows, state styles, keyed animation and transitions.",
+    "title": "Effects & motion"
+  },
+  {
+    "api": [
+      [
+        "run_ui_with_messages(options, state, view, init, update)",
+        "Start with a typed message channel."
+      ],
+      [
+        "UiSender::send(message)",
+        "Non-blocking; Full or Closed errors are explicit."
+      ],
+      [
+        "Batching",
+        "Up to 64 messages per turn, then one recomposition."
+      ]
+    ],
+    "group": "Patterns",
+    "sections": [
+      {
+        "code": "// Worker thread\nsender.send(Message::Progress { generation, step })?;\n\n// UI thread, batched per event-loop turn\nfn update(app: &mut App, message: Message) {\n    let Message::Progress { generation, step } = message;\n    if generation == app.generation { app.progress = step; }\n}\n\nnative::run_ui_with_messages_and_theme(options, app, view, theme,\n    |app, sender| app.sender = Some(sender), update)?;",
+        "height": 200,
+        "id": "tasks",
+        "image": "background-tasks-tasks.png",
+        "note": "A thread sends progress; the UI applies it on its own thread and ignores stale results.",
+        "title": "Worker progress",
+        "width": 1000
+      }
+    ],
+    "slug": "background-tasks",
+    "summary": "Worker threads report progress through a bounded message queue.",
+    "title": "Background tasks"
+  },
+  {
+    "api": [
+      [
+        "CommandRegistry::new().command(...)",
+        "Up to 256 validated, uniquely named Rust commands."
+      ],
+      [
+        "Command::enabled_when(predicate)",
+        "Rechecked against current state before every execution."
+      ],
+      [
+        "Shortcut::primary('s')",
+        "Exact Cmd/Ctrl logical letter/digit chord; optional shift/alt."
+      ],
+      [
+        "registry.entries(&app)",
+        "Metadata for your own palette, buttons or other UI."
+      ],
+      [
+        "Application::on_close_request(callback)",
+        "Close or KeepOpen; the developer owns dirty state and dialogs."
+      ],
+      [
+        "Application::requests(initialize)",
+        "Bounded, event-driven commands and close requests; no idle polling."
+      ]
+    ],
+    "group": "Patterns",
+    "sections": [
+      {
+        "code": "Application::new(\"Documents\", app, view)\n    .commands(commands())\n    .requests(|app, sender| app.requests = Some(sender))\n    .on_close_request(|app, reason| {\n        if app.dirty() {\n            app.close_prompt = Some(reason);\n            CloseDecision::KeepOpen\n        } else { CloseDecision::Close }\n    })\n    .run()?;\n// Save / Discard: update app state, then enqueue Close(reason).\n// Cancel: dismiss the dialog without closing or clearing the draft.",
+        "height": 734,
+        "id": "application-document",
+        "image": "application-lifecycle-application-document.png",
+        "note": "Edit the draft, use Save or Cmd/Ctrl+S, then request closing. Dirty work opens Save / Discard / Cancel. Saving here is in memory, not disk persistence.",
+        "title": "A guarded document",
+        "width": 1000
+      }
+    ],
+    "slug": "application-lifecycle",
+    "summary": "State-aware commands and guarded closing for unsaved work.",
+    "title": "Application lifecycle"
+  },
+  {
+    "api": [
+      [
+        "file_dialog::open_file / save_file",
+        "Main-thread, native-desktop macOS panels; Cancel is Ok(None)."
+      ],
+      [
+        "files::read_text_file",
+        "Bounded UTF-8 regular file; no silent truncation."
+      ],
+      [
+        "files::save_text_file",
+        "Private sibling + sync + commit; explicit create/replace policy."
+      ],
+      [
+        "SavePolicy::MatchContents(original)",
+        "Rejects ordinary external edits before replacement; not a cross-process lock."
+      ]
+    ],
+    "group": "Patterns",
+    "sections": [
+      {
+        "code": "// Application owns document state and paths.\n// Native panels choose a path; read/write on a worker.\nlet selected = file_dialog::open_file(&FileDialogOptions::new(\"Open notes\"))?;\n// Worker: files::read_text_file(&path)\n// Worker: files::save_text_file(&path, &snapshot, SavePolicy::MatchContents(&original))\n// Main-thread completion marks ONLY that saved snapshot clean.\n// Close stays vetoed until saving succeeds; errors keep the draft.",
+        "height": 1600,
+        "id": "document-files",
+        "image": "documents-document-files.png",
+        "note": "Native macOS file panels and worker-thread UTF-8 I/O. 8 KiB maximum; failed/cancelled operations retain your draft. No automatic saving or hidden path selection.",
+        "title": "A real notes document",
+        "width": 1000
+      }
+    ],
+    "slug": "documents",
+    "summary": "Native file panels and asynchronous document saving.",
+    "title": "Documents"
+  },
+  {
+    "api": [
+      [
+        "notifications::capabilities()",
+        "Adapter availability plus explicit unsupported actions/settings/foreground capabilities."
+      ],
+      [
+        "request_authorization(callback)",
+        "Explicit alert-only decision, no automatic prompting; OS-thread completion."
+      ],
+      [
+        "LocalNotification::new(id,title,body)",
+        "Bounded stable ID and UTF-8 content; no truncation or arbitrary attachments."
+      ],
+      [
+        "notification.after(Duration)",
+        "One-shot 1 second–24 hours, silent local notification."
+      ],
+      [
+        "notifications::send / remove",
+        "Accepted-not-displayed callback; removal has no completion receipt."
+      ]
+    ],
+    "group": "Patterns",
+    "sections": [
+      {
+        "code": "// Build with native-notifications, then package the executable.\n// Only a deliberate user action calls request_authorization.\nnotifications::request_authorization(move |decision| {\n    // Marshal into bounded UiSender; never mutate UI on this OS thread.\n})?;\nlet note = LocalNotification::new(\"build.ready\", \"Build ready\", \"All checks passed.\")\n    .after(Duration::from_secs(8));\nnotifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;\n// A later Remove action (after this callback) may remove \"build.ready\".",
+        "height": 544,
+        "id": "desktop-notifications",
+        "image": "desktop-services-desktop-notifications.png",
+        "note": "An explicit, opt-in OS service—not an in-app toast. No permission or notification is requested on launch.",
+        "title": "Local notifications",
+        "width": 1000
+      },
+      {
+        "code": "DesktopConfig::new(\"My app\")\n    .tray(TrayConfig { tooltip: \"My app\".into(), rgba, width: 18, height: 18,\n        template: true, commands: vec![\n            DesktopCommand::new(\"command-probe\", \"Count command execution\"),\n        ] })\n// Register the same ID in CommandRegistry; don't duplicate callbacks.",
+        "height": 206,
+        "id": "desktop-tray",
+        "image": "desktop-services-desktop-tray.png",
+        "note": "The optional native-desktop tray reuses these command IDs. Menu/toolbar/palette/tray commands all pass current enablement and modal guards.",
+        "title": "One command registry, multiple surfaces",
+        "width": 1000
+      }
+    ],
+    "slug": "desktop-services",
+    "summary": "Explicit local notifications and shared native tray commands.",
+    "title": "Desktop services"
+  },
+  {
+    "api": [
+      [
+        "area_chart(series)",
+        ".stacked / .x_labels / .legend / .value_format / .size"
+      ],
+      [
+        "candlestick_chart(candles)",
+        "Candle::new(o, h, l, c).volume(v); .volume(true) for a strip"
+      ],
+      [
+        "donut_chart(slices)",
+        ".center(value, caption) / .thickness / .legend"
+      ],
+      [
+        "stacked_bar_chart(categories, series)",
+        "Series stacked per category, with legend"
+      ],
+      [
+        "nice_ticks(lo, hi, n) / short_number(v)",
+        "Axis helpers: round ticks, 1.2k-style labels"
+      ]
+    ],
+    "group": "Patterns",
+    "sections": [
+      {
+        "code": "candlestick_chart(candles).size(560., 250.).x_labels(dates).volume(true)\ndonut_chart([(\"Search\", 4210.), (\"Direct\", 2980.)]).center(\"10.5k\", \"visits\")\narea_chart([(\"Pro\", pro), (\"Team\", team)]).stacked(true).x_labels(months)\nstacked_bar_chart([\"Q1\", \"Q2\"], [(\"Americas\", vec![420., 510.])])",
+        "height": 1600,
+        "id": "dashboard",
+        "image": "dashboard-dashboard.png",
+        "note": "A dense, data-heavy screen built only from Volt components: stats, sparklines, candlesticks with volume, donut, stacked area and bars, and a sortable table.",
+        "title": "Analytics dashboard",
+        "width": 1000
+      }
+    ],
+    "slug": "dashboard",
+    "summary": "A dense analytics screen: KPIs, candlesticks, donut, stacked charts and orders.",
+    "title": "Dashboard"
+  },
+  {
+    "api": [
+      [
+        "form_field(label, control)",
+        "Label, required mark, description or error."
+      ],
+      [
+        ".leading_icon / .trailing_action",
+        "Icons and actions inside the field."
+      ]
+    ],
+    "group": "Patterns",
+    "sections": [
+      {
+        "code": "form_field(\"Password\", text_field(&app.password)\n        .password(!app.show_password)\n        .leading_icon(Icon::Lock)\n        .trailing_action(\"reveal\", Icon::Eye, \"Show password\", toggle_reveal))\n    .required(true)\n    .error(too_short.then(|| \"Use at least 8 characters\".into()))\nbutton(\"Sign in\").variant(ButtonVariant::Primary).fill_width().enabled(ready)",
+        "height": 506,
+        "id": "sign-in",
+        "image": "sign-in-form-sign-in.png",
+        "note": "The submit button enables once the form is valid.",
+        "title": "Sign-in card",
+        "width": 1000
+      }
+    ],
+    "slug": "sign-in-form",
+    "summary": "Inputs, validation and actions composed into a form.",
+    "title": "Sign-in form"
+  },
+  {
+    "api": [],
+    "group": "Patterns",
+    "sections": [
+      {
+        "code": "hstack![\n    vstack![label(title), muted(detail)].flex(1.),\n    toggle(\"\", app.push).on_change(|app: &mut App, v| app.push = v),\n]",
+        "height": 432,
+        "id": "settings",
+        "image": "settings-panel-settings.png",
+        "note": "Rows with a title, a description and a control.",
+        "title": "Settings card",
+        "width": 1000
+      }
+    ],
+    "slug": "settings-panel",
+    "summary": "Grouped preferences with switches, selects and sliders.",
+    "title": "Settings panel"
+  }
+]

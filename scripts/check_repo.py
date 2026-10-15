@@ -32,8 +32,8 @@ class Site(HTMLParser):
             self.errors.append(f"active content is not allowed in static site: {tag}")
         if any(k.startswith("on") or k == "style" for k in a):
             self.errors.append("inline scripts/styles are not allowed")
-        if tag == "img" and not a.get("alt"):
-            self.errors.append("image needs descriptive alt text")
+        if tag == "img" and "alt" not in a:
+            self.errors.append("image needs alt text (empty for decorative artwork)")
         if tag == "meta" and a.get("http-equiv", "").lower() == "content-security-policy":
             self.csp = "default-src 'none'" in a.get("content", "")
         for attr in ("href", "src"):
@@ -65,20 +65,26 @@ def check_link(root: Path, source: Path, link: str, ids=None):
     if ids is not None and target == source.resolve() and parts.fragment:
         if unquote(parts.fragment) not in ids:
             return f"missing HTML anchor: {link}"
+    elif target.suffix == ".html" and parts.fragment:
+        linked = Site()
+        linked.feed(target.read_text())
+        if unquote(parts.fragment) not in linked.ids:
+            return f"missing HTML anchor in {target.relative_to(root)}: {link}"
     return None
 
 
 def inspect_site(root: Path):
-    source = root / "docs/index.html"
-    site = Site()
-    site.feed(source.read_text())
-    errors = list(site.errors)
-    if site.h1_count != 1 or site.stylesheets != 1 or not site.csp:
-        errors.append("site requires one h1, one stylesheet and a restrictive CSP")
-    for link in site.links:
-        error = check_link(root, source, link, site.ids)
-        if error:
-            errors.append(error)
+    errors = []
+    for source in (root / "docs").rglob("*.html"):
+        site = Site()
+        site.feed(source.read_text())
+        errors.extend(f"{source.relative_to(root)}: {e}" for e in site.errors)
+        if site.h1_count != 1 or not 1 <= site.stylesheets <= 2 or not site.csp:
+            errors.append(f"{source.relative_to(root)}: site requires one h1, local stylesheets and a restrictive CSP")
+        for link in site.links:
+            error = check_link(root, source, link, site.ids)
+            if error:
+                errors.append(error)
     return errors
 
 

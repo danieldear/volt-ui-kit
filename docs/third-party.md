@@ -25,9 +25,19 @@ No Apple font binaries are included. SF and SF Mono refer to fonts available
 on supported systems or explicitly supplied by the application developer;
 other platforms may use fallbacks. Do not copy Apple fonts into an app or web
 bundle without verifying the applicable license. The documentation website
-uses system fonts and makes no font downloads.
+uses system fonts for interface text/code and a self-hosted Bricolage Grotesque display face. There are no third-party font
+requests at runtime.
 
 The images in `docs/images/` are screenshots of synthetic Catalog content.
 They illustrate native output, not customer data or an embedded web demo.
 The site's bolt favicon is repository-local SVG artwork. Apps remain
 responsible for rights to their own images, icons and custom fonts.
+
+### Website display font
+
+`docs/assets/fonts/bricolage-grotesque.ttf` is the unmodified variable Bricolage
+Grotesque font by The Bricolage Grotesque Project Authors, under the SIL Open
+Font License 1.1. Its full [license](assets/fonts/OFL.txt) ships with the site.
+Source: [Google Fonts](https://github.com/google/fonts/tree/94301472b4d809299b4775bc6502592b83dd6934/ofl/bricolagegrotesque),
+revision `94301472b4d809299b4775bc6502592b83dd6934`, retrieved 2026-10-15.
+The original asset is 408,496 bytes; no Apple font binaries are redistributed.

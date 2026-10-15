@@ -4,6 +4,7 @@
 pub mod art;
 pub mod desktop_services;
 pub mod documents;
+pub mod export;
 mod kit;
 mod landing;
 pub mod lifecycle;

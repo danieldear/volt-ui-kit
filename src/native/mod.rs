@@ -26,6 +26,8 @@ mod gpu;
 pub use gpu::GpuOffscreenRenderer;
 #[cfg(feature = "native-gpu")]
 mod gpu_scene;
+#[cfg(feature = "native-gpu")]
+pub use gpu_scene::{estimate_gpu_scene, GpuSceneEstimate};
 #[cfg(all(test, feature = "native-gpu"))]
 mod gpu_tests;
 mod messages;

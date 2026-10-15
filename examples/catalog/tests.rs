@@ -1472,8 +1472,19 @@ fn gpu_segment_estimates_per_page() {
 #[cfg(feature = "native-gpu")]
 #[test]
 fn editor_heavy_pages_keep_far_below_the_gpu_segment_budget() {
-    use volt_ui_kit::native::GpuOffscreenRenderer;
-    let mut gpu = GpuOffscreenRenderer::new().expect("GPU required");
+    check_editor_page_budgets(None);
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires an actual GPU; explicit editor-page readback acceptance"]
+fn actual_gpu_editor_heavy_pages_render_without_budget_fallback() {
+    let gpu = volt_ui_kit::native::GpuOffscreenRenderer::new().expect("GPU required");
+    check_editor_page_budgets(Some(gpu));
+}
+
+#[cfg(feature = "native-gpu")]
+fn check_editor_page_budgets(mut gpu: Option<volt_ui_kit::native::GpuOffscreenRenderer>) {
     let viewport = Viewport::new(2880., 1840., 2.).unwrap();
     let mut painter = RasterPainter::new(viewport);
     for page in [Page::ThemeEditor, Page::TextArea, Page::TextField] {
@@ -1488,13 +1499,21 @@ fn editor_heavy_pages_keep_far_below_the_gpu_segment_budget() {
         for _ in 0..6 {
             let ui = theme(&app, ThemeMode::Light);
             let batches = runtime.paint_ui(&mut painter, &ui);
-            gpu.render(&mut painter, &batches, ui.palette.base[0])
-                .unwrap();
+            let estimate = volt_ui_kit::native::estimate_gpu_scene(&mut painter, &batches).unwrap();
             // Unbounded editor rows once clipped at 1,000,000 px wide, which
             // Vello counted as millions of segments (software fallback).
-            let (_, segments) = gpu.last_path_estimate();
+            let segments = estimate.segments;
             assert!(segments < (1 << 21) / 2, "{page:?}: {segments} segments");
-            assert_eq!(gpu.last_over_budget(), None, "{page:?} fell back");
+            assert_eq!(
+                estimate.over_budget, None,
+                "{page:?} exceeds encoder budget"
+            );
+            if let Some(gpu) = &mut gpu {
+                gpu.render(&mut painter, &batches, ui.palette.base[0])
+                    .unwrap();
+                assert_eq!(gpu.last_over_budget(), None, "{page:?} fell back");
+                assert_eq!(gpu.last_path_estimate().1, segments);
+            }
             runtime
                 .scroll_outcome(1800., 1200., [0., 600.], &mut handlers, &mut app)
                 .unwrap();

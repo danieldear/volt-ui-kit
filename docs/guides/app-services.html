@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Background work, commands, files, menus, notifications and packaging."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Application services — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.ttf" as="font" type="font/ttf" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.4 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html" aria-current="page">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html" aria-current="page">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Application services</div><div class="reference-title"><p>Guide</p><h1>Application services</h1><div class="reference-description">Background work, commands, files, menus, notifications and packaging.</div></div><article class="guide-article"><h2 id="background-work">Background work</h2>
+<p>Callbacks run on the UI thread, so do slow work elsewhere and send the result
+back as a typed message:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::{Application, UiSender}, ui::prelude::*};
+
+enum Message {
+    Loaded(String),
+}
+
+#[derive(Default)]
+struct App {
+    sender: Option&lt;UiSender&lt;Message&gt;&gt;,
+    result: String,
+}
+
+fn view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    vstack![
+        text(&amp;app.result),
+        button(&quot;Load&quot;).key(&quot;load&quot;).on_click(|app: &amp;mut App| {
+            let sender = app.sender.clone().expect(&quot;installed before the first view&quot;);
+            std::thread::spawn(move || {
+                let data = &quot;loaded on a worker thread&quot;.to_string(); // I/O goes here
+                let _ = sender.send(Message::Loaded(data));
+            });
+        }),
+    ]
+    .into()
+}
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Application::new(&quot;Worker&quot;, App::default(), view)
+        .messages(
+            |app, sender| app.sender = Some(sender),
+            |app, message| match message {
+                Message::Loaded(data) =&gt; app.result = data,
+            },
+        )
+        .run()
+}</code></pre></div><ul>
+<li>Messages need <code>Send</code>; your state does not.</li>
+<li><code>send</code> never blocks. The queue holds 256 messages; when it is full or the
+window has closed, <code>send</code> drops the message and returns <code>UiSendError::Full</code>
+or <code>Closed</code>. Decide whether to retry, drop or merge.</li>
+<li>The UI handles up to 64 messages per wake-up and calls <code>view</code> once per batch.</li>
+<li>Use any executor (threads, tokio, async-std); the kit starts none of its own.</li>
+<li>Tag long jobs with an ID so you can ignore results from cancelled work.</li>
+</ul>
+<h2 id="commands-and-shortcuts">Commands and shortcuts</h2>
+<p>A command registry gives actions an ID, a label, an optional shortcut and a
+rule for when they are enabled. The same command can then run from a keyboard
+shortcut, the macOS menu bar, a tray menu, your own buttons or a command
+palette built from <code>registry.entries(&amp;app)</code>.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{
+    native::{
+        Application, ApplicationRequest, CloseDecision, CloseReason, Command, CommandRegistry,
+        Shortcut, UiSender,
+    },
+    ui::prelude::*,
+};
+
+#[derive(Default)]
+struct App {
+    draft: String,
+    dirty: bool,
+    closing: Option&lt;CloseReason&gt;,
+    requests: Option&lt;UiSender&lt;ApplicationRequest&gt;&gt;,
+}
+
+fn commands() -&gt; CommandRegistry&lt;App&gt; {
+    CommandRegistry::new()
+        .command(
+            Command::new(&quot;save&quot;, &quot;Save&quot;, |app: &amp;mut App| app.dirty = false)
+                .shortcut(Shortcut::primary(&#39;s&#39;))
+                .enabled_when(|app| app.dirty),
+        )
+        .command(
+            Command::new(&quot;close&quot;, &quot;Close window&quot;, |_: &amp;mut App| {})
+                .shortcut(Shortcut::primary(&#39;w&#39;))
+                .request_close(CloseReason::Window),
+        )
+}
+
+fn view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    let editor = text_area(&amp;app.draft).key(&quot;draft&quot;).on_change(|app: &amp;mut App, text| {
+        app.draft = text;
+        app.dirty = true;
+    });
+    let Some(reason) = app.closing else {
+        return editor.into();
+    };
+    zstack![
+        editor,
+        dialog(hstack![
+            button(&quot;Cancel&quot;).key(&quot;cancel&quot;).on_click(|app: &amp;mut App| app.closing = None),
+            button(&quot;Discard&quot;).key(&quot;discard&quot;).on_click(move |app: &amp;mut App| {
+                app.dirty = false;
+                if let Some(requests) = &amp;app.requests {
+                    let _ = requests.send(ApplicationRequest::Close(reason));
+                }
+            }),
+        ].gap(8., Axis::Horizontal))
+        .key(&quot;confirm&quot;)
+        .title(&quot;Discard unsaved changes?&quot;)
+        .open(true)
+        .on_dismiss(|app: &amp;mut App| app.closing = None),
+    ]
+    .into()
+}
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Application::new(&quot;Editor&quot;, App::default(), view)
+        .commands(commands())
+        .requests(|app, sender| app.requests = Some(sender))
+        .on_close_request(|app, reason| {
+            if app.dirty {
+                app.closing = Some(reason);
+                CloseDecision::KeepOpen
+            } else {
+                CloseDecision::Close
+            }
+        })
+        .run()
+}</code></pre></div><ul>
+<li><code>Shortcut::primary(&#39;s&#39;)</code> is Cmd+S on macOS and Ctrl+S elsewhere; add
+<code>.shift(true)</code> or <code>.alt(true)</code>. Shortcuts are ignored while typing with an IME
+or while a modal is open, and clipboard and undo keys stay with text fields.</li>
+<li>Disabled commands never run, whichever way they are triggered.</li>
+<li><code>ApplicationRequest::Command(id)</code> runs a command from your own UI;
+<code>ApplicationRequest::Close(reason)</code> asks to close, and the close guard is
+checked again.</li>
+</ul>
+<h3 id="guarding-close">Guarding close</h3>
+<p><code>on_close_request</code> decides whether the window may close. Return <code>KeepOpen</code>,
+show your own Save / Discard / Cancel dialog, and request the close again when
+the user decides. Save asynchronously with a background message and close when
+the save succeeds.</p>
+<p>The guard covers the window&#39;s close button, Cmd+W and, with <code>native-desktop</code>,
+the owned Quit menu item. It cannot stop Force Quit, system shutdown or a crash.</p>
+<h2 id="files-and-dialogs">Files and dialogs</h2>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::native::{
+    file_dialog::{self, FileDialogOptions},
+    files::{read_text_file, save_text_file, SavePolicy},
+};
+// Panels run on the main thread (inside a callback); `Ok(None)` means cancelled.
+if let Some(path) = file_dialog::open_file(&amp;FileDialogOptions::new(&quot;Open notes&quot;))? {
+    // Do the I/O on a worker thread, then report back with a message.
+    let original = read_text_file(&amp;path)?;
+    save_text_file(&amp;path, &quot;Updated&quot;, SavePolicy::MatchContents(&amp;original))?;
+}</code></pre></div><ul>
+<li><code>open_file</code> and <code>save_file</code> (with <code>.suggested_name(..)</code>) show the native macOS
+panels and need <code>native-desktop</code>. Other platforms return <code>Unsupported</code> for now.</li>
+<li><code>save_text_file</code> writes to a temporary file and moves it into place.
+<code>CreateNew</code> never overwrites; <code>MatchContents(original)</code> refuses to save if the
+file changed on disk since you read it; <code>ApprovedReplacement</code> overwrites.</li>
+<li>These helpers are for small UTF-8 text files (up to 8 KiB). Use <code>std::fs</code>
+directly for anything larger.</li>
+</ul>
+<h2 id="menus-and-tray">Menus and tray</h2>
+<p>With <code>native-desktop</code> on macOS, add an application menu and a tray item. Their
+items share IDs with your registered commands, so they enable, disable and run
+exactly like shortcuts:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::native::system::{DesktopCommand, DesktopConfig, DesktopMenu};
+let desktop = DesktopConfig::new(&quot;My app&quot;).menu(DesktopMenu::new(
+    &quot;File&quot;,
+    [DesktopCommand::new(&quot;save&quot;, &quot;Save&quot;), DesktopCommand::new(&quot;close&quot;, &quot;Close window&quot;)],
+));
+// Application::new(..).commands(..).desktop(desktop, |_app, _unregistered_id| {})</code></pre></div><p>The menu includes the standard About, Services, Hide and Quit items. A
+<code>TrayConfig</code> adds a menu-bar icon (RGBA, up to 128×128) with its own commands.</p>
+<h2 id="notifications">Notifications</h2>
+<p>With <code>native-notifications</code> on macOS:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use std::time::Duration;
+use volt_ui_kit::native::notifications::{self, LocalNotification};
+// Ask from a deliberate user action; the callback runs on an OS thread.
+notifications::request_authorization(|decision| { let _ = decision; })?;
+let note = LocalNotification::new(&quot;build.ready&quot;, &quot;Build ready&quot;, &quot;All checks passed.&quot;)
+    .after(Duration::from_secs(5));
+notifications::send(&amp;note, |accepted| { let _ = accepted; })?;
+notifications::remove(&quot;build.ready&quot;)?;</code></pre></div><p>Notifications work only from a bundled <code>.app</code> (see <a href="#packaging-and-releasing">Packaging and releasing</a>).
+&quot;Accepted&quot; means the OS took the request; Focus modes and user settings decide
+whether it is shown. Forward the callback results to your UI with a
+background message.</p>
+<h2 id="the-development-loop">The development loop</h2>
+<p><code>cargo volt dev</code> rebuilds your project when a source or manifest changes and
+restarts the app after a successful build. To keep your place across restarts,
+save and restore state:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::Application, ui::prelude::*};
+#[derive(Default)]
+struct App { page: usize }
+fn view(app: &amp;App) -&gt; Element&lt;App&gt; { text(format!(&quot;Page {}&quot;, app.page)).into() }
+Application::new(&quot;Dev&quot;, App::default(), view)
+    .dev_state(
+        |app| app.page.to_string(),
+        |app, saved| app.page = saved.parse().unwrap_or(0),
+    )
+    .theme_file(&quot;theme.json&quot;)
+    .run()?;</code></pre></div><ul>
+<li><code>dev_state</code> runs only under <code>cargo volt dev</code>; the window keeps its size and
+position too. Use any format for the saved string.</li>
+<li><code>theme_file</code> reloads the palette whenever the file changes, without a rebuild.</li>
+<li>The dev loop runs your project&#39;s build scripts; use it on code you trust.</li>
+</ul>
+<h2 id="packaging-and-releasing">Packaging and releasing</h2>
+<p>Describe the app once in <code>Cargo.toml</code>, then let <code>cargo volt</code> build it:</p>
+<div class="reference-code"><div>toml<span>Source</span></div><pre tabindex="0" role="region" aria-label="toml"><code>[package.metadata.volt.bundle]
+name = &quot;My App&quot;
+identifier = &quot;com.example.myapp&quot;
+icon = &quot;assets/AppIcon.icns&quot;          # relative to Cargo.toml
+minimum-system-version = &quot;13.0&quot;
+category = &quot;public.app-category.productivity&quot;
+copyright = &quot;© 2026 Example&quot;
+notary-profile = &quot;myapp&quot;              # optional; see below
+aliases = [&quot;myapp&quot;]                   # optional; see below
+
+[[package.metadata.volt.bundle.document-types]]
+name = &quot;Markdown Document&quot;
+role = &quot;Editor&quot;                       # Editor, Viewer, Shell or None
+rank = &quot;Default&quot;                      # Owner, Default, Alternate or None
+content-types = [&quot;net.daringfireball.markdown&quot;]
+
+[[package.metadata.volt.bundle.document-types]]
+name = &quot;Markdown Document&quot;
+role = &quot;Editor&quot;
+extensions = [&quot;mdown&quot;, &quot;mkd&quot;]</code></pre></div><p><code>imported-types</code> declares UTIs for formats no app on the system defines,
+and <code>resources</code>, <code>usage</code> (privacy descriptions) and <code>build-number</code> work as
+the manual flags below.</p>
+<p><code>aliases</code> adds other names for the executable, as links beside it in
+<code>Contents/MacOS</code>. Use one to ship a command-line tool inside the app: link
+<code>/usr/local/bin/myapp</code> to <code>My App.app/Contents/MacOS/myapp</code>, and have
+<code>main</code> check the name it was run as (<code>std::env::args().next()</code>) to run the
+command line instead of opening a window. The links are signed and
+notarized with the app.</p>
+<p>App extensions, such as a Quick Look preview, are other binaries of the
+package. Each goes into <code>Contents/PlugIns/NAME.appex</code> with its own
+<code>Info.plist</code> and is signed in the app sandbox before the app:</p>
+<div class="reference-code"><div>toml<span>Source</span></div><pre tabindex="0" role="region" aria-label="toml"><code>[[package.metadata.volt.bundle.extensions]]
+name = &quot;My App Preview&quot;
+identifier = &quot;com.example.myapp.preview&quot;   # extends the app&#39;s identifier
+binary = &quot;myapp-preview&quot;                   # a [[bin]] of this package
+point = &quot;com.apple.quicklook.preview&quot;      # NSExtensionPointIdentifier
+principal-class = &quot;MyAppPreviewProvider&quot;   # the Objective-C class it defines
+[package.metadata.volt.bundle.extensions.attributes]
+QLIsDataBasedPreview = true
+QLSupportedContentTypes = [&quot;net.daringfireball.markdown&quot;]</code></pre></div><p>The binary defines the principal class and hands control to
+<code>NSExtensionMain</code>; the attributes become <code>NSExtensionAttributes</code>.</p>
+<p><code>cargo volt bundle</code> strips the executable&#39;s symbol table, about a fifth of a
+Rust release binary (<code>strip = false</code> keeps it, for readable backtraces). For
+a smaller app still, give the package a size-tuned release profile:</p>
+<div class="reference-code"><div>toml<span>Source</span></div><pre tabindex="0" role="region" aria-label="toml"><code>[profile.release]
+opt-level = &quot;s&quot;        # optimise for size
+lto = true             # link-time optimisation across crates
+codegen-units = 1
+panic = &quot;abort&quot;        # no unwinding tables or landing pads
+strip = true</code></pre></div><p>Together these took one app from 20.6 MB to 9.8 MB per architecture, for
+rendering about 3% slower and release builds a minute or two longer.</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo volt bundle                 # target/release/bundle/My App.app, signed ad hoc
+cargo volt bundle --universal     # one binary for Apple silicon and Intel</code></pre></div><p><code>cargo volt release</code> makes a build you can hand to other Macs: it signs with
+your Developer ID and the hardened runtime, notarizes the app with Apple and
+staples the ticket, then builds, signs, notarizes and staples a disk image.</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>xcrun notarytool store-credentials myapp --apple-id you@example.com --team-id TEAMID
+
+cargo volt release --universal --dry-run    # print every step
+cargo volt release --universal              # target/release/bundle/My-App-1.0.0.dmg</code></pre></div><p>The identity defaults to the only &quot;Developer ID Application&quot; certificate in
+your keychain (<code>--identity</code> picks another). The notary profile comes from
+<code>--notary-profile</code>, <code>VOLT_NOTARY_PROFILE</code> or <code>notary-profile</code> in the
+metadata. <code>--no-notarize</code> and <code>--no-dmg</code> stop early, and <code>--entitlements</code>
+adds an entitlements file. Steps run programs directly, never a shell, and
+only direct outputs under <code>target/release/bundle</code> are replaced. The metadata
+<code>name</code> is a single filename: directory separators, <code>.</code> and <code>..</code> are rejected.
+Inputs and bundle metadata are validated after the build and before replacing
+an existing app; cleanup cannot follow intermediate directory symlinks. The
+prebuilt flags form below keeps its explicit output path independent of the
+app&#39;s display name.</p>
+<p>To bundle a binary built some other way, pass everything as flags:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo volt bundle \
+  --binary target/release/my-app \
+  --output MyApp.app \
+  --name &quot;My App&quot; \
+  --identifier com.example.myapp \
+  --version 0.1.0 \
+  --minimum-system-version 11.0 \
+  --icon assets/AppIcon.icns</code></pre></div><p>Every bundle gets an <code>Info.plist</code>, checks that the binary links only system
+libraries and declares a deployment target no newer than the minimum, and
+never overwrites a path it did not create. Run <code>cargo volt bundle --help</code> for
+every option.</p>
+<p>To receive the files Finder opens with your app (double-click, Open With,
+the Dock), install an AppKit handler in <code>Application::before_launch</code>, which
+runs once the application object exists and before launch events arrive.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#menus-and-tray">Menus and tray</a><a href="#notifications">Notifications</a><a href="#the-development-loop">The development loop</a><a href="#packaging-and-releasing">Packaging and releasing</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

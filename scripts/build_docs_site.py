@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
 """Stage only the reviewed static site, never the repository or work logs."""
 import argparse
+import json
 from pathlib import Path
+import re
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = (
+BASE_FILES = (
     "index.html", ".nojekyll", "assets/site.css", "assets/favicon.svg",
     "images/dashboard-dark.png", "images/theme-editor-light.png",
+    "assets/fonts/bricolage-grotesque.ttf", "assets/fonts/OFL.txt",
+    "assets/reference.css",
 )
+
+
+def generated_files(root: Path) -> tuple[str, ...]:
+    """Only publish reviewed HTML, preview PNGs and the Catalog data export."""
+    entries = json.loads((root / "docs/site-manifest.json").read_text())
+    allowed = r"(?:(?:reference|guides)/[a-z0-9-]+\.html|images/components/[a-z0-9-]+\.png|assets/catalog-data\.json)"
+    if not isinstance(entries, list) or any(
+        not isinstance(name, str) or not re.fullmatch(allowed, name) for name in entries
+    ) or len(entries) != len(set(entries)):
+        raise ValueError("invalid generated documentation manifest")
+    return tuple(entries)
+
+
+FILES = BASE_FILES + generated_files(ROOT)
 
 
 def build(output: Path) -> None:
