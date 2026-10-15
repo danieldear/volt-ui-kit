@@ -16,7 +16,9 @@ volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit", features = ["
 # volt-ui-kit = { path = "../volt-ui-kit", features = ["native-gpu"] }
 ```
 
-Rust 1.89 or newer is required.
+Rust 1.89 or newer is required. Pin a reviewed Git revision using `rev` and
+commit your app's `Cargo.lock` for reproducibility; a moving default branch is
+not a versioned release.
 
 ### Features
 
@@ -84,7 +86,7 @@ compiled in, and an ordinary native title bar. See
 
 ```sh
 # From a checkout of this repository:
-cargo install --path . --features dev-tools --bin cargo-volt
+cargo install --locked --path . --features dev-tools --bin cargo-volt
 
 cargo volt new my-app --kit-path /path/to/volt-ui-kit --template navigation
 cargo volt dev my-app
@@ -105,7 +107,7 @@ The Catalog example shows every component with live previews, source code,
 API tables, themes and a working dashboard:
 
 ```sh
-cargo run --release --features native-gpu,native-desktop --example catalog
+cargo run --release --locked --features native-gpu,native-desktop --example catalog
 ```
 
 Useful flags: `--page dashboard`, `--theme light|dark`, `--accent violet`.
@@ -117,8 +119,8 @@ Page names are the sidebar titles in lowercase with hyphens, for example
 | Platform | Status |
 | --- | --- |
 | macOS 11+ | Primary platform; tested on Apple silicon with Metal. |
-| Windows | Builds and passes headless tests in CI (DX12). Native runtime not yet validated. |
-| Linux | Builds and passes headless tests in CI (Vulkan, X11/Wayland). Native runtime not yet validated. |
+| Windows | Cross-compilation checked; headless CI configured (DX12). Native runtime not yet validated. |
+| Linux | Cross-compilation checked; headless CI configured (Vulkan, X11/Wayland). Native runtime not yet validated. |
 | WebAssembly | The core (`rust-ui`) compiles for `wasm32-unknown-unknown`; there is no web host yet. |
 
 ## Next

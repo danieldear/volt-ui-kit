@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Add a reusable, preview-first Git identity correction tool. It rewrites only
+  selected branch commit metadata, reuses all trees/blobs and keeps zero-copy
+  backup refs. Local rewrite, lease-protected push and local restore are
+  separate explicit operations; no clone, stash, GC or global identity change
+  is performed. Include regression tests and a maintainer guide.
+
+- Prepare for public collaboration: static documentation landing page,
+  repository hygiene/link checks, pinned security workflows, Dependabot,
+  contribution templates and a reproducible main-protection policy. Document
+  publication gates without changing repository visibility or claiming remote
+  CI/runtime acceptance.
+- Make `cargo volt dev` state handoffs fresh, atomically created directories
+  (owner-only on Unix), refuse pre-existing paths/symlinks, and remove the
+  directory on normal exit after stopping the child. No public API or runtime
+  dependency changes.
+
+
 - Harden four reviewed paths without changing public APIs or dependencies:
   metadata-driven bundles reject path-component names and validate inputs
   before replacing a direct output; cleanup cannot traverse parent directories
