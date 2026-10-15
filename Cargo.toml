@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/danieldear/volt-ui-kit"
 keywords = ["gui", "ui", "desktop", "declarative", "gpu"]
 categories = ["gui", "graphics", "rendering", "accessibility"]
-include = ["docs/*.md", "src/**", "examples/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["docs/*.md", "docs/assets/catalog-data.json", "src/**", "examples/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [package.metadata.docs.rs]
 # Document the Rust UI, native host and GPU renderer, not just the core.

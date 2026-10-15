@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep plain and rich text in the requested font family when an exact weight
+  is unavailable, rather than falling back to an unrelated face. Cover sparse
+  font inventories, inherited run weights and macOS without optional SF font
+  installs. Include Catalog test metadata in Cargo source packages.
+
 - Expand the landing page into a static documentation portal: 50 Catalog pages,
   115 toolkit-rendered example previews, Rust usage excerpts/API notes and eight
   HTML guides. Add an explicit offline Catalog exporter, repeatable site

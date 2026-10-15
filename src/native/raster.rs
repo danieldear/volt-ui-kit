@@ -955,6 +955,8 @@ impl RasterPainter {
             } else {
                 attrs.letter_spacing(tracking)
             };
+            let requested_attrs = attrs.clone();
+            let attrs = available_family_weight(&self.fonts, attrs);
             let align = match key.align {
                 crate::declarative::TextAlign::Start => None,
                 crate::declarative::TextAlign::Center => Some(cosmic_text::Align::Center),
@@ -985,7 +987,9 @@ impl RasterPainter {
                         if at < start {
                             spans.push((&value[at..start], attrs.clone()));
                         }
-                        let mut a = attrs.clone();
+                        // A run that changes family must inherit the requested
+                        // weight, not the closest face of the paragraph family.
+                        let mut a = requested_attrs.clone();
                         if !run_family.is_empty() {
                             a = a.family(family_of(run_family));
                         }
@@ -1007,7 +1011,7 @@ impl RasterPainter {
                                 size * line_height,
                             ));
                         }
-                        spans.push((&value[start..end], a));
+                        spans.push((&value[start..end], available_family_weight(fonts, a)));
                         at = end;
                     }
                     if at < value.len() {
@@ -2096,6 +2100,26 @@ impl RasterPainter {
         result
     }
 }
+// cosmic-text 0.14's default-family fallback requires an exact weight. If a
+// family has 400/700 (or a variable face registered as 400), requesting 500 or
+// 800 can silently select an unrelated family with that exact weight instead.
+// Let fontdb choose the nearest face within the requested family first. Keep
+// style/stretch fallback behavior unchanged, and leave missing families alone.
+fn available_family_weight<'a>(fonts: &FontSystem, attrs: Attrs<'a>) -> Attrs<'a> {
+    let selected = fonts.db().query(&cosmic_text::fontdb::Query {
+        families: &[attrs.family],
+        weight: attrs.weight,
+        style: attrs.style,
+        stretch: attrs.stretch,
+    });
+    if let Some(face) = selected.and_then(|id| fonts.db().face(id)) {
+        if face.style == attrs.style && face.stretch == attrs.stretch {
+            return attrs.weight(face.weight);
+        }
+    }
+    attrs
+}
+
 // cosmic-text's default generic families may not be installed (e.g. DejaVu
 // Serif on macOS). Select available faces instead of silently using sans fallback.
 fn configure_generic_families(fonts: &mut FontSystem) {
@@ -4240,6 +4264,166 @@ mod generic_font_tests {
 #[cfg(test)]
 mod sf_alias_tests {
     use super::*;
+    #[test]
+    fn sparse_family_weights_stay_in_the_requested_family_for_plain_and_rich_text() {
+        let mut p = RasterPainter::new(Viewport::new(600., 120., 1.).unwrap());
+        let source = p
+            .fonts
+            .db()
+            .query(&cosmic_text::fontdb::Query {
+                families: &[Family::SansSerif],
+                ..Default::default()
+            })
+            .expect("native text tests require an installed sans face");
+        let source = p.fonts.db().face(source).unwrap().clone();
+        // An in-memory inventory, not a bundled/downloaded font: the requested
+        // family has only 400/700, while another family has exact 500/600/800.
+        // Cosmic's exact-weight-first fallback must not steal those requests.
+        let mut db = cosmic_text::fontdb::Database::new();
+        for (family, weight) in [
+            ("Volt Test Sparse", 400),
+            ("Volt Test Sparse", 700),
+            ("Volt Test Other", 500),
+            ("Volt Test Other", 600),
+            ("Volt Test Other", 800),
+        ] {
+            let mut face = source.clone();
+            face.id = cosmic_text::fontdb::ID::dummy();
+            face.families = vec![(family.into(), source.families[0].1)];
+            face.weight = Weight(weight);
+            face.style = Style::Normal;
+            face.stretch = cosmic_text::fontdb::Stretch::Normal;
+            db.push_face_info(face);
+        }
+        p.fonts = FontSystem::new_with_locale_and_db("en-US".into(), db);
+        let text = "Native Rust 012345";
+        for weight in [400, 500, 600, 700, 800] {
+            let expected = p
+                .fonts
+                .db()
+                .query(&cosmic_text::fontdb::Query {
+                    families: &[Family::Name("Volt Test Sparse")],
+                    weight: Weight(weight),
+                    ..Default::default()
+                })
+                .unwrap();
+            for rich in [false, true] {
+                let style = TextStyle {
+                    family: "Volt Test Sparse".into(),
+                    weight: if rich { 400 } else { weight },
+                    runs: if rich {
+                        vec![TextRun {
+                            start: 0,
+                            end: text.len(),
+                            weight: Some(weight),
+                            ..Default::default()
+                        }]
+                    } else {
+                        vec![]
+                    },
+                    ..default_style(16.)
+                };
+                let key = p.key(text, &style, 590.);
+                let glyphs: Vec<_> = p.text[&key]
+                    .0
+                    .layout_runs()
+                    .flat_map(|r| r.glyphs)
+                    .collect();
+                assert!(!glyphs.is_empty());
+                assert!(glyphs.iter().all(|g| g.font_id == expected),
+                    "weight {weight}, rich={rich}: requested family lost to an unrelated exact-weight face");
+            }
+        }
+        for weight in [500, 600, 800] {
+            let style = TextStyle {
+                family: "Volt Test Sparse".into(),
+                weight,
+                runs: vec![TextRun {
+                    start: 0,
+                    end: text.len(),
+                    family: Some("Volt Test Other".into()),
+                    ..Default::default()
+                }],
+                ..default_style(16.)
+            };
+            let expected = p
+                .fonts
+                .db()
+                .query(&cosmic_text::fontdb::Query {
+                    families: &[Family::Name("Volt Test Other")],
+                    weight: Weight(weight),
+                    ..Default::default()
+                })
+                .unwrap();
+            let key = p.key(text, &style, 590.);
+            assert!(
+                p.text[&key]
+                    .0
+                    .layout_runs()
+                    .flat_map(|r| r.glyphs)
+                    .all(|g| g.font_id == expected),
+                "family-changing runs must inherit the requested weight"
+            );
+        }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sf_aliases_work_without_optional_developer_installed_sf_fonts() {
+        let mut p = RasterPainter::new(Viewport::new(600., 120., 1.).unwrap());
+        let optional: Vec<_> = p
+            .fonts
+            .db()
+            .faces()
+            .filter(|face| {
+                face.families
+                    .iter()
+                    .any(|(name, _)| name.starts_with("SF Pro") || name == "SF Mono")
+            })
+            .map(|face| face.id)
+            .collect();
+        for id in optional {
+            p.fonts.db_mut().remove_face(id);
+        }
+        p.sf_text = apple_family(&p.fonts, &[".SF NS", "System Font"], "sans-serif");
+        p.sf_display = p.sf_text.clone();
+        p.sf_mono = apple_family(&p.fonts, &[".SF NS Mono"], "monospace");
+        for alias in ["SF", "SF Mono"] {
+            for weight in [400, 500, 600, 700] {
+                let family = p.resolved_font_family(alias, 16.);
+                if matches!(family.as_str(), "sans-serif" | "monospace") {
+                    continue;
+                }
+                let expected = p
+                    .fonts
+                    .db()
+                    .query(&cosmic_text::fontdb::Query {
+                        families: &[Family::Name(&family)],
+                        weight: Weight(weight),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                let key = p.key(
+                    "Native Rust 012345",
+                    &TextStyle {
+                        family: alias.into(),
+                        weight,
+                        ..default_style(16.)
+                    },
+                    590.,
+                );
+                let glyphs: Vec<_> = p.text[&key]
+                    .0
+                    .layout_runs()
+                    .flat_map(|r| r.glyphs)
+                    .collect();
+                assert!(!glyphs.is_empty());
+                assert!(
+                    glyphs.iter().all(|g| g.font_id == expected),
+                    "{alias}/{weight} must stay in {family} without separately installed SF fonts"
+                );
+            }
+        }
+    }
     #[test]
     fn sf_requested_weights_shape_with_the_matching_installed_face() {
         for scale in [1., 2.] {
