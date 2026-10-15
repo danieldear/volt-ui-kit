@@ -122,7 +122,14 @@ fn parse_args(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (app, options) = parse_args(std::env::args().skip(1))?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--export-docs") {
+        if args.len() != 2 {
+            return Err("usage: catalog --export-docs NEW_DIRECTORY".into());
+        }
+        return catalog::export::write(std::path::Path::new(&args[1]));
+    }
+    let (app, options) = parse_args(args)?;
     if !cfg!(feature = "native-gpu") {
         eprintln!(
             "Volt UI: the frosted sidebar needs a translucent window; run with \

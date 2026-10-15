@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Expand the landing page into a static documentation portal: 50 Catalog pages,
+  115 toolkit-rendered example previews, Rust usage excerpts/API notes and eight
+  HTML guides. Add an explicit offline Catalog exporter, repeatable site
+  generation and manifest/coverage/link regression tests.
+
+- Redesign the documentation landing page with self-hosted OFL display
+  typography, a native Catalog composition and keyboard-accessible CSS-only
+  palette, corner and shadow studies. Keep the site script-free and update
+  static-asset packaging and license notices for the local font.
+
 - Add a reusable, preview-first Git identity correction tool. It rewrites only
   selected branch commit metadata, reuses all trees/blobs and keeps zero-copy
   backup refs. Local rewrite, lease-protected push and local restore are

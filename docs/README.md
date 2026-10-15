@@ -1,6 +1,9 @@
 # Volt UI Kit guides
 
-Start at the [HTML landing page](index.html), or read the guides below.
+Start at the [HTML landing page](index.html), browse the
+[component reference](reference/index.html), or read the guides below.
+The HTML site includes every Catalog page and the guides below; Markdown stays
+the editable source for the guides.
 
 1. [Getting started](getting-started.md): install, features, your first window, templates and platform support.
 2. [Building interfaces](building-uis.md): state and callbacks, keys, layout, responsive design, layers and scrolling.
@@ -20,3 +23,5 @@ Every Rust example in these guides is compiled and run as a doctest
 Maintainers: [public-release checklist](public-release.md). Distributors: [third-party notes](third-party.md).
 
 Repository maintenance: [low-disk Git identity correction](git-identity.md).
+
+Website maintainers: [regenerate the component previews and guides](site-maintenance.md).

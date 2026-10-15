@@ -6,7 +6,8 @@ not change GitHub visibility, protect branches or publish a Pages site.
 ## Prepared in this change
 
 - `docs/index.html`: responsive static landing page with local screenshots,
-  system fonts, no JavaScript/trackers/CDN assets and a restrictive content policy.
+  a self-hosted OFL display face, system interface fonts, no JavaScript/trackers/CDN
+  assets and a restrictive content policy.
 - `Repository security`: hygiene/link checks, full reachable-history Gitleaks
   scanning with redacted output and a checksum-pinned scanner, and a weekly
   RustSec dependency audit. No credentials or reports are uploaded as artifacts.
@@ -95,8 +96,8 @@ Do this **only after the repo is public and the site contents are approved**:
 1. In Settings → Pages, select **GitHub Actions** as the build/deployment source.
 2. Restrict the `github-pages` environment to `main` before dispatching.
 3. Run the **Documentation site** workflow manually on `main`. It will refuse
-   private repositories and other branches. Only six reviewed static files are
-   staged; logs, Rust sources, security reports and arbitrary `docs/` files are
+   private repositories and other branches. Only the base assets and reviewed HTML/PNG/JSON paths in
+   `docs/site-manifest.json` are staged; logs, Rust sources, security reports and arbitrary `docs/` files are
    not included. The job has Pages/OIDC write privileges only at deployment.
 4. Verify the resulting URL and links before adding it as the repository
    homepage. The expected project URL is `https://danieldear.github.io/volt-ui-kit/`,

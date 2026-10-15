@@ -142,10 +142,13 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory docs
 # Open http://127.0.0.1:8000
 ```
 
-The site uses local assets, system fonts and no JavaScript or analytics.
+The site uses local assets, an OFL-licensed display font, system interface
+fonts and no JavaScript or analytics.
 GitHub Pages publishing is a separate, manual maintainer step; see the
-[public-release checklist](docs/public-release.md). The landing page links to
-Markdown guides on GitHub; it is not yet a full generated documentation portal.
+[public-release checklist](docs/public-release.md). The landing page leads to
+the [component reference](docs/reference/index.html) and eight HTML how-to guides.
+The reference includes source-backed Rust excerpts, API notes and toolkit-rendered
+previews. See [site maintenance](docs/site-maintenance.md) to regenerate them.
 
 ## Security and maintenance
 
