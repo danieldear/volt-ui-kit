@@ -153,3 +153,78 @@ fn lists_need_a_key_and_a_window_callback() {
         .into();
     assert!(unkeyed_rows.build().is_err());
 }
+
+#[test]
+fn invalid_lazy_counts_are_errors_before_allocation_or_row_construction() {
+    for count in [usize::MAX, 1_000_001] {
+        let result = std::panic::catch_unwind(|| {
+            let ui: Element<()> = lazy_list(count, |_| panic!("invalid list built a row"))
+                .key("list")
+                .on_window_change(|_, _| {})
+                .into();
+            ui.build().is_err()
+        });
+        assert_eq!(
+            result.ok(),
+            Some(true),
+            "count {count} must be rejected, not panic"
+        );
+        let ui: Element<()> = lazy_list(count, |_| panic!("invalid count built a row"))
+            .key("list")
+            .on_window_change(|_, _| {})
+            .estimates(std::iter::from_fn(|| -> Option<f32> {
+                panic!("invalid count consumed estimates")
+            }))
+            .into();
+        assert!(ui.build().is_err());
+    }
+}
+
+#[test]
+fn invalid_estimates_do_not_construct_rows_or_consume_unbounded_iterators() {
+    use std::{cell::Cell, rc::Rc};
+    for estimate in [f32::NAN, f32::INFINITY, 0., 100_001.] {
+        let ui: Element<()> = lazy_list(3, |_| panic!("invalid estimate built a row"))
+            .key("list")
+            .estimate(estimate)
+            .on_window_change(|_, _| {})
+            .into();
+        assert!(ui.build().is_err());
+    }
+    let reads = Rc::new(Cell::new(0));
+    let read = reads.clone();
+    let ui: Element<()> = lazy_list(3, |_| panic!("excess estimates built a row"))
+        .key("list")
+        .on_window_change(|_, _| {})
+        .estimates((0..100).map(move |_| {
+            read.set(read.get() + 1);
+            24.
+        }))
+        .into();
+    assert!(ui.build().is_err());
+    assert!(
+        reads.get() <= 4,
+        "read {} estimates for three rows",
+        reads.get()
+    );
+    let ui: Element<()> = lazy_list(3, |i| text("row").key(format!("r{i}")).into())
+        .key("list")
+        .on_window_change(|_, _| {})
+        .estimates(std::iter::repeat(24.))
+        .into();
+    assert!(
+        ui.build().is_err(),
+        "infinite input is bounded and rejected"
+    );
+}
+
+#[test]
+fn empty_and_maximum_sized_lazy_lists_remain_valid() {
+    for count in [0, 1_000_000] {
+        let ui: Element<()> = lazy_list(count, |i| text("row").key(format!("r{i}")).into())
+            .key("list")
+            .on_window_change(|_, _| {})
+            .into();
+        assert!(ui.build().is_ok());
+    }
+}

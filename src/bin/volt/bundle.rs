@@ -306,6 +306,9 @@ impl BundleOptions {
         self.output.with_file_name("extension.entitlements")
     }
     pub fn validate(&self) -> io::Result<()> {
+        // The prebuilt CLI has an explicit output path; its display name does
+        // not determine that path. Metadata-driven callers validate a filename
+        // separately before deriving their output directory.
         text(&self.name, 128)?;
         if self.identifier.len() > 255
             || !self.identifier.contains('.')
@@ -620,6 +623,17 @@ fn text(value: &str, limit: usize) -> io::Result<()> {
     if value.trim().is_empty() || value.len() > limit || value.chars().any(char::is_control) {
         return Err(error(
             "metadata must be nonblank, bounded and free of control characters",
+        ));
+    }
+    Ok(())
+}
+/// A display name becomes a single filesystem component in metadata-driven
+/// bundles. Validate before deriving output paths, not after deleting an old app.
+pub(super) fn validate_app_name(name: &str) -> io::Result<()> {
+    text(name, 128)?;
+    if name == "." || name == ".." || name.contains(['/', '\\', ':']) {
+        return Err(error(
+            "app name must be a single filename, without path separators",
         ));
     }
     Ok(())

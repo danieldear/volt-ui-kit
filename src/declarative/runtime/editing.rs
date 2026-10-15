@@ -11,6 +11,162 @@ pub(super) fn text_limit(multiline: bool) -> usize {
         MAX_TEXT
     }
 }
+
+#[cfg(test)]
+mod reflow_regression_tests {
+    use super::*;
+    #[derive(Default)]
+    struct CountingMetrics {
+        bytes: usize,
+    }
+    impl TextMetrics for CountingMetrics {
+        fn measure(&mut self, t: &str, s: f32, _: f32) -> [f32; 2] {
+            [t.graphemes(true).count() as f32 * s * 0.5, s * 1.2]
+        }
+        fn line_advances(&mut self, t: &str, s: &TextStyle, offsets: &[usize]) -> Vec<f32> {
+            self.bytes += t.len();
+            offsets.iter().map(|at| *at as f32 * s.size * 0.5).collect()
+        }
+    }
+    #[test]
+    fn long_wrapped_lines_have_bounded_shaping_work() {
+        let options = super::super::super::document::EditorOptions {
+            multiline: true,
+            soft_wrap: true,
+            ..Default::default()
+        };
+        let style = TextStyle {
+            size: 14.,
+            ..Default::default()
+        };
+        for n in [4096, 8192, 32768, MAX_EDITOR_TEXT] {
+            let mut metrics = CountingMetrics::default();
+            let line = line_rows(&"x".repeat(n), &options, &style, 280., &mut metrics);
+            assert_eq!(line.rows.last().unwrap().1, n);
+            assert!(
+                metrics.bytes <= n * 16,
+                "{n} bytes shaped {} bytes",
+                metrics.bytes
+            );
+            assert!(line.positions.iter().all(|(_, x, _)| *x <= 280.));
+        }
+    }
+
+    // Bounded compatibility oracle for the previous wrapping algorithm. Never
+    // use this on large documents: repeatedly shaping suffixes is the bug.
+    #[cfg(feature = "native")]
+    fn reference_rows(
+        text: &str,
+        options: &super::super::super::document::EditorOptions,
+        style: &TextStyle,
+        width: f32,
+        metrics: &mut impl TextMetrics,
+    ) -> LineLayout {
+        let row_style = editor_row_style(style);
+        let mut out = LineLayout {
+            rows: Vec::new(),
+            positions: Vec::new(),
+        };
+        let mut start = 0;
+        loop {
+            let remaining = &text[start..];
+            let (_, points, advances) =
+                shape_editor_segment(remaining, options.password, &row_style, metrics);
+            let mut end = remaining.len();
+            if options.soft_wrap && advances.last().copied().unwrap_or(0.) > width {
+                let fit = advances
+                    .iter()
+                    .enumerate()
+                    .take_while(|(_, x)| **x <= width)
+                    .last()
+                    .map_or(1, |(i, _)| i.max(1));
+                end = points[fit.min(points.len() - 1)];
+                if !options.password {
+                    if let Some(space) = remaining[..end]
+                        .grapheme_indices(true)
+                        .filter(|(_, g)| g.chars().all(char::is_whitespace))
+                        .map(|(i, g)| i + g.len())
+                        .next_back()
+                    {
+                        end = space;
+                    }
+                }
+            }
+            let (mut display, mut points, mut advances) =
+                shape_editor_segment(&remaining[..end], options.password, &row_style, metrics);
+            while options.soft_wrap
+                && advances.last().copied().unwrap_or(0.) > width
+                && points.len() > 2
+            {
+                end = points[points.len() - 2];
+                (display, points, advances) =
+                    shape_editor_segment(&remaining[..end], options.password, &row_style, metrics);
+            }
+            let free = (width - advances.iter().copied().fold(0_f32, f32::max)).max(0.);
+            let x = match style.align {
+                super::super::super::extras::TextAlign::Center => free * 0.5,
+                super::super::super::extras::TextAlign::End => free,
+                _ => 0.,
+            };
+            for (i, at) in points.iter().enumerate() {
+                out.positions.push((
+                    start + at,
+                    x + advances.get(i).copied().unwrap_or(0.),
+                    out.rows.len(),
+                ));
+            }
+            out.rows.push((start, start + end, display, x));
+            start += end;
+            if start >= text.len() {
+                break;
+            }
+        }
+        out
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn bounded_reflow_preserves_rows_carets_alignment_and_password_masks() {
+        use super::super::super::{document::EditorOptions, extras::TextAlign};
+        use crate::{native::RasterPainter, Viewport};
+        let mut metrics = RasterPainter::new(Viewport::new(900., 500., 1.).unwrap());
+        for scale in [1., 2.] {
+            for text in [
+                "",
+                "AV office affine flowers. ".repeat(8).as_str(),
+                "Cafe\u{301} — 世界 👨‍👩‍👧‍👦 🇺🇸 mixed text ".repeat(4).as_str(),
+                "supercalifragilisticexpialidocious".repeat(6).as_str(),
+            ] {
+                for width in [15., 110., 320.] {
+                    for align in [TextAlign::Start, TextAlign::Center, TextAlign::End] {
+                        for password in [false, true] {
+                            let options = EditorOptions {
+                                multiline: true,
+                                soft_wrap: true,
+                                password,
+                                ..Default::default()
+                            };
+                            let style = TextStyle {
+                                size: 14. * scale,
+                                align,
+                                ..Default::default()
+                            };
+                            let actual =
+                                line_rows(text, &options, &style, width * scale, &mut metrics);
+                            let expected =
+                                reference_rows(text, &options, &style, width * scale, &mut metrics);
+                            assert_eq!(
+                                actual.rows, expected.rows,
+                                "{text:?}, width={width}, scale={scale}, password={password}"
+                            );
+                            assert_eq!(actual.positions, expected.positions, "carets for {text:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 const MAX_UNDO: usize = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditKey {
@@ -312,18 +468,39 @@ fn line_rows(
         rows: Vec::new(),
         positions: Vec::new(),
     };
-    let mut start = 0;
+    // Find the source's grapheme boundaries once. Shaping the entire remaining
+    // suffix for each wrapped row made a single long hard line quadratic even
+    // with a linear-time metrics adapter.
+    let source_points = boundaries(hard_line);
+    let last = source_points.len() - 1;
+    let mut start_point = 0;
     loop {
-        let remainder = &hard_line[start..];
-        let points = boundaries(remainder);
-        let display = if options.password {
-            "•".repeat(remainder.graphemes(true).count())
+        let start = source_points[start_point];
+        // A small look-ahead, grown geometrically only while it fits. Total
+        // shaping work follows visible row lengths, not the unconsumed suffix.
+        let mut end_point = if options.soft_wrap {
+            start_point.saturating_add(32).min(last)
         } else {
-            remainder.to_string()
+            last
         };
-        let display_points = boundaries(&display);
-        let advances = metrics.line_advances(&display, &row_style, &display_points);
-        let mut end = remainder.len();
+        let (mut display, mut points, mut advances) = loop {
+            let shaped = shape_editor_segment(
+                &hard_line[start..source_points[end_point]],
+                options.password,
+                &row_style,
+                metrics,
+            );
+            if !options.soft_wrap
+                || end_point == last
+                || shaped.2.last().copied().unwrap_or(0.) > width
+            {
+                break shaped;
+            }
+            end_point = start_point
+                .saturating_add((end_point - start_point).saturating_mul(2))
+                .min(last);
+        };
+        let candidate_end = end_point;
         if options.soft_wrap && advances.last().copied().unwrap_or(0.) > width {
             let fitting = advances
                 .iter()
@@ -331,40 +508,46 @@ fn line_rows(
                 .take_while(|(_, x)| **x <= width)
                 .last()
                 .map_or(1, |(i, _)| i.max(1));
-            end = points[fitting.min(points.len() - 1)];
+            end_point = (start_point + fitting).min(end_point);
             if !options.password {
-                let whitespace = remainder[..end]
+                let whitespace = hard_line[start..source_points[end_point]]
                     .grapheme_indices(true)
                     .filter(|(_, g)| g.chars().all(char::is_whitespace))
                     .map(|(i, g)| i + g.len())
                     .next_back();
                 if let Some(space) = whitespace {
-                    end = space;
+                    end_point = source_points.partition_point(|p| *p <= start + space) - 1;
                 }
             }
         }
-        let mut segment = &remainder[..end];
-        let mut display = if options.password {
-            "•".repeat(segment.graphemes(true).count())
-        } else {
-            segment.to_string()
-        };
-        let mut points = boundaries(segment);
-        let mut advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
+        if end_point != candidate_end {
+            (display, points, advances) = shape_editor_segment(
+                &hard_line[start..source_points[end_point]],
+                options.password,
+                &row_style,
+                metrics,
+            );
+        }
         // Shaping a segment can differ from the original line's contextual width.
         while options.soft_wrap
             && advances.last().copied().unwrap_or(0.) > width
             && points.len() > 2
         {
-            end = points[points.len() - 2];
-            segment = &remainder[..end];
-            display = if options.password {
-                "•".repeat(segment.graphemes(true).count())
-            } else {
-                segment.to_string()
-            };
-            points = boundaries(segment);
-            advances = metrics.line_advances(&display, &row_style, &boundaries(&display));
+            // Jump to a fitting prefix rather than reshaping after removing
+            // just one grapheme over and over. Always retain at least one.
+            let fitting = advances
+                .iter()
+                .take_while(|x| **x <= width)
+                .count()
+                .saturating_sub(1)
+                .max(1);
+            end_point = (start_point + fitting).min(end_point - 1);
+            (display, points, advances) = shape_editor_segment(
+                &hard_line[start..source_points[end_point]],
+                options.password,
+                &row_style,
+                metrics,
+            );
         }
         let row = out.rows.len();
         let free = (width - advances.iter().copied().fold(0_f32, f32::max)).max(0.);
@@ -377,13 +560,33 @@ fn line_rows(
             out.positions
                 .push((start + at, x + advances.get(i).copied().unwrap_or(0.), row));
         }
-        out.rows.push((start, start + end, display, x));
-        start += end;
-        if start >= hard_line.len() {
+        out.rows.push((start, source_points[end_point], display, x));
+        start_point = end_point;
+        if start_point >= last {
             break;
         }
     }
     out
+}
+
+fn shape_editor_segment(
+    text: &str,
+    password: bool,
+    style: &TextStyle,
+    metrics: &mut impl TextMetrics,
+) -> (String, Vec<usize>, Vec<f32>) {
+    let points = boundaries(text);
+    let display = if password {
+        "•".repeat(points.len() - 1)
+    } else {
+        text.to_owned()
+    };
+    let advances = if password {
+        metrics.line_advances(&display, style, &boundaries(&display))
+    } else {
+        metrics.line_advances(&display, style, &points)
+    };
+    (display, points, advances)
 }
 
 impl Runtime {

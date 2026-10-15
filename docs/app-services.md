@@ -337,7 +337,12 @@ your keychain (`--identity` picks another). The notary profile comes from
 `--notary-profile`, `VOLT_NOTARY_PROFILE` or `notary-profile` in the
 metadata. `--no-notarize` and `--no-dmg` stop early, and `--entitlements`
 adds an entitlements file. Steps run programs directly, never a shell, and
-only files under `target/release/bundle` are ever replaced.
+only direct outputs under `target/release/bundle` are replaced. The metadata
+`name` is a single filename: directory separators, `.` and `..` are rejected.
+Inputs and bundle metadata are validated after the build and before replacing
+an existing app; cleanup cannot follow intermediate directory symlinks. The
+prebuilt flags form below keeps its explicit output path independent of the
+app's display name.
 
 To bundle a binary built some other way, pass everything as flags:
 

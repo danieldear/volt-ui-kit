@@ -2315,6 +2315,100 @@ impl RasterPainter {
         [width, height]
     }
 }
+/// Query shaped clusters in byte order while preserving the original visual
+/// glyph priority (including RTL and multi-glyph clusters). A scan of every
+/// glyph for every caret stop becomes quadratic on unwrapped document lines.
+fn shaped_line_advances(
+    text: &str,
+    glyphs: &[cosmic_text::LayoutGlyph],
+    offsets: &[usize],
+    mut visit: impl FnMut(),
+) -> Vec<f32> {
+    use std::{cmp::Reverse, collections::BinaryHeap};
+    let mut starts: Vec<usize> = (0..glyphs.len()).collect();
+    if !glyphs.windows(2).all(|w| w[0].start <= w[1].start) {
+        starts.sort_unstable_by_key(|i| {
+            visit();
+            (glyphs[*i].start, *i)
+        });
+    }
+    let mut queries: Vec<usize> = (0..offsets.len()).collect();
+    if !offsets.windows(2).all(|w| w[0] <= w[1]) {
+        queries.sort_unstable_by_key(|i| {
+            visit();
+            offsets[*i]
+        });
+    }
+    let mut result = vec![0.; offsets.len()];
+    let mut active = BinaryHeap::new();
+    let mut next = 0;
+    let mut ends: Option<Vec<usize>> = None;
+    let mut cluster_points: Option<(usize, usize, Vec<usize>)> = None;
+    for query in queries {
+        visit();
+        let at = offsets[query];
+        if !text.is_char_boundary(at) {
+            continue;
+        }
+        while next < starts.len() && glyphs[starts[next]].start <= at {
+            visit();
+            active.push(Reverse(starts[next]));
+            next += 1;
+        }
+        while active.peek().is_some_and(|Reverse(i)| glyphs[*i].end <= at) {
+            visit();
+            active.pop();
+        }
+        if let Some(&Reverse(i)) = active.peek() {
+            let g = &glyphs[i];
+            let (before, count) = if at == g.start {
+                (0, 1)
+            } else {
+                if cluster_points
+                    .as_ref()
+                    .is_none_or(|(a, b, _)| *a != g.start || *b != g.end)
+                {
+                    let points = text
+                        .get(g.start..g.end)
+                        .unwrap_or("")
+                        .grapheme_indices(true)
+                        .map(|(i, _)| i)
+                        .collect();
+                    cluster_points = Some((g.start, g.end, points));
+                }
+                let points = &cluster_points.as_ref().unwrap().2;
+                (
+                    points.partition_point(|i| g.start + *i < at),
+                    points.len().max(1),
+                )
+            };
+            let advance = g.w * before as f32 / count as f32;
+            result[query] = if g.level.is_rtl() {
+                g.x + g.w - advance
+            } else {
+                g.x + advance
+            };
+        } else {
+            // Endpoints not covered by a cluster use the first visual glyph
+            // ending there, just as the previous lookup did. Build this index
+            // lazily, normally only for the final caret stop.
+            let ends = ends.get_or_insert_with(|| {
+                let mut indices: Vec<usize> = (0..glyphs.len()).collect();
+                indices.sort_unstable_by_key(|i| {
+                    visit();
+                    (glyphs[*i].end, *i)
+                });
+                indices
+            });
+            let index = ends.partition_point(|i| glyphs[*i].end < at);
+            if let Some(g) = ends.get(index).map(|i| &glyphs[*i]).filter(|g| g.end == at) {
+                result[query] = if g.level.is_rtl() { g.x } else { g.x + g.w };
+            }
+        }
+    }
+    result
+}
+
 impl TextMetrics for RasterPainter {
     fn text_range_rects(
         &mut self,
@@ -2375,37 +2469,9 @@ impl TextMetrics for RasterPainter {
         let Some(run) = buffer.layout_runs().next() else {
             return vec![0.; byte_offsets.len()];
         };
-        byte_offsets
-            .iter()
-            .map(|&at| {
-                if !text.is_char_boundary(at) {
-                    return 0.;
-                }
-                for glyph in run.glyphs {
-                    if at >= glyph.start && at < glyph.end {
-                        let cluster = &text[glyph.start..glyph.end];
-                        let count = cluster.graphemes(true).count().max(1);
-                        let before = cluster
-                            .grapheme_indices(true)
-                            .take_while(|(offset, _)| glyph.start + offset < at)
-                            .count();
-                        let advance = glyph.w * before as f32 / count as f32;
-                        return if glyph.level.is_rtl() {
-                            glyph.x + glyph.w - advance
-                        } else {
-                            glyph.x + advance
-                        };
-                    }
-                }
-                run.glyphs.iter().find(|g| g.end == at).map_or(0., |g| {
-                    if g.level.is_rtl() {
-                        g.x
-                    } else {
-                        g.x + g.w
-                    }
-                })
-            })
-            .collect()
+        // Empty generic observer compiles away; tests count operations instead
+        // of asserting a machine-dependent elapsed-time threshold.
+        shaped_line_advances(text, run.glyphs, byte_offsets, || {})
     }
     fn measure(&mut self, text: &str, size: f32, max_width: f32) -> [f32; 2] {
         self.measure_styled(text, &default_style(size), max_width)
@@ -4325,6 +4391,94 @@ mod scaled_image_tests {
 #[cfg(test)]
 mod editor_metric_tests {
     use super::*;
+    #[test]
+    fn unwrapped_caret_lookup_has_a_bounded_operation_count() {
+        let mut p = RasterPainter::new(Viewport::new(600., 200., 1.).unwrap());
+        let key = p.key("x", &default_style(14.), 1_000_000.);
+        let glyph = p.text[&key].0.layout_runs().next().unwrap().glyphs[0].clone();
+        for count in [4096, 16384] {
+            let text = "x".repeat(count);
+            let glyphs: Vec<_> = (0..count)
+                .map(|i| {
+                    let mut g = glyph.clone();
+                    g.start = i;
+                    g.end = i + 1;
+                    g.x = i as f32 * 7.;
+                    g.w = 7.;
+                    g
+                })
+                .collect();
+            let offsets: Vec<_> = (0..=count).collect();
+            let mut work = 0;
+            let stops = shaped_line_advances(&text, &glyphs, &offsets, || work += 1);
+            assert_eq!(stops.len(), count + 1);
+            assert_eq!(stops[count], count as f32 * 7.);
+            assert!(
+                work <= 64 * count,
+                "{count} stops required {work} operations"
+            );
+        }
+    }
+    #[test]
+    fn indexed_caret_advances_preserve_visual_cluster_priority_and_unsorted_offsets() {
+        let mut p = RasterPainter::new(Viewport::new(800., 200., 1.).unwrap());
+        let style = default_style(16.);
+        for value in [
+            "AV office",
+            "e\u{301} ﬁ 👨‍👩‍👧‍👦",
+            "abc שלום xyz",
+            "سلام",
+            "",
+            "A\u{200d}B\tC",
+        ] {
+            let key = p.key(value, &style, 1_000_000.);
+            let buffer = &p.text[&key].0;
+            let Some(run) = buffer.layout_runs().next() else {
+                continue;
+            };
+            let offsets: Vec<usize> = (0..value.len() + 2).rev().chain([0, value.len()]).collect();
+            // Original linear lookup is the compatibility oracle, including
+            // invalid UTF-8 offsets, ligature interiors and bidi visual order.
+            let reference: Vec<f32> = offsets
+                .iter()
+                .map(|&at| {
+                    if !value.is_char_boundary(at) {
+                        return 0.;
+                    }
+                    for g in run.glyphs {
+                        if at >= g.start && at < g.end {
+                            let cluster = &value[g.start..g.end];
+                            let count = cluster.graphemes(true).count().max(1);
+                            let before = cluster
+                                .grapheme_indices(true)
+                                .take_while(|(i, _)| g.start + i < at)
+                                .count();
+                            let advance = g.w * before as f32 / count as f32;
+                            return if g.level.is_rtl() {
+                                g.x + g.w - advance
+                            } else {
+                                g.x + advance
+                            };
+                        }
+                    }
+                    run.glyphs.iter().find(|g| g.end == at).map_or(0., |g| {
+                        if g.level.is_rtl() {
+                            g.x
+                        } else {
+                            g.x + g.w
+                        }
+                    })
+                })
+                .collect();
+            let indexed = shaped_line_advances(value, run.glyphs, &offsets, || {});
+            for (actual, expected) in indexed.iter().zip(&reference) {
+                assert!(
+                    (actual - expected).abs() < 0.001,
+                    "{value:?}: {indexed:?} vs {reference:?}"
+                );
+            }
+        }
+    }
     #[test]
     fn editor_advances_share_shaped_clusters_without_prefix_buffers() {
         for scale in [1., 2.] {
