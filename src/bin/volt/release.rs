@@ -165,6 +165,8 @@ pub fn options_from_manifest(
     output: PathBuf,
 ) -> io::Result<BundleOptions> {
     let b = &m.metadata;
+    let name = optional(b, "name")?.unwrap_or_else(|| m.package.clone());
+    bundle::validate_app_name(&name)?;
     let path = |p: String| m.dir.join(p);
     let document_types = b["document-types"]
         .as_array()
@@ -248,7 +250,7 @@ pub fn options_from_manifest(
     Ok(BundleOptions {
         binary,
         output,
-        name: optional(b, "name")?.unwrap_or_else(|| m.package.clone()),
+        name,
         identifier: optional(b, "identifier")?.ok_or_else(|| error("identifier is required"))?,
         version: m.version.clone(),
         minimum: optional(b, "minimum-system-version")?.unwrap_or_else(|| "13.0".into()),
@@ -597,6 +599,33 @@ fn read_manifest(path: Option<&Path>) -> io::Result<Manifest> {
     manifest_from_json(&json, path)
 }
 
+/// Resolve the explicitly chosen target directory, but never let generated
+/// `release`/`bundle` directories redirect cleanup through a symlink/junction.
+/// A linked target directory itself is a supported user-selected cache path.
+fn checked_output_root(m: &Manifest, create: bool) -> io::Result<PathBuf> {
+    if create {
+        fs::create_dir_all(&m.target_dir)?;
+    }
+    let mut root = m.target_dir.canonicalize()?;
+    for leaf in ["release", "bundle"] {
+        root.push(leaf);
+        if create {
+            match fs::create_dir(&root) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let metadata = fs::symlink_metadata(&root)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() || root.canonicalize()? != root {
+            return Err(error(
+                "generated release/bundle directories must be real directories, not symlinks",
+            ));
+        }
+    }
+    Ok(root)
+}
+
 fn execute(
     step: &Step,
     m: &Manifest,
@@ -624,15 +653,24 @@ fn execute(
             Ok(())
         }
         Step::Remove(path) => {
-            // Only ever remove outputs this tool writes.
-            if !path.starts_with(out_dir(m)) {
+            // Generated outputs are direct children, never paths reached through
+            // `..` or an intermediate symlink. Lexical starts_with is not enough.
+            let root = out_dir(m);
+            if path.parent() != Some(root.as_path()) || path.file_name().is_none() {
                 return Err(error(
                     "refusing to remove a path outside target/release/bundle",
                 ));
             }
-            match fs::symlink_metadata(path) {
-                Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
-                Ok(_) => fs::remove_file(path),
+            let root = checked_output_root(m, false)?;
+            // The build/lipo steps have completed. Check all inputs and metadata
+            // before removing the previous working bundle.
+            if let Some(options) = bundle_options.as_ref() {
+                options.validate()?;
+            }
+            let path = root.join(path.file_name().unwrap());
+            match fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_dir() => fs::remove_dir_all(&path),
+                Ok(_) => fs::remove_file(&path),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
                 Err(e) => Err(e),
             }
@@ -738,7 +776,7 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
         }
         return Ok(());
     }
-    fs::create_dir_all(&out)?;
+    checked_output_root(&m, true)?;
     let mut options = Some(options);
     for step in &steps {
         execute(step, &m, &mut options)?;
@@ -747,4 +785,189 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
         println!("Released to {}", out.display());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod confinement_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let p = std::env::temp_dir().join(format!(
+                "volt-release-confinement-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&p).unwrap();
+            Self(p)
+        }
+        fn manifest(&self) -> Manifest {
+            Manifest {
+                dir: self.0.clone(),
+                target_dir: self.0.join("target"),
+                package: "notes".into(),
+                version: "1.0.0".into(),
+                bin: "notes".into(),
+                bins: vec!["notes".into()],
+                metadata: serde_json::json!({"name":"Notes Pro","identifier":"dev.volt.notes"}),
+            }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn bundle_metadata_rejects_path_names_before_any_output_cleanup() {
+        let f = Fixture::new();
+        for name in [
+            "../../Victim",
+            "nested/Notes",
+            "..",
+            ".",
+            "/tmp/Victim",
+            "C:\\Victim",
+            "Notes:Other",
+        ] {
+            let mut m = f.manifest();
+            m.metadata["name"] = name.into();
+            assert!(
+                options_from_manifest(&m, "/unused/binary".into(), out_dir(&m).join("Notes.app"))
+                    .is_err(),
+                "accepted {name:?}"
+            );
+        }
+    }
+    #[test]
+    fn cleanup_rejects_parent_traversal_and_preserves_the_existing_app() {
+        let f = Fixture::new();
+        let m = f.manifest();
+        let out = out_dir(&m);
+        fs::create_dir_all(&out).unwrap();
+        let victim = m.target_dir.join("Victim.app");
+        fs::create_dir(&victim).unwrap();
+        fs::write(victim.join("keep.txt"), b"untouched").unwrap();
+        let result = execute(&Step::Remove(out.join("../../Victim.app")), &m, &mut None);
+        assert!(result.is_err());
+        assert_eq!(fs::read(victim.join("keep.txt")).unwrap(), b"untouched");
+    }
+    #[test]
+    fn invalid_bundle_options_do_not_remove_the_previous_output() {
+        let f = Fixture::new();
+        let mut m = f.manifest();
+        m.metadata["identifier"] = "invalid".into();
+        let out = out_dir(&m);
+        fs::create_dir_all(&out).unwrap();
+        let app = out.join("Notes Pro.app");
+        fs::create_dir(&app).unwrap();
+        fs::write(app.join("keep.txt"), b"untouched").unwrap();
+        let o = options_from_manifest(&m, "/unused/binary".into(), app.clone());
+        if let Ok(o) = o {
+            assert!(execute(&Step::Remove(app.clone()), &m, &mut Some(o)).is_err());
+        }
+        assert_eq!(fs::read(app.join("keep.txt")).unwrap(), b"untouched");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_cannot_follow_an_intermediate_symlink_outside_the_output() {
+        let f = Fixture::new();
+        let m = f.manifest();
+        let out = out_dir(&m);
+        fs::create_dir_all(&out).unwrap();
+        let outside = f.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("keep.app"), b"untouched").unwrap();
+        std::os::unix::fs::symlink(&outside, out.join("link")).unwrap();
+        assert!(execute(&Step::Remove(out.join("link/keep.app")), &m, &mut None).is_err());
+        assert_eq!(fs::read(outside.join("keep.app")).unwrap(), b"untouched");
+    }
+    #[test]
+    fn cleanup_can_replace_direct_generated_outputs_only() {
+        let f = Fixture::new();
+        let m = f.manifest();
+        let out = out_dir(&m);
+        fs::create_dir_all(&out).unwrap();
+        let app = out.join("Notes Pro.app");
+        fs::create_dir(&app).unwrap();
+        execute(&Step::Remove(app.clone()), &m, &mut None).unwrap();
+        assert!(!app.exists());
+        execute(&Step::Remove(app), &m, &mut None).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_unlinks_a_direct_symlink_without_removing_its_target() {
+        let f = Fixture::new();
+        let m = f.manifest();
+        let out = out_dir(&m);
+        fs::create_dir_all(&out).unwrap();
+        let target = f.0.join("outside");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep.txt"), b"untouched").unwrap();
+        let link = out.join("Notes Pro.app");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        execute(&Step::Remove(link.clone()), &m, &mut None).unwrap();
+        assert!(fs::symlink_metadata(link).is_err());
+        assert_eq!(fs::read(target.join("keep.txt")).unwrap(), b"untouched");
+    }
+    #[test]
+    fn an_explicit_target_directory_can_contain_parent_components() {
+        let f = Fixture::new();
+        let mut m = f.manifest();
+        fs::create_dir(f.0.join("cache")).unwrap();
+        m.target_dir = f.0.join("cache/../target");
+        let out = out_dir(&m);
+        fs::create_dir_all(&out).unwrap();
+        let app = out.join("Notes Pro.app");
+        fs::create_dir(&app).unwrap();
+        execute(&Step::Remove(app.clone()), &m, &mut None).unwrap();
+        assert!(!app.exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn generated_output_roots_cannot_be_redirected_through_symlinks() {
+        for linked in ["release", "bundle"] {
+            let f = Fixture::new();
+            let m = f.manifest();
+            let out = out_dir(&m);
+            fs::create_dir_all(&out).unwrap();
+            let outside = f.0.join("outside");
+            fs::create_dir(&outside).unwrap();
+            let victim = if linked == "release" {
+                fs::create_dir(outside.join("bundle")).unwrap();
+                outside.join("bundle/Notes.app")
+            } else {
+                outside.join("Notes.app")
+            };
+            fs::write(&victim, b"untouched").unwrap();
+            let link = if linked == "release" {
+                m.target_dir.join("release")
+            } else {
+                out.clone()
+            };
+            fs::remove_dir_all(&link).unwrap();
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert!(execute(&Step::Remove(out.join("Notes.app")), &m, &mut None).is_err());
+            assert_eq!(fs::read(victim).unwrap(), b"untouched");
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn explicitly_linked_target_directories_remain_supported() {
+        let f = Fixture::new();
+        let mut m = f.manifest();
+        let cache = f.0.join("cache");
+        fs::create_dir(&cache).unwrap();
+        std::os::unix::fs::symlink(&cache, &m.target_dir).unwrap();
+        let out = out_dir(&m);
+        fs::create_dir_all(&out).unwrap();
+        let app = out.join("Notes.app");
+        fs::write(&app, b"generated").unwrap();
+        execute(&Step::Remove(app.clone()), &m, &mut None).unwrap();
+        assert!(!app.exists());
+        m.target_dir = cache;
+        assert!(out_dir(&m).is_dir());
+    }
 }
