@@ -33,8 +33,8 @@ builders and runtime without a window; `native` adds a complete host.
    nodes. Text shaping is cached.
 5. Painting produces ordered drawing batches, which Vello encodes for the GPU
    (or tiny-skia rasterizes, redrawing only damaged regions).
-6. The window presents the frame and goes back to waiting. Nothing runs while
-   the window is idle.
+6. The window presents the frame and goes back to waiting. No continuous rendering loop is required when idle; active animations,
+   application background tasks and dev-loop polling can still wake it.
 
 Hover, scrolling, resizing and animation skip step 3.
 
@@ -79,9 +79,13 @@ tests; live sessions with VoiceOver, Narrator and Orca are still to do.
   (30) are pinned to exact versions because GPU output is validated against them.
 - wgpu is built with only the backend each platform uses (Metal, DX12 or
   Vulkan); Vello's default features are off.
-- `cargo audit` reports no vulnerabilities. It lists unmaintained-crate
-  warnings for `rustybuzz` and `ttf-parser` (through cosmic-text), which have
-  no fixed versions yet.
+- The 2026-10-15 `cargo audit` check found no known vulnerability advisories
+  in the lockfile. It reported maintenance advisories `RUSTSEC-2026-0206`
+  (`rustybuzz`) and `RUSTSEC-2026-0192` (`ttf-parser`) in the native text stack.
+  This is dated evidence, not a guarantee; rerun `cargo audit` for current data.
+- Builds and dev tooling execute trusted application code and Cargo build
+  scripts. File helpers and temporary directories are not application sandboxes.
+  See [Security](../SECURITY.md) and [third-party notes](third-party.md).
 
 ## Embedding the drawing layer
 

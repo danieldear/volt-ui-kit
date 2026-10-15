@@ -2,11 +2,18 @@
 
 Native desktop interfaces in plain Rust, drawn on the GPU.
 
+[Guides](docs/README.md) · [Documentation landing page](docs/index.html) ·
+[Examples](examples/README.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
+**Pre-1.0:** macOS is the primary native platform. Rust 1.89+ is required;
+Windows/Linux runtime acceptance and a browser host remain work in progress.
+
 Write a function from your state to a tree of elements. Volt UI Kit lays it
 out, draws it with [Vello](https://github.com/linebender/vello) on Metal, DX12
 or Vulkan (with a CPU fallback), handles input, focus and accessibility, and
-calls your closures when something happens. There's no markup language, no
-webview and no runtime to embed.
+calls your closures when something happens. The Rust frontend needs no markup
+language or webview. The optional JSON frontend is data-only; application
+behavior stays in Rust.
 
 ![The Catalog's analytics dashboard in dark mode](docs/images/dashboard-dark.png)
 
@@ -40,14 +47,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - **Plain Rust.** Views are functions and callbacks are closures over your own
   state type. Conditionals, loops and reusable components are ordinary Rust.
-- **70+ components.** Buttons, fields, selects, date pickers, menus, dialogs,
+- **Application components.** Buttons, fields, selects, date pickers, menus, dialogs,
   command palettes, tables, trees, virtual lists, split panes, toasts and
   interactive charts.
 - **Themes you define.** Every colour role is yours to set, from code or a JSON
   theme file that reloads live, with contrast checks built in. Bring any SVG
   icon set.
 - **GPU first.** Vello renders on the GPU through wgpu, falls back to the CPU
-  automatically, and draws nothing while the window is idle.
+  automatically. Rendering is event-driven; animations and application tasks
+  can still wake the app.
 - **Desktop integration.** Window chrome and blur, native menus and tray, file
   panels, notifications, commands with shortcuts, close guards and `.app`
   bundles (macOS first).
@@ -63,11 +71,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```sh
 git clone https://github.com/danieldear/volt-ui-kit
 cd volt-ui-kit
-cargo run --release --features native-gpu,native-desktop --example catalog
+cargo run --release --locked --features native-gpu,native-desktop --example catalog
 ```
 
-The Catalog shows every component with live previews, source code and API
-tables. Add `--page dashboard`, `--theme light` or `--accent violet`.
+The Catalog showcases components with live previews, source code and API
+tables. Pass arguments after `--`, for example:
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
+```
 
 ## Use it
 
@@ -78,10 +90,15 @@ The crate is not on crates.io yet; depend on it from Git:
 volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit", features = ["native-gpu"] }
 ```
 
-Or start from a template:
+For reproducible applications, pin the Git dependency to a reviewed commit
+with `rev = "<full-commit-sha>"` and commit `Cargo.lock`. No crates.io release
+or stable API is implied by the current package version.
+
+Or start from a template (the generator currently requires a local checkout
+via `--kit-path`, even if the CLI was installed from Git):
 
 ```sh
-cargo install --git https://github.com/danieldear/volt-ui-kit --features dev-tools --bin cargo-volt
+cargo install --locked --git https://github.com/danieldear/volt-ui-kit --features dev-tools --bin cargo-volt
 cargo volt new my-app --kit-path /path/to/volt-ui-kit --template navigation
 cargo volt dev my-app
 ```
@@ -100,8 +117,10 @@ Rust 1.89 or newer.
 ## Status
 
 Version 0.4, pre-release. macOS is the primary platform and is tested on Apple
-silicon. Windows and Linux build and pass the headless test suite in CI, but
-their native runtime has not been validated yet. The core compiles to
+silicon. Windows and Linux have local cross-compilation checks and a configured
+headless CI matrix; their native runtime has not been validated yet. Check
+[Actions](https://github.com/danieldear/volt-ui-kit/actions) for actual remote
+results; configured jobs are not evidence of a passing run. The core compiles to
 WebAssembly; a web host is planned. Expect API changes before 1.0.
 
 ## Documentation
@@ -116,6 +135,25 @@ WebAssembly; a web host is planned. Expect API changes before 1.0.
 - [Architecture](docs/architecture.md)
 - [Examples](examples/README.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
+## Preview the documentation site
+
+```sh
+python3 -m http.server 8000 --bind 127.0.0.1 --directory docs
+# Open http://127.0.0.1:8000
+```
+
+The site uses local assets, system fonts and no JavaScript or analytics.
+GitHub Pages publishing is a separate, manual maintainer step; see the
+[public-release checklist](docs/public-release.md). The landing page links to
+Markdown guides on GitHub; it is not yet a full generated documentation portal.
+
+## Security and maintenance
+
+Report vulnerabilities using the [security policy](SECURITY.md), not public
+issues. Dependency alerts, scheduled advisory checks, redacted history scans
+and SHA-pinned workflows help maintain the project; they do not certify that
+application code or native dependencies are free of vulnerabilities.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE) and [third-party notes](docs/third-party.md).

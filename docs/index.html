@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Volt UI Kit: native desktop interfaces in plain Rust. Explore declarative components, GPU drawing, themes, accessibility and application tooling.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta property="og:title" content="Volt UI Kit — Native interfaces. Plain Rust.">
+  <meta property="og:description" content="A desktop toolkit with declarative Rust views, GPU drawing and a runnable component Catalog.">
+  <meta property="og:type" content="website">
+  <title>Volt UI Kit — Native interfaces. Plain Rust.</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="./" aria-label="Volt UI Kit home"><span class="mark" aria-hidden="true">ϟ</span> Volt UI Kit <span class="version">0.4 / pre-1.0</span></a>
+    <nav aria-label="Main navigation">
+      <a href="#start">Quick start</a><a href="#guides">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub</a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="intro">
+        <p class="intro-note"><span class="status-dot" aria-hidden="true"></span> A native desktop toolkit, built in the open</p>
+        <h1 id="hero-title">Native interfaces.<br>Plain Rust.</h1>
+        <p class="lead">Your state, your functions, your callbacks. Build desktop apps with declarative components and GPU drawing. No webview required.</p>
+        <div class="actions"><a class="button primary" href="#start">Build your first app</a><a class="button" href="#catalog">Explore the Catalog</a></div>
+        <p class="fine">MIT licensed. Rust 1.89+. macOS first; other native platforms need runtime validation.</p>
+      </div>
+      <figure class="hero-shot">
+        <img src="images/dashboard-dark.png" alt="Volt Catalog dashboard in dark mode: native navigation, activity charts and analytics panels" width="2880" height="1800" fetchpriority="high">
+        <figcaption>Not a mockup. The dashboard running inside the native Catalog.</figcaption>
+      </figure>
+    </section>
+    <section class="qualities wrap" aria-label="Toolkit foundations">
+      <div><h2>Rust all the way down</h2><p>Views are functions of state. Events call Rust closures. Reuse ordinary types, loops and components.</p></div>
+      <div><h2>A renderer, not a browser</h2><p>Vello draws through wgpu on Metal, DX12 or Vulkan. A software renderer provides a fallback.</p></div>
+      <div><h2>Desktop foundations</h2><p>Keyboard focus, AccessKit accessibility, scrolling and application services, with optional platform integrations.</p></div>
+    </section>
+    <section id="start" class="section wrap" aria-labelledby="start-title">
+      <div class="section-heading"><h2 id="start-title">A small view.<br>A real application.</h2><p>Declare the interface in Rust. Let the toolkit handle layout, drawing and input while your application owns its behavior.</p></div>
+      <div class="start-grid">
+        <div class="instructions">
+          <h3>Run the component Catalog</h3>
+          <p>The repository is the source of truth; the crate is not yet published on crates.io.</p>
+          <pre aria-label="Clone and run the Catalog"><code>git clone https://github.com/danieldear/volt-ui-kit
+cd volt-ui-kit
+cargo run --release --locked \
+  --features native-gpu,native-desktop \
+  --example catalog</code></pre>
+          <h3>Add it to your project</h3>
+          <pre aria-label="Cargo dependency"><code>[dependencies]
+volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit", features = ["native-gpu"] }</code></pre>
+          <p>For reproducible builds, pin a reviewed Git commit with <code>rev</code> and commit your application's lockfile.</p>
+          <a class="text-link" href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/getting-started.md">Read the complete getting-started guide</a>
+        </div>
+        <div class="code-panel"><div class="code-heading"><span>src/main.rs</span><span>State → view → event</span></div>
+<pre><code><span class="kw">use</span> volt_ui_kit::{native::Application, ui::prelude::*};
+
+#[derive(Default)]
+<span class="kw">struct</span> App { count: u32 }
+
+<span class="kw">fn</span> view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    vstack![
+        text(format!(<span class="string">"Count: {}"</span>, app.count))
+            .font_size(24.),
+        button(<span class="string">"Add one"</span>)
+            .key(<span class="string">"add"</span>)
+            .variant(ButtonVariant::Primary)
+            .on_click(|app: &amp;mut App| app.count += 1),
+    ]
+    .padding(24., Edge::All)
+    .gap(12., Axis::Vertical)
+    .into()
+}
+
+<span class="kw">fn</span> main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Application::new(<span class="string">"Counter"</span>, App::default(), view).run()
+}</code></pre>
+        </div>
+      </div>
+    </section>
+    <section id="catalog" class="catalog section" aria-labelledby="catalog-title">
+      <div class="wrap catalog-grid">
+        <figure><img src="images/theme-editor-light.png" alt="Volt Catalog theme editor in light mode showing editable colors and component previews" width="2880" height="1800" loading="lazy"><figcaption>The same toolkit, in a different palette. Actual native Catalog capture.</figcaption></figure>
+        <div><h2 id="catalog-title">See the components.<br>Change the details.</h2><p>Use one app to explore buttons, navigation, forms, tables, trees, charts and more. Compare themes and inspect the declarations behind each preview.</p>
+          <ul class="feature-list"><li>Live component previews and Rust source</li><li>Semantic colors, fonts and corner styles</li><li>GPU and software drawing paths</li><li>Window transparency and blur controls</li></ul>
+          <p class="fine">Blur behavior and native integrations depend on the OS and selected backend. This site is static; run the Catalog to interact.</p>
+          <a class="button" href="https://github.com/danieldear/volt-ui-kit/tree/main/examples">Browse runnable examples</a>
+        </div>
+      </div>
+    </section>
+    <section id="guides" class="section wrap" aria-labelledby="guides-title">
+      <div class="section-heading"><h2 id="guides-title">From first window<br>to application.</h2><p>These guides live with the code. Follow a path through the toolkit, or jump straight to the part you need.</p></div>
+      <div class="guide-grid">
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/getting-started.md"><h3>Getting started</h3><p>Install, choose features, create a window and run a template.</p></a>
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/building-uis.md"><h3>Building interfaces</h3><p>State, callbacks, layout, stable keys and responsive views.</p></a>
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md"><h3>Components</h3><p>Inputs, navigation, dialogs, data views, charts and more.</p></a>
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/styling-and-themes.md"><h3>Styling and themes</h3><p>Semantic palettes, fonts, icons, effects and animation.</p></a>
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md"><h3>Windows and rendering</h3><p>GPU drawing, software fallback, chrome, transparency and blur.</p></a>
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md"><h3>Application services</h3><p>Commands, files, menus, notifications and packaging.</p></a>
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/json-ui.md"><h3>Optional JSON frontend</h3><p>Validated file-based UI declarations with Rust event handlers.</p></a>
+        <a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/architecture.md"><h3>Architecture and boundaries</h3><p>Understand the pipeline, accessibility and resource limits.</p></a>
+      </div>
+    </section>
+    <section class="section wrap support" aria-labelledby="support-title">
+      <div><h2 id="support-title">Know where it stands.</h2><p>Volt UI Kit is pre-1.0. APIs may change, and a build check is not the same as native runtime acceptance.</p><a class="text-link" href="https://github.com/danieldear/volt-ui-kit/blob/main/ROADMAP.md">Read the roadmap</a></div>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Platform support"><table><caption>Current platform scope</caption><thead><tr><th scope="col">Platform</th><th scope="col">Status</th></tr></thead><tbody><tr><th scope="row">macOS</th><td>Primary platform. Apple silicon / Metal tested.</td></tr><tr><th scope="row">Windows / Linux</th><td>Cross-compilation checked. Native runtime acceptance pending.</td></tr><tr><th scope="row">WebAssembly</th><td>Core compiles. No browser host yet.</td></tr><tr><th scope="row">iOS / Android</th><td>No mobile host yet.</td></tr></tbody></table></div>
+    </section>
+  </main>
+  <footer class="wrap"><div><a class="brand" href="./"><span class="mark" aria-hidden="true">ϟ</span> Volt UI Kit</a><p>Native UI, with room to make it yours.</p></div><nav aria-label="Project resources"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/danieldear/volt-ui-kit/security/policy">Security</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/CHANGELOG.md">Changelog</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/LICENSE">MIT license</a></nav></footer>
+</body>
+</html>

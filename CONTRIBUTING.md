@@ -21,8 +21,8 @@ docs/                 guides; their Rust examples run as doctests
 
 ## Checks
 
-Run these before opening a pull request. CI runs the same on macOS, Windows and
-Linux.
+Run these before opening a pull request. CI is configured to run these on
+macOS, Windows and Linux; check the actual run before claiming validation.
 
 ```sh
 cargo fmt --all -- --check
@@ -39,7 +39,7 @@ them on a machine with a GPU when you touch rendering:
 
 ```sh
 cargo test --locked --all-features --lib native::gpu -- --ignored --nocapture
-cargo test --locked --all-features --example catalog -- --ignored --nocapture
+SNAP=target/catalog-interaction.png cargo test --locked --all-features --example catalog -- --ignored --nocapture --test-threads=1
 ```
 
 On Linux, install a font (for example `fonts-dejavu-core`) for the text tests.
@@ -87,3 +87,17 @@ This library started as the interface layer of the Volt terminal, which still
 vendors a copy of it. `scripts/sync_into_volt.py --volt <checkout>` refreshes
 that copy reproducibly (`--check` verifies it). Never edit the vendored copy
 directly.
+
+## Public repository workflow
+
+- Use a feature branch and a PR to `main`; do not force-push the default branch.
+- Run `python3 -m unittest discover -s scripts -p 'test_*.py'` and
+  `python3 scripts/check_repo.py` for documentation/tooling changes.
+- Review workflow/dependency changes carefully. Actions use immutable SHAs;
+  PR jobs have read-only tokens, no repository secrets, and no privileged
+  `pull_request_target` execution. Never run untrusted PR code on your own Mac.
+- Do not include `.env`, private keys, signing profiles, personal app state,
+  tokens or unredacted logs. Screenshot only synthetic example content.
+- Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
+- See the [publication checklist](docs/public-release.md) for protection and
+  Pages settings. Never weaken failing required checks just to merge a PR.
