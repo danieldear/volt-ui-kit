@@ -312,6 +312,7 @@ mod navigation;
 mod popovers;
 mod progress;
 mod split;
+mod split_view;
 pub mod tokens;
 pub use dates::{
     calendar, date_picker, date_range_picker, days_in_month, time_picker, Calendar, CalendarDate,
@@ -326,7 +327,7 @@ pub use icons::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon, ALL_ICONS};
 mod value_controls;
 pub use bars::{
     button_bar, segmented_control, tab, tab_bar, tab_item, tabs, toolbar, ButtonBar,
-    SelectionControl, Tab, TabItem, TabPlacement, Tabs, Toolbar,
+    SelectionControl, Tab, TabItem, TabPlacement, TabVariant, Tabs, Toolbar,
 };
 pub use data::{
     data_item, lazy_list, table, table_column, table_row, tree_node, tree_view, virtual_list,
@@ -344,6 +345,7 @@ pub use navigation::{
 pub use popovers::{hover_card, popover, tooltip, Popover, Tooltip};
 pub use progress::{loading, progress, progress_indeterminate, spinner, Progress};
 pub use split::{split, SplitPane};
+pub use split_view::{navigation_split_view, NavigationSplitView, SidebarPlace};
 pub use value_controls::{
     range_slider, select, select_item, slider, RangeSlider, Select, SelectItem, Slider,
 };
@@ -1131,6 +1133,7 @@ modifiers!(SplitPane, [0.node], [0.auto_id]);
 container_modifiers!(ButtonBar);
 container_modifiers!(Toolbar);
 modifiers!(Navigation, [T], [0.node], [0.auto_id]);
+modifiers!(NavigationSplitView, [0.node], [0.auto_id]);
 container_modifiers!(Navigation, [T]);
 
 container_modifiers!(SelectionControl, [T]);
@@ -1167,9 +1170,9 @@ pub mod prelude {
         ImagePosition, Interaction, Justify, LazyList, Menu, MenuItem, Navigation, NavigationItem,
         NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
         Select, SelectItem, SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle,
-        SplitPane, Tab, TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextAlign,
-        TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme,
-        VectorPath, VirtualList, VisualStyle,
+        SplitPane, Tab, TabItem, TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs,
+        TextAlign, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
+        UiTheme, VectorPath, VirtualList, VisualStyle,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
@@ -1180,5 +1183,6 @@ pub mod prelude {
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
+    pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
 }

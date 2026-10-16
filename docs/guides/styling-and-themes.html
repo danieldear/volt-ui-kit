@@ -25,7 +25,35 @@ their text); <code>Primary</code>, <code>Secondary</code>, <code>Accent</code> a
 <code>Info</code>, <code>Success</code>, <code>Warning</code> and <code>Error</code>; each with a matching <code>*Content</code> role
 for text drawn on it; plus <code>Border</code> and <code>Muted</code>. <code>ColorToken::Primary.alpha(15)</code>
 is the role at 15% opacity, which keeps tints correct in both modes.</p>
-<h2 id="custom-themes">Custom themes</h2>
+<h2 id="built-in-palettes">Built-in palettes</h2>
+<p><code>Palette::light()</code> and <code>Palette::dark()</code> are the kit&#39;s default, a warm palette
+with an amber accent, which <code>Application</code> uses unless you choose another.
+<code>Palette::zinc_light()</code> and <code>Palette::zinc_dark()</code> are the Catalog&#39;s neutral
+Zinc palette: white or near-black surfaces in zinc greys, with the text colour
+as the primary. Apps made with <code>cargo volt new</code> start with Zinc.
+<code>.with_accent(rgba)</code> gives Zinc a coloured primary on the same neutral
+surfaces, which is how the Catalog&#39;s Blue, Violet, Rose, Green and Orange
+themes are made.</p>
+<p><code>.palette(..)</code> sets one palette for both appearances. To follow the system&#39;s
+light or dark mode, choose the palette in <code>.theme_with(..)</code>:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::Application, ui::prelude::*};
+
+fn view(_: &amp;()) -&gt; Element&lt;()&gt; {
+    text(&quot;Hello&quot;).color(ColorToken::BaseContent).into()
+}
+
+fn theme(_: &amp;(), system: ThemeMode) -&gt; UiTheme {
+    let palette = if system == ThemeMode::Dark {
+        Palette::zinc_dark()
+    } else {
+        Palette::zinc_light()
+    };
+    UiTheme::from_palette(palette.with_accent([0.49, 0.23, 0.93, 1.]))
+}
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Application::new(&quot;Zinc&quot;, (), view).theme_with(theme).run()
+}</code></pre></div><h2 id="custom-themes">Custom themes</h2>
 <p>A <code>Palette</code> assigns a colour to every role, and you can define all of them:</p>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::Application, ui::prelude::*, ColorToken, Palette, ThemeMode};
 
@@ -136,4 +164,4 @@ SVG path data.</li>
 clicks follow the same shape. <code>.clip_contents(true)</code> clips to the rounded
 corners.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/styling-and-themes.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#modifiers-and-inheritance">Modifiers and inheritance</a><a href="#theme-colours">Theme colours</a><a href="#custom-themes">Custom themes</a><a href="#typography-and-fonts">Typography and fonts</a><a href="#effects-and-interaction-states">Effects and interaction states</a><a href="#animation-and-transitions">Animation and transitions</a><a href="#images">Images</a><a href="#vector-drawing-and-clipping">Vector drawing and clipping</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/styling-and-themes.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#modifiers-and-inheritance">Modifiers and inheritance</a><a href="#theme-colours">Theme colours</a><a href="#built-in-palettes">Built-in palettes</a><a href="#custom-themes">Custom themes</a><a href="#typography-and-fonts">Typography and fonts</a><a href="#effects-and-interaction-states">Effects and interaction states</a><a href="#animation-and-transitions">Animation and transitions</a><a href="#images">Images</a><a href="#vector-drawing-and-clipping">Vector drawing and clipping</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

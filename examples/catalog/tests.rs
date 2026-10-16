@@ -1061,12 +1061,12 @@ fn layout_adapts_to_window_width() {
     // Wide: sidebar and full search; no menu button.
     let wide = mount(&app, [1440., 900.]);
     assert!(has(&wide, "side-button") && has(&wide, "open-palette"));
-    assert!(!has(&wide, "open-nav") && !has(&wide, "open-palette-compact"));
+    assert!(!has(&wide, "shell-menu") && !has(&wide, "open-palette-compact"));
     assert!(has(&wide, "hero-full") && !has(&wide, "hero-compact"));
     // Narrow: sidebar collapses behind a menu button, search becomes an icon.
     let narrow = mount(&app, [720., 900.]);
     assert!(!has(&narrow, "side-button") && !has(&narrow, "open-palette"));
-    assert!(has(&narrow, "open-nav") && has(&narrow, "open-palette-compact"));
+    assert!(has(&narrow, "shell-menu") && has(&narrow, "open-palette-compact"));
     assert!(has(&narrow, "hero-compact") && !has(&narrow, "hero-full"));
     // The drawer lists the same pages and navigation closes it.
     app.nav_open = true;
@@ -1112,8 +1112,8 @@ fn dragging_the_divider_resizes_the_sidebar_in_pixels() {
             .bounds
             .bounds()
     };
-    assert_eq!(bounds(&runtime, "sidebar-column")[2], 248.);
-    let [x, y, w, h] = bounds(&runtime, "body-split-divider");
+    assert_eq!(bounds(&runtime, "shell-sidebar-column")[2], 248.);
+    let [x, y, w, h] = bounds(&runtime, "shell-split-divider");
     let (cx, cy) = (x + w * 0.5, y + h * 0.5);
     runtime
         .pointer_down_outcome(cx, cy, &mut handlers, &mut app)
@@ -1132,7 +1132,7 @@ fn dragging_the_divider_resizes_the_sidebar_in_pixels() {
         .unwrap();
     handlers = next;
     layout(&mut runtime, 1300.);
-    let [x, y, w, h] = bounds(&runtime, "body-split-divider");
+    let [x, y, w, h] = bounds(&runtime, "shell-split-divider");
     let (cx, cy) = (x + w * 0.5, y + h * 0.5);
     runtime
         .pointer_down_outcome(cx, cy, &mut handlers, &mut app)
@@ -1147,7 +1147,7 @@ fn dragging_the_divider_resizes_the_sidebar_in_pixels() {
         .replace_document(doc, &next, &Bindings::default())
         .unwrap();
     layout(&mut runtime, 1600.);
-    assert_eq!(bounds(&runtime, "sidebar-column")[2], 420.);
+    assert_eq!(bounds(&runtime, "shell-sidebar-column")[2], 420.);
 }
 
 #[test]
@@ -1168,7 +1168,7 @@ fn divider_drag_cost_per_page() {
         let d = runtime
             .boxes()
             .iter()
-            .find(|b| b.id == "body-split-divider")
+            .find(|b| b.id == "shell-split-divider")
             .unwrap()
             .bounds
             .bounds();

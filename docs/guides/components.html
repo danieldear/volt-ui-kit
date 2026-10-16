@@ -103,8 +103,23 @@ view(&amp;App::default()).build()?;</code></pre></div><ul>
 <li><code>segmented_control</code>, <code>tab_bar![tab_item(..), ..]</code> and <code>tabs![tab(..), ..]</code>
 select typed values. <code>tabs</code> mounts only the selected page; keep page data in
 your state. Item <code>.enabled(false)</code> disables one option.</li>
+<li>Tabs draw as text over a hairline, with the selected tab underlined in the
+primary colour. <code>.variant(TabVariant::Contained)</code> draws a raised chip in a
+quiet track instead. Segmented controls keep their joined look.</li>
 <li><code>navigation([navigation_item(value, &quot;Label&quot;), ..])</code> is an app-level
-destination list with <code>NavigationPlacement::Sidebar</code>, <code>Rail</code> or <code>Bottom</code>.</li>
+destination list with <code>NavigationPlacement::Sidebar</code>, <code>Rail</code> or <code>Bottom</code>,
+drawn like the Catalog&#39;s sidebar. Item <code>.section(&quot;Title&quot;)</code> groups
+consecutive items under a sidebar heading; <code>.badge(&quot;New&quot;)</code> adds a trailing
+badge. <code>.selected(None)</code> highlights nothing.</li>
+<li><code>navigation_split_view(|place| sidebar, detail)</code> is the Catalog&#39;s app shell,
+like SwiftUI&#39;s <code>NavigationSplitView</code>: the sidebar beside a detail column with
+a draggable <code>.toolbar(..)</code>, room for the macOS window controls, and an
+optional resizable divider (<code>.on_sidebar_resize</code>). The sidebar closure runs
+once for its column and once for the drawer that replaces it below <code>Lg</code>;
+build its keys with <code>place.key(&quot;nav&quot;)</code> so the two stay distinct. Wire
+<code>.drawer_open(..)</code> and <code>.on_drawer_change(..)</code> to app state for the menu
+button and drawer; <code>.material(true)</code> floats the detail over a translucent
+window. It is optional: compose your own shell from stacks when you need to.</li>
 <li>With an option focused, arrow keys and Home/End move the selection.</li>
 </ul>
 <h2 id="fields-value-controls-and-dialogs">Fields, value controls and dialogs</h2>

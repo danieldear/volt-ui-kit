@@ -721,6 +721,10 @@
         "A tab strip and the active content."
       ],
       [
+        ".variant(TabVariant::Contained)",
+        "A raised chip in a track instead of an underline."
+      ],
+      [
         ".placement(TabPlacement::Bottom)",
         "Put the strip below the content."
       ],
@@ -738,6 +742,15 @@
         "image": "tabs-tabs.png",
         "note": "Content for inactive tabs is never built.",
         "title": "Tabs",
+        "width": 1000
+      },
+      {
+        "code": "tabs([\n    tab(0, \"Account\", account_page(app)),\n    tab(1, \"Password\", password_page(app)),\n    tab(2, \"Billing\", billing_page(app)).enabled(false),\n])\n.variant(TabVariant::Contained)\n.selected(app.tab)\n.on_select(|app: &mut App, t| app.tab = t)",
+        "height": 200,
+        "id": "tabs-contained",
+        "image": "tabs-tabs-contained.png",
+        "note": "The selected tab is a raised chip in a quiet track.",
+        "title": "Contained",
         "width": 1000
       }
     ],
@@ -760,24 +773,53 @@
         "Application owns routing and state"
       ],
       [
+        ".selected(None)",
+        "Highlight nothing, e.g. while a filter hides the current page"
+      ],
+      [
+        "navigation_item(..).section(title).badge(label)",
+        "Sidebar headings for consecutive items; a trailing badge such as \"New\""
+      ],
+      [
         ".key(...)",
         "Stable group and item identities are required"
+      ],
+      [
+        "navigation_split_view(|place| sidebar, detail)",
+        "The app shell: sidebar beside a detail with a toolbar; build the sidebar's keys with place.key(..)"
+      ],
+      [
+        ".drawer_open(..).on_drawer_change(..)",
+        "Below Lg (or .collapse_below) the sidebar moves into a drawer"
+      ],
+      [
+        ".on_sidebar_resize(..) / .material(true)",
+        "A draggable divider; a frosted sidebar with a floating sheet"
       ]
     ],
     "group": "Components",
     "sections": [
       {
-        "code": "navigation([\n    navigation_item(Page::Inbox, \"Inbox\").key(\"inbox\"),\n    navigation_item(Page::Sent, \"Sent\").key(\"sent\"),\n]).key(\"navigation\").selected(app.page)\n  .placement(NavigationPlacement::Sidebar)\n  .on_select(|app: &mut App, page| app.page = page)\n// Use Rail or Bottom; compose independently with ordinary stacks/panels.",
-        "height": 534,
+        "code": "navigation([\n    navigation_item(Page::Inbox, \"Inbox\").key(\"inbox\").section(\"Mail\").badge(\"3\"),\n    navigation_item(Page::Sent, \"Sent\").key(\"sent\").section(\"Mail\"),\n]).key(\"navigation\").selected(app.page)\n  .placement(NavigationPlacement::Sidebar)\n  .on_select(|app: &mut App, page| app.page = page)\n// Use Rail or Bottom; compose independently with ordinary stacks/panels.",
+        "height": 488,
         "id": "navigation-layouts",
         "image": "navigation-navigation-layouts.png",
         "note": "All three previews share controlled app state. These are independent components, not a mandatory application shell.",
         "title": "Navigation, your layout",
         "width": 1000
+      },
+      {
+        "code": "navigation_split_view(\n    |place| navigation(items).key(place.key(\"nav\")).selected(app.page)\n        .on_select(|app: &mut App, page| app.page = page),\n    page_view(app),\n)\n.key(\"shell\")\n.title(\"Workspace\")\n.sidebar_header(brand)\n.toolbar(toolbar)\n.drawer_open(app.nav_open)\n.on_drawer_change(|app: &mut App, open| app.nav_open = open)",
+        "height": 426,
+        "id": "navigation-split-view",
+        "image": "navigation-navigation-split-view.png",
+        "note": "The Catalog's own shell: a sidebar beside the page under a draggable toolbar. Below Lg the sidebar moves into a drawer opened from the toolbar.",
+        "title": "Split view",
+        "width": 1000
       }
     ],
     "slug": "navigation",
-    "summary": "Independent controlled destination navigation: sidebar, rail and bottom placement.",
+    "summary": "Destination lists in sidebar, rail or bottom placement, and the app shell around them.",
     "title": "Navigation"
   },
   {
