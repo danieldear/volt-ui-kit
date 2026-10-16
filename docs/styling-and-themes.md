@@ -44,6 +44,41 @@ their text); `Primary`, `Secondary`, `Accent` and `Neutral`; the status colours
 for text drawn on it; plus `Border` and `Muted`. `ColorToken::Primary.alpha(15)`
 is the role at 15% opacity, which keeps tints correct in both modes.
 
+## Built-in palettes
+
+`Palette::light()` and `Palette::dark()` are the kit's default, a warm palette
+with an amber accent, which `Application` uses unless you choose another.
+`Palette::zinc_light()` and `Palette::zinc_dark()` are the Catalog's neutral
+Zinc palette: white or near-black surfaces in zinc greys, with the text colour
+as the primary. Apps made with `cargo volt new` start with Zinc.
+`.with_accent(rgba)` gives Zinc a coloured primary on the same neutral
+surfaces, which is how the Catalog's Blue, Violet, Rose, Green and Orange
+themes are made.
+
+`.palette(..)` sets one palette for both appearances. To follow the system's
+light or dark mode, choose the palette in `.theme_with(..)`:
+
+```rust,no_run
+use volt_ui_kit::{native::Application, ui::prelude::*};
+
+fn view(_: &()) -> Element<()> {
+    text("Hello").color(ColorToken::BaseContent).into()
+}
+
+fn theme(_: &(), system: ThemeMode) -> UiTheme {
+    let palette = if system == ThemeMode::Dark {
+        Palette::zinc_dark()
+    } else {
+        Palette::zinc_light()
+    };
+    UiTheme::from_palette(palette.with_accent([0.49, 0.23, 0.93, 1.]))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Application::new("Zinc", (), view).theme_with(theme).run()
+}
+```
+
 ## Custom themes
 
 A `Palette` assigns a colour to every role, and you can define all of them:

@@ -308,6 +308,59 @@ impl Palette {
     pub fn light() -> Self {
         UiTheme::from_legacy(&Theme::light()).palette
     }
+    /// The Catalog's neutral Zinc palette, light: white and zinc surfaces with
+    /// near-black text, which is also the primary colour. `with_accent` gives
+    /// it a coloured primary.
+    pub fn zinc_light() -> Self {
+        Self::zinc(false)
+    }
+    /// The Catalog's neutral Zinc palette, dark; see [`Palette::zinc_light`].
+    pub fn zinc_dark() -> Self {
+        Self::zinc(true)
+    }
+    fn zinc(dark: bool) -> Self {
+        // Each role as `0xRRGGBB`, light then dark.
+        let c = |light: u32, night: u32| {
+            let v = if dark { night } else { light };
+            [
+                ((v >> 16) & 255) as f32 / 255.,
+                ((v >> 8) & 255) as f32 / 255.,
+                (v & 255) as f32 / 255.,
+                1.,
+            ]
+        };
+        let base = [
+            c(0xFFFFFF, 0x09090B),
+            c(0xF4F4F5, 0x18181B),
+            c(0xE4E4E7, 0x27272A),
+        ];
+        let content = c(0x09090B, 0xFAFAFA);
+        // Secondary stays the default palette's blue.
+        let secondary = [0.22, 0.60, 0.95, 1.];
+        Self {
+            name: "Zinc".into(),
+            base,
+            content,
+            primary: content,
+            on_primary: base[0],
+            secondary,
+            on_secondary: contrast(secondary),
+            accent: content,
+            on_accent: base[0],
+            neutral: c(0x18181B, 0xFAFAFA),
+            on_neutral: c(0xFAFAFA, 0x18181B),
+            info: c(0x2563EB, 0x3B82F6),
+            on_info: c(0xFFFFFF, 0xFFFFFF),
+            success: c(0x16A34A, 0x22C55E),
+            on_success: c(0xFFFFFF, 0xFFFFFF),
+            warning: c(0xD97706, 0xF59E0B),
+            on_warning: c(0x18181B, 0x18181B),
+            error: c(0xDC2626, 0xDC2626),
+            on_error: c(0xFFFFFF, 0xFAFAFA),
+            border: c(0xE4E4E7, 0x27272A),
+            muted: c(0x71717A, 0xA1A1AA),
+        }
+    }
     pub fn with_accent(mut self, c: [f32; 4]) -> Self {
         self.accent = c;
         self.on_accent = contrast(c);
@@ -601,6 +654,24 @@ mod tests {
         let mut p = Palette::dark();
         p.error[0] = f32::NAN;
         assert!(!p.is_valid());
+    }
+    #[test]
+    fn zinc_palettes_are_neutral_readable_and_take_an_accent() {
+        let (light, dark) = (Palette::zinc_light(), Palette::zinc_dark());
+        assert_eq!(light.base.map(hex), ["#FFFFFF", "#F4F4F5", "#E4E4E7"]);
+        assert_eq!(dark.base.map(hex), ["#09090B", "#18181B", "#27272A"]);
+        for p in [&light, &dark] {
+            assert!(p.is_valid());
+            assert_eq!(p.name, "Zinc");
+            assert_eq!((p.primary, p.on_primary), (p.content, p.base[0]));
+            assert!(contrast_ratio(p.content, p.base[0]) >= 4.5);
+            assert!(contrast_ratio(p.muted, p.base[0]) >= 4.5);
+        }
+        let violet = parse_hex("#7C3AED").unwrap();
+        let accented = light.clone().with_accent(violet);
+        assert_eq!((accented.primary, accented.accent), (violet, violet));
+        assert_eq!(accented.on_primary, [1.; 4]);
+        assert_eq!(accented.base, light.base, "surfaces stay neutral");
     }
 }
 #[cfg(test)]

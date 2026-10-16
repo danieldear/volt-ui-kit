@@ -2,13 +2,21 @@
 
 ## Unreleased
 
+- Add `Palette::zinc_light()` and `Palette::zinc_dark()`, the Catalog's
+  neutral Zinc palette, as kit presets; `.with_accent(..)` gives them a
+  coloured primary. The Catalog's themes are built on them (renders
+  unchanged), and every `cargo volt new` template now generates an app in
+  Zinc that follows the system's light or dark mode. The kit's default
+  palette is unchanged.
+
 - Add `navigation_split_view`, the Catalog's app shell as a component (like
   SwiftUI's `NavigationSplitView`): a sidebar beside a detail column with a
   draggable toolbar, room for the macOS window controls, an optional resizable
   divider, a drawer behind a menu button below `Lg`, and `.material(true)` for
   a frosted sidebar with a floating sheet. The Catalog's shell is built on it
   (renders unchanged), and the `navigation`, `mail`, `settings` and `agent`
-  templates now generate apps on it.
+  templates now generate apps on it, with a sidebar that resizes like the
+  Catalog's.
 
 - Draw `tab_bar` and `tabs` as line tabs: muted text over a hairline, with the
   selected tab underlined in the primary colour, instead of filled buttons.

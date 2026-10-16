@@ -384,44 +384,14 @@ pub fn theme(app: &App, system: ThemeMode) -> UiTheme {
 /// Neutral zinc surfaces with a selectable primary colour.
 pub fn preset_palette(app: &App, dark: bool) -> Palette {
     let mut p = if dark {
-        Palette::dark()
+        Palette::zinc_dark()
     } else {
-        Palette::light()
+        Palette::zinc_light()
     };
-    p.name = THEMES[app.theme].0.into();
-    if dark {
-        p.base = [rgba(0x09090B), rgba(0x18181B), rgba(0x27272A)];
-        p.content = rgba(0xFAFAFA);
-        p.muted = rgba(0xA1A1AA);
-        p.border = rgba(0x27272A);
-        p.neutral = rgba(0xFAFAFA);
-        p.on_neutral = rgba(0x18181B);
-        p.error = rgba(0xDC2626);
-        p.on_error = rgba(0xFAFAFA);
-    } else {
-        p.base = [rgba(0xFFFFFF), rgba(0xF4F4F5), rgba(0xE4E4E7)];
-        p.content = rgba(0x09090B);
-        p.muted = rgba(0x71717A);
-        p.border = rgba(0xE4E4E7);
-        p.neutral = rgba(0x18181B);
-        p.on_neutral = rgba(0xFAFAFA);
-        p.error = rgba(0xDC2626);
-        p.on_error = rgba(0xFFFFFF);
-    }
-    p.success = rgba(if dark { 0x22C55E } else { 0x16A34A });
-    p.on_success = rgba(0xFFFFFF);
-    p.warning = rgba(if dark { 0xF59E0B } else { 0xD97706 });
-    p.on_warning = rgba(0x18181B);
-    p.info = rgba(if dark { 0x3B82F6 } else { 0x2563EB });
-    p.on_info = rgba(0xFFFFFF);
-    let (_, light_primary, dark_primary) = THEMES[app.theme];
+    let (name, light_primary, dark_primary) = THEMES[app.theme];
+    p.name = name.into();
+    // Zinc keeps the kit preset's primary: the text colour itself.
     if app.theme == 0 {
-        // Zinc: the primary colour is the text colour itself.
-        let mut p = p;
-        p.primary = p.content;
-        p.on_primary = p.base[0];
-        p.accent = p.content;
-        p.on_accent = p.base[0];
         p
     } else {
         p.with_accent(rgba(if dark { dark_primary } else { light_primary }))
