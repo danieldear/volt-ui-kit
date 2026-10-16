@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Draw `tab_bar` and `tabs` as line tabs: muted text over a hairline, with the
+  selected tab underlined in the primary colour, instead of filled buttons.
+  Add `TabVariant::Contained` for a raised chip in a quiet track. Segmented
+  controls keep their joined look. Buttons now honour `border_sides` and
+  dashed/dotted borders.
+
+- Draw `navigation` with the Catalog's sidebar rows in every placement. Add
+  `navigation_item(..).section(..)` headings and `.badge(..)`, and let
+  `.selected(None)` highlight nothing. The Catalog's sidebar and page drawer
+  are now built on `navigation`.
+
 - Include every glyph sharing a cluster endpoint when placing the final caret,
   fixing multi-glyph emoji fallback on Windows while preserving indexed lookup,
   unsorted/repeated offsets and first visual-direction priority.

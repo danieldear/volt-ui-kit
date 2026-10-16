@@ -335,77 +335,37 @@ fn page_links(app: &App, prefix: &str) -> Vec<El<App>> {
             |app: &mut App| app.sidebar_query.clear(),
         );
     }
-    let mut items: Vec<El<App>> = vec![filter.into()];
-    let mut group = "";
-    let mut shown = 0;
-    for page in PAGES {
-        if !query.is_empty() && !page.title().to_lowercase().contains(&query) {
-            continue;
-        }
-        if page.group() != group {
-            group = page.group();
-            items.push(
-                vstack![text(group)
-                    .font_size(12.)
-                    .font_weight(600)
-                    .color(ColorToken::BaseContent)]
-                .key(format!(
-                    "{}group-{}",
-                    if prefix == "side" {
-                        String::new()
-                    } else {
-                        format!("{prefix}-")
-                    },
-                    group.replace(' ', "-").to_lowercase()
-                ))
-                .padding(16., Edge::Top)
-                .padding(4., Edge::Bottom)
-                .padding(10., Edge::Left)
-                .into(),
-            );
-        }
-        shown += 1;
-        let active = app.page == page;
-        let mut link = button(page.title())
-            .key(format!("{prefix}-{}", page.slug()))
-            .variant(ButtonVariant::Ghost)
-            .label_align(Align::Start)
-            .height(30.)
-            .font_size(13.)
-            .flex(1.)
-            .on_click(move |app: &mut App| app.go(page));
-        link = if active {
-            link.background(ColorToken::BaseContent.alpha(if app.glass { 10 } else { 7 }))
-                .font_weight(600)
-        } else {
-            link.color(ColorToken::Muted)
-        };
-        let row: El<App> = if page.is_new() {
-            hstack![
-                link,
-                badge("New")
-                    .font_size(10.)
-                    .rounded(Rounding::Full)
-                    .background(ColorToken::Primary.alpha(14))
-                    .color(ColorToken::Primary),
-            ]
-            .gap(6., Axis::Horizontal)
-            .align(Align::Center)
-            .into()
-        } else {
-            link.into()
-        };
-        items.push(row);
-    }
-    if shown == 0 {
-        items.push(
+    let pages: Vec<Page> = PAGES
+        .into_iter()
+        .filter(|page| query.is_empty() || page.title().to_lowercase().contains(&query))
+        .collect();
+    if pages.is_empty() {
+        return vec![
+            filter.into(),
             text("No matching pages.")
                 .font_size(13.)
                 .color(ColorToken::Muted)
                 .into(),
-        );
+        ];
     }
-    items
+    // The kit's own navigation: grouped rows with "New" badges. Nothing is
+    // highlighted while the filter hides the current page.
+    let current = pages.contains(&app.page).then_some(app.page);
+    let links = navigation(pages.into_iter().map(|page| {
+        let item = navigation_item(page, page.title())
+            .key(page.slug())
+            .section(page.group());
+        if page.is_new() {
+            item.badge("New")
+        } else {
+            item
+        }
+    }))
+    .key(prefix)
+    .selected(current)
+    .padding(12., Edge::Top)
+    .on_select(|app: &mut App, page| app.go(page));
+    vec![filter.into(), links.into()]
 }
 
 /// Narrow windows: the same page list in a left drawer.

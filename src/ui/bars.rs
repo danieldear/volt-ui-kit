@@ -101,6 +101,17 @@ impl<T> TabItem<T> {
     }
 }
 type Select<C, T> = Rc<RefCell<dyn FnMut(&mut C, T)>>;
+/// How a tab strip draws its tabs. Segmented controls keep their joined look
+/// whatever the variant.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TabVariant {
+    /// Text tabs over a hairline; the selected tab is underlined in the
+    /// primary colour.
+    #[default]
+    Line,
+    /// A quiet track; the selected tab is a raised chip.
+    Contained,
+}
 /// Discrete typed selection; Left/Right and Home/End navigate the group in native hosts.
 pub struct SelectionControl<C, T>(pub(super) Element<C>, SelectionOptions<C, T>);
 struct SelectionOptions<C, T> {
@@ -109,6 +120,7 @@ struct SelectionOptions<C, T> {
     callback: Option<Select<C, T>>,
     enabled: bool,
     joined: bool,
+    variant: TabVariant,
 }
 pub fn tab_bar<C, T>(items: impl IntoIterator<Item = TabItem<T>>) -> SelectionControl<C, T> {
     let mut e = Element::new(Kind::Row);
@@ -123,6 +135,7 @@ pub fn tab_bar<C, T>(items: impl IntoIterator<Item = TabItem<T>>) -> SelectionCo
             callback: None,
             enabled: true,
             joined: false,
+            variant: TabVariant::Line,
         },
     )
 }
@@ -147,8 +160,14 @@ impl<C, T> SelectionControl<C, T> {
         self.1.enabled = enabled;
         self
     }
+    /// Join the options into one divided control, as `segmented_control` does.
     pub fn joined(mut self, joined: bool) -> Self {
         self.1.joined = joined;
+        self
+    }
+    /// Line (default) or contained tabs. Ignored by joined controls.
+    pub fn variant(mut self, variant: TabVariant) -> Self {
+        self.1.variant = variant;
         self
     }
     pub fn on_select(mut self, callback: impl FnMut(&mut C, T) + 'static) -> Self {
@@ -194,23 +213,31 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<SelectionControl<C, T>> fo
             bar.0.validation_error = Some("selection requires on_select".into());
             return bar.0;
         };
+        let segmented = bar.1.joined;
+        if !segmented {
+            style_strip(&mut bar.0, bar.1.variant);
+        }
         for item in bar.1.items {
             let active = item.value == selected;
             let value = item.value;
             let handler = callback.clone();
             let mut child = button(item.label)
-                .primary(active)
                 .enabled(bar.1.enabled && item.enabled)
                 .on_click(move |context: &mut C| {
                     if !active {
                         (handler.borrow_mut())(context, value.clone());
                     }
                 });
-            // The selected surface uses Primary; a parent's general text color
-            // must not replace its paired foreground (e.g. white on pale Iris).
-            if active {
-                child = child.color(ColorToken::PrimaryContent);
-            }
+            child = if !segmented {
+                style_tab(child, bar.1.variant, active)
+            } else if active {
+                // The selected surface uses Primary; a parent's general text
+                // color must not replace its paired foreground (e.g. white on
+                // pale Iris).
+                child.primary(true).color(ColorToken::PrimaryContent)
+            } else {
+                child
+            };
             child.0.node.checked = active;
             child.0.node.access_selected = Some(active);
             child.0.node.access_role =
@@ -224,10 +251,72 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<SelectionControl<C, T>> fo
             }
             bar.0.children.push(child.into());
         }
-        if bar.1.joined {
+        if segmented {
             join(&mut bar.0);
         }
         bar.0
+    }
+}
+/// The strip behind the tabs, where the app has not styled it: a hairline
+/// under line tabs, a rounded track around contained ones.
+fn style_strip<C>(strip: &mut Element<C>, variant: TabVariant) {
+    let node = &mut strip.node;
+    match variant {
+        TabVariant::Line => {
+            if node.style.border_color.is_none() && node.style.border_width.is_none() {
+                node.ext.border_sides = Some(Sides::BOTTOM);
+                node.style.border_width = Some(1.);
+                node.style.border_color = Some(ColorToken::Border.into());
+            }
+        }
+        TabVariant::Contained => {
+            node.gap = 2.;
+            if node.style.background.is_none() {
+                node.style.background = Some(ColorToken::BaseContent.alpha(6));
+            }
+            if node.style.radius.is_none() && node.style.corners.is_none() {
+                node.style.radius = Some(Rounding::Radius(9.));
+            }
+            if node.padding == 0. && node.responsive.padding.iter().all(Option::is_none) {
+                node.padding = 3.;
+            }
+            if node.height.is_none() {
+                node.height = Some(36.);
+            }
+            // Chips fill the track's height.
+            if node.align == Align::Start {
+                node.align = Align::Stretch;
+            }
+        }
+    }
+}
+/// A tab drawn as text: muted until selected, then underlined (line) or
+/// raised on a chip (contained). The rounding only shapes the focus ring;
+/// the underline stays straight.
+fn style_tab<C>(tab: Button<C>, variant: TabVariant, active: bool) -> Button<C> {
+    let tab = tab
+        .background(ColorToken::BaseContent.alpha(0))
+        .rounded(6.)
+        .font_weight(if active { 600 } else { 500 })
+        .color(if active {
+            ColorToken::BaseContent
+        } else {
+            ColorToken::Muted
+        })
+        .hover_style(|s| s.color(ColorToken::BaseContent));
+    match (variant, active) {
+        (TabVariant::Line, true) => tab
+            .border_sides(Sides::BOTTOM)
+            .border_width(2.)
+            .border_color(ColorToken::Primary),
+        (TabVariant::Line, false) => tab,
+        // Chips share a stretched track equally; a natural-width track
+        // (e.g. in a row) has no spare width, so they keep their size.
+        (TabVariant::Contained, true) => tab
+            .flex(1.)
+            .background(ColorToken::Base100)
+            .shadow(Shadow::new().color("#0000001A").blur(4.).offset(0., 1.)),
+        (TabVariant::Contained, false) => tab.flex(1.),
     }
 }
 
@@ -264,6 +353,7 @@ struct TabsOptions<C, T> {
     selected: Option<T>,
     callback: Option<Select<C, T>>,
     placement: TabPlacement,
+    variant: TabVariant,
 }
 pub fn tabs<C, T>(items: impl IntoIterator<Item = Tab<C, T>>) -> Tabs<C, T> {
     let mut e = Element::new(Kind::Column);
@@ -275,6 +365,7 @@ pub fn tabs<C, T>(items: impl IntoIterator<Item = Tab<C, T>>) -> Tabs<C, T> {
             selected: None,
             callback: None,
             placement: TabPlacement::Top,
+            variant: TabVariant::Line,
         },
     )
 }
@@ -285,6 +376,11 @@ impl<C, T> Tabs<C, T> {
     }
     pub fn placement(mut self, value: TabPlacement) -> Self {
         self.1.placement = value;
+        self
+    }
+    /// Line (default) or contained tabs.
+    pub fn variant(mut self, value: TabVariant) -> Self {
+        self.1.variant = value;
         self
     }
     pub fn on_select(mut self, callback: impl FnMut(&mut C, T) + 'static) -> Self {
@@ -314,9 +410,14 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Tabs<C, T>> for Element<C>
             }
             items.push(tab.item);
         }
-        let mut bar = tab_bar(items).selected(selected);
+        let variant = tabs.1.variant;
+        let mut bar = tab_bar(items).selected(selected).variant(variant);
         bar.1.callback = tabs.1.callback;
         let mut strip: Element<C> = bar.into();
+        if variant == TabVariant::Line && strip.node.ext.fraction[0].is_none() {
+            // The hairline runs under the whole panel, not just the tabs.
+            strip.node.ext.fraction[0] = Some(1.);
+        }
         if !tabs.0.auto_id {
             strip.node.id = format!("{}-strip", tabs.0.node.id);
             strip.auto_id = false;
@@ -337,17 +438,85 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Tabs<C, T>> for Element<C>
 mod tests {
     use super::*;
     #[test]
-    fn selected_label_uses_the_paired_primary_foreground() {
-        let e: Element<()> = tab_bar([tab_item(0, "One"), tab_item(1, "Two")])
+    fn selected_segment_uses_the_paired_primary_foreground() {
+        let e: Element<()> = segmented_control([(0, "One"), (1, "Two")])
             .selected(0)
             .on_select(|_: &mut (), _| {})
             .color(ColorToken::BaseContent)
             .into();
+        assert!(e.children[0].node.primary);
         assert_eq!(
             e.children[0].node.style.color.as_deref(),
             Some("@primary-content")
         );
         assert_eq!(e.children[1].node.style.color, None);
+    }
+    #[test]
+    fn segmented_controls_ignore_the_tab_variant() {
+        let e: Element<()> = segmented_control([(0, "One"), (1, "Two")])
+            .variant(TabVariant::Contained)
+            .on_select(|_: &mut (), _| {})
+            .into();
+        assert_eq!(e.node.style.background, None);
+        assert_eq!(e.node.gap, 1., "joined, not a contained track");
+    }
+    fn two_tabs(variant: TabVariant) -> Element<()> {
+        tab_bar([tab_item(0, "One"), tab_item(1, "Two")])
+            .selected(0)
+            .variant(variant)
+            .on_select(|_: &mut (), _| {})
+            .into()
+    }
+    #[test]
+    fn line_tabs_underline_the_selection_over_a_hairline() {
+        let e = two_tabs(TabVariant::Line);
+        assert_eq!(e.node.ext.border_sides, Some(Sides::BOTTOM));
+        assert_eq!(e.node.style.border_color.as_deref(), Some("@border"));
+        let [on, off] = [&e.children[0].node, &e.children[1].node];
+        assert!(!on.primary, "no filled selection");
+        assert_eq!(on.ext.border_sides, Some(Sides::BOTTOM));
+        assert_eq!(on.style.border_width, Some(2.));
+        assert_eq!(on.style.border_color.as_deref(), Some("@primary"));
+        assert_eq!(on.style.color.as_deref(), Some("@base-content"));
+        assert_eq!(off.ext.border_sides, None);
+        assert_eq!(off.style.color.as_deref(), Some("@muted"));
+        assert!(e.build().is_ok());
+    }
+    #[test]
+    fn contained_tabs_raise_the_selection_in_a_track() {
+        let e = two_tabs(TabVariant::Contained);
+        assert_eq!(e.node.style.background.as_deref(), Some("@base-content/6"));
+        assert_eq!(e.node.padding, 3.);
+        assert_eq!(e.node.align, Align::Stretch);
+        let [on, off] = [&e.children[0].node, &e.children[1].node];
+        assert_eq!(on.style.background.as_deref(), Some("@base-100"));
+        assert_eq!(on.ext.border_sides, None);
+        assert_eq!(off.style.background.as_deref(), Some("@base-content/0"));
+        assert!(
+            on.flex > 0. && on.flex == off.flex,
+            "chips share a wide track"
+        );
+        assert!(e.build().is_ok());
+    }
+    #[test]
+    fn an_app_styled_strip_keeps_its_own_surface() {
+        let e: Element<()> = tab_bar([tab_item(0, "One")])
+            .variant(TabVariant::Contained)
+            .background(ColorToken::Base200)
+            .padding(8., Edge::All)
+            .on_select(|_: &mut (), _| {})
+            .into();
+        assert_eq!(e.node.style.background.as_deref(), Some("@base-200"));
+        assert_eq!(e.node.padding, 0., "responsive padding still applies");
+    }
+    #[test]
+    fn tabs_stretch_the_line_strip_under_the_panel() {
+        let e: Element<()> = tabs([tab(0, "One", text("A")), tab(1, "Two", text("B"))])
+            .key("tabs")
+            .on_select(|_: &mut (), _| {})
+            .into();
+        assert_eq!(e.children[0].node.ext.fraction[0], Some(1.));
+        assert_eq!(e.children[0].node.id, "tabs-strip");
     }
     #[test]
     fn oversized_selection_is_rejected_before_lowering() {

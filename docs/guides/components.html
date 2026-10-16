@@ -103,8 +103,14 @@ view(&amp;App::default()).build()?;</code></pre></div><ul>
 <li><code>segmented_control</code>, <code>tab_bar![tab_item(..), ..]</code> and <code>tabs![tab(..), ..]</code>
 select typed values. <code>tabs</code> mounts only the selected page; keep page data in
 your state. Item <code>.enabled(false)</code> disables one option.</li>
+<li>Tabs draw as text over a hairline, with the selected tab underlined in the
+primary colour. <code>.variant(TabVariant::Contained)</code> draws a raised chip in a
+quiet track instead. Segmented controls keep their joined look.</li>
 <li><code>navigation([navigation_item(value, &quot;Label&quot;), ..])</code> is an app-level
-destination list with <code>NavigationPlacement::Sidebar</code>, <code>Rail</code> or <code>Bottom</code>.</li>
+destination list with <code>NavigationPlacement::Sidebar</code>, <code>Rail</code> or <code>Bottom</code>,
+drawn like the Catalog&#39;s sidebar. Item <code>.section(&quot;Title&quot;)</code> groups
+consecutive items under a sidebar heading; <code>.badge(&quot;New&quot;)</code> adds a trailing
+badge. <code>.selected(None)</code> highlights nothing.</li>
 <li>With an option focused, arrow keys and Home/End move the selection.</li>
 </ul>
 <h2 id="fields-value-controls-and-dialogs">Fields, value controls and dialogs</h2>
