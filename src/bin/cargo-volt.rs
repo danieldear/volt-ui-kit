@@ -43,7 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::new("My app", (), view).chrome(window_chrome()).run()
 }
 "#,
-        ) + WINDOW_SHELL);
+        ) + WINDOW_CHROME
+            + WINDOW_HEADER);
     }
     let (title,items,body)=match kind {
         "mail"=>("Mailbox","Inbox|Sent|Drafts", "text(\"Your mail interface\").font_size(24.).into()"),
@@ -56,29 +57,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "agent" => ", draft: String",
         _ => "",
     };
-    let items = items
-        .split('|')
+    let labels: Vec<&str> = items.split('|').collect();
+    let names = labels
+        .iter()
+        .map(|label| format!("\"{label}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let count = labels.len();
+    let items = labels
+        .iter()
         .enumerate()
         .map(|(i, label)| format!("navigation_item({i}u8, \"{label}\").key(\"destination-{i}\")"))
         .collect::<Vec<_>>()
-        .join(",\n            ");
+        .join(",\n                ");
     Ok(format!(
         r#"use volt_ui_kit::{{native::{{Application, WindowChrome}}, ui::prelude::*}};
+const PAGES: [&str; {count}] = [{names}];
 #[derive(Default)]
-struct App {{ page: u8{extra_state} }}
+struct App {{ page: u8, nav_open: bool{extra_state} }}
 fn view(app: &App) -> Element<App> {{
     let content: Element<App> = {body};
-    let body = hstack![
-        navigation([
-            {items}
-        ]).key("navigation").selected(app.page).width(200.)
-            .on_select(|app: &mut App, page| app.page = page),
-        vstack![content].flex(1.).padding(24., Edge::All),
-    ].key("app-content").flex(1.).align(Align::Stretch)
-        .gap(16., Axis::Horizontal).padding(16., Edge::All);
-    vstack![window_header("{title}"), divider().background(ColorToken::Border), body]
-        .align(Align::Stretch).font_family("SF")
-        .background(ColorToken::Base100).color(ColorToken::BaseContent).into()
+    // The Catalog's shell: the sidebar beside the page. Below 1024pt the
+    // sidebar moves into a drawer opened from the toolbar.
+    navigation_split_view(
+        |place| {{
+            navigation([
+                {items}
+            ])
+            .key(place.key("destinations"))
+            .selected(app.page)
+            .on_select(|app: &mut App, page| {{
+                app.page = page;
+                app.nav_open = false;
+            }})
+        }},
+        vstack![content].key("page").padding(24., Edge::All),
+    )
+    .key("app")
+    .title("{title}")
+    .sidebar_header(
+        hstack![text("{title}").font_size(15.).font_weight(700)]
+            .key("app-name").height(40.).align(Align::Center).padding(18., Edge::Horizontal),
+    )
+    .toolbar(text(PAGES[app.page as usize]).key("page-title").font_weight(600))
+    .drawer_open(app.nav_open)
+    .on_drawer_change(|app: &mut App, open| app.nav_open = open)
+    .font_family("SF").color(ColorToken::BaseContent).into()
 }}
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // Catalog-style macOS chrome; native controls remain. Blur is your choice.
@@ -86,10 +110,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
         .size(1100, 760).chrome(window_chrome()).run()
 }}
 "#
-    ) + WINDOW_SHELL)
+    ) + WINDOW_CHROME)
 }
-// Kept in the generated source so developers can edit the header/chrome directly.
-const WINDOW_SHELL: &str = r#"
+// Kept in the generated source so developers can edit the chrome directly.
+const WINDOW_CHROME: &str = r#"
 fn window_chrome() -> WindowChrome {
     if cfg!(target_os = "macos") {
         WindowChrome::Overlay
@@ -97,6 +121,9 @@ fn window_chrome() -> WindowChrome {
         WindowChrome::Native
     }
 }
+"#;
+// The minimal template's own title row; split views bring their own.
+const WINDOW_HEADER: &str = r#"
 fn window_header<C: 'static>(title: &str) -> Element<C> {
     // 60pt unified header, with a clear lane for native macOS traffic lights.
     hstack![text(title).key("window-title").font_size(15.).font_weight(600), spacer()]
@@ -180,7 +207,12 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
         fs::write(destination.join("Cargo.toml"),format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nresolver = \"3\"\nrust-version = \"1.89\"\n\n[dependencies]\nvolt-ui-kit = {{ path = {path}, features = [{features}] }}\n"))?;
         fs::write(destination.join("src/main.rs"), source)?;
         fs::write(destination.join(".gitignore"), "/target\n")?;
-        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable 60pt header with reserved control space. Other platforms retain native window decorations.\nChange window_chrome() to WindowChrome::Native for a standard title bar. Background blur/transparency is not forced.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
+        let (shell, native) = if kind == "minimal" {
+            ("", "")
+        } else {
+            ("The sidebar and page come from navigation_split_view, the Catalog's own shell; below 1024pt the sidebar moves into a drawer.\n", " (and turn off .titlebar_inset on macOS)")
+        };
+        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable header with reserved control space. Other platforms retain native window decorations.\n{shell}Change window_chrome() to WindowChrome::Native for a standard title bar{native}. Background blur/transparency is not forced.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
         Ok(())
     })();
     if result.is_err() {
@@ -469,10 +501,20 @@ mod tests {
                 assert!(source.contains("WindowChrome::Overlay"));
                 assert!(source.contains("WindowChrome::Native"));
                 assert!(source.contains("cfg!(target_os = \"macos\")"));
-                assert!(source.contains("fn window_header"));
-                assert!(source.contains(".height(60.)"));
-                assert!(source.contains(".drag_region(true)"));
-                assert!(source.contains("{ 96. } else { 20. }"));
+                if kind == "minimal" {
+                    assert!(source.contains("fn window_header"));
+                    assert!(source.contains(".height(60.)"));
+                    assert!(source.contains(".drag_region(true)"));
+                    assert!(source.contains("{ 96. } else { 20. }"));
+                } else {
+                    // The split view brings the drag header, the window-control
+                    // lane and the narrow-window drawer.
+                    assert!(source.contains("navigation_split_view("));
+                    assert!(source.contains(".key(place.key(\"destinations\"))"));
+                    assert!(source.contains(".drawer_open(app.nav_open)"));
+                    assert!(source.contains(".on_drawer_change("));
+                    assert!(!source.contains("fn window_header"), "no dead helper");
+                }
                 assert!(!source.contains("WindowChrome::Borderless"));
                 assert!(!source.contains("WindowBackground::Blur"));
                 assert_eq!(source.matches(".run()").count(), 1);
@@ -491,9 +533,10 @@ mod tests {
         assert!(String::from_utf8_lossy(&original).contains("resolver = \"3\""));
         let source = fs::read_to_string(dest.join("src/main.rs")).unwrap();
         assert!(source.contains(".chrome(window_chrome())"));
-        assert!(source.contains("window_header(\"Mailbox\")"));
+        assert!(source.contains(".title(\"Mailbox\")"));
         let readme = fs::read_to_string(dest.join("README.md")).unwrap();
         assert!(readme.contains("native traffic lights"));
+        assert!(readme.contains("navigation_split_view"));
         assert!(readme.contains("Background blur/transparency is not forced"));
         assert!(scaffold(
             &dest,

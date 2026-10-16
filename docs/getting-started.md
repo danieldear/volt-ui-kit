@@ -94,7 +94,8 @@ cargo volt dev my-app
 
 Templates: `minimal`, `navigation`, `mail`, `settings` and `agent`. Add
 `--desktop` for macOS menus and a tray item. `new` never overwrites an existing
-directory.
+directory. All but `minimal` start from `navigation_split_view`, the Catalog's
+own sidebar-and-detail shell.
 
 `cargo volt dev` watches your sources, rebuilds on save and restarts the app
 after a successful build; a failed build leaves the running app alone. Apps that

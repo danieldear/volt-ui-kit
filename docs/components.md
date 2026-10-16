@@ -129,6 +129,15 @@ view(&App::default()).build()?;
   drawn like the Catalog's sidebar. Item `.section("Title")` groups
   consecutive items under a sidebar heading; `.badge("New")` adds a trailing
   badge. `.selected(None)` highlights nothing.
+- `navigation_split_view(|place| sidebar, detail)` is the Catalog's app shell,
+  like SwiftUI's `NavigationSplitView`: the sidebar beside a detail column with
+  a draggable `.toolbar(..)`, room for the macOS window controls, and an
+  optional resizable divider (`.on_sidebar_resize`). The sidebar closure runs
+  once for its column and once for the drawer that replaces it below `Lg`;
+  build its keys with `place.key("nav")` so the two stay distinct. Wire
+  `.drawer_open(..)` and `.on_drawer_change(..)` to app state for the menu
+  button and drawer; `.material(true)` floats the detail over a translucent
+  window. It is optional: compose your own shell from stacks when you need to.
 - With an option focused, arrow keys and Home/End move the selection.
 
 ## Fields, value controls and dialogs
