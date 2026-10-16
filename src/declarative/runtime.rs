@@ -2243,20 +2243,32 @@ impl Runtime {
                 }
                 if b.style.surface_override() {
                     paint_surface(p, &mut shapes, r, radius, surface);
-                    paint_border(
-                        p,
-                        &mut shapes,
-                        r,
-                        radius,
-                        b.style
-                            .border_width
-                            .unwrap_or(if b.style.border_color.is_some() {
-                                self.scale
-                            } else {
-                                0.
-                            }),
-                        b.style.border_color.unwrap_or(c.border),
-                    );
+                    let width = b
+                        .style
+                        .border_width
+                        .unwrap_or(if b.style.border_color.is_some() {
+                            self.scale
+                        } else {
+                            0.
+                        });
+                    let border = b.style.border_color.unwrap_or(c.border);
+                    // Single-side and patterned borders take the straight-edge
+                    // path, as on other boxes (e.g. a tab's underline).
+                    if b.ext.border_sides.is_some()
+                        || b.ext.border_style != super::extras::BorderStyle::Solid
+                    {
+                        paint_border_edges(
+                            p,
+                            &mut shapes,
+                            r,
+                            width,
+                            border,
+                            b.ext.border_sides.unwrap_or(super::extras::Sides::ALL),
+                            b.ext.border_style,
+                        );
+                    } else {
+                        paint_border(p, &mut shapes, r, radius, width, border);
+                    }
                 } else {
                     // Keep the legacy surface recipe on the unstyled default path.
                     Button {
@@ -5760,5 +5772,38 @@ mod foundation_tests {
             reds.len() >= 10 && reds.iter().all(|y| (*y - 59.).abs() <= 1.5),
             "{reds:?}"
         );
+    }
+    #[test]
+    fn buttons_paint_only_their_chosen_border_sides() {
+        let red_ys = |sides: Option<Sides>| -> Vec<f32> {
+            let mut b = crate::ui::button("Tab")
+                .key("tab")
+                .width(100.)
+                .height(30.)
+                .rounded(0.)
+                .border_color(RED)
+                .border_width(2.)
+                .on_click(|_: &mut App| {});
+            if let Some(sides) = sides {
+                b = b.border_sides(sides);
+            }
+            let (r, _) = mount(vstack![b].key("root").into());
+            shapes(&r)
+                .into_iter()
+                .filter_map(|s| match s {
+                    S::Tri(p, [1., 0., 0., 1.]) => Some(p.map(|v| v[1])),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        };
+        // An underline: every red vertex sits on the bottom edge (y ≈ 30 − 1).
+        let underline = red_ys(Some(Sides::BOTTOM));
+        assert!(
+            !underline.is_empty() && underline.iter().all(|y| (*y - 29.).abs() <= 1.5),
+            "{underline:?}"
+        );
+        // Without sides the full box is still drawn, top edge included.
+        assert!(red_ys(None).iter().any(|y| *y < 3.));
     }
 }

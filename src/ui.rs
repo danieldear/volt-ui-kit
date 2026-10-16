@@ -326,7 +326,7 @@ pub use icons::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon, ALL_ICONS};
 mod value_controls;
 pub use bars::{
     button_bar, segmented_control, tab, tab_bar, tab_item, tabs, toolbar, ButtonBar,
-    SelectionControl, Tab, TabItem, TabPlacement, Tabs, Toolbar,
+    SelectionControl, Tab, TabItem, TabPlacement, TabVariant, Tabs, Toolbar,
 };
 pub use data::{
     data_item, lazy_list, table, table_column, table_row, tree_node, tree_view, virtual_list,
@@ -1167,9 +1167,9 @@ pub mod prelude {
         ImagePosition, Interaction, Justify, LazyList, Menu, MenuItem, Navigation, NavigationItem,
         NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
         Select, SelectItem, SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle,
-        SplitPane, Tab, TabItem, TabPlacement, Table, TableColumn, TableRow, Tabs, TextAlign,
-        TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme,
-        VectorPath, VirtualList, VisualStyle,
+        SplitPane, Tab, TabItem, TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs,
+        TextAlign, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
+        UiTheme, VectorPath, VirtualList, VisualStyle,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,

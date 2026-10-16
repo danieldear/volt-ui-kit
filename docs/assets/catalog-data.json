@@ -721,6 +721,10 @@
         "A tab strip and the active content."
       ],
       [
+        ".variant(TabVariant::Contained)",
+        "A raised chip in a track instead of an underline."
+      ],
+      [
         ".placement(TabPlacement::Bottom)",
         "Put the strip below the content."
       ],
@@ -738,6 +742,15 @@
         "image": "tabs-tabs.png",
         "note": "Content for inactive tabs is never built.",
         "title": "Tabs",
+        "width": 1000
+      },
+      {
+        "code": "tabs([\n    tab(0, \"Account\", account_page(app)),\n    tab(1, \"Password\", password_page(app)),\n    tab(2, \"Billing\", billing_page(app)).enabled(false),\n])\n.variant(TabVariant::Contained)\n.selected(app.tab)\n.on_select(|app: &mut App, t| app.tab = t)",
+        "height": 200,
+        "id": "tabs-contained",
+        "image": "tabs-tabs-contained.png",
+        "note": "The selected tab is a raised chip in a quiet track.",
+        "title": "Contained",
         "width": 1000
       }
     ],
@@ -760,6 +773,14 @@
         "Application owns routing and state"
       ],
       [
+        ".selected(None)",
+        "Highlight nothing, e.g. while a filter hides the current page"
+      ],
+      [
+        "navigation_item(..).section(title).badge(label)",
+        "Sidebar headings for consecutive items; a trailing badge such as \"New\""
+      ],
+      [
         ".key(...)",
         "Stable group and item identities are required"
       ]
@@ -767,8 +788,8 @@
     "group": "Components",
     "sections": [
       {
-        "code": "navigation([\n    navigation_item(Page::Inbox, \"Inbox\").key(\"inbox\"),\n    navigation_item(Page::Sent, \"Sent\").key(\"sent\"),\n]).key(\"navigation\").selected(app.page)\n  .placement(NavigationPlacement::Sidebar)\n  .on_select(|app: &mut App, page| app.page = page)\n// Use Rail or Bottom; compose independently with ordinary stacks/panels.",
-        "height": 534,
+        "code": "navigation([\n    navigation_item(Page::Inbox, \"Inbox\").key(\"inbox\").section(\"Mail\").badge(\"3\"),\n    navigation_item(Page::Sent, \"Sent\").key(\"sent\").section(\"Mail\"),\n]).key(\"navigation\").selected(app.page)\n  .placement(NavigationPlacement::Sidebar)\n  .on_select(|app: &mut App, page| app.page = page)\n// Use Rail or Bottom; compose independently with ordinary stacks/panels.",
+        "height": 488,
         "id": "navigation-layouts",
         "image": "navigation-navigation-layouts.png",
         "note": "All three previews share controlled app state. These are independent components, not a mandatory application shell.",

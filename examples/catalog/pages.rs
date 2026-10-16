@@ -1044,42 +1044,65 @@ fn segmented(app: &App) -> Doc {
 
 fn tabs_doc(app: &App) -> Doc {
     let panel_text = |t: &str| -> El<App> { muted(t.to_string()).into() };
-    let tabbed = tabs([
-        tab(
-            0u8,
-            "Account",
-            panel_text("Make changes to your account here. Only this page is mounted."),
-        ),
-        tab(1, "Password", panel_text("Change your password here.")),
-        tab(
-            2,
-            "Billing",
-            panel_text("Billing is disabled on this workspace."),
-        )
-        .enabled(false),
-    ])
-    .key("tabs")
-    .selected(app.tab)
-    .on_select(|app: &mut App, t| app.tab = t)
-    .width(420.);
+    let tabbed = |key: &str, variant: TabVariant| {
+        tabs([
+            tab(
+                0u8,
+                "Account",
+                panel_text("Make changes to your account here. Only this page is mounted."),
+            ),
+            tab(1, "Password", panel_text("Change your password here.")),
+            tab(
+                2,
+                "Billing",
+                panel_text("Billing is disabled on this workspace."),
+            )
+            .enabled(false),
+        ])
+        .key(key)
+        .variant(variant)
+        .selected(app.tab)
+        .on_select(|app: &mut App, t| app.tab = t)
+        .width(420.)
+    };
     Doc {
-        sections: vec![section(
-            "tabs",
-            "Tabs",
-            "Content for inactive tabs is never built.",
-            tabbed,
-            r#"tabs([
+        sections: vec![
+            section(
+                "tabs",
+                "Tabs",
+                "Content for inactive tabs is never built.",
+                tabbed("tabs", TabVariant::Line),
+                r#"tabs([
     tab(0, "Account", account_page(app)),
     tab(1, "Password", password_page(app)),
     tab(2, "Billing", billing_page(app)).enabled(false),
 ])
 .selected(app.tab)
 .on_select(|app: &mut App, t| app.tab = t)"#,
-        )],
+            ),
+            section(
+                "tabs-contained",
+                "Contained",
+                "The selected tab is a raised chip in a quiet track.",
+                tabbed("tabs-contained", TabVariant::Contained),
+                r#"tabs([
+    tab(0, "Account", account_page(app)),
+    tab(1, "Password", password_page(app)),
+    tab(2, "Billing", billing_page(app)).enabled(false),
+])
+.variant(TabVariant::Contained)
+.selected(app.tab)
+.on_select(|app: &mut App, t| app.tab = t)"#,
+            ),
+        ],
         api: vec![
             (
                 "tabs([tab(value, label, content), ...])",
                 "A tab strip and the active content.",
+            ),
+            (
+                ".variant(TabVariant::Contained)",
+                "A raised chip in a track instead of an underline.",
             ),
             (
                 ".placement(TabPlacement::Bottom)",
@@ -2863,11 +2886,19 @@ fn settings_doc(app: &App) -> Doc {
 fn navigation_doc(app: &App) -> Doc {
     let make = |key: &str, placement| {
         navigation([
-            navigation_item(0u8, "Overview").key("overview"),
-            navigation_item(1, "Messages").key("messages"),
-            navigation_item(2, "Settings").key("settings"),
+            navigation_item(0u8, "Overview")
+                .key("overview")
+                .section("Workspace"),
+            navigation_item(1, "Messages")
+                .key("messages")
+                .section("Workspace")
+                .badge("3"),
+            navigation_item(2, "Settings")
+                .key("settings")
+                .section("Workspace"),
             navigation_item(3, "Unavailable")
                 .key("unavailable")
+                .section("Admin")
                 .enabled(false),
         ])
         .key(key)
@@ -2887,13 +2918,13 @@ fn navigation_doc(app: &App) -> Doc {
                 make("nav-bottom",NavigationPlacement::Bottom),
             ].gap(24.,Axis::Vertical).into(),
             code: r#"navigation([
-    navigation_item(Page::Inbox, "Inbox").key("inbox"),
-    navigation_item(Page::Sent, "Sent").key("sent"),
+    navigation_item(Page::Inbox, "Inbox").key("inbox").section("Mail").badge("3"),
+    navigation_item(Page::Sent, "Sent").key("sent").section("Mail"),
 ]).key("navigation").selected(app.page)
   .placement(NavigationPlacement::Sidebar)
   .on_select(|app: &mut App, page| app.page = page)
 // Use Rail or Bottom; compose independently with ordinary stacks/panels."#,
         }],
-        api: vec![("navigation(items)","Controlled, typed destinations"),(".placement(Sidebar | Rail | Bottom)","Vertical or horizontal destination layout"),(".selected(value).on_select(callback)","Application owns routing and state"),(".key(...)","Stable group and item identities are required")],
+        api: vec![("navigation(items)","Controlled, typed destinations"),(".placement(Sidebar | Rail | Bottom)","Vertical or horizontal destination layout"),(".selected(value).on_select(callback)","Application owns routing and state"),(".selected(None)","Highlight nothing, e.g. while a filter hides the current page"),("navigation_item(..).section(title).badge(label)","Sidebar headings for consecutive items; a trailing badge such as \"New\""),(".key(...)","Stable group and item identities are required")],
     }
 }
