@@ -190,7 +190,7 @@ fn hero(app: &App) -> El<App> {
     .into()
 }
 
-fn hero_tier(_app: &App, tier: Tier) -> El<App> {
+fn hero_tier(app: &App, tier: Tier) -> El<App> {
     let t = tier.name();
     let k = |name: &str| format!("{name}-{t}");
     let (mark_size, sans, serif, lead, height, orbit_size) = match tier {
@@ -237,7 +237,7 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
         )
     };
     let lead_copy: El<App> = if tier == Tier::Compact {
-        text("Declare your interface as a function of your state. Volt lays it out, draws it on the GPU and speaks it to screen readers.")
+        text("Declare your interface as a function of your state. Volt lays it out, draws it on the GPU and handles input, text and accessibility.")
             .font_size(lead)
             .line_height(1.45)
             .color(ColorToken::Muted)
@@ -252,7 +252,7 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
                     .color(ColorToken::Muted)
             ),
             centered(
-                text("Volt lays it out, draws it on the GPU and speaks it to screen readers.")
+                text("Volt lays it out, draws it on the GPU and handles input, text and accessibility.")
                     .font_size(lead)
                     .color(ColorToken::Muted)
             ),
@@ -329,9 +329,9 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
         gap(28.),
         centered(
             text(if tier == Tier::Compact {
-                "MIT · MACOS · WINDOWS · LINUX"
+                "MIT · MACOS FIRST"
             } else {
-                "OPEN SOURCE · MIT      MACOS · WINDOWS · LINUX      NO WEBVIEW"
+                "OPEN SOURCE · MIT      MACOS FIRST      NO WEBVIEW"
             })
             .font_family(LABEL)
             .font_size(10.)
@@ -358,7 +358,7 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
     ];
     // Floating fragments need room beside the copy: widest tier only.
     if tier == Tier::Full {
-        layers.extend(fragments());
+        layers.extend(fragments(app));
     }
     layers.push(copy.into());
     // Full bleed for the orbits, but the floating cards stay near the copy
@@ -378,7 +378,7 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
 }
 
 /// Small floating cards built from real components (widest hero only).
-fn fragments() -> Vec<El<App>> {
+fn fragments(app: &App) -> Vec<El<App>> {
     let label = |value: &'static str| {
         text(value)
             .font_family(LABEL)
@@ -397,25 +397,29 @@ fn fragments() -> Vec<El<App>> {
         190.,
         Ambient::float(6., 4.).period_ms(11_000),
     );
-    let metric = fragment(
-        "fragment-metric",
+    let dark_mode = app.mode == ThemeMode::Dark;
+    let accent = fragment(
+        "fragment-accent",
         vstack![
-            label("SAMPLE FRAME TIME"),
+            label("ACCENT"),
             hstack![
-                text("3.7").font_size(26.).font_weight(600),
-                text("ms").font_size(13.).color(ColorToken::Muted),
+                text(THEMES.len().to_string())
+                    .font_size(26.)
+                    .font_weight(600),
+                text("presets").font_size(13.).color(ColorToken::Muted),
             ]
             .gap(4., Axis::Horizontal)
             .align(Align::End),
-            canvas(|c| {
-                let points = [14., 11., 12., 8., 9., 6., 7., 5., 6., 4.];
-                let mut path = VectorPath::new().move_to(0., points[0]);
-                for (i, y) in points.iter().enumerate().skip(1) {
-                    path = path.line_to(i as f32 * 16., *y);
+            canvas(move |c| {
+                for (i, (_, light, dark)) in THEMES.iter().enumerate() {
+                    let rgb = if dark_mode { *dark } else { *light };
+                    c.fill(
+                        VectorPath::circle(6. + i as f32 * 20., 9., 6.),
+                        format!("#{rgb:06X}"),
+                    );
                 }
-                c.stroke(path, ColorToken::Primary, 1.5);
             })
-            .key("fragment-spark")
+            .key("fragment-dots")
             .width(150.)
             .height(18.),
         ]
@@ -462,7 +466,7 @@ fn fragments() -> Vec<El<App>> {
     };
     vec![
         place(build, "fragment-build-layer", Flow::TopLeft, 56., 70.),
-        place(metric, "fragment-metric-layer", Flow::Right, 64., 0.),
+        place(accent, "fragment-accent-layer", Flow::Right, 64., 0.),
         place(status, "fragment-status-layer", Flow::BottomLeft, 96., 64.),
     ]
 }
@@ -688,7 +692,13 @@ fn dot(color: &'static str) -> El<App> {
 // ── 3. Numbers ──────────────────────────────────────────────────────────
 
 fn numbers() -> El<App> {
-    let documented = PAGES.len().to_string();
+    let pages_in = |group: &str| {
+        PAGES
+            .iter()
+            .filter(|p| p.group() == group)
+            .count()
+            .to_string()
+    };
     let figure = |value: String, label: &'static str| -> El<App> {
         vstack![
             text(value)
@@ -709,8 +719,8 @@ fn numbers() -> El<App> {
         .into()
     };
     stack([
-        figure(documented, "documented pages, each with live previews"),
-        figure("8K".into(), "Retina displays rendered on the GPU"),
+        figure(pages_in("Components"), "component pages"),
+        figure(pages_in("Patterns"), "app patterns"),
         figure("0".into(), "webviews, browsers or JavaScript"),
         figure("100%".into(), "Rust, with one declarative API"),
     ])
@@ -753,12 +763,12 @@ fn features() -> El<App> {
         opener(
             "02 — WHY VOLT",
             ("Everything a desktop app", "", "needs, built in."),
-            "A small, auditable toolkit: layout, input, text, accessibility and rendering in one Rust crate with no unsafe code."
+            "Layout, input, text, accessibility and rendering in one Rust crate."
         ),
         row([
             feature(Icon::Layers, "Declarative", "Rebuild your view from state on every change; stable keys preserve input state, and software damage tracking limits repaint work."),
-            feature(Icon::Chip, "GPU rendered", "Vector shapes and text drawn by Vello on Metal, Vulkan or DX12, with strips for 8K displays and a software fallback."),
-            feature(Icon::Person, "Accessible", "A real screen-reader tree with roles, values and actions, plus full keyboard focus and reduced motion."),
+            feature(Icon::Chip, "GPU rendered", "Shapes and text drawn by Vello on Metal, Vulkan or DX12, with an automatic software fallback."),
+            feature(Icon::Person, "Accessible", "An AccessKit tree with roles, values and actions, plus keyboard focus for every control and reduced motion."),
         ]),
         row([
             feature(Icon::Palette, "Themeable", "Semantic colour roles, light and dark palettes and translucent tokens restyle every component at once."),
@@ -789,7 +799,7 @@ fn view(app: &App) -> Element<App> {
 
 fn code(app: &App) -> El<App> {
     let checks = [
-        "Plain functions and structs: no macros to learn, no lifetimes in views",
+        "Plain functions and structs, with no lifetimes in views",
         "Stable keys keep focus, scroll and animation across rebuilds",
         "Every callback receives your state mutably, on the UI thread",
     ]
