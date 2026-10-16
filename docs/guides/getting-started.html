@@ -58,7 +58,8 @@ compiled in, and an ordinary native title bar. See
 cargo volt new my-app --kit-path /path/to/volt-ui-kit --template navigation
 cargo volt dev my-app</code></pre></div><p>Templates: <code>minimal</code>, <code>navigation</code>, <code>mail</code>, <code>settings</code> and <code>agent</code>. Add
 <code>--desktop</code> for macOS menus and a tray item. <code>new</code> never overwrites an existing
-directory.</p>
+directory. All but <code>minimal</code> start from <code>navigation_split_view</code>, the Catalog&#39;s
+own sidebar-and-detail shell.</p>
 <p><code>cargo volt dev</code> watches your sources, rebuilds on save and restarts the app
 after a successful build; a failed build leaves the running app alone. Apps that
 call <a href="../guides/app-services.html#the-development-loop"><code>Application::dev_state</code></a> keep their

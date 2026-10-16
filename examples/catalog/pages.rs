@@ -259,7 +259,7 @@ impl Page {
             SignIn => "Inputs, validation and actions composed into a form.",
             Settings => "Grouped preferences with switches, selects and sliders.",
             Navigation => {
-                "Independent controlled destination navigation: sidebar, rail and bottom placement."
+                "Destination lists in sidebar, rail or bottom placement, and the app shell around them."
             }
             Utilities => "Grid, wrapping, justify, typography, gradients, borders and motion.",
             Icons => "A built-in, theme-aware vector icon set.",
@@ -2906,6 +2906,53 @@ fn navigation_doc(app: &App) -> Doc {
         .placement(placement)
         .on_select(|app: &mut App, page| app.navigation = page)
     };
+    const DESTINATIONS: [&str; 4] = ["Overview", "Messages", "Settings", "Unavailable"];
+    // The app shell around a navigation list. It stays visible down to Sm so
+    // the preview keeps its sidebar in narrow windows.
+    let shell = navigation_split_view(
+        |place| {
+            navigation([
+                navigation_item(0u8, "Overview").key("overview"),
+                navigation_item(1, "Messages").key("messages").badge("3"),
+                navigation_item(2, "Settings").key("settings"),
+            ])
+            .key(place.key("split-nav"))
+            .selected((app.navigation <= 2).then_some(app.navigation))
+            .on_select(|app: &mut App, page| app.navigation = page)
+        },
+        vstack![
+            label("YOUR WORKSPACE"),
+            text(format!("Destination {}", app.navigation)).font_size(24.),
+            muted("The detail column fills the rest of the window."),
+        ]
+        .gap(12., Axis::Vertical)
+        .padding(24., Edge::All),
+    )
+    .key("split-demo")
+    .title("Acme")
+    .sidebar_header(
+        hstack![text("Acme").font_size(15.).font_weight(700)]
+            .key("split-demo-name")
+            .height(40.)
+            .align(Align::Center)
+            .padding(18., Edge::Horizontal),
+    )
+    .toolbar(
+        text(DESTINATIONS[usize::from(app.navigation).min(3)])
+            .key("split-demo-title")
+            .font_weight(600),
+    )
+    .sidebar_width(200.)
+    .collapse_below(Breakpoint::Sm)
+    .titlebar_inset(false)
+    .width(720.)
+    .height(360.);
+    // A hairline frame: the shell's own layers cover a border set on it.
+    let shell = vstack![shell]
+        .key("split-demo-frame")
+        .padding(1., Edge::All)
+        .border_color(ColorToken::Border)
+        .border_width(1.);
     Doc {
         sections: vec![Section {
             id:"navigation-layouts", title:"Navigation, your layout", note:"All three previews share controlled app state. These are independent components, not a mandatory application shell.",
@@ -2924,7 +2971,24 @@ fn navigation_doc(app: &App) -> Doc {
   .placement(NavigationPlacement::Sidebar)
   .on_select(|app: &mut App, page| app.page = page)
 // Use Rail or Bottom; compose independently with ordinary stacks/panels."#,
-        }],
-        api: vec![("navigation(items)","Controlled, typed destinations"),(".placement(Sidebar | Rail | Bottom)","Vertical or horizontal destination layout"),(".selected(value).on_select(callback)","Application owns routing and state"),(".selected(None)","Highlight nothing, e.g. while a filter hides the current page"),("navigation_item(..).section(title).badge(label)","Sidebar headings for consecutive items; a trailing badge such as \"New\""),(".key(...)","Stable group and item identities are required")],
+        },
+        section(
+            "navigation-split-view",
+            "Split view",
+            "The Catalog's own shell: a sidebar beside the page under a draggable toolbar. Below Lg the sidebar moves into a drawer opened from the toolbar.",
+            shell,
+            r#"navigation_split_view(
+    |place| navigation(items).key(place.key("nav")).selected(app.page)
+        .on_select(|app: &mut App, page| app.page = page),
+    page_view(app),
+)
+.key("shell")
+.title("Workspace")
+.sidebar_header(brand)
+.toolbar(toolbar)
+.drawer_open(app.nav_open)
+.on_drawer_change(|app: &mut App, open| app.nav_open = open)"#,
+        )],
+        api: vec![("navigation(items)","Controlled, typed destinations"),(".placement(Sidebar | Rail | Bottom)","Vertical or horizontal destination layout"),(".selected(value).on_select(callback)","Application owns routing and state"),(".selected(None)","Highlight nothing, e.g. while a filter hides the current page"),("navigation_item(..).section(title).badge(label)","Sidebar headings for consecutive items; a trailing badge such as \"New\""),(".key(...)","Stable group and item identities are required"),("navigation_split_view(|place| sidebar, detail)","The app shell: sidebar beside a detail with a toolbar; build the sidebar's keys with place.key(..)"),(".drawer_open(..).on_drawer_change(..)","Below Lg (or .collapse_below) the sidebar moves into a drawer"),(".on_sidebar_resize(..) / .material(true)","A draggable divider; a frosted sidebar with a floating sheet")],
     }
 }
