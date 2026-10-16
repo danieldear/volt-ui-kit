@@ -15,7 +15,8 @@
   divider, a drawer behind a menu button below `Lg`, and `.material(true)` for
   a frosted sidebar with a floating sheet. The Catalog's shell is built on it
   (renders unchanged), and the `navigation`, `mail`, `settings` and `agent`
-  templates now generate apps on it.
+  templates now generate apps on it, with a sidebar that resizes like the
+  Catalog's.
 
 - Draw `tab_bar` and `tabs` as line tabs: muted text over a hairline, with the
   selected tab underlined in the primary colour, instead of filled buttons.

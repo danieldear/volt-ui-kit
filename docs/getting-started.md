@@ -95,7 +95,8 @@ cargo volt dev my-app
 Templates: `minimal`, `navigation`, `mail`, `settings` and `agent`. Add
 `--desktop` for macOS menus and a tray item. `new` never overwrites an existing
 directory. All but `minimal` start from `navigation_split_view`, the Catalog's
-own sidebar-and-detail shell. Every template also uses the Catalog's colours:
+own sidebar-and-detail shell, with a sidebar you resize by dragging its
+divider. Every template also uses the Catalog's colours:
 its `theme()` function picks `Palette::zinc_light()` or `Palette::zinc_dark()`
 to match the system appearance (see
 [Built-in palettes](styling-and-themes.md#built-in-palettes)).

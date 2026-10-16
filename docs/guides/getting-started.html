@@ -59,7 +59,8 @@ cargo volt new my-app --kit-path /path/to/volt-ui-kit --template navigation
 cargo volt dev my-app</code></pre></div><p>Templates: <code>minimal</code>, <code>navigation</code>, <code>mail</code>, <code>settings</code> and <code>agent</code>. Add
 <code>--desktop</code> for macOS menus and a tray item. <code>new</code> never overwrites an existing
 directory. All but <code>minimal</code> start from <code>navigation_split_view</code>, the Catalog&#39;s
-own sidebar-and-detail shell. Every template also uses the Catalog&#39;s colours:
+own sidebar-and-detail shell, with a sidebar you resize by dragging its
+divider. Every template also uses the Catalog&#39;s colours:
 its <code>theme()</code> function picks <code>Palette::zinc_light()</code> or <code>Palette::zinc_dark()</code>
 to match the system appearance (see
 <a href="../guides/styling-and-themes.html#built-in-palettes">Built-in palettes</a>).</p>
