@@ -40,10 +40,12 @@ fn view(_: &()) -> Element<()> {
         .background(ColorToken::Base100).color(ColorToken::BaseContent).into()
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Application::new("My app", (), view).chrome(window_chrome()).run()
+    Application::new("My app", (), view)
+        .chrome(window_chrome()).theme_with(theme).run()
 }
 "#,
-        ) + WINDOW_CHROME
+        ) + THEME
+            + WINDOW_CHROME
             + WINDOW_HEADER);
     }
     let (title,items,body)=match kind {
@@ -107,11 +109,25 @@ fn view(app: &App) -> Element<App> {{
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // Catalog-style macOS chrome; native controls remain. Blur is your choice.
     Application::new("{title}", App::default(), view)
-        .size(1100, 760).chrome(window_chrome()).run()
+        .size(1100, 760).chrome(window_chrome()).theme_with(theme).run()
 }}
 "#
-    ) + WINDOW_CHROME)
+    ) + THEME
+        + WINDOW_CHROME)
 }
+// The Catalog's colours, not the kit's default warm palette.
+const THEME: &str = r#"
+fn theme<C>(_: &C, system: ThemeMode) -> UiTheme {
+    // The Catalog's neutral Zinc palette, light or dark with the system.
+    // Add .with_accent([0.49, 0.23, 0.93, 1.]) for a violet primary.
+    let palette = if system == ThemeMode::Dark {
+        Palette::zinc_dark()
+    } else {
+        Palette::zinc_light()
+    };
+    UiTheme::from_palette(palette)
+}
+"#;
 // Kept in the generated source so developers can edit the chrome directly.
 const WINDOW_CHROME: &str = r#"
 fn window_chrome() -> WindowChrome {
@@ -212,7 +228,7 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
         } else {
             ("The sidebar and page come from navigation_split_view, the Catalog's own shell; below 1024pt the sidebar moves into a drawer.\n", " (and turn off .titlebar_inset on macOS)")
         };
-        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable header with reserved control space. Other platforms retain native window decorations.\n{shell}Change window_chrome() to WindowChrome::Native for a standard title bar{native}. Background blur/transparency is not forced.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
+        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable header with reserved control space. Other platforms retain native window decorations.\n{shell}Change window_chrome() to WindowChrome::Native for a standard title bar{native}. Background blur/transparency is not forced.\ntheme() gives the app the Catalog's neutral Zinc palette, light or dark with the system; add .with_accent(..) there for a brand colour.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
         Ok(())
     })();
     if result.is_err() {
@@ -523,6 +539,30 @@ mod tests {
         }
     }
     #[test]
+    fn every_template_uses_the_catalog_zinc_palette_in_both_modes() {
+        for kind in ["minimal", "navigation", "mail", "settings", "agent"] {
+            for desktop in [false, true] {
+                let source = template(kind).unwrap();
+                let source = if desktop {
+                    desktop_template(source, kind)
+                } else {
+                    source
+                };
+                assert_eq!(
+                    source.matches(".theme_with(theme)").count(),
+                    1,
+                    "{kind}, desktop={desktop}"
+                );
+                assert_eq!(source.matches("fn theme<C>(").count(), 1);
+                assert!(source.contains("if system == ThemeMode::Dark"));
+                assert!(source.contains("Palette::zinc_dark()"));
+                assert!(source.contains("Palette::zinc_light()"));
+                assert!(!source.contains("Palette::dark()"), "not the warm default");
+                assert!(!source.contains("Palette::light()"));
+            }
+        }
+    }
+    #[test]
     fn scaffold_never_overwrites_and_preserves_custom_paths() {
         let dir = std::env::temp_dir().join(format!("volt-scaffold-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -538,6 +578,7 @@ mod tests {
         assert!(readme.contains("native traffic lights"));
         assert!(readme.contains("navigation_split_view"));
         assert!(readme.contains("Background blur/transparency is not forced"));
+        assert!(readme.contains("Catalog's neutral Zinc palette"));
         assert!(scaffold(
             &dest,
             "settings",
