@@ -127,6 +127,8 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Navigation<C, T>> for Elem
         if placement != NavigationPlacement::Bottom && nav.0.node.align == Align::Start {
             nav.0.node.align = Align::Stretch;
         }
+        // Public rows retain `{id}-{item_key}`. Internal nodes use `{id}__`
+        // and disjoint role prefixes, so valid item keys cannot shadow them.
         let mut section: Option<String> = None;
         for item in nav.1.items {
             let key = item.key.unwrap();
@@ -136,7 +138,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Navigation<C, T>> for Elem
             {
                 let first = nav.0.children.is_empty();
                 nav.0.children.push(section_heading(
-                    format!("{id}-{key}-section"),
+                    format!("{id}__s_{key}"),
                     item.section.clone().unwrap(),
                     first,
                 ));
@@ -180,7 +182,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Navigation<C, T>> for Elem
                 continue;
             };
             let tag: Element<C> = badge(label)
-                .key(format!("{id}-{key}-badge"))
+                .key(format!("{id}__b_{key}"))
                 .font_size(10.)
                 .rounded(Rounding::Full)
                 .background(ColorToken::Primary.alpha(14))
@@ -192,12 +194,12 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Navigation<C, T>> for Elem
                 NavigationPlacement::Rail => zstack([
                     row.into(),
                     hstack([spacer().into(), tag])
-                        .key(format!("{id}-{key}-badge-lane"))
+                        .key(format!("{id}__l_{key}"))
                         .align(Align::Center)
                         .padding(6., Edge::Right)
                         .into(),
                 ])
-                .key(format!("{id}-{key}-row"))
+                .key(format!("{id}__r_{key}"))
                 .align(Align::Stretch)
                 .into(),
                 // Beside the row: the sidebar row takes the remaining width.
@@ -209,7 +211,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Navigation<C, T>> for Elem
                     },
                     tag,
                 ])
-                .key(format!("{id}-{key}-row"))
+                .key(format!("{id}__r_{key}"))
                 .gap(6., Axis::Horizontal)
                 .align(Align::Center)
                 .into(),
@@ -266,10 +268,10 @@ mod tests {
         assert_eq!(
             ids(&e),
             [
-                "side-intro-section",
+                "side__s_intro",
                 "side-intro",
-                "side-theming-row",
-                "side-button-section",
+                "side__r_theming",
+                "side__s_button",
                 "side-button"
             ]
         );
@@ -280,7 +282,7 @@ mod tests {
     fn headings_are_sidebar_only() {
         for placement in [NavigationPlacement::Rail, NavigationPlacement::Bottom] {
             let e = nav(placement, None);
-            assert!(!ids(&e).iter().any(|id| id.ends_with("-section")));
+            assert!(!ids(&e).iter().any(|id| id.starts_with("side__s_")));
         }
     }
     #[test]
@@ -289,7 +291,7 @@ mod tests {
         let row = &e.children[2];
         assert_eq!(row.children[0].node.id, "side-theming");
         assert!(row.children[0].node.flex > 0., "the sidebar row fills");
-        assert_eq!(row.children[1].node.id, "side-theming-badge");
+        assert_eq!(row.children[1].node.id, "side__b_theming");
         // Horizontal rows keep their natural width.
         let bottom = nav(NavigationPlacement::Bottom, None);
         assert_eq!(bottom.children[1].children[0].node.flex, 0.);
@@ -300,7 +302,7 @@ mod tests {
         let row = &e.children[1];
         assert_eq!(row.node.kind, Kind::ZStack);
         assert_eq!(row.children[0].node.id, "side-theming");
-        assert_eq!(row.children[1].children[1].node.id, "side-theming-badge");
+        assert_eq!(row.children[1].children[1].node.id, "side__b_theming");
         assert!(e.build().is_ok());
     }
     #[test]

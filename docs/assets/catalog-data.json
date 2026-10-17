@@ -2270,7 +2270,7 @@
     "sections": [
       {
         "code": "Application::new(\"Documents\", app, view)\n    .commands(commands())\n    .requests(|app, sender| app.requests = Some(sender))\n    .on_close_request(|app, reason| {\n        if app.dirty() {\n            app.close_prompt = Some(reason);\n            CloseDecision::KeepOpen\n        } else { CloseDecision::Close }\n    })\n    .run()?;\n// Save / Discard: update app state, then enqueue Close(reason).\n// Cancel: dismiss the dialog without closing or clearing the draft.",
-        "height": 734,
+        "height": 720,
         "id": "application-document",
         "image": "application-lifecycle-application-document.png",
         "note": "Edit the draft, use Save or Cmd/Ctrl+S, then request closing. Dirty work opens Save / Discard / Cancel. Saving here is in memory, not disk persistence.",
@@ -2344,7 +2344,7 @@
     "sections": [
       {
         "code": "// Build with native-notifications, then package the executable.\n// Only a deliberate user action calls request_authorization.\nnotifications::request_authorization(move |decision| {\n    // Marshal into bounded UiSender; never mutate UI on this OS thread.\n})?;\nlet note = LocalNotification::new(\"build.ready\", \"Build ready\", \"All checks passed.\")\n    .after(Duration::from_secs(8));\nnotifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;\n// A later Remove action (after this callback) may remove \"build.ready\".",
-        "height": 544,
+        "height": 620,
         "id": "desktop-notifications",
         "image": "desktop-services-desktop-notifications.png",
         "note": "An explicit, opt-in OS service—not an in-app toast. No permission or notification is requested on launch.",

@@ -41,16 +41,44 @@ class SiteTests(unittest.TestCase):
             self.assertTrue(target.is_file())
             self.assertIn(target.relative_to(docs).as_posix(), build_docs_site.FILES)
 
-    def test_component_study_keeps_native_controls_and_honest_label(self):
-        html = (build_docs_site.ROOT / "docs/index.html").read_text()
-        site = Site()
-        site.feed(html)
-        self.assertTrue({'palette-orchid', 'palette-sage', 'palette-graphite',
-                         'soft-shadow', 'corner-soft', 'corner-square'} <= site.ids)
-        self.assertIn('Interactive HTML preview', html)
-        self.assertIn('not the native renderer', html)
-        self.assertIn('<summary>Appearance settings', html)
-        self.assertNotIn('<span><h3>', html)
+    def test_landing_page_claims_match_the_kit(self):
+        docs = build_docs_site.ROOT / "docs"
+        html = (docs / "index.html").read_text()
+        # Palettes and settings the kit does not have, and screen-capture
+        # claims for what are headless renders, must not come back.
+        for invented in ("Orchid", "Sage", "Graphite", "Soft corners",
+                         "Native capture", "Actual native output", "translucent navigation"):
+            self.assertNotIn(invented, html)
+        self.assertGreaterEqual(html.count("headless render"), 2)
+        # The counts in the copy come from the Catalog's own metadata.
+        catalog = json.loads((docs / "assets/catalog-data.json").read_text())
+        components = sum(page["group"] == "Components" for page in catalog)
+        patterns = sum(page["group"] == "Patterns" for page in catalog)
+        text = re.sub(r"<[^>]+>", "", html)
+        self.assertIn(f"{components} component pages", text)
+        self.assertIn(f"{patterns} app patterns", text)
+        self.assertIn(f"{len(catalog)} reference pages", text)
+        self.assertIn(f"all {len(catalog)} pages", text)
+        # Every image the page shows, at every size, exists and is published,
+        # and is a Catalog render: apps that are not released stay off the page.
+        images = re.findall(r'(?:src|srcset)="([^"]+)"', html)
+        paths = {part.split()[0] for value in images for part in value.split(",")}
+        for path in paths:
+            if path.startswith("images/"):
+                self.assertTrue((docs / path).is_file(), path)
+                self.assertIn(path, build_docs_site.FILES + tuple(
+                    build_docs_site.generated_files(build_docs_site.ROOT)))
+                self.assertRegex(path, r"^images/(?:catalog|theming)/", path)
+
+    def test_landing_motion_control_and_high_contrast_labels(self):
+        docs = build_docs_site.ROOT / "docs"
+        html = (docs / "index.html").read_text()
+        css = (docs / "assets/site.css").read_text()
+        self.assertIn('id="pause-motion"', html)
+        self.assertIn('Pause decorative motion', html)
+        self.assertIn('animation-play-state: paused', css)
+        self.assertIn('.swatch .sr-only { position: static;', css)
+        self.assertIn('./scripts/run_catalog.sh', html)
 
     def test_links_cannot_escape_root_or_use_javascript(self):
         root = build_docs_site.ROOT

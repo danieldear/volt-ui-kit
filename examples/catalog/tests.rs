@@ -1754,3 +1754,63 @@ fn dashboard_interaction_snapshot() {
     let pix = painter.rasterize(&batches, ui.palette.base[0]).unwrap();
     pix.save_png(std::env::var("SNAP").unwrap()).unwrap();
 }
+
+#[test]
+fn catalog_context_menu_opens_from_the_preview_surface() {
+    for scale in [1., 2.] {
+        let mut app = App::new();
+        app.page = Page::ContextMenu;
+        let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+        let bindings = Bindings::default();
+        let mut runtime = Runtime::new(doc, &handlers, &bindings).unwrap();
+        let viewport = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+        runtime
+            .layout(viewport, &bindings, &mut RasterPainter::new(viewport))
+            .unwrap();
+        let b = runtime
+            .boxes()
+            .iter()
+            .find(|b| b.id == "ctx-surface")
+            .unwrap()
+            .bounds
+            .bounds();
+        let outcome = runtime
+            .context_menu_at(b[0] + b[2] / 2., b[1] + b[3] / 2., &mut handlers, &mut app)
+            .unwrap();
+        assert!(outcome.activated, "scale={scale} bounds={b:?}");
+        assert!(app.context_open);
+        let (doc, next) = view(&app).build().unwrap().into_parts();
+        runtime.replace_document(doc, &next, &bindings).unwrap();
+        runtime
+            .layout(viewport, &bindings, &mut RasterPainter::new(viewport))
+            .unwrap();
+        assert!(runtime.boxes().iter().any(|b| b.id == "ctx-popup"));
+        let item = runtime
+            .focused()
+            .expect("menu focuses its first action")
+            .to_owned();
+        let mut handlers = next;
+        assert!(
+            runtime
+                .accessibility_activate(&item, &mut handlers, &mut app)
+                .unwrap()
+                .activated
+        );
+        assert_eq!(app.last_action, "Back");
+        assert!(!app.context_open);
+    }
+}
+
+#[test]
+fn notification_setup_help_explains_feature_and_bundle_requirements() {
+    let help = desktop_services::notification_setup_help();
+    if !cfg!(target_os = "macos") {
+        assert!(help.contains("no notification adapter"));
+    } else if !cfg!(feature = "native-notifications") {
+        assert!(help.contains("./scripts/run_catalog.sh"));
+        assert!(help.contains("bundled Catalog"));
+    } else {
+        assert!(help.contains("not cargo run"));
+        assert!(help.contains("Request alert permission"));
+    }
+}

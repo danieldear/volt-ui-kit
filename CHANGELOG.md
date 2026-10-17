@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.5.0 (2026-10-17; not published to crates.io)
+
+- Add `./scripts/run_catalog.sh`: one-command, fully featured GPU Catalog,
+  automatically bundled and ad-hoc signed on macOS. `--check` verifies without
+  launching; notification permission and sending remain explicit UI actions.
+- Fix context menus blocked by passive toast layers, fixed-sidebar detail
+  overflow, generated navigation key collisions, and Zinc info/success
+  foreground contrast. Add regressions for scale, placement and modal guards.
+- Carry forward the redesigned documentation landing page, add visible
+  high-contrast accent labels and a pause-motion control, and refresh the
+  native component previews and application-service instructions.
+
 - Add `Palette::zinc_light()` and `Palette::zinc_dark()`, the Catalog's
   neutral Zinc palette, as kit presets; `.with_accent(..)` gives them a
   coloured primary. The Catalog's themes are built on them (renders

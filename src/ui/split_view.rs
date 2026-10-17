@@ -288,11 +288,22 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
                 .background(surface.clone())
                 .on_resize(move |app: &mut C, width| resize(app, width))
                 .into(),
-            // Rigid: a wide detail must not squeeze the sidebar.
-            None => hstack([column.width(o.width).min_width(o.width).into(), detail])
+            // Use the same constrained geometry even without a draggable
+            // divider. A flex row shrinks the natural sizes first, then
+            // re-applies the sidebar minimum and can overflow the window.
+            None => split(column.width(o.width), detail)
                 .key(format!("{id}-split"))
+                .first_size(o.width)
+                .min_first(o.width)
+                .max_first(o.width)
+                .min_second(0.)
+                .handle_size(1.)
+                .handle_color(clear())
+                .enabled(false)
+                .on_resize(|_: &mut C, _| {})
+                .fill_width()
+                .fill_height()
                 .flex(1.)
-                .align(Align::Stretch)
                 .background(surface.clone())
                 .into(),
         };

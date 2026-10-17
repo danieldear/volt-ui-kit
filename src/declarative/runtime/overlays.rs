@@ -411,6 +411,12 @@ impl Runtime {
         let mut marker = None;
         if let Some(mut index) = self.boxes.iter().rposition(|b| {
             !self.portal_hit_passthrough(&b.id)
+                // Passive full-window layers (for example a toaster) must
+                // not become the starting ancestry for a right-click below.
+                && (!b.effects.scroll_passthrough
+                    || super::interactive_box(b)
+                    || find_node(self.document.root(), &b.id)
+                        .is_some_and(|node| node.on_context.is_some()))
                 && self.scope_allows_id(&b.id)
                 && b.clip.contains(x, y)
                 && b.clip_regions.iter().all(|clip| clip.contains(x, y))

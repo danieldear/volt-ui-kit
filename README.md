@@ -43,6 +43,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Try the complete Catalog
+
+From a checkout of this repository:
+
+```sh
+./scripts/run_catalog.sh
+```
+
+Builds and opens the full GPU Catalog, including macOS desktop services and
+local notifications, with app packaging handled automatically. Permission is
+requested only when you click the notification permission button. Use
+`--check` to build/verify without opening it. Requires Cargo, Python 3 and, on
+macOS, the command-line tools. Individual library features remain optional.
+
 ## Highlights
 
 - **Plain Rust.** Views are functions and callbacks are closures over your own

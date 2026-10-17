@@ -187,6 +187,17 @@ pub fn can_send(app: &App) -> bool {
         && !app.services.busy
         && app.services.authorization == Some(Authorization::Granted)
 }
+/// Explain build/platform prerequisites without requesting OS permission.
+pub(super) fn notification_setup_help() -> &'static str {
+    if !cfg!(target_os = "macos") {
+        "Local notifications currently require macOS; this platform has no notification adapter."
+    } else if !cfg!(feature = "native-notifications") {
+        "Notifications are not compiled in. native-desktop enables menus and tray, not notifications. Run ./scripts/run_catalog.sh from the repository to build and open the full, bundled Catalog."
+    } else {
+        "The notification adapter is compiled. Use ./scripts/run_catalog.sh to launch the identified Catalog .app, not cargo run. Request alert permission here, then send and switch to another app before the delay expires. OS acceptance does not guarantee presentation. See docs/app-services.md: Testing Catalog notifications."
+    }
+}
+
 pub fn doc(app: &App) -> Doc {
     let caps = notifications::capabilities();
     Doc {sections:vec![Section {
@@ -194,6 +205,7 @@ pub fn doc(app: &App) -> Doc {
         demo:vstack![
             hstack![badge(if caps.local_requests {"macOS adapter compiled"} else {"Adapter unavailable"}),
                 badge(match app.services.authorization {Some(Authorization::Granted)=>"Last decision: granted",Some(Authorization::Denied)=>"Last decision: denied",None=>"Permission not requested"})],
+            text(notification_setup_help()).key("notification-setup-help").font_size(13.).color(ColorToken::Muted),
             text(ID).font_family("SF Mono").font_size(12.).color(ColorToken::Muted),
             text_field(&app.services.title).key("notification-title").accessible_label("Local notification title").read_only(app.services.busy)
                 .on_change(|app:&mut App,v|app.services.title=v),
@@ -210,7 +222,7 @@ pub fn doc(app: &App) -> Doc {
                 button("Reset witness").key("notification-reset").variant(ButtonVariant::Ghost).enabled(!app.services.busy).on_click(reset)].gap(8.,Axis::Horizontal),
             text(&app.services.status).font_size(13.).color(ColorToken::Muted),
             text(app.services.error.as_deref().unwrap_or("")).font_size(13.).color(ColorToken::Error),
-            text("Package with native-notifications and an explicit .app ID. Missing bundle, unsupported build and native errors stay visible. Permission is not a live setting; this slice does not supply sound, badge, action-click callbacks or foreground delegates.").font_size(12.).color(ColorToken::Muted),
+            text("The full Catalog launcher handles build features and macOS packaging. Permission is always your choice. Unsupported platforms and native errors stay visible; sound, badge, action-click callbacks and forced foreground presentation are not supplied.").font_size(12.).color(ColorToken::Muted),
         ].width(620.).gap(14.,Axis::Vertical).into(),
         code:r#"// Build with native-notifications, then package the executable.
 // Only a deliberate user action calls request_authorization.

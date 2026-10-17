@@ -214,6 +214,36 @@ Notifications work only from a bundled `.app` (see [Packaging and releasing](#pa
 whether it is shown. Forward the callback results to your UI with a
 background message.
 
+### Testing Catalog notifications
+
+Use the full Catalog launcher from the repository root:
+
+```sh
+./scripts/run_catalog.sh
+```
+
+It builds every Catalog capability (GPU, desktop integrations and local
+notifications), creates and ad-hoc signs a temporary identified macOS `.app`,
+registers it with Launch Services, and launches it. There is no separate feature or packaging setup. The launcher
+waits for the app to quit and removes its temporary bundle afterward; it does
+not duplicate repository history. Python 3, Cargo and the macOS command-line
+tools are required. `./scripts/run_catalog.sh --check` builds and verifies
+without opening the app or requesting permission.
+
+Open **Desktop services**, click **Request alert permission** and allow alerts.
+Then click **Send in 8 seconds** and switch to another app before the timer
+expires: this adapter does not force foreground presentation. Check
+Notification Center if no banner appears, and use **Remove test notification**
+to clean up. Focus modes and macOS notification settings can suppress banners.
+No permission prompt or notification is sent automatically. The stable Catalog
+bundle identifier is `com.volt.ui.catalog`.
+
+Direct `cargo run --features native-desktop --example catalog` still works for
+ordinary component testing, including context menus, but intentionally omits
+GPU rendering and the separately opt-in notification adapter. Application
+developers retain independent library feature flags. Non-macOS launches report
+that local notifications are unavailable rather than pretending to deliver.
+
 ## The development loop
 
 `cargo volt dev` rebuilds your project when a source or manifest changes and

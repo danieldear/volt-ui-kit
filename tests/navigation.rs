@@ -146,3 +146,87 @@ fn split_view_collapses_the_sidebar_into_a_drawer_below_lg() {
     let (drawer, _) = mount(&app, 800.);
     assert!(shown(&drawer, "nav-drawer-inbox"));
 }
+
+#[test]
+fn navigation_internal_ids_do_not_collide_with_unique_user_keys() {
+    for placement in [
+        NavigationPlacement::Sidebar,
+        NavigationPlacement::Rail,
+        NavigationPlacement::Bottom,
+    ] {
+        let e: Element<()> = navigation([
+            navigation_item(0u8, "Inbox")
+                .key("inbox")
+                .badge("3")
+                .section("Mail"),
+            navigation_item(1, "Badge name").key("inbox-badge"),
+            navigation_item(2, "Section name").key("inbox-section"),
+            navigation_item(3, "Row name").key("inbox-row"),
+            navigation_item(4, "Lane name").key("inbox-badge-lane"),
+        ])
+        .key("nav")
+        .placement(placement)
+        .on_select(|_: &mut (), _| {})
+        .into();
+        assert!(e.build().is_ok(), "{placement:?}");
+    }
+}
+
+#[test]
+fn split_view_detail_stays_inside_the_viewport_with_or_without_resizing() {
+    struct Metrics;
+    impl volt_ui_kit::declarative::TextMetrics for Metrics {
+        fn measure(&mut self, t: &str, s: f32, w: f32) -> [f32; 2] {
+            [(t.len() as f32 * s * 0.5).min(w), s * 1.2]
+        }
+    }
+    for scale in [1., 2.] {
+        for width in [800., 1280., 1600.] {
+            for resizable in [false, true] {
+                for material in [false, true] {
+                    let mut shell = navigation_split_view(
+                        |p| text("Sidebar").key(p.key("side")),
+                        text("Detail").key("page"),
+                    )
+                    .key("app")
+                    .material(material)
+                    .sidebar_width(300.);
+                    if resizable {
+                        shell = shell.on_sidebar_resize(|_: &mut (), _| {});
+                    }
+                    let e: Element<()> = shell.into();
+                    let (doc, handlers) = e.build().unwrap().into_parts();
+                    let bindings = Bindings::default();
+                    let mut runtime = Runtime::new(doc, &handlers, &bindings).unwrap();
+                    runtime
+                        .layout(
+                            volt_ui_kit::Viewport::new(width * scale, 700. * scale, scale).unwrap(),
+                            &bindings,
+                            &mut Metrics,
+                        )
+                        .unwrap();
+                    let detail = runtime
+                        .boxes()
+                        .iter()
+                        .find(|b| b.id == "app-detail")
+                        .unwrap()
+                        .bounds
+                        .bounds();
+                    assert!(detail[0] + detail[2] <= width * scale + 0.1, "{detail:?}");
+                    if width >= 1024. {
+                        let col = runtime
+                            .boxes()
+                            .iter()
+                            .find(|b| b.id == "app-sidebar-column")
+                            .unwrap()
+                            .bounds
+                            .bounds();
+                        assert!((col[2] - 300. * scale).abs() < 0.1, "{col:?}");
+                    } else {
+                        assert!(!runtime.boxes().iter().any(|b| b.id == "app-sidebar-column"));
+                    }
+                }
+            }
+        }
+    }
+}

@@ -35,9 +35,11 @@ responsible for rights to their own images, icons and custom fonts.
 
 ### Website display font
 
-`docs/assets/fonts/bricolage-grotesque.ttf` is the unmodified variable Bricolage
+`docs/assets/fonts/bricolage-grotesque.woff2` is the variable Bricolage
 Grotesque font by The Bricolage Grotesque Project Authors, under the SIL Open
-Font License 1.1. Its full [license](assets/fonts/OFL.txt) ships with the site.
+Font License 1.1, converted from the upstream TrueType file to WOFF2 with
+fontTools 4.60.1 (compression only: glyphs, axes and names are unchanged). Its full [license](assets/fonts/OFL.txt) ships with the site.
 Source: [Google Fonts](https://github.com/google/fonts/tree/94301472b4d809299b4775bc6502592b83dd6934/ofl/bricolagegrotesque),
 revision `94301472b4d809299b4775bc6502592b83dd6934`, retrieved 2026-10-15.
-The original asset is 408,496 bytes; no Apple font binaries are redistributed.
+The upstream TrueType file is 408,496 bytes and the WOFF2 file 204,904 bytes; no
+Apple font binaries are redistributed.

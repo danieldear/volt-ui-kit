@@ -656,3 +656,51 @@ fn tooltips_fit_their_label_wrap_long_ones_and_centre_on_the_target() {
         "long labels stop at 240: {long:?}"
     );
 }
+
+#[test]
+fn context_requests_pass_through_passive_toast_layers() {
+    for scale in [1., 2.] {
+        for visible in [false, true] {
+            let mut app = App::default();
+            let notes = if visible {
+                vec![Toast::new(1, "Saved")]
+            } else {
+                vec![]
+            };
+            let ui: Element<App> = zstack![
+                contextual(&app),
+                toaster(&notes)
+                    .key("notifications")
+                    .on_dismiss(|_: &mut App, _| {}),
+            ]
+            .align(Align::Stretch)
+            .into();
+            let (mut runtime, mut handlers) = mount(ui, scale);
+            let [x, y] = point(&runtime, "document");
+            assert!(
+                runtime
+                    .context_menu_at(x, y, &mut handlers, &mut app)
+                    .unwrap()
+                    .activated
+            );
+            assert!(app.context);
+            assert_eq!(app.clicks, 0);
+            assert_eq!(app.point, [x / scale, y / scale]);
+        }
+    }
+}
+
+#[test]
+fn context_targets_can_opt_into_scroll_passthrough_without_losing_right_clicks() {
+    let mut app = App::default();
+    let ui = contextual(&app).scroll_passthrough(true);
+    let (mut runtime, mut handlers) = mount(ui, 1.);
+    let [x, y] = point(&runtime, "document");
+    assert!(
+        runtime
+            .context_menu_at(x, y, &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(app.context);
+}
