@@ -43,7 +43,7 @@ identified app bundle; use the full launcher rather than adding a flag to
 [notification testing](../docs/app-services.md#testing-catalog-notifications).
 Other platforms report the unavailable notification adapter explicitly.
 The launcher takes only `--check` or `--help`; it does not forward the direct
-example flags below. It requires Cargo and Python 3 (plus macOS command-line
+example flags above. It requires Cargo and Python 3 (plus macOS command-line
 tools for bundling), and exists only in the repository, not the published crate.
 
 ## Apps
