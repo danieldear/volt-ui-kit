@@ -85,19 +85,32 @@ macOS, the command-line tools. Individual library features remain optional.
 ```sh
 git clone https://github.com/danieldear/volt-ui-kit
 cd volt-ui-kit
-cargo run --release --locked --features native-gpu,native-desktop --example catalog
+./scripts/run_catalog.sh
 ```
 
-The Catalog showcases components with live previews, source code and API
-tables. Pass arguments after `--`, for example:
+The launcher enables all demo capabilities and handles the identified macOS
+app bundle required by local notifications. It does not request permission or
+send a notification automatically. Run it from a **repository checkout**, not
+an extracted crates.io source package; source-maintenance scripts are not
+shipped in the crate.
+
+For targeted component development, direct Cargo launches accept example
+arguments after `--`:
 
 ```sh
 cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
 ```
 
+Direct launches do not package an app: the command above supports GPU drawing,
+menus and file panels, but not the local-notification demo. Adding
+`native-notifications` alone is not enough on macOS; use the launcher for that
+end-to-end test. For software-only component testing, use `--features native`.
+See [examples](examples/README.md#catalog-launch-modes) for the launch modes.
+
 ## Use it
 
-The crate is not on crates.io yet; depend on it from Git:
+Version **0.5.0** is prepared in this repository but is **not published on
+crates.io**. Until publication, depend on it from Git:
 
 ```toml
 [dependencies]
@@ -130,7 +143,7 @@ Rust 1.89 or newer.
 
 ## Status
 
-Version 0.4, pre-release. macOS is the primary platform and is tested on Apple
+Version 0.5.0, pre-1.0. macOS is the primary platform and is tested on Apple
 silicon. Windows and Linux have local cross-compilation checks and a configured
 headless CI matrix; their native runtime has not been validated yet. Check
 [Actions](https://github.com/danieldear/volt-ui-kit/actions) for actual remote
@@ -174,3 +187,10 @@ application code or native dependencies are free of vulnerabilities.
 ## License
 
 MIT. See [LICENSE](LICENSE) and [third-party notes](docs/third-party.md).
+
+## Publishing
+
+A merged PR, package version or Git tag does not upload a crate. Maintainers:
+follow the [crates.io publication checklist](docs/public-release.md#publish-the-crate)
+for package verification, account prerequisites and the separately approved
+`cargo publish` operation. `cargo push` is not a Cargo command.

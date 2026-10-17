@@ -13,7 +13,9 @@ be published, and rejects palette names and settings the kit doesn't have.
 
 The landing page shows only the Catalog. Every image is a headless render by
 Volt, not a screen capture, and is labelled that way. Build the Catalog once,
-then render from the repository root:
+then render from the repository root. These direct commands are deliberately
+headless snapshot/export paths, not replacements for the full interactive
+`./scripts/run_catalog.sh` launcher. No OS permission is requested by rendering:
 
 ```sh
 cargo build --release --locked --features native-gpu,native-desktop --example catalog

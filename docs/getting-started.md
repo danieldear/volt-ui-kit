@@ -7,7 +7,8 @@ your Rust closures when something happens.
 
 ## Add the dependency
 
-The crate is not on crates.io yet. Use a Git or path dependency:
+Version **0.5.0** is prepared in the repository but is not yet on crates.io.
+Use a Git or path dependency until it is published:
 
 ```toml
 [dependencies]
@@ -108,16 +109,34 @@ state and window position across restarts.
 
 ## Explore the components
 
-The Catalog example shows every component with live previews, source code,
-API tables, themes and a working dashboard:
+The Catalog example shows components with live previews, source code,
+API tables, themes and a working dashboard. From a repository checkout:
 
 ```sh
-cargo run --release --locked --features native-gpu,native-desktop --example catalog
+./scripts/run_catalog.sh
 ```
 
-Useful flags: `--page dashboard`, `--theme light|dark`, `--accent violet`.
+This is the recommended full-demo path: it enables GPU, desktop integrations
+and notifications, builds and signs an identified macOS `.app`, registers it
+before launch, and opens it. Notification permission is requested only when
+you click its button. The launcher requires Cargo and Python 3; macOS also
+needs the command-line tools. Use `--check` to build/verify without opening.
+The script is a repository tool, not part of the crates.io package.
+
+For targeted component development or snapshot flags, launch directly:
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
+```
+
+That direct command does **not** package the app or enable the notification
+adapter; use the full launcher for the notification demo. `--features native`
+is the software-only alternative. See the [launch-mode table](../examples/README.md#catalog-launch-modes).
+
+Useful direct flags: `--page dashboard`, `--theme light|dark`, `--accent violet`.
 Page names are the sidebar titles in lowercase with hyphens, for example
-`--page theme-editor` or `--page form-inputs`.
+`--page theme-editor` or `--page form-inputs`. These flags are not accepted by
+the launcher script, which intentionally only accepts `--check` and `--help`.
 
 ## Platform support
 
