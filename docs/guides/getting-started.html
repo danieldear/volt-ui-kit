@@ -4,7 +4,8 @@ your application state to a tree of elements; the kit lays it out, draws it on
 the GPU (or the CPU as a fallback), routes input and accessibility, and calls
 your Rust closures when something happens.</p>
 <h2 id="add-the-dependency">Add the dependency</h2>
-<p>The crate is not on crates.io yet. Use a Git or path dependency:</p>
+<p>Version <strong>0.5.0</strong> is prepared in the repository but is not yet on crates.io.
+Use a Git or path dependency until it is published:</p>
 <div class="reference-code"><div>toml<span>Source</span></div><pre tabindex="0" role="region" aria-label="toml"><code>[dependencies]
 volt-ui-kit = { git = &quot;https://github.com/danieldear/volt-ui-kit&quot;, features = [&quot;native-gpu&quot;] }</code></pre></div><p>Rust 1.89 or newer is required. Pin a reviewed Git revision using <code>rev</code> and
 commit your app&#39;s <code>Cargo.lock</code> for reproducibility; a moving default branch is
@@ -69,11 +70,22 @@ after a successful build; a failed build leaves the running app alone. Apps that
 call <a href="../guides/app-services.html#the-development-loop"><code>Application::dev_state</code></a> keep their
 state and window position across restarts.</p>
 <h2 id="explore-the-components">Explore the components</h2>
-<p>The Catalog example shows every component with live previews, source code,
-API tables, themes and a working dashboard:</p>
-<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo run --release --locked --features native-gpu,native-desktop --example catalog</code></pre></div><p>Useful flags: <code>--page dashboard</code>, <code>--theme light|dark</code>, <code>--accent violet</code>.
+<p>The Catalog example shows components with live previews, source code,
+API tables, themes and a working dashboard. From a repository checkout:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>./scripts/run_catalog.sh</code></pre></div><p>This is the recommended full-demo path: it enables GPU, desktop integrations
+and notifications, builds and signs an identified macOS <code>.app</code>, registers it
+before launch, and opens it. Notification permission is requested only when
+you click its button. The launcher requires Cargo and Python 3; macOS also
+needs the command-line tools. Use <code>--check</code> to build/verify without opening.
+The script is a repository tool, not part of the crates.io package.</p>
+<p>For targeted component development or snapshot flags, launch directly:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet</code></pre></div><p>That direct command does <strong>not</strong> package the app or enable the notification
+adapter; use the full launcher for the notification demo. <code>--features native</code>
+is the software-only alternative. See the <a href="https://github.com/danieldear/volt-ui-kit/blob/main/examples/README.md#catalog-launch-modes">launch-mode table</a>.</p>
+<p>Useful direct flags: <code>--page dashboard</code>, <code>--theme light|dark</code>, <code>--accent violet</code>.
 Page names are the sidebar titles in lowercase with hyphens, for example
-<code>--page theme-editor</code> or <code>--page form-inputs</code>.</p>
+<code>--page theme-editor</code> or <code>--page form-inputs</code>. These flags are not accepted by
+the launcher script, which intentionally only accepts <code>--check</code> and <code>--help</code>.</p>
 <h2 id="platform-support">Platform support</h2>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Platform</th><th scope="col">Status</th></tr></thead><tbody><tr><td>macOS 11+</td><td>Primary platform; tested on Apple silicon with Metal.</td></tr><tr><td>Windows</td><td>Cross-compilation checked; headless CI configured (DX12). Native runtime not yet validated.</td></tr><tr><td>Linux</td><td>Cross-compilation checked; headless CI configured (Vulkan, X11/Wayland). Native runtime not yet validated.</td></tr><tr><td>WebAssembly</td><td>The core (<code>rust-ui</code>) compiles for <code>wasm32-unknown-unknown</code>; there is no web host yet.</td></tr></tbody></table></div><h2 id="next">Next</h2>
 <ul>

@@ -1,6 +1,7 @@
 # Examples
 
-Run any example with `cargo run --release --features <features> --example <name>`.
+From a repository checkout, launch the complete Catalog with `./scripts/run_catalog.sh`.
+Run individual examples with `cargo run --release --locked --features <features> --example <name>`.
 `native-gpu` draws with Vello on the GPU; `native` draws on the CPU.
 
 ## Start here
@@ -19,9 +20,31 @@ Run any example with `cargo run --release --features <features> --example <name>
 | `rust_transparent` | A see-through window (needs `native-gpu`) |
 
 ```sh
-cargo run --release --features native-gpu,native-desktop --example catalog
-cargo run --features native --example rust_counter
+./scripts/run_catalog.sh
+cargo run --locked --features native --example rust_counter
 ```
+
+## Catalog launch modes
+
+| Mode | Command / purpose |
+| --- | --- |
+| Full Catalog (recommended) | `./scripts/run_catalog.sh`: GPU, desktop services and local notifications; builds, signs and registers an identified macOS `.app` before opening it. |
+| Build/verify only | `./scripts/run_catalog.sh --check`: no UI launch, permission prompt or notification. |
+| Targeted component work | Direct `cargo run` below: accepts Catalog flags, but does not package the notification demo. |
+| Software component work | Replace the features below with `native`; no GPU drawing, native menus/tray or notification adapter. |
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
+```
+
+On macOS, local notifications need both `native-notifications` **and** a running
+identified app bundle; use the full launcher rather than adding a flag to
+`cargo run`. Permission remains an explicit button click. See
+[notification testing](../docs/app-services.md#testing-catalog-notifications).
+Other platforms report the unavailable notification adapter explicitly.
+The launcher takes only `--check` or `--help`; it does not forward the direct
+example flags below. It requires Cargo and Python 3 (plus macOS command-line
+tools for bundling), and exists only in the repository, not the published crate.
 
 ## Apps
 

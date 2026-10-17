@@ -13,6 +13,29 @@ import configure_github
 
 
 class SiteTests(unittest.TestCase):
+    def test_release_docs_agree_on_full_catalog_and_publication(self):
+        root = build_docs_site.ROOT
+        for name in ("README.md", "examples/README.md", "docs/getting-started.md",
+                     "docs/README.md", "CONTRIBUTING.md"):
+            with self.subTest(document=name):
+                self.assertIn("./scripts/run_catalog.sh", (root / name).read_text())
+        readme = (root / "README.md").read_text()
+        version = re.search(r'^version = "([^"]+)"',
+                            (root / "Cargo.toml").read_text(), re.M).group(1)
+        self.assertIn(f"Version {version}, pre-1.0", readme)
+        checklist = (root / "docs/public-release.md").read_text()
+        self.assertIn("## Publish the crate", checklist)
+        self.assertIn("cargo publish --dry-run --locked --all-features", checklist)
+        self.assertIn("does not reserve the name", checklist)
+        self.assertNotIn("Private; unchanged by this work", checklist)
+        self.assertNotIn("portal can follow independently", checklist)
+        modes = (root / "examples/README.md").read_text()
+        self.assertIn("## Catalog launch modes", modes)
+        self.assertIn("--check", modes)
+        guide = (root / "docs/guides/getting-started.html").read_text()
+        self.assertIn("./scripts/run_catalog.sh", guide)
+        self.assertIn("not yet on crates.io", guide)
+
     def test_real_site_is_valid(self):
         self.assertEqual(inspect_site(build_docs_site.ROOT), [])
 

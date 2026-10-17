@@ -8,7 +8,8 @@
   selectable and copyable read-only text, and syntax colouring in the editor.
 - **API documentation** for every public item, written once the APIs above
   settle.
-- **Public repository, CI and a project website.**
+- **Publication readiness.** Maintain the public repository, protected CI and
+  generated documentation; publish to crates.io only after release approval.
 
 ## Next
 
