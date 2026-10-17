@@ -3,131 +3,237 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A native desktop UI toolkit for Rust. Compose expressive interfaces with typed callbacks, GPU drawing, accessible components and your own design language.">
+  <meta name="description" content="Volt UI Kit: native desktop interfaces in plain Rust. Declare your interface as a function of your state; Volt lays it out and draws it with Vello on the GPU or in software.">
   <meta name="color-scheme" content="light dark">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
-  <meta property="og:title" content="Volt UI Kit — Build native interfaces in Rust.">
-  <meta property="og:description" content="A Rust UI toolkit for expressive, GPU-rendered desktop applications.">
   <meta property="og:type" content="website">
-  <title>Volt UI Kit — Build native interfaces in Rust.</title>
+  <meta property="og:site_name" content="Volt UI Kit">
+  <meta property="og:url" content="https://danieldear.github.io/volt-ui-kit/">
+  <meta property="og:title" content="Volt UI Kit: native interfaces, written in Rust">
+  <meta property="og:description" content="Declare your interface as a function of your state. Volt lays it out and draws it with Vello on the GPU or in software.">
+  <meta property="og:image" content="https://danieldear.github.io/volt-ui-kit/images/og-card.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="The Volt wordmark above the line: native interfaces, written in Rust">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>Volt UI Kit: native interfaces, written in Rust</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-  <link rel="preload" href="assets/fonts/bricolage-grotesque.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="assets/site.css">
 </head>
-<body>
-  <svg class="icon-library" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
-    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="m13.5 2-8 12H12l-1.5 8 8-12H12z" fill="currentColor"/></symbol>
-    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
-    <symbol id="i-external" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
-    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16"/></symbol>
-    <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M9 9v11"/></symbol>
-    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h3m6 0h7M4 17h7m6 0h3"/><circle cx="10" cy="7" r="3"/><circle cx="14" cy="17" r="3"/></symbol>
-    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m3 8 9-5 9 5-9 5zm0 5 9 5 9-5M3 18l9 5 9-5"/></symbol>
-    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
-    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m5 6 6 6-6 6m9 0h5"/></symbol>
-    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6v15M3 4c4-1 6 0 9 2 3-2 5-3 9-2v15c-4-1-6 0-9 2-3-2-5-3-9-2z"/></symbol>
-    <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M6 6.5h.01M9 6.5h.01"/></symbol>
-    <symbol id="i-command" viewBox="0 0 24 24"><path d="M8 8H5a3 3 0 1 1 3-3v14a3 3 0 1 1-3-3h14a3 3 0 1 1-3 3V5a3 3 0 1 1 3 3H8z"/></symbol>
-    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
-    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></symbol>
-  </svg>
+<body class="landing">
   <a class="skip" href="#main">Skip to content</a>
-  <header class="site-header shell">
-    <a class="brand" href="./" aria-label="Volt UI Kit home"><span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg></span><span class="wordmark">Volt<span class="brand-suffix">UI Kit</span></span></a>
-    <nav aria-label="Main navigation"><a href="reference/index.html">Components</a><a href="guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit" class="github-link">GitHub <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></nav>
-    <span class="release-tag">0.4 <span>Pre-1.0</span></span>
+  <svg class="icon-library" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <!-- The wordmark and mark are the Catalog's own outlines (examples/catalog/art.rs). -->
+    <symbol id="volt-wordmark" viewBox="0 0 556 100"><path d="M0 0h28l34 74L96 0h28L76 100H48zM190 0h56a50 50 0 0 1 0 100h-56a50 50 0 0 1 0-100zm0 25a25 25 0 0 0 0 50h56a25 25 0 0 0 0-50zM312 0h25v76h79v24H312zM432 0h124v24h-49.5v76h-25V24H432z" fill="currentColor" fill-rule="evenodd"/></symbol>
+    <symbol id="volt-mark" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="currentColor"/><path d="M13.5 4 7 13.5h4.5l-1 6.5 6.5-9.5h-4.5z" fill="#fff"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9.5 2.5V6m5-3.5V6m-5 12v3.5m5-3.5v3.5M2.5 9.5H6m-3.5 5H6m12-5h3.5m-3.5 5h3.5"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2"/><path d="M5 9h14M12 9v5.5M8.5 21l3.5-6.5 3.5 6.5"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.3 0 2-.8 2-1.8 0-.6-.3-1-.6-1.4-.3-.4-.6-.8-.6-1.4 0-1.1.9-2 2-2H17a4 4 0 0 0 4-4C21 6.3 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1.2"/><circle cx="10.5" cy="7.5" r="1.2"/><circle cx="15.5" cy="8" r="1.2"/></symbol>
+    <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M6 6.5h.01M9 6.5h.01"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="m13.5 2-8 12H12l-1.5 8 8-12H12z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="./" aria-label="Volt UI Kit home"><svg class="brand-mark" aria-hidden="true"><use href="#volt-mark"/></svg><span class="brand-name">Volt UI Kit</span><span class="brand-version">0.5</span></a>
+      <nav class="topnav" aria-label="Main navigation">
+        <a href="reference/index.html">Components</a>
+        <a href="guides/getting-started.html">Guides</a>
+        <a class="topnav-wide" href="https://github.com/danieldear/volt-ui-kit/tree/main/examples">Examples <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
+        <a href="https://github.com/danieldear/volt-ui-kit">GitHub <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
+      </nav>
+      <a class="cta cta-filled cta-small" href="guides/getting-started.html">Get started</a>
+    </div>
   </header>
+
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-copy shell">
-        <p class="hero-note"><span class="tiny-bolt" aria-hidden="true">ϟ</span> A native UI toolkit for Rust</p>
-        <h1 id="hero-title">Build native interfaces<br>in Rust.</h1>
-        <p class="hero-lead">A Rust UI toolkit for expressive, GPU-rendered desktop applications.</p>
-        <div class="hero-actions"><a class="button button-primary" href="guides/getting-started.html">Start building <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a><a class="button button-quiet" href="reference/index.html">Explore components <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></a></div>
-        <p class="hero-meta">Plain Rust <span aria-hidden="true">/</span> MIT licensed <span aria-hidden="true">/</span> No webview required</p>
+      <div class="orbit orbit-outer" aria-hidden="true"></div>
+      <div class="orbit orbit-inner" aria-hidden="true"></div>
+      <div class="fragments" aria-hidden="true">
+        <div class="fragment fragment-build"><p><span>Cargo build</span><span>72%</span></p><span class="fragment-bar"></span></div>
+        <div class="fragment fragment-accent"><p><span>Accent</span><span>Six presets</span></p><span class="fragment-dots"><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
+        <div class="fragment fragment-status"><span class="fragment-dot"></span>Native window, no webview</div>
       </div>
-      <div class="interface-stage shell">
-        <figure class="native-window">
-          <img src="images/dashboard-dark.png" alt="Actual Volt Catalog native dashboard: translucent navigation, analytics, charts and dark themed components" width="2880" height="1800" fetchpriority="high">
-          <figcaption><span class="native-dot" aria-hidden="true"></span> Actual native output <span class="caption-divider">/</span> Catalog dashboard</figcaption>
-        </figure>
-        <div class="floating-palette" aria-hidden="true">
-          <div class="mini-topline"><span class="mini-icon"><svg class="icon"><use href="#i-sliders"/></svg></span><span>Make it yours</span><span class="mini-menu">···</span></div>
-          <div class="palette-label">Accent color <span>Orchid</span></div>
-          <div class="color-dots"><i class="dot-orchid chosen"></i><i class="dot-blue"></i><i class="dot-rose"></i><i class="dot-green"></i><i class="dot-amber"></i><i class="dot-ink"></i></div>
-          <div class="mini-divider"></div><div class="mini-setting"><span>Soft corners</span><span class="mini-toggle"></span></div>
-          <div class="mini-setting"><span>Native drawing</span><span class="mini-check"><svg class="icon"><use href="#i-check"/></svg></span></div>
-        </div>
-        <div class="floating-code" aria-hidden="true"><div class="mini-code-title"><svg class="icon"><use href="#i-code"/></svg><span>Looks like Rust.<br>Because it is.</span></div><pre><code><span class="syntax-purple">vstack!</span>[
-  text(<span class="syntax-lime">"Hello, native."</span>),
-  button(<span class="syntax-lime">"Let's build"</span>)
-    .on_click(|app| { ... }),
-]
-.padding(<span class="syntax-peach">24.</span>, Edge::All)</code></pre><div class="code-footnote"><span class="code-status-dot"></span> Your state. Your callbacks.</div></div>
-        <div class="stage-label" aria-hidden="true"><svg class="icon"><use href="#i-layers"/></svg> Small pieces.<br>Endless possibilities.</div>
-      </div>
-      <p class="stage-caption shell">Native Catalog capture, surrounded by illustrative component studies.</p>
-    </section>
-    <section class="foundations shell" aria-label="Toolkit foundations">
-      <div><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><h2>Declare it in Rust.</h2><p>Ordinary functions and typed closures.<br>No new language between you and your UI.</p></div>
-      <div><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg><h2>Draw it natively.</h2><p>Vello on wgpu, with a software fallback.<br>Native pixels, not a browser in a box.</p></div>
-      <div><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><h2>Keep your own style.</h2><p>Color, type, spacing, corners and motion.<br>A toolkit, not a prescribed look.</p></div>
-    </section>
-    <section id="components" class="component-section shell" aria-labelledby="component-title">
-      <div class="section-intro"><p class="section-kicker">The building blocks</p><h2 id="component-title">The details<br>make the difference.</h2><p>Quiet borders. Thoughtful spacing. Just the right corner. Build an interface that feels considered, all the way down.</p><p>Buttons and fields, menus and dialogs, tables and trees. Compose them your way, with real Rust callbacks behind every interaction.</p><a class="inline-link" href="reference/index.html">Meet the components <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a><div class="component-tags"><span>Layout</span><span>Inputs</span><span>Navigation</span><span>Data</span><span>Effects</span></div></div>
-      <div class="workbench">
-        <div class="workbench-header"><span class="workbench-title"><svg class="icon" aria-hidden="true"><use href="#i-layout"/></svg> Component study</span><span class="web-label">Interactive HTML preview</span></div>
-        <fieldset class="palette-picker"><legend>Try a palette</legend><label><input class="sr-only" type="radio" name="palette" id="palette-orchid" checked aria-describedby="study-caption"><span class="swatch swatch-orchid" aria-hidden="true"></span>Orchid</label><label><input class="sr-only" type="radio" name="palette" id="palette-sage" aria-describedby="study-caption"><span class="swatch swatch-sage" aria-hidden="true"></span>Sage</label><label><input class="sr-only" type="radio" name="palette" id="palette-graphite" aria-describedby="study-caption"><span class="swatch swatch-graphite" aria-hidden="true"></span>Graphite</label></fieldset>
-        <div class="specimen-scene"><div class="specimen-card"><div class="specimen-heading"><span class="specimen-app-icon"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg></span><span class="status-badge"><span aria-hidden="true"></span>In progress</span></div><h3>A little more<br>you.</h3><p>Good interfaces don't all have to look the same.</p><div class="specimen-members" aria-label="Three fictional workspace members"><span>AD</span><span>MK</span><span>JL</span><small>A space for your next idea</small></div><details class="specimen-settings"><summary>Appearance settings <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg></summary><div class="settings-body"><label class="shadow-control" for="soft-shadow">Soft shadow <input type="checkbox" id="soft-shadow" checked></label><fieldset class="corner-picker"><legend>Corner style</legend><label><input type="radio" name="corners" id="corner-soft" checked><span>Soft</span></label><label><input type="radio" name="corners" id="corner-square"><span>Square</span></label></fieldset></div></details></div><div class="specimen-status" aria-hidden="true"><span class="success-icon"><svg class="icon"><use href="#i-check"/></svg></span><div>Made to fit your app.<small>Color is just the beginning.</small></div></div></div>
-        <p id="study-caption" class="study-caption">A web illustration of palettes and composition, not the native renderer. <a href="#start">Run the Catalog</a> to explore the Rust components.</p>
+      <div class="hero-copy">
+        <a class="cta cta-line cta-news" href="https://github.com/danieldear/volt-ui-kit/blob/main/CHANGELOG.md">What’s new in 0.5 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        <div class="hero-mark" aria-hidden="true"><svg class="wordmark"><use href="#volt-wordmark"/></svg><span class="hero-kit">UI Kit</span></div>
+        <h1 id="hero-title"><span class="sr-only">Volt UI Kit: </span><span class="h-sans">Native interfaces,</span> <span class="h-serif">written in Rust.</span></h1>
+        <p class="hero-lead">Declare your interface as a function of your state. <br>Volt lays it out, draws it on the GPU and handles input, text and accessibility.</p>
+        <div class="actions"><a class="cta cta-filled" href="guides/getting-started.html">Get started</a><a class="cta cta-line" href="reference/index.html">Browse components</a></div>
+        <p class="hero-meta"><span>Open source · MIT</span><span>macOS first</span><span>No webview</span></p>
       </div>
     </section>
-    <section id="declare" class="declaration-section" aria-labelledby="declare-title"><div class="shell declaration-layout">
-      <div class="code-panel"><div class="code-heading"><span><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg> counter.rs</span><span>Rust</span></div><pre tabindex="0" role="region" aria-label="Rust counter source"><code><span class="syntax-muted">// Your app state. No framework magic.</span>
-<span class="syntax-purple">use</span> volt_ui_kit::{native::Application, ui::prelude::*};
 
-#[derive(Default)]
-<span class="syntax-purple">struct</span> App { count: u32 }
+    <div class="motion-setting shell"><label><input type="checkbox" id="pause-motion"> Pause decorative motion</label></div>
+    <div class="ticker shell">
+      <div class="ticker-track">
+        <ul aria-label="What Volt is"><li>Declarative</li><li>GPU rendered</li><li>Accessible</li><li>Damage tracked</li><li>Themeable</li><li>Native menus</li><li>File panels</li><li>Notifications</li><li>Written in Rust</li><li>No webview</li></ul>
+        <ul aria-hidden="true"><li>Declarative</li><li>GPU rendered</li><li>Accessible</li><li>Damage tracked</li><li>Themeable</li><li>Native menus</li><li>File panels</li><li>Notifications</li><li>Written in Rust</li><li>No webview</li></ul>
+      </div>
+    </div>
 
-<span class="syntax-purple">fn</span> view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    <section class="screen shot shell" aria-labelledby="shot-title">
+      <div class="shot-head"><h2 id="shot-title" class="eyebrow">01 — The Catalog</h2><p>Every component in one native app. A headless render by Volt at 2×.</p></div>
+      <figure class="shot-frame">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="images/catalog/dashboard-dark-1440.webp 1440w, images/catalog/dashboard-dark.webp 2880w" sizes="(max-width: 1260px) calc(100vw - 40px), 1200px">
+          <source type="image/webp" srcset="images/catalog/dashboard-light-1440.webp 1440w, images/catalog/dashboard-light.webp 2880w" sizes="(max-width: 1260px) calc(100vw - 40px), 1200px">
+          <img src="images/catalog/dashboard-light.webp" alt="The Volt Catalog app on its Dashboard page: a sidebar of every component page, revenue and user figures with sparklines, a candlestick chart and a traffic-source donut" width="2880" height="1800" loading="lazy">
+        </picture>
+        <figcaption>Run it from a checkout of the repository: <code>./scripts/run_catalog.sh</code></figcaption>
+      </figure>
+    </section>
+
+    <ul class="numbers shell" aria-label="Volt in numbers">
+      <li><strong>37</strong> <span>component pages</span></li>
+      <li><strong>7</strong> <span>app patterns</span></li>
+      <li><strong>0</strong> <span>webviews, browsers or JavaScript</span></li>
+      <li><strong>100%</strong> <span>Rust, with one declarative API</span></li>
+    </ul>
+
+    <section class="screen shell" aria-labelledby="features-title">
+      <div class="opener">
+        <p class="eyebrow">02 — Why Volt</p>
+        <h2 id="features-title"><span class="h-line">Everything a desktop app</span> <span class="h-line h-serif">needs, built in.</span></h2>
+        <p class="lede">Layout, input, text, accessibility and rendering in one Rust crate.</p>
+      </div>
+      <ul class="features">
+        <li><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg></span><h3>Declarative</h3><p>Rebuild your view from state on every change. Stable keys keep input state, and damage tracking limits repaint work.</p></li>
+        <li><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-chip"/></svg></span><h3>GPU rendered</h3><p>Shapes and text drawn by Vello on Metal, Vulkan or DX12, with an automatic software fallback.</p></li>
+        <li><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-person"/></svg></span><h3>Accessible</h3><p>An AccessKit tree with roles, values and actions, plus keyboard focus for every control and reduced motion.</p></li>
+        <li><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-palette"/></svg></span><h3>Themeable</h3><p>Semantic colour roles, light and dark palettes and translucent tokens restyle every component at once.</p></li>
+        <li><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-window"/></svg></span><h3>Truly native</h3><p>Unified title bars, frosted materials, menus, a tray item, file panels and notifications on macOS.</p></li>
+        <li><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg></span><h3>Fast to start</h3><p><code>cargo volt new</code> scaffolds an app; <code>cargo volt dev</code> rebuilds and restarts it on save.</p></li>
+      </ul>
+    </section>
+
+    <section class="screen split shell" aria-labelledby="code-title">
+      <div class="split-copy">
+        <p class="eyebrow">03 — Declarative</p>
+        <h2 id="code-title"><span class="h-line">Your interface is</span> <span class="h-line">a function <span class="h-serif">of state.</span></span></h2>
+        <p class="lede">Write the view once. Change state in a callback, and Volt works out what to redraw.</p>
+        <ul class="checks">
+          <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Typed callbacks receive your state mutably</li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Stable keys keep focus, scroll and animation across rebuilds</li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>An optional JSON frontend, with behaviour still in Rust</li>
+        </ul>
+        <a class="text-link" href="guides/building-uis.html">Learn the model <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+      </div>
+      <figure class="code-card">
+        <div class="code-card-head"><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg>counter.rs</div>
+        <pre tabindex="0" aria-label="Counter view in Rust"><code><span class="syntax-key">struct</span> App { count: u32 }
+
+<span class="syntax-key">fn</span> view(app: &amp;App) -&gt; Element&lt;App&gt; {
     vstack![
-        text(format!(<span class="syntax-lime">"Count: {}"</span>, app.count))
-            .font_size(<span class="syntax-peach">24.</span>),
-        button(<span class="syntax-lime">"Add one"</span>)
-            .key(<span class="syntax-lime">"add"</span>)
+        text(format!(<span class="syntax-str">"Clicked {} times"</span>, app.count)),
+        button(<span class="syntax-str">"Click me"</span>)
+            .key(<span class="syntax-str">"increment"</span>)
             .variant(ButtonVariant::Primary)
-            .on_click(|app: &amp;mut App| app.count += <span class="syntax-peach">1</span>),
+            .on_click(|app: &amp;mut App| app.count += <span class="syntax-num">1</span>),
     ]
-    .padding(<span class="syntax-peach">24.</span>, Edge::All)
-    .gap(<span class="syntax-peach">12.</span>, Axis::Vertical)
+    .gap(<span class="syntax-num">12.</span>, Axis::Vertical)
     .into()
-}
+}</code></pre>
+        <div class="code-preview">
+          <picture class="accent-shot is-violet"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-violet-dark.webp"><img src="images/theming/counter-violet-light.webp" alt="The counter drawn by Volt: the text Clicked 0 times above a full-width Click me button" width="1449" height="383" loading="lazy"></picture>
+          <picture class="accent-shot is-zinc"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-zinc-dark.webp"><img src="images/theming/counter-zinc-light.webp" alt="The counter drawn by Volt with the Zinc accent" width="1449" height="383" loading="lazy"></picture>
+          <picture class="accent-shot is-blue"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-blue-dark.webp"><img src="images/theming/counter-blue-light.webp" alt="The counter drawn by Volt with the Blue accent" width="1449" height="383" loading="lazy"></picture>
+          <picture class="accent-shot is-rose"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-rose-dark.webp"><img src="images/theming/counter-rose-light.webp" alt="The counter drawn by Volt with the Rose accent" width="1449" height="383" loading="lazy"></picture>
+          <picture class="accent-shot is-green"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-green-dark.webp"><img src="images/theming/counter-green-light.webp" alt="The counter drawn by Volt with the Green accent" width="1449" height="383" loading="lazy"></picture>
+          <picture class="accent-shot is-orange"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-orange-dark.webp"><img src="images/theming/counter-orange-light.webp" alt="The counter drawn by Volt with the Orange accent" width="1449" height="383" loading="lazy"></picture>
+        </div>
+        <figcaption>The Catalog’s own counter, drawn by Volt (headless render at 3×).</figcaption>
+      </figure>
+    </section>
 
-<span class="syntax-purple">fn</span> main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-    Application::new(<span class="syntax-lime">"Counter"</span>, App::default(), view).run()
-}</code></pre><div class="code-panel-footer"><span class="code-status-dot" aria-hidden="true"></span> Layout, drawing and input handled. State stays yours.</div></div>
-      <div class="section-intro"><p class="section-kicker">Less ceremony. More making.</p><h2 id="declare-title">A view is<br>just a function.</h2><p>Your state goes in. A tree of elements comes out. When something happens, a Rust closure changes your state and the view is recomposed.</p><p>Use the tools you already know: functions, types, conditionals, loops and the compiler.</p><ul class="declaration-points"><li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg> Typed callbacks over your own app state</li><li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg> Stable keys for focus and composition</li><li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg> No webview needed for native drawing</li></ul><a class="inline-link" href="guides/building-uis.html">Learn the model <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
-    </div></section>
-    <section id="catalog" class="catalog-section shell" aria-labelledby="catalog-title"><div class="catalog-heading"><div><p class="section-kicker">The native Catalog</p><h2 id="catalog-title">Not just a pretty example.<br>A place to try everything.</h2></div><p>Explore components, read their source, and find your app's look. This is the toolkit running as a native Rust application.</p></div><figure class="catalog-shot"><img src="images/theme-editor-light.png" alt="Actual native Volt Catalog theme editor, showing semantic colors, appearance controls and live component previews" width="2880" height="1800" loading="lazy"><figcaption><span>Theme editor <span class="caption-divider">/</span> Light palette <span class="caption-divider">/</span> Native capture</span><a href="https://github.com/danieldear/volt-ui-kit/tree/main/examples">Browse the examples <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a></figcaption></figure><div class="catalog-capabilities"><span><svg class="icon" aria-hidden="true"><use href="#i-window"/></svg> Window chrome &amp; blur</span><span><svg class="icon" aria-hidden="true"><use href="#i-command"/></svg> Keyboard &amp; accessibility</span><span><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg> Semantic themes</span><span><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg> GPU &amp; software drawing</span></div></section>
-    <section id="start" class="start-section shell" aria-labelledby="start-title"><div class="section-intro"><p class="section-kicker">Take it for a spin</p><h2 id="start-title">Your first window<br>starts here.</h2><p>Clone the repo and run the Catalog. Find a component you like, inspect its declaration, and make something of your own.</p><a class="button button-primary" href="guides/getting-started.html">Read the quick start <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a><p class="requirement">Rust 1.89+ required. Not yet on crates.io.</p></div><div class="terminal"><div class="terminal-header"><svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg> Run the Catalog <span>Terminal</span></div><pre tabindex="0" role="region" aria-label="Catalog terminal commands"><code><span class="terminal-prompt" aria-hidden="true">$ </span>git clone https://github.com/danieldear/volt-ui-kit
-<span class="terminal-prompt" aria-hidden="true">$ </span>cd volt-ui-kit
-<span class="terminal-prompt" aria-hidden="true">$ </span>cargo run --release --locked \
-    --features native-gpu,native-desktop \
-    --example catalog</code></pre><div class="terminal-note"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg><p>Prefer your own app? Start with the <a href="guides/getting-started.html#start-from-a-template">project templates</a>. Pin a reviewed Git revision for reproducible builds.</p></div></div></section>
-    <section id="guides" class="guides-section shell" aria-labelledby="guides-title"><div class="guides-heading"><h2 id="guides-title">A little direction.<br>A lot of possibility.</h2><p>From your first stack to the finer details.<br>Source-backed guides, right here in the docs.</p></div><div class="guide-list">
-      <a href="guides/getting-started.html"><span class="guide-icon guide-lilac"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg></span><div class="guide-copy"><h3>Getting started</h3><p>Features, a first window and app templates.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-      <a href="guides/building-uis.html"><span class="guide-icon guide-blue"><svg class="icon" aria-hidden="true"><use href="#i-layout"/></svg></span><div class="guide-copy"><h3>Building interfaces</h3><p>State, callbacks, layout and responsive views.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-      <a href="reference/index.html"><span class="guide-icon guide-peach"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg></span><div class="guide-copy"><h3>Components</h3><p>Controls, navigation, data views and charts.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-      <a href="guides/styling-and-themes.html"><span class="guide-icon guide-green"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg></span><div class="guide-copy"><h3>Styling and themes</h3><p>Type, color, effects, icons and motion.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-      <a href="guides/windows-and-rendering.html"><span class="guide-icon guide-blue"><svg class="icon" aria-hidden="true"><use href="#i-window"/></svg></span><div class="guide-copy"><h3>Windows and rendering</h3><p>GPU drawing, chrome, transparency and blur.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-      <a href="guides/app-services.html"><span class="guide-icon guide-lilac"><svg class="icon" aria-hidden="true"><use href="#i-command"/></svg></span><div class="guide-copy"><h3>Application services</h3><p>Commands, files, menus and packaging.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-      <a href="guides/json-ui.html"><span class="guide-icon guide-green"><svg class="icon" aria-hidden="true"><use href="#i-code"/></svg></span><div class="guide-copy"><h3>Optional JSON frontend</h3><p>Data-only declarations. Rust-owned behavior.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-      <a href="guides/architecture.html"><span class="guide-icon guide-peach"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg></span><div class="guide-copy"><h3>Under the hood</h3><p>Architecture, input and resource boundaries.</p></div><svg class="icon guide-arrow" aria-hidden="true"><use href="#i-external"/></svg></a>
-    </div></section>
-    <section class="platform-section shell" aria-labelledby="platform-title"><div><h2 id="platform-title">Built in the open.<br>Still taking shape.</h2><p>Pre-1.0, with room to grow. macOS is the primary native platform; APIs can change before 1.0.</p><a class="inline-link" href="https://github.com/danieldear/volt-ui-kit/blob/main/ROADMAP.md">Follow the roadmap <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div><dl class="platform-list"><div><dt>macOS</dt><dd><span class="platform-state primary-state">Primary</span>Apple silicon / Metal tested</dd></div><div><dt>Windows &amp; Linux</dt><dd><span class="platform-state">In progress</span>Cross-compilation checked; native runtime acceptance pending</dd></div><div><dt>WebAssembly</dt><dd><span class="platform-state">Core only</span>No browser host yet</dd></div><div><dt>iOS &amp; Android</dt><dd><span class="platform-state">Not yet</span>No mobile host</dd></div></dl></section>
-    <section class="closing shell"><svg class="closing-bolt" aria-hidden="true"><use href="#i-bolt"/></svg><h2>Start with a window.<br>Make it your own.</h2><a class="button button-primary" href="guides/getting-started.html">Build with Volt <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a><p>Open source. MIT licensed. Yours to build on.</p></section>
+    <section class="screen split shell" aria-labelledby="theming-title">
+      <div class="split-copy">
+        <p class="eyebrow">04 — Theming</p>
+        <h2 id="theming-title"><span class="h-line">One palette</span> <span class="h-line">restyles <span class="h-serif">everything.</span></span></h2>
+        <p class="lede">Components draw with semantic roles, never literal colours. Pick an accent: this page follows, and the card and the counter switch to Volt’s own renders in that preset.</p>
+        <fieldset class="swatches">
+          <legend class="sr-only">Accent preset</legend>
+          <label class="swatch swatch-zinc"><input type="radio" name="accent" id="accent-zinc"><span class="swatch-dot"></span><span class="sr-only">Zinc</span></label>
+          <label class="swatch swatch-blue"><input type="radio" name="accent" id="accent-blue"><span class="swatch-dot"></span><span class="sr-only">Blue</span></label>
+          <label class="swatch swatch-violet"><input type="radio" name="accent" id="accent-violet" checked><span class="swatch-dot"></span><span class="sr-only">Violet</span></label>
+          <label class="swatch swatch-rose"><input type="radio" name="accent" id="accent-rose"><span class="swatch-dot"></span><span class="sr-only">Rose</span></label>
+          <label class="swatch swatch-green"><input type="radio" name="accent" id="accent-green"><span class="swatch-dot"></span><span class="sr-only">Green</span></label>
+          <label class="swatch swatch-orange"><input type="radio" name="accent" id="accent-orange"><span class="swatch-dot"></span><span class="sr-only">Orange</span></label>
+        </fieldset>
+        <p class="swatch-note">Light or dark follows your system setting. <a class="text-link" href="guides/styling-and-themes.html">Theming guide <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+      </div>
+      <figure class="plan">
+        <picture class="accent-shot is-violet"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-violet-dark.webp"><img src="images/theming/card-violet-light.webp" alt="A Pro plan card drawn by Volt with the Violet accent: a price, a usage bar, a checked checkbox and Upgrade and Compare buttons" width="1020" height="1160" loading="lazy"></picture>
+        <picture class="accent-shot is-zinc"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-zinc-dark.webp"><img src="images/theming/card-zinc-light.webp" alt="The same Pro plan card with the Zinc accent" width="1020" height="1160" loading="lazy"></picture>
+        <picture class="accent-shot is-blue"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-blue-dark.webp"><img src="images/theming/card-blue-light.webp" alt="The same Pro plan card with the Blue accent" width="1020" height="1160" loading="lazy"></picture>
+        <picture class="accent-shot is-rose"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-rose-dark.webp"><img src="images/theming/card-rose-light.webp" alt="The same Pro plan card with the Rose accent" width="1020" height="1160" loading="lazy"></picture>
+        <picture class="accent-shot is-green"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-green-dark.webp"><img src="images/theming/card-green-light.webp" alt="The same Pro plan card with the Green accent" width="1020" height="1160" loading="lazy"></picture>
+        <picture class="accent-shot is-orange"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-orange-dark.webp"><img src="images/theming/card-orange-light.webp" alt="The same Pro plan card with the Orange accent" width="1020" height="1160" loading="lazy"></picture>
+        <figcaption>The Catalog’s plan card in the chosen preset (headless render at 3×).</figcaption>
+      </figure>
+    </section>
+
+    <section class="screen shell" aria-labelledby="index-title">
+      <div class="opener">
+        <p class="eyebrow">05 — Components</p>
+        <h2 id="index-title"><span class="h-line">Every component,</span> <span class="h-line h-serif">documented.</span></h2>
+        <p class="lede">50 reference pages. Each component page has rendered previews, the Rust that produced them and API notes.</p>
+      </div>
+      <ul class="index-grid">
+        <li><a href="reference/button.html"><span class="index-title">Button <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Triggers an action. Six variants, three sizes and a disclosure style.</span></a></li>
+        <li><a href="reference/text-field.html"><span class="index-title">Text field <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Single-line text entry with placeholder, password and read-only modes.</span></a></li>
+        <li><a href="reference/select.html"><span class="index-title">Select <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Choose one option from a dropdown list.</span></a></li>
+        <li><a href="reference/date-time.html"><span class="index-title">Date &amp; time <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Calendars, date and range pickers, and a time picker.</span></a></li>
+        <li><a href="reference/dialog.html"><span class="index-title">Dialog <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">A modal card that captures focus until dismissed.</span></a></li>
+        <li><a href="reference/menu.html"><span class="index-title">Menu <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">A list of actions opened from a trigger.</span></a></li>
+        <li><a href="reference/table.html"><span class="index-title">Table <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Rows and columns with sorting and selection.</span></a></li>
+        <li><a href="reference/tree-view.html"><span class="index-title">Tree view <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Hierarchical items that expand and collapse.</span></a></li>
+        <li><a href="reference/virtual-list.html"><span class="index-title">Virtual list <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Thousands of rows; only the visible window is built.</span></a></li>
+        <li><a href="reference/split-pane.html"><span class="index-title">Split pane <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Two panes divided by a draggable handle.</span></a></li>
+        <li><a href="reference/charts.html"><span class="index-title">Charts <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Sparklines, bar charts and line charts drawn with vector paths.</span></a></li>
+        <li><a href="reference/toast.html"><span class="index-title">Toast <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">A brief notification that confirms an action.</span></a></li>
+      </ul>
+      <div class="actions actions-start"><a class="cta cta-line" href="reference/index.html">Browse all 50 pages</a><a class="text-link" href="reference/index.html#group-patterns">See the app patterns <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+    </section>
+
+    <section class="screen shell" aria-labelledby="status-title">
+      <div class="opener">
+        <p class="eyebrow">06 — Status</p>
+        <h2 id="status-title"><span class="h-line">Where it runs</span> <span class="h-line h-serif">today.</span></h2>
+        <p class="lede">Volt is pre-1.0 and its APIs can change. macOS is where it is tested.</p>
+      </div>
+      <dl class="platforms">
+        <div><dt>macOS 11+</dt><dd><span class="state state-primary">Primary</span>Tested on Apple silicon with Metal.</dd></div>
+        <div><dt>Windows and Linux</dt><dd><span class="state">Not validated</span>Compiles, with headless CI configured (DX12; Vulkan, X11 and Wayland).</dd></div>
+        <div><dt>WebAssembly</dt><dd><span class="state">Core only</span>The <code>rust-ui</code> core compiles; there is no web host.</dd></div>
+        <div><dt>iOS and Android</dt><dd><span class="state">Not supported</span>There is no mobile host.</dd></div>
+      </dl>
+      <a class="text-link" href="https://github.com/danieldear/volt-ui-kit/blob/main/ROADMAP.md">Read the roadmap <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
+    </section>
+
+    <section class="screen closing shell" aria-labelledby="closing-title">
+      <p class="eyebrow">07 — Get started</p>
+      <h2 id="closing-title"><span class="h-line closing-first"><svg class="wordmark" aria-hidden="true"><use href="#volt-wordmark"/></svg><span>Build something</span></span> <span class="h-line h-serif closing-native">native.</span></h2>
+      <p class="lede">Start from a template, or open any component page and copy its Rust.</p>
+      <div class="actions actions-start"><a class="cta cta-filled" href="guides/getting-started.html">Get started</a><a class="cta cta-line" href="reference/index.html#group-patterns">See the patterns</a></div>
+    </section>
   </main>
-  <footer class="site-footer shell"><a class="brand" href="./" aria-label="Volt UI Kit home"><span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg></span><span class="wordmark">Volt<span class="brand-suffix">UI Kit</span></span></a><p>A little more native.</p><nav aria-label="Project resources"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/CONTRIBUTING.md">Contribute</a><a href="https://github.com/danieldear/volt-ui-kit/security/policy">Security</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/CHANGELOG.md">Changelog</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/LICENSE">License</a></nav></footer>
+
+  <footer class="footer shell">
+    <div class="footer-bar"><span class="footer-brand"><svg class="brand-mark" aria-hidden="true"><use href="#volt-mark"/></svg>Volt UI Kit 0.5</span><span>MIT licensed · Vello on the GPU · Written in Rust</span></div>
+    <nav class="footer-links" aria-label="Site">
+      <div><p>Guides</p><a href="guides/getting-started.html">Getting started</a><a href="guides/building-uis.html">Building interfaces</a><a href="guides/components.html">Component recipes</a><a href="guides/styling-and-themes.html">Styling and themes</a></div>
+      <div><p>More guides</p><a href="guides/windows-and-rendering.html">Windows and rendering</a><a href="guides/app-services.html">Application services</a><a href="guides/json-ui.html">Optional JSON frontend</a><a href="guides/architecture.html">Architecture</a></div>
+      <div><p>Library</p><a href="reference/index.html">All components</a><a href="reference/index.html#group-patterns">App patterns</a><a href="https://github.com/danieldear/volt-ui-kit/tree/main/examples">Examples</a></div>
+      <div><p>Project</p><a href="https://github.com/danieldear/volt-ui-kit">GitHub</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/ROADMAP.md">Roadmap</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/CHANGELOG.md">Changelog</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/CONTRIBUTING.md">Contribute</a><a href="https://github.com/danieldear/volt-ui-kit/security/policy">Security</a><a href="https://github.com/danieldear/volt-ui-kit/blob/main/LICENSE">License</a></div>
+    </nav>
+  </footer>
 </body>
 </html>

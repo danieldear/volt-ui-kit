@@ -1,8 +1,54 @@
 # Maintaining the documentation website
 
-The landing page is `docs/index.html`. Its **Explore components** link opens
-`docs/reference/index.html`; **Start building** opens the getting-started guide.
-The component library does not replace the landing page.
+The landing page is `docs/index.html`, written by hand. Its **Browse
+components** link opens `docs/reference/index.html`; **Get started** opens the
+getting-started guide. The component library does not replace the landing page.
+
+Every claim on the landing page should be checkable against the code or the
+guides. `scripts/test_repo.py` keeps the component, pattern and page counts in
+step with `assets/catalog-data.json`, requires every image it shows to exist and
+be published, and rejects palette names and settings the kit doesn't have.
+
+## Landing page images
+
+The landing page shows only the Catalog. Every image is a headless render by
+Volt, not a screen capture, and is labelled that way. Build the Catalog once,
+then render from the repository root:
+
+```sh
+cargo build --release --locked --features native-gpu,native-desktop --example catalog
+C=target/release/examples/catalog
+
+# The Catalog window (1440x900 at 2x), published at full and half size:
+for mode in light dark; do
+  $C --page dashboard --theme $mode --accent violet \
+    --snapshot work/dashboard-$mode.png --size 1440x900 --scale 2
+  cwebp -q 88 -m 6 -sharp_yuv work/dashboard-$mode.png \
+    -o docs/images/catalog/dashboard-$mode.webp
+  cwebp -q 90 -m 6 -sharp_yuv -resize 1440 0 work/dashboard-$mode.png \
+    -o docs/images/catalog/dashboard-$mode-1440.webp
+done
+
+# The theme picker: the Catalog's landing page at 3x in every accent and mode,
+# cropped to its plan card and its counter preview.
+for mode in light dark; do for accent in zinc blue violet rose green orange; do
+  $C --page introduction --theme $mode --accent $accent \
+    --snapshot work/intro-$mode-$accent.png --size 1440x3700 --scale 3
+  cwebp -q 90 -m 6 -sharp_yuv -crop 3233 9640 1020 1160 work/intro-$mode-$accent.png \
+    -o docs/images/theming/card-$accent-$mode.webp
+  cwebp -q 92 -m 6 -sharp_yuv -crop 2643 8875 1449 383 work/intro-$mode-$accent.png \
+    -o docs/images/theming/counter-$accent-$mode.webp
+done; done
+```
+
+The crop rectangles depend on the landing page's layout at a 1440-point-wide
+window. If that page changes, find the card and the counter again; each crop's
+edge must be exactly the colour behind it on the site (white or `#09090B` for
+the card, `#0B0B10` for the counter's code card), so the renders sit flush.
+`images/og-card.jpg` is the 1200x630 link preview.
+
+The display font ships as WOFF2, converted from the upstream TrueType file
+without changes to its glyphs (see [third-party notices](third-party.md)).
 
 ## What is generated
 

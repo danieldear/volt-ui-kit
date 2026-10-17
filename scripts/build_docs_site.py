@@ -7,11 +7,19 @@ import re
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
+# The landing page shows only Catalog renders: the dashboard in each mode,
+# and the plan card and counter in every accent preset for its theme picker.
+ACCENTS = ("zinc", "blue", "violet", "rose", "green", "orange")
 BASE_FILES = (
     "index.html", ".nojekyll", "assets/site.css", "assets/favicon.svg",
-    "images/dashboard-dark.png", "images/theme-editor-light.png",
-    "assets/fonts/bricolage-grotesque.ttf", "assets/fonts/OFL.txt",
+    "images/catalog/dashboard-light.webp", "images/catalog/dashboard-light-1440.webp",
+    "images/catalog/dashboard-dark.webp", "images/catalog/dashboard-dark-1440.webp",
+    "images/og-card.jpg",
+    "assets/fonts/bricolage-grotesque.woff2", "assets/fonts/OFL.txt",
     "assets/reference.css",
+) + tuple(
+    f"images/theming/{kind}-{accent}-{mode}.webp"
+    for kind in ("card", "counter") for accent in ACCENTS for mode in ("light", "dark")
 )
 
 

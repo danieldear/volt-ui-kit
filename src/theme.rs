@@ -350,9 +350,9 @@ impl Palette {
             neutral: c(0x18181B, 0xFAFAFA),
             on_neutral: c(0xFAFAFA, 0x18181B),
             info: c(0x2563EB, 0x3B82F6),
-            on_info: c(0xFFFFFF, 0xFFFFFF),
+            on_info: contrast(c(0x2563EB, 0x3B82F6)),
             success: c(0x16A34A, 0x22C55E),
-            on_success: c(0xFFFFFF, 0xFFFFFF),
+            on_success: contrast(c(0x16A34A, 0x22C55E)),
             warning: c(0xD97706, 0xF59E0B),
             on_warning: c(0x18181B, 0x18181B),
             error: c(0xDC2626, 0xDC2626),
@@ -666,6 +666,21 @@ mod tests {
             assert_eq!((p.primary, p.on_primary), (p.content, p.base[0]));
             assert!(contrast_ratio(p.content, p.base[0]) >= 4.5);
             assert!(contrast_ratio(p.muted, p.base[0]) >= 4.5);
+            for role in [
+                ColorToken::Primary,
+                ColorToken::Secondary,
+                ColorToken::Accent,
+                ColorToken::Neutral,
+                ColorToken::Info,
+                ColorToken::Success,
+                ColorToken::Warning,
+                ColorToken::Error,
+            ] {
+                assert!(
+                    contrast_ratio(p.color(role), p.color(role.content_pair())) >= 4.5,
+                    "{role:?}"
+                );
+            }
         }
         let violet = parse_hex("#7C3AED").unwrap();
         let accented = light.clone().with_accent(violet);

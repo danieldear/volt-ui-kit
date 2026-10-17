@@ -1,6 +1,7 @@
 //! Volt UI catalog: every component, documented with live previews, code,
 //! variations and API tables, in a shadcn/ui-style documentation shell.
 //!
+//! ./scripts/run_catalog.sh  # full Catalog, automatically bundled on macOS
 //! cargo run --release --features native --example catalog
 //! cargo run --release --features native --example catalog -- --page table --theme dark --accent violet
 //! cargo run --release --features native-gpu --example catalog   # frosted sidebar
