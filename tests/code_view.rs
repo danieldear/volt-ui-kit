@@ -3,8 +3,8 @@
 //! hands every edit to the application.
 use volt_ui_kit::{
     declarative::{
-        Bindings, CodeInput, CodeKey, CodeLine, CodePosition, CodeSelection, DocumentPainter,
-        Handlers, InputModifiers, Runtime, TextMetrics, TextStyle,
+        Bindings, CodeDecoration, CodeInput, CodeKey, CodeLine, CodeMark, CodePosition,
+        CodeSelection, DocumentPainter, Handlers, InputModifiers, Runtime, TextMetrics, TextStyle,
     },
     ui::prelude::*,
     Painter, Viewport,
@@ -26,6 +26,7 @@ struct Doc {
     focus: bool,
     /// Watch this many points at the bottom for the caret.
     band: Option<f32>,
+    decorations: Vec<CodeDecoration>,
 }
 impl Doc {
     fn new(lines: usize) -> Self {
@@ -60,6 +61,7 @@ fn view(d: &Doc) -> Element<Doc> {
         )
         .reveal(d.reveal)
         .read_only(d.read_only)
+        .decorations(d.decorations.clone())
         .on_input(|d: &mut Doc, input| {
             if let CodeInput::Visible { first, .. } = &input {
                 d.visible = match &input {
@@ -105,6 +107,8 @@ struct Recorder {
     texts: Vec<String>,
     /// Each styled text's run colours.
     runs: Vec<(String, Vec<[f32; 4]>)>,
+    /// Every rectangle drawn, in order: bounds and colour.
+    rects: std::cell::RefCell<Vec<([f32; 4], [f32; 4])>>,
 }
 impl TextMetrics for Recorder {
     fn measure(&mut self, t: &str, size: f32, w: f32) -> [f32; 2] {
@@ -117,7 +121,9 @@ impl Painter for Recorder {
     fn viewport(&self) -> Viewport {
         Viewport::new(600., 400., 1.).unwrap()
     }
-    fn draw_rect(&self, _: &mut Vec<()>, _: f32, _: f32, _: f32, _: f32, _: [f32; 4]) {}
+    fn draw_rect(&self, _: &mut Vec<()>, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+        self.rects.borrow_mut().push(([x, y, w, h], color));
+    }
     fn card_triangle(&self, _: &mut Vec<()>, _: [[f32; 2]; 3], _: [f32; 4]) {}
     fn card_text(&mut self, _: &mut Vec<()>, _: &str, _: f32, _: f32, _: f32, _: [f32; 4]) {}
     fn draw_text_colored(
@@ -592,8 +598,109 @@ fn the_caret_band_reports_when_the_caret_enters_and_leaves_the_bottom_of_the_vie
     // Scrolling the caret line up out of the band reports that it left.
     let [bx, by, bw, bh] = m.bounds();
     m.runtime
-        .scroll_outcome(bx + bw / 2., by + bh / 2., [0., 100.], &mut m.handlers, &mut doc)
+        .scroll_outcome(
+            bx + bw / 2.,
+            by + bh / 2.,
+            [0., 100.],
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
-    m.runtime.dispatch_widths(&mut m.handlers, &mut doc).unwrap();
+    m.runtime
+        .dispatch_widths(&mut m.handlers, &mut doc)
+        .unwrap();
     assert_eq!(band(&doc), Some(None));
+}
+
+#[test]
+fn decorations_fill_outline_underline_and_tint_lines_by_mark() {
+    let at = CodePosition::new;
+    let mut doc = Doc::new(200);
+    doc.decorations = vec![
+        CodeDecoration::new(at(1, 4), at(1, 0), CodeMark::Fill, "#00FF00"),
+        CodeDecoration::new(at(2, 5), at(2, 6), CodeMark::Outline, "#0000FF|#FF00FF"),
+        CodeDecoration::new(at(3, 0), at(3, 4), CodeMark::Underline, "#FFFF00"),
+        CodeDecoration::new(at(4, 0), at(5, 0), CodeMark::Lines, "#00FFFF40"),
+        CodeDecoration::new(at(7, 0), at(7, 0), CodeMark::Lines, "#FF000040"),
+        // Empty ranges and ranges far off screen draw nothing.
+        CodeDecoration::new(at(1, 2), at(1, 2), CodeMark::Fill, "#123456"),
+        CodeDecoration::new(at(150, 0), at(150, 3), CodeMark::Fill, "#654321"),
+    ];
+    let mut m = Mounted::new(&mut doc);
+    m.painter.rects.borrow_mut().clear();
+    m.paint();
+    let rects = m.painter.rects.take();
+    let [bx, by, ..] = m.bounds();
+    let rgba = |r: u8, g: u8, b: u8, a: u8| [r, g, b, a].map(|v| v as f32 / 255.);
+    let drawn = |color: [f32; 4]| -> Vec<[f32; 4]> {
+        rects
+            .iter()
+            .filter(|(_, c)| *c == color)
+            .map(|(r, _)| *r)
+            .collect()
+    };
+    // Monospace metrics: 6.5pt per column; text starts after a 64pt gutter
+    // and a 12pt inset; lines are 20pt.
+    let (text_x, col) = (bx + 76., 6.5);
+    assert_eq!(
+        drawn(rgba(0, 255, 0, 255)),
+        vec![[text_x, by + 20., 4. * col, 20.]]
+    );
+    // The dark half of a light|dark pair; four sides around column 5.
+    let outline = drawn(rgba(255, 0, 255, 255));
+    assert_eq!(outline.len(), 4);
+    assert!(outline.contains(&[text_x + 5. * col, by + 40., col, 1.]));
+    assert!(outline.contains(&[text_x + 5. * col, by + 40., 1., 20.]));
+    assert_eq!(
+        drawn(rgba(255, 255, 0, 255)),
+        vec![[text_x, by + 78., 4. * col, 1.]]
+    );
+    // Two whole lines, each with a tint across the view and a solid bar.
+    let tint = drawn(rgba(0, 255, 255, 0x40));
+    assert_eq!(
+        tint,
+        vec![[bx, by + 80., 600., 20.], [bx, by + 100., 600., 20.]]
+    );
+    assert_eq!(drawn(rgba(0, 255, 255, 255)).len(), 2);
+    // An empty range marks removed lines: a hairline on the boundary above
+    // line 7, and a notch at the gutter's edge.
+    assert_eq!(
+        drawn(rgba(255, 0, 0, 0x40)),
+        vec![[bx, by + 139.5, 600., 1.]]
+    );
+    assert_eq!(
+        drawn(rgba(255, 0, 0, 255)),
+        vec![[bx + 58., by + 138., 6., 4.]]
+    );
+    assert!(drawn(rgba(0x12, 0x34, 0x56, 255)).is_empty());
+    assert!(drawn(rgba(0x65, 0x43, 0x21, 255)).is_empty());
+
+    // Fills go under the selection; a reversed range or too many is invalid.
+    doc.selection = Some(CodeSelection {
+        anchor: at(1, 0),
+        head: at(1, 2),
+    });
+    m.rebuild(&mut doc);
+    m.settle(&mut doc);
+    m.paint();
+    let rects = m.painter.rects.take();
+    let fill = rects
+        .iter()
+        .position(|(_, c)| *c == rgba(0, 255, 0, 255))
+        .unwrap();
+    let selection = rects
+        .iter()
+        .position(|(r, _)| *r == [text_x, by + 20., 2. * col, 20.])
+        .unwrap();
+    assert!(fill < selection);
+    let reversed = CodeDecoration {
+        start: at(2, 0),
+        end: at(1, 0),
+        ..doc.decorations[0].clone()
+    };
+    doc.decorations = vec![reversed];
+    assert!(view(&doc).build().is_err());
+    doc.decorations = vec![doc.decorations[0].clone(); 10_001];
+    doc.decorations[0].start = at(0, 0);
+    assert!(view(&doc).build().is_err());
 }

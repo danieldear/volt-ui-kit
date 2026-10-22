@@ -41,6 +41,49 @@ impl CodeSelection {
     }
 }
 
+/// How a [`CodeDecoration`] marks its range.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CodeMark {
+    /// A tint behind the text, under any selection: a search match.
+    #[default]
+    Fill,
+    /// A line under the text: a diagnostic.
+    Underline,
+    /// A thin box around the range: the current match.
+    Outline,
+    /// Every line from the start's to the end's, tinted across the view,
+    /// with a bar at the gutter's edge: changed lines. An empty range marks
+    /// the boundary above the start's line instead: removed lines.
+    Lines,
+}
+
+/// A marked range of the document: search matches, diagnostics, an agent's
+/// edits. Ranges that end where they start are skipped, except `Lines`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeDecoration {
+    pub start: CodePosition,
+    pub end: CodePosition,
+    pub mark: CodeMark,
+    /// A theme token (`"@primary"`), hex, or `"light|dark"`; `Fill` and
+    /// `Lines` draw it as given, so give them a translucent colour.
+    pub color: String,
+}
+impl CodeDecoration {
+    pub fn new(
+        start: CodePosition,
+        end: CodePosition,
+        mark: CodeMark,
+        color: impl Into<String>,
+    ) -> Self {
+        Self {
+            start: start.min(end),
+            end: start.max(end),
+            mark,
+            color: color.into(),
+        }
+    }
+}
+
 /// A line as drawn: its text (tabs already expanded) and coloured byte
 /// ranges `(start, end, palette index)`, sorted and disjoint.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -123,6 +166,8 @@ pub enum CodeInput {
 pub(crate) const MAX_CODE_LINES: usize = 4096;
 /// Longest line text accepted; longer lines should be cut by the application.
 pub(crate) const MAX_CODE_LINE: usize = 64 * 1024;
+/// Most decorations one view may carry; supply those near the window.
+pub(crate) const MAX_CODE_DECORATIONS: usize = 10_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CodeViewProps {
@@ -142,6 +187,7 @@ pub(crate) struct CodeViewProps {
     pub scroll_to: Option<(usize, u32)>,
     /// Height of the bottom band watched for the caret (`CodeInput::CaretBand`).
     pub caret_band: Option<f32>,
+    pub decorations: Vec<CodeDecoration>,
     pub selection_color: Option<String>,
     pub caret_color: Option<String>,
     pub line_color: Option<String>,
@@ -166,6 +212,7 @@ impl Default for CodeViewProps {
             reveal: 0,
             scroll_to: None,
             caret_band: None,
+            decorations: vec![],
             selection_color: None,
             caret_color: None,
             line_color: None,
@@ -189,6 +236,11 @@ impl CodeViewProps {
             && finite(self.line_height, self.font_size, 4. * self.font_size)
             && self.font_family.len() <= 256
             && self.caret_band.is_none_or(|h| finite(h, 0., 4096.))
+            && self.decorations.len() <= MAX_CODE_DECORATIONS
+            && self
+                .decorations
+                .iter()
+                .all(|d| d.start <= d.end && d.color.len() <= 64)
             && self.lines.iter().all(|l| {
                 l.text.len() <= MAX_CODE_LINE
                     && l.spans.windows(2).all(|w| w[0].1 <= w[1].0)
@@ -643,7 +695,10 @@ impl Runtime {
         let left = f.text_x + (x - st.offset[0]) * f.scale;
         let top = f.bounds[1] + (head.line as f32 * props.line_height - st.offset[1]) * f.scale;
         let bottom = f.bounds[1] + f.bounds[3];
-        let on_screen = left >= f.text_x && left <= f.bounds[0] + f.bounds[2] && top + f.line_height > f.bounds[1] && top < bottom;
+        let on_screen = left >= f.text_x
+            && left <= f.bounds[0] + f.bounds[2]
+            && top + f.line_height > f.bounds[1]
+            && top < bottom;
         (on_screen && top + f.line_height > bottom - height * f.scale)
             .then(|| [left / f.scale, (f.advance / f.scale).max(1.)])
     }
@@ -772,22 +827,27 @@ impl Runtime {
         // `"light|dark"` entries pick by the text colour: light text means a
         // dark theme, so syntax colours follow System appearance too.
         let dark = 0.2126 * text_color[0] + 0.7152 * text_color[1] + 0.0722 * text_color[2] > 0.5;
-        let palette: Vec<Option<[f32; 4]>> = props
-            .palette
-            .iter()
-            .map(|v| {
-                let v = match v.split_once('|') {
-                    Some((light, night)) => {
-                        if dark {
-                            night
-                        } else {
-                            light
-                        }
+        let pick = |v: &str| {
+            let v = match v.split_once('|') {
+                Some((light, night)) => {
+                    if dark {
+                        night
+                    } else {
+                        light
                     }
-                    None => v.as_str(),
-                };
-                ui.resolve(v.trim())
-            })
+                }
+                None => v,
+            };
+            ui.resolve(v.trim())
+        };
+        let palette: Vec<Option<[f32; 4]>> = props.palette.iter().map(|v| pick(v)).collect();
+        // Decorations touching the drawn lines, with their colours.
+        let marks: Vec<(&CodeDecoration, [f32; 4])> = props
+            .decorations
+            .iter()
+            .filter(|d| d.start.line < last && d.end.line >= first)
+            .filter(|d| d.mark == CodeMark::Lines || d.start != d.end)
+            .filter_map(|d| Some((d, pick(&d.color)?)))
             .collect();
 
         // 1. Surface and current-line bands, across gutter and text.
@@ -812,6 +872,37 @@ impl Runtime {
                 {
                     let [x, y, w, h] = r.bounds();
                     p.draw_rect(&mut shapes, x, y, w, h, line_color);
+                }
+            }
+        }
+        for (d, color) in marks.iter().filter(|(d, _)| d.mark == CodeMark::Lines) {
+            // The band as given; the bar at the gutter's edge fully opaque.
+            let bar = (2. * s).round().max(1.);
+            let bar_x = (bx + f.gutter - 4. * s).max(bx);
+            let solid = [color[0], color[1], color[2], 1.];
+            let rects = if d.start == d.end {
+                // Removed lines: a notch on the boundary and a hairline.
+                let y = y_of(d.start.line);
+                let thin = s.round().max(1.);
+                vec![
+                    (Rect::new(bx, y - thin / 2., bw, thin), *color),
+                    (Rect::new(bar_x - bar, y - 2. * s, 3. * bar, 4. * s), solid),
+                ]
+            } else {
+                (d.start.line.max(first)..=d.end.line.min(last.saturating_sub(1)))
+                    .flat_map(|line| {
+                        let y = y_of(line);
+                        [
+                            (Rect::new(bx, y, bw, lh), *color),
+                            (Rect::new(bar_x, y, bar, lh), solid),
+                        ]
+                    })
+                    .collect()
+            };
+            for (r, color) in rects {
+                if let Some(r) = r.and_then(|r| intersection(r, b.clip)) {
+                    let [x, y, w, h] = r.bounds();
+                    p.draw_rect(&mut shapes, x, y, w, h, color);
                 }
             }
         }
@@ -855,39 +946,72 @@ impl Runtime {
             stops.get(column).or(stops.last()).map_or(0., |x| x * s)
         };
 
-        // 2. Selections and text.
-        let mut shapes = Vec::new();
-        let mut glyphs = Vec::new();
+        // One rectangle per drawn line of a range, unclipped; a line break
+        // inside the range counts as part of it.
+        let mut range_rects =
+            |start: CodePosition, end: CodePosition, p: &mut P| -> Vec<[f32; 4]> {
+                let mut out = Vec::new();
+                for line in start.line.max(first)..=end.line.min(last.saturating_sub(1)) {
+                    let text = props.line(line).map_or("", |l| l.text.as_str());
+                    let chars = text.chars().count();
+                    let a = if line == start.line {
+                        start.column.min(chars)
+                    } else {
+                        0
+                    };
+                    let z = if line == end.line {
+                        end.column.min(chars)
+                    } else {
+                        chars
+                    };
+                    let x0 = f.text_x - x_scroll + x_at(line, text, a, p);
+                    let mut x1 = f.text_x - x_scroll + x_at(line, text, z, p);
+                    if line != end.line {
+                        x1 += f.advance * 0.6;
+                    }
+                    out.push([x0, y_of(line), (x1 - x0).max(0.), lh]);
+                }
+                out
+            };
+        let mut fills = Vec::new();
+        let mut overlays = Vec::new();
+        let thin = s.round().max(1.);
+        for (d, color) in &marks {
+            for [x, y, w, h] in range_rects(d.start, d.end, p) {
+                match d.mark {
+                    CodeMark::Fill => fills.push(([x, y, w, h], *color)),
+                    CodeMark::Underline => {
+                        overlays.push(([x, y + h - 2. * s, w.max(thin), thin], *color))
+                    }
+                    CodeMark::Outline => {
+                        let w = w.max(thin);
+                        overlays.push(([x, y, w, thin], *color));
+                        overlays.push(([x, y + h - thin, w, thin], *color));
+                        overlays.push(([x, y, thin, h], *color));
+                        overlays.push(([x + w - thin, y, thin, h], *color));
+                    }
+                    CodeMark::Lines => {}
+                }
+            }
+        }
+        let mut selected = Vec::new();
         for sel in &props.selections {
             let (start, end) = sel.ordered();
-            if start == end {
-                continue;
+            if start != end {
+                selected.extend(range_rects(start, end, p));
             }
-            for line in start.line.max(first)..=end.line.min(last.saturating_sub(1)) {
-                let text = props.line(line).map_or("", |l| l.text.as_str());
-                let chars = text.chars().count();
-                let a = if line == start.line {
-                    start.column.min(chars)
-                } else {
-                    0
-                };
-                let z = if line == end.line {
-                    end.column.min(chars)
-                } else {
-                    chars
-                };
-                let x0 = f.text_x - x_scroll + x_at(line, text, a, p);
-                let mut x1 = f.text_x - x_scroll + x_at(line, text, z, p);
-                if line != end.line {
-                    // The line break is part of the selection.
-                    x1 += f.advance * 0.6;
-                }
-                if let Some(r) = Rect::new(x0, y_of(line), (x1 - x0).max(0.), lh)
-                    .and_then(|r| intersection(r, text_clip))
-                {
-                    let [x, y, w, h] = r.bounds();
-                    p.draw_rect(&mut shapes, x, y, w, h, selection_color);
-                }
+        }
+
+        // 2. Decoration fills, selections and text.
+        let mut shapes = Vec::new();
+        let mut glyphs = Vec::new();
+        let painted = fills
+            .into_iter()
+            .chain(selected.into_iter().map(|r| (r, selection_color)));
+        for ([x, y, w, h], color) in painted {
+            if let Some(r) = Rect::new(x, y, w, h).and_then(|r| intersection(r, text_clip)) {
+                let [x, y, w, h] = r.bounds();
+                p.draw_rect(&mut shapes, x, y, w, h, color);
             }
         }
         for line in first..last {
@@ -958,6 +1082,21 @@ impl Runtime {
             shapes,
             glyphs,
         });
+        // Underlines and outlines above the text.
+        if !overlays.is_empty() {
+            let mut shapes = Vec::new();
+            for ([x, y, w, h], color) in overlays {
+                if let Some(r) = Rect::new(x, y, w, h).and_then(|r| intersection(r, text_clip)) {
+                    let [x, y, w, h] = r.bounds();
+                    p.draw_rect(&mut shapes, x, y, w, h, color);
+                }
+            }
+            out.push(PaintBatch {
+                clip: text_clip,
+                shapes,
+                glyphs: vec![],
+            });
+        }
 
         // 3. Carets above the text, only while focused.
         if focused {

@@ -49,6 +49,18 @@
     last `on_escape` container in the document, through
     `Runtime::dispatch_escape`.
   - Additive, in `runtime/hover.rs`. Tests: `tests/hover_regions.rs`.
+- Add `.decorations(..)` to `code_view`: marked ranges as `CodeDecoration`s,
+  each with a `CodeMark` and a colour (a token, hex or `"light|dark"`).
+  - **Marks:** `Fill` tints behind the text and under selections (search
+    matches); `Underline` (diagnostics) and `Outline` (the current match)
+    draw above the text; `Lines` tints whole lines across the view with a
+    bar at the gutter's edge (changed lines), and an empty `Lines` range
+    marks the boundary where lines were removed.
+  - **Bounded:** like lines, decorations are supplied near the visible
+    window, at most 10,000 per view; only those touching drawn lines
+    are resolved and painted.
+  - Additive: one field and builder; selections share the new range
+    geometry and look the same. Tests: `tests/code_view.rs`.
 
 - Add opt-in content padding/gap to forms and disclosure composites, dialogs,
   popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and

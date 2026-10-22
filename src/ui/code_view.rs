@@ -8,7 +8,7 @@
 //! It never holds the whole file, so very large files cost no more per frame
 //! than small ones.
 use super::*;
-use crate::declarative::{CodeInput, CodeLine, CodeSelection, CodeViewProps};
+use crate::declarative::{CodeDecoration, CodeInput, CodeLine, CodeSelection, CodeViewProps};
 use std::sync::Arc;
 
 type CodeCallback<C> = Box<dyn FnMut(&mut C, CodeInput) -> Option<String>>;
@@ -98,6 +98,12 @@ impl<C> CodeView<C> {
     /// floats over that band and must keep clear of the caret.
     pub fn caret_band(mut self, height: f32) -> Self {
         self.props().caret_band = Some(height);
+        self
+    }
+    /// Marked ranges: search matches, diagnostics, changed lines. Like the
+    /// lines, supply those near the visible window (at most 10,000).
+    pub fn decorations(mut self, list: Vec<CodeDecoration>) -> Self {
+        self.props().decorations = list;
         self
     }
     pub fn selection_color(mut self, value: impl Into<String>) -> Self {

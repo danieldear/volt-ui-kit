@@ -1,4 +1,4 @@
-#![cfg(feature = "rust-ui")]
+#![cfg(feature = "native")]
 //! Containers with `on_hover` learn when the pointer enters and leaves them,
 //! descendants included, so a floating panel can stay open while in use.
 use volt_ui_kit::{
