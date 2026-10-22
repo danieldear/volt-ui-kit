@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+- Add opt-in content padding/gap to forms and disclosure composites, dialogs,
+  popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and
+  combobox `option_gap` where generic container gaps would not affect the
+  intended inner layout.
+- Add `Tabs::tab_gap` and `tab_padding`, independent of strip-to-page spacing;
+  preserve the current 2px tab-bar default and explicit joined-bar gaps.
+- Make menu popup padding, item gap/height and height cap configurable; retain
+  the current 6/2/34/480 defaults and `surface`, with `popup_background` alias.
+- Add table row/header height and horizontal cell padding, tree row height and
+  indentation, and fixed panel padding/gap without changing existing defaults.
+  Regression coverage includes explicit zero, responsive overrides, both DPI
+  scales, input callbacks and content-card versus overlay spacing.
+
+- Add `canvas_frames(frames, frame_ms, revision)`: a canvas tween computed
+  while composing and played at paint time (no recomposition or layout per
+  frame). It restarts only when `revision` changes for that element and
+  shows the last frame under reduced motion.
+- `sunburst_chart(..).animate_from(previous, revision)`: arcs tween to new
+  data (d3's cubic in-out over ~360 ms; new arcs grow from their start) and
+  labels cross-fade. A different root draws without a tween.
+- Menus and context menus take `.surface(color)` for the popup card (default
+  `Base200`); a caller-set surface also floats on a soft shadow, for apps whose
+  panels are translucent. The popup's height cap rises from 360 to 480 so a
+  dozen-row context menu isn't cut off.
+- Add `Application::appearance_from_state(..)`: an in-app Light / Dark /
+  System choice. The window (and so its native material) and the mode passed
+  to `theme_with` follow it after each update; `System` follows the OS again.
+  Not covered by headless tests (it drives the native window).
+- A keyed segmented control or tab bar gives its options stable ids
+  (`{key}-{index}`, unless an item has its own key), so their hover, press
+  and fade state can't move to another element when siblings before the
+  control come and go.
+- Add `sunburst_chart`, a zoomable sunburst after d3's (rings around a root,
+  a rainbow hue per top-level branch, a centre that can go back up), with
+  `sunburst_layout` and d3's `rainbow` palette. Arcs are sector-clipped
+  buttons sharing the hierarchy charts' ids, labels, selection, review
+  markers, dashed context targets, hover links, menus and keyboard roving.
+- Add `.on_height(...)`, the height counterpart of `.on_width(...)`, reported
+  through the same `dispatch_widths` pass, and `selectable_list(..)
+  .flexible_height()` so a list can take a column's remaining height and
+  scroll inside it.
+- Joined segmented controls and tab bars keep a caller-set `.gap(...)`
+  instead of always forcing the 1px seam (still the default).
+- Keyboard-opened context menus (Shift-F10 / Context Menu) fall back to the
+  focused item's nearest menu owner when the item's box centre lies outside
+  a clipped, non-rectangular target such as a ring segment.
+
+- Add opt-in paint-only `.hover_link(key)` peers and hierarchy
+  `.hover_linked(true)`: matching mounted components share hover styling without
+  callbacks, recomposition, selection, focus, scrolling or peer tooltips. Legacy
+  chart behavior and public input event variants remain unchanged.
+
+- Add opt-in hierarchy multi-selection, passive review markers, custom node
+  palettes, hidden icicle root bands, distinct context targets and per-node
+  context callbacks. Keyboard navigation uses one roving Tab stop, arrow keys,
+  and native Shift-F10 / Context Menu requests. Existing chart defaults, public
+  input event variants and the feature-free Volt core remain unchanged.
+
+- Add opt-in macOS `native::file_dialog::move_to_trash` for one caller-confirmed
+  item, with unsupported-platform reporting and no permanent-delete fallback.
+  Confirmation, path protection and revalidation remain application policy.
+
+- Add Rust-native `icicle_chart` and squarified `treemap_chart`, inclusive
+  hierarchy weights, bounded layout helpers, accessible tile labels, tooltips
+  and typed mouse/keyboard selection. Demonstrate both on the Catalog Charts page.
+- Add macOS `native::file_dialog::reveal_file` for a toolkit-owned Finder reveal
+  request without opening or executing file contents.
+- Add opt-in `Application::window_visibility_from_state` for tray-resident
+  applications; hide/show keeps existing workers alive and restores focus only
+  on a visibility transition. Existing window-close behavior is unchanged.
+
 ## 0.5.0 (2026-10-17; not published to crates.io)
 
 - Add `./scripts/run_catalog.sh`: one-command, fully featured GPU Catalog,

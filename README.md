@@ -154,7 +154,7 @@ WebAssembly; a web host is planned. Expect API changes before 1.0.
 
 - [Getting started](docs/getting-started.md)
 - [Building interfaces](docs/building-uis.md)
-- [Components](docs/components.md)
+- [Components](docs/components.md) — including [component spacing overrides](docs/components.md#customizing-component-spacing)
 - [Styling and themes](docs/styling-and-themes.md)
 - [Windows and rendering](docs/windows-and-rendering.md)
 - [Application services](docs/app-services.md)

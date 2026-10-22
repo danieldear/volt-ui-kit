@@ -160,6 +160,19 @@ pub(crate) fn parse_color(value: &str) -> Option<[f32; 4]> {
     }
     Some(color)
 }
+/// Opt-in logical neighbors for one roving-focus control. Private and
+/// serde-skipped: schema-v1 and public event enums remain unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RovingNavigation {
+    pub group: String,
+    pub member: String,
+    pub left: Option<String>,
+    pub right: Option<String>,
+    pub parent: Option<String>,
+    pub child: Option<String>,
+    pub first: Option<String>,
+    pub last: Option<String>,
+}
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
@@ -283,8 +296,26 @@ pub struct Node {
     /// Reports the laid-out width when it changes.
     #[serde(skip)]
     pub(crate) on_width: Option<String>,
+    /// Reports the laid-out height when it changes.
+    #[serde(skip)]
+    pub(crate) on_height: Option<String>,
     #[serde(skip)]
     pub(crate) on_key: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_activate_input: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_input_key: Option<String>,
+    #[serde(skip)]
+    pub(crate) input_focus: bool,
+    #[serde(skip, default = "yes")]
+    pub(crate) tab_stop: bool,
+    #[serde(skip)]
+    pub(crate) roving: Option<RovingNavigation>,
+    /// Rust-only paint linkage; no callback, selection or accessibility semantics.
+    #[serde(skip)]
+    pub(crate) hover_link: Option<String>,
+    #[serde(skip)]
+    pub(crate) access_multiselectable: bool,
     #[serde(skip)]
     pub(crate) slider: Option<SliderProps>,
     #[serde(skip)]
@@ -454,6 +485,8 @@ pub(crate) struct ProgressProps {
 pub(crate) struct SurfaceContent {
     pub image: Option<crate::graphics::BackgroundImage>,
     pub canvas: crate::graphics::Canvas,
+    /// Optional frames played over `canvas` (which holds the final frame).
+    pub frames: Option<crate::graphics::CanvasFrames>,
     pub clip: Option<crate::graphics::Clip>,
     pub scroll: Option<Scroll>,
     pub scrollbars: Scrollbars,
@@ -552,7 +585,15 @@ impl Node {
             on_selection: None,
             on_select_text: None,
             on_width: None,
+            on_height: None,
             on_key: None,
+            on_activate_input: None,
+            on_input_key: None,
+            input_focus: false,
+            tab_stop: true,
+            roving: None,
+            hover_link: None,
+            access_multiselectable: false,
             slider: None,
             overlay: None,
             on_context: None,
@@ -784,6 +825,7 @@ impl Document {
                 (&n.on_selection, EventKind::SelectionChanged),
                 (&n.on_select_text, EventKind::TextChanged),
                 (&n.on_width, EventKind::ValueChanged),
+                (&n.on_height, EventKind::ValueChanged),
                 (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
@@ -791,6 +833,14 @@ impl Document {
                 if let Some(name) = name {
                     handlers
                         .validate(name, kind)
+                        .map_err(|e| error(&n.id, &e.to_string()))?;
+                }
+            }
+            #[cfg(feature = "rust-ui")]
+            for (name, key) in [(&n.on_activate_input, false), (&n.on_input_key, true)] {
+                if let Some(name) = name {
+                    handlers
+                        .validate_input(name, key)
                         .map_err(|e| error(&n.id, &e.to_string()))?;
                 }
             }
@@ -1053,6 +1103,12 @@ fn check_node(
     ids: &mut BTreeSet<String>,
 ) -> Result<(), DocumentError> {
     n.effects.validate(path)?;
+    if n.hover_link
+        .as_ref()
+        .is_some_and(|key| key.is_empty() || key.len() > 128)
+    {
+        return Err(error(path, "hover link requires 1..128 bytes"));
+    }
     if !n.ext.valid() {
         return Err(error(path, "invalid layout or style extension value"));
     }
@@ -1156,7 +1212,9 @@ fn check_node(
             "Text/Badge requires exactly one of text or bind_text",
         ));
     }
-    if n.kind == Kind::Button && (n.label.is_none() || n.on_activate.is_none()) {
+    if n.kind == Kind::Button
+        && (n.label.is_none() || (n.on_activate.is_none() && n.on_activate_input.is_none()))
+    {
         return Err(error(path, "Button requires label and on_activate"));
     }
     if matches!(n.kind, Kind::Checkbox | Kind::Toggle)
@@ -1328,7 +1386,10 @@ fn check_node(
         &n.on_selection,
         &n.on_select_text,
         &n.on_width,
+        &n.on_height,
         &n.on_key,
+        &n.on_activate_input,
+        &n.on_input_key,
         &n.on_context,
         &n.on_files_dropped,
     ]

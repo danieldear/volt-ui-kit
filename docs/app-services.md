@@ -193,6 +193,24 @@ let desktop = DesktopConfig::new("My app").menu(DesktopMenu::new(
 The menu includes the standard About, Services, Hide and Quit items. A
 `TrayConfig` adds a menu-bar icon (RGBA, up to 128×128) with its own commands.
 
+`native::file_dialog::reveal_file(&absolute_path)` asks Finder to select an
+existing file or folder without opening its contents. It requires
+`native-desktop` on macOS and the UI thread; other platforms return
+`Unsupported`. Success reports dispatch, not an observed Finder window.
+
+### Tray-resident window visibility
+
+Use `.window_visibility_from_state(|app| !app.hidden)` with a tray command that
+clears `hidden`. In `.on_close_request`, set `hidden = true` and return
+`CloseDecision::KeepOpen` for `CloseReason::Window`; allow `Quit` to close.
+Hiding changes the native window's visibility without shutting down the worker
+queues. A false-to-true transition restores and focuses the window. Visibility
+is not focus-stealing on every message: it is applied only on a transition.
+
+This opt-in does not install a tray icon, login item or daemon automatically.
+Always provide an explicit Open and Quit path. Existing applications retain
+normal close-to-exit behavior unless they opt into a close guard.
+
 ## Notifications
 
 With `native-notifications` on macOS:
@@ -269,6 +287,18 @@ Application::new("Dev", App::default(), view)
   position too. Use any format for the saved string.
 - `theme_file` reloads the palette whenever the file changes, without a rebuild.
 - The dev loop runs your project's build scripts; use it on code you trust.
+
+### Explicit macOS Trash
+
+`native::file_dialog::move_to_trash(&absolute_path)` moves one item to macOS
+Trash through Foundation, without permanently deleting it or emptying Trash.
+It requires `native-desktop` on macOS; other builds report `Unsupported`.
+The caller must own the confirmation UI, protected-location policy and
+concurrent-change validation. Run preflight and the filesystem operation on a
+worker, not in the rendering callback. The helper never falls back to deletion.
+Moving synced content can propagate to other devices; returning success does
+not guarantee immediate free-space recovery. The OS API is documented by
+[Apple](https://developer.apple.com/documentation/foundation/filemanager/trashitem(at:resultingitemurl:)).
 
 ## Packaging and releasing
 

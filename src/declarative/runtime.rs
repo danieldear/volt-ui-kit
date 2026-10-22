@@ -6,6 +6,8 @@ use super::{
 use super::{
     Align, Bindings, Document, DocumentError, Event, Handlers, Kind, Node, Rounding, Tone, Value,
 };
+#[cfg(feature = "rust-ui")]
+use super::{InputKeyEvent, InputModifiers, InputSource, PointerActivation};
 use crate::graphics::{BackgroundImage, Canvas, Clip, ClipRegion, VectorPath};
 use crate::{Button, ButtonColors, Painter, Panel, Rect, SurfaceStyle, Theme, UiTheme, Viewport};
 use std::{
@@ -242,6 +244,9 @@ pub struct LayoutBox {
     style: ResolvedStyle,
     pub(crate) text: String,
     pub(crate) action: Option<String>,
+    pub(crate) tab_stop: bool,
+    pub(crate) roving: Option<super::document::RovingNavigation>,
+    hover_link: Option<String>,
     pub(crate) editor: Option<super::document::EditorOptions>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_text_changed: Option<String>,
@@ -254,7 +259,13 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) on_key: Option<String>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) on_activate_input: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_input_key: Option<String>,
+    #[cfg(feature = "rust-ui")]
     pub(crate) on_width: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_height: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -287,6 +298,7 @@ pub struct LayoutBox {
     content_clip: Option<ClipRegion>,
     image: Option<BackgroundImage>,
     canvas: Canvas,
+    pub(crate) frames: Option<crate::graphics::CanvasFrames>,
     pub scroll_max: [f32; 2],
     pub scroll_offset: [f32; 2],
     pub scroll: Option<super::Scroll>,
@@ -382,8 +394,12 @@ pub struct Runtime {
     /// The last width reported to each `on_width` element, by id.
     #[cfg(feature = "rust-ui")]
     reported_widths: std::collections::HashMap<String, f32>,
+    /// The last height reported to each `on_height` element, by id.
+    #[cfg(feature = "rust-ui")]
+    reported_heights: std::collections::HashMap<String, f32>,
     scrollbar_capture: Option<ScrollbarCapture>,
     focused: Option<String>,
+    roving_focus: BTreeMap<String, String>,
     /// Focus arrived by keyboard (Tab, arrows, shortcuts), not a click.
     focus_visible: bool,
     hovered: Option<String>,
@@ -392,7 +408,13 @@ pub struct Runtime {
     hovered_link: Option<(String, usize)>,
     link_capture: Option<(String, usize)>,
     visual_hover: BTreeSet<String>,
+    /// Layout-cached paint peers. Pointer moves never compose application state.
+    hover_peers: BTreeMap<String, Vec<String>>,
     capture: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    capture_modifiers: InputModifiers,
+    #[cfg(feature = "rust-ui")]
+    pending_input_focus: Option<String>,
     keyboard: Option<String>,
     scale: f32,
     cache: Option<([f32; 3], Bindings)>,
@@ -451,20 +473,30 @@ impl Runtime {
         values: &Bindings,
     ) -> Result<Self, DocumentError> {
         document.validate_connections(handlers, values)?;
+        #[cfg(feature = "rust-ui")]
+        let pending_input_focus = Self::input_focus_request(None, document.root());
         let runtime = Self {
             document,
             boxes: vec![],
             layout_boxes: vec![],
             #[cfg(feature = "rust-ui")]
             reported_widths: std::collections::HashMap::new(),
+            #[cfg(feature = "rust-ui")]
+            reported_heights: std::collections::HashMap::new(),
             scrollbar_capture: None,
             focused: None,
+            roving_focus: BTreeMap::new(),
             focus_visible: false,
             hovered: None,
             hovered_link: None,
             link_capture: None,
             visual_hover: BTreeSet::new(),
+            hover_peers: BTreeMap::new(),
             capture: None,
+            #[cfg(feature = "rust-ui")]
+            capture_modifiers: InputModifiers::default(),
+            #[cfg(feature = "rust-ui")]
+            pending_input_focus,
             keyboard: None,
             scale: 1.,
             cache: None,
@@ -627,6 +659,28 @@ impl Runtime {
     /// state untouched. Successful installs cancel transient input; focus survives
     /// only if its key still names the same enabled interactive component kind.
     /// The host must install the matching handlers immediately on success.
+    #[cfg(feature = "rust-ui")]
+    fn input_focus_request(old: Option<&Node>, next: &Node) -> Option<String> {
+        fn collect(n: &Node, ids: &mut BTreeSet<String>) {
+            if n.input_focus {
+                ids.insert(n.id.clone());
+            }
+            for child in &n.children {
+                collect(child, ids);
+            }
+        }
+        fn find(n: &Node, ids: &BTreeSet<String>) -> Option<String> {
+            if n.input_focus && !ids.contains(&n.id) && n.enabled && interactive_node(n) {
+                return Some(n.id.clone());
+            }
+            n.children.iter().find_map(|child| find(child, ids))
+        }
+        let mut ids = BTreeSet::new();
+        if let Some(old) = old {
+            collect(old, &mut ids);
+        }
+        find(next, &ids)
+    }
     pub fn replace_document<C>(
         &mut self,
         next: Document,
@@ -640,6 +694,35 @@ impl Runtime {
             }
             node.children().iter().find_map(|child| find(child, id))
         }
+        // A roving chart retains focus by application identity even when its
+        // legacy index-based tile IDs change after a sorted/updated snapshot.
+        let roving = self
+            .focused
+            .as_deref()
+            .and_then(|id| find(self.document.root(), id))
+            .and_then(|node| node.roving.as_ref());
+        fn find_member<'a>(
+            node: &'a Node,
+            group: &str,
+            member: &str,
+            values: &Bindings,
+        ) -> Option<&'a Node> {
+            if node
+                .roving
+                .as_ref()
+                .is_some_and(|r| r.group == group && r.member == member)
+                && interactive_node(node)
+                && enabled(node, values)
+            {
+                return Some(node);
+            }
+            node.children
+                .iter()
+                .find_map(|child| find_member(child, group, member, values))
+        }
+        let roving_focus = roving.map(|r| {
+            find_member(next.root(), &r.group, &r.member, values).map(|node| node.id.clone())
+        });
         let keep_focus = self.focused.as_deref().is_some_and(|id| {
             match (find(self.document.root(), id), find(next.root(), id)) {
                 (Some(old), Some(new)) => {
@@ -648,7 +731,9 @@ impl Runtime {
                 _ => false,
             }
         });
-        if !keep_focus {
+        if let Some(focus) = roving_focus {
+            self.focused = focus;
+        } else if !keep_focus {
             self.focused = None;
         }
         fn keys(n: &Node, ids: &mut BTreeSet<String>) {
@@ -673,6 +758,11 @@ impl Runtime {
         let scrollbar_capture = self.scrollbar_capture.clone();
         #[cfg(feature = "rust-ui")]
         let autofocus = Self::autofocus_target(Some(self.document.root()), next.root());
+        #[cfg(feature = "rust-ui")]
+        {
+            self.pending_input_focus =
+                Self::input_focus_request(Some(self.document.root()), next.root());
+        }
         let mut old = std::mem::replace(&mut self.document, next);
         self.reuse.prepare(
             &mut old,
@@ -864,6 +954,14 @@ impl Runtime {
             b.ext.links = links;
         }
         self.layout_boxes = boxes;
+        self.roving_focus.retain(|group, member| {
+            self.layout_boxes.iter().any(|b| {
+                b.enabled
+                    && b.roving
+                        .as_ref()
+                        .is_some_and(|r| r.group == *group && r.member == *member)
+            })
+        });
         self.boxes = self
             .layout_boxes
             .iter()
@@ -901,8 +999,28 @@ impl Runtime {
             self.layout(viewport, values, metrics)?;
             return Ok(true);
         }
+        self.hover_peers.clear();
+        for b in &self.boxes {
+            if b.enabled {
+                if let Some(key) = &b.hover_link {
+                    self.hover_peers
+                        .entry(key.clone())
+                        .or_default()
+                        .push(b.id.clone());
+                }
+            }
+        }
         self.cache = Some((key, values.clone()));
-        if self.apply_scroll_requests() {
+        #[cfg(feature = "rust-ui")]
+        let input_focus_scrolled = if let Some(id) = self.pending_input_focus.take() {
+            self.accessibility_focus(&id);
+            self.cache.is_none()
+        } else {
+            false
+        };
+        #[cfg(not(feature = "rust-ui"))]
+        let input_focus_scrolled = false;
+        if self.apply_scroll_requests() || input_focus_scrolled {
             self.cache = None;
             self.layout(viewport, values, metrics)?;
         }
@@ -1416,6 +1534,36 @@ impl Runtime {
             };
             index = parent;
         }
+        // Rich linked content may be a descendant of its activation target
+        // (e.g. a selectable row) or cover a passive review diamond. Find the
+        // top painted leaf independently; do not change legacy hover ancestry.
+        if !self.hover_peers.is_empty() {
+            let mut leaf = self.boxes.iter().rposition(|b| {
+                self.scope_allows_id(&b.id)
+                    && !self.portal_passthrough(&b.id)
+                    && !b.effects.scroll_passthrough
+                    && b.clip.contains(x, y)
+                    && b.clip_regions.iter().all(|r| r.contains(x, y))
+                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+            });
+            while let Some(index) = leaf {
+                let b = &self.boxes[index];
+                if let Some(peers) = b
+                    .hover_link
+                    .as_ref()
+                    .filter(|_| b.enabled && self.scope_allows_id(&b.id))
+                    .and_then(|key| self.hover_peers.get(key))
+                {
+                    result.extend(peers.iter().filter(|id| self.scope_allows_id(id)).cloned());
+                    break;
+                }
+                leaf = b
+                    .depth
+                    .checked_sub(1)
+                    .and_then(|depth| self.boxes[..index].iter().rposition(|p| p.depth == depth));
+            }
+        }
         result
     }
     /// Full input adapter for controls which dispatch continuously (sliders).
@@ -1505,15 +1653,21 @@ impl Runtime {
         changed
     }
     pub fn pointer_leave(&mut self) -> bool {
+        // Do not short-circuit takes: physical link and linked peer states must
+        // both clear even when an interactive control was hovered.
         let changed = self.hovered.take().is_some()
-            || !self.visual_hover.is_empty()
-            || self.hovered_link.take().is_some();
+            | !self.visual_hover.is_empty()
+            | self.hovered_link.take().is_some();
         self.visual_hover.clear();
         #[cfg(feature = "rust-ui")]
         let changed = self.tooltip_pointer(None) || changed;
         changed
     }
     pub fn pointer_down(&mut self, x: f32, y: f32) -> bool {
+        #[cfg(feature = "rust-ui")]
+        {
+            self.capture_modifiers = InputModifiers::default();
+        }
         if self.scrollbar_pointer_down(x, y) {
             return true;
         }
@@ -1548,6 +1702,32 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         self.sync_tooltip_visibility();
         changed
+    }
+    /// Opt-in pointer adapter. Modifiers are captured on press, not sampled on
+    /// release; legacy pointer adapters retain their default/unmodified behavior.
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_down_with_modifiers(
+        &mut self,
+        x: f32,
+        y: f32,
+        modifiers: InputModifiers,
+    ) -> bool {
+        let changed = self.pointer_down(x, y);
+        self.capture_modifiers = modifiers;
+        changed
+    }
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_down_outcome_with_modifiers<C>(
+        &mut self,
+        x: f32,
+        y: f32,
+        modifiers: InputModifiers,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        let outcome = self.pointer_down_outcome(x, y, handlers, context)?;
+        self.capture_modifiers = modifiers;
+        Ok(outcome)
     }
     /// Compatibility wrapper: true means a pressed capture was released, even
     /// if release was outside. Use pointer_up_outcome to distinguish activation.
@@ -1622,7 +1802,22 @@ impl Runtime {
             .as_ref()
             .filter(|id| Some((*id).clone()) == self.hit(x, y))
         {
-            self.activate(id, handlers, context)?
+            #[cfg(feature = "rust-ui")]
+            {
+                self.activate_with_input(
+                    id,
+                    PointerActivation {
+                        modifiers: self.capture_modifiers,
+                        source: InputSource::Pointer,
+                    },
+                    handlers,
+                    context,
+                )?
+            }
+            #[cfg(not(feature = "rust-ui"))]
+            {
+                self.activate(id, handlers, context)?
+            }
         } else {
             false
         };
@@ -1630,6 +1825,54 @@ impl Runtime {
             changed: pressed.is_some(),
             activated,
         })
+    }
+    fn remember_roving_focus(&mut self) {
+        if let Some((group, id)) = self.focused.as_deref().and_then(|id| {
+            self.layout_boxes
+                .iter()
+                .find(|b| b.id == id && b.enabled)
+                .and_then(|b| {
+                    b.roving
+                        .as_ref()
+                        .map(|r| (r.group.clone(), r.member.clone()))
+                })
+        }) {
+            self.roving_focus.insert(group, id);
+        }
+    }
+    fn tab_order(&mut self) -> Vec<String> {
+        self.remember_roving_focus();
+        let reachable = |b: &&LayoutBox| {
+            self.scope_allows_id(&b.id) && interactive_box(b) && b.enabled && !b.departing
+        };
+        let mut entries: BTreeMap<String, (bool, String)> = BTreeMap::new();
+        for b in self.layout_boxes.iter().filter(reachable) {
+            if let Some(roving) = &b.roving {
+                let entry = entries
+                    .entry(roving.group.clone())
+                    .or_insert((b.tab_stop, b.id.clone()));
+                if b.tab_stop && !entry.0 {
+                    *entry = (true, b.id.clone());
+                }
+            }
+        }
+        for b in self.layout_boxes.iter().filter(reachable) {
+            if let Some(roving) = &b.roving {
+                if self.roving_focus.get(&roving.group) == Some(&roving.member) {
+                    entries.insert(roving.group.clone(), (true, b.id.clone()));
+                }
+            }
+        }
+        self.layout_boxes
+            .iter()
+            .filter(reachable)
+            .filter(|b| {
+                b.roving.as_ref().map_or(b.tab_stop, |r| {
+                    entries.get(&r.group).is_some_and(|(_, id)| id == &b.id)
+                })
+            })
+            .map(|b| b.id.clone())
+            .collect()
     }
     pub fn focus_next(&mut self, backwards: bool) -> bool {
         #[cfg(feature = "rust-ui")]
@@ -1651,12 +1894,7 @@ impl Runtime {
         self.capture = None;
         self.keyboard = None;
         self.scrollbar_capture = None;
-        let ids: Vec<_> = self
-            .layout_boxes
-            .iter()
-            .filter(|b| self.scope_allows_id(&b.id) && interactive_box(b) && b.enabled)
-            .map(|b| b.id.clone())
-            .collect();
+        let ids = self.tab_order();
         if ids.is_empty() {
             return self.focused.take().is_some();
         }
@@ -1800,7 +2038,133 @@ impl Runtime {
         #[cfg(not(feature = "rust-ui"))]
         changed
     }
+    #[cfg(feature = "rust-ui")]
+    fn roving_target(&self, key: super::InputKey) -> Option<Option<String>> {
+        use super::InputKey;
+        if self.overlay_active() || self.editing_focus() {
+            return None;
+        }
+        let focused = self.focused.as_deref()?;
+        let navigation = self
+            .layout_boxes
+            .iter()
+            .find(|b| {
+                b.id == focused && b.enabled && !b.departing && self.scope_allows_id(focused)
+            })?
+            .roving
+            .as_ref()?;
+        Some(match key {
+            InputKey::ArrowLeft => navigation.left.clone(),
+            InputKey::ArrowRight => navigation.right.clone(),
+            InputKey::ArrowUp => navigation.parent.clone(),
+            InputKey::ArrowDown => navigation.child.clone(),
+            InputKey::Home => navigation.first.clone(),
+            InputKey::End => navigation.last.clone(),
+            _ => return None,
+        })
+    }
+    #[cfg(feature = "native")]
+    pub(crate) fn is_roving_key(&self, key: super::InputKey) -> bool {
+        self.roving_target(key).is_some()
+    }
+    /// Dispatch to an explicitly opted-in focused control only. Editors,
+    /// overlay/menu scopes and unhandled keys keep their existing host routing.
+    /// A true activation means the callback consumed the key and requests recomposition.
+    #[cfg(feature = "rust-ui")]
+    pub fn input_key<C>(
+        &mut self,
+        event: InputKeyEvent,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        if self.overlay_active() || self.editing_focus() {
+            return Ok(InputOutcome::default());
+        }
+        if let Some(target) = self.roving_target(event.key) {
+            let mut changed = self.cancel_pointer_captures() || !self.focus_visible;
+            self.focus_visible = true;
+            if let Some(target) = target.filter(|id| {
+                self.layout_boxes
+                    .iter()
+                    .any(|b| b.id == *id && b.enabled && !b.departing && self.scope_allows_id(id))
+            }) {
+                changed |= self.focused.as_ref() != Some(&target);
+                self.focused = Some(target.clone());
+                changed |= self.reveal_focus(&target);
+                self.remember_roving_focus();
+            }
+            self.sync_tooltip_visibility();
+            return Ok(InputOutcome {
+                changed,
+                activated: false,
+            });
+        }
+        let action = self
+            .focused
+            .as_deref()
+            .and_then(|id| {
+                self.layout_boxes
+                    .iter()
+                    .find(|b| b.id == id && b.enabled && !b.departing && self.scope_allows_id(id))
+            })
+            .and_then(|b| b.on_input_key.clone());
+        let Some(action) = action else {
+            return Ok(InputOutcome::default());
+        };
+        let activated = handlers
+            .dispatch_input_key(&action, event, context)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        let changed = activated && self.cancel_pointer_captures();
+        Ok(InputOutcome { changed, activated })
+    }
+    #[cfg(feature = "rust-ui")]
+    fn activate_with_input<C>(
+        &self,
+        id: &str,
+        event: PointerActivation,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        if !self.scope_allows_id(id) {
+            return Ok(false);
+        }
+        if let Some(action) = self
+            .layout_boxes
+            .iter()
+            .find(|b| b.id == id && b.enabled && !b.departing)
+            .and_then(|b| b.on_activate_input.as_ref())
+        {
+            handlers
+                .dispatch_activation(action, event, context)
+                .map_err(|e| DocumentError(e.to_string()))?;
+            return Ok(true);
+        }
+        self.activate_legacy(id, handlers, context)
+    }
     fn activate<C>(
+        &self,
+        id: &str,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        #[cfg(feature = "rust-ui")]
+        {
+            self.activate_with_input(
+                id,
+                PointerActivation {
+                    modifiers: InputModifiers::default(),
+                    source: InputSource::Keyboard,
+                },
+                handlers,
+                context,
+            )
+        }
+        #[cfg(not(feature = "rust-ui"))]
+        {
+            self.activate_legacy(id, handlers, context)
+        }
+    }
+    fn activate_legacy<C>(
         &self,
         id: &str,
         handlers: &mut Handlers<'_, C>,
@@ -1863,6 +2227,17 @@ impl Runtime {
         let mut motion = self.motion.borrow_mut();
         motion.scale = self.scale;
         let mut boxes = motion.paint_boxes(&self.boxes);
+        // Frame sequences show the frame for now; finished ones keep the
+        // final drawing, which layout already holds.
+        if motion.frames_playing() {
+            let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
+            for b in &mut list {
+                if let Some(canvas) = b.frames.as_ref().and_then(|f| motion.frame(&b.id, f)) {
+                    b.canvas = canvas.clone();
+                }
+            }
+            boxes = Some(list);
+        }
         if !motion.reduced
             && boxes
                 .as_deref()
@@ -2929,10 +3304,23 @@ fn paint_scrollbars<P: Painter>(
     }
 }
 fn interactive_node(n: &Node) -> bool {
-    interactive(n.kind) || n.editor.is_some() || n.slider.is_some() || n.split_handle.is_some()
+    interactive(n.kind)
+        || n.editor.is_some()
+        || n.slider.is_some()
+        || n.split_handle.is_some()
+        || n.on_activate_input.is_some()
+        || n.on_input_key.is_some()
 }
 fn interactive_box(b: &LayoutBox) -> bool {
-    interactive(b.kind) || b.editor.is_some() || b.slider.is_some() || b.split_handle.is_some()
+    #[cfg(feature = "rust-ui")]
+    let custom = b.on_activate_input.is_some() || b.on_input_key.is_some();
+    #[cfg(not(feature = "rust-ui"))]
+    let custom = false;
+    interactive(b.kind)
+        || b.editor.is_some()
+        || b.slider.is_some()
+        || b.split_handle.is_some()
+        || custom
 }
 #[cfg(not(feature = "rust-ui"))]
 impl Runtime {
@@ -4060,6 +4448,7 @@ fn place(
     }
     out.push(LayoutBox {
         id: n.id.clone(),
+        hover_link: n.hover_link.clone(),
         kind: n.kind,
         bounds,
         clip,
@@ -4083,8 +4472,16 @@ fn place(
         on_selection: n.on_selection.clone(),
         #[cfg(feature = "rust-ui")]
         on_key: n.on_key.clone(),
+        tab_stop: n.tab_stop,
+        roving: n.roving.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_activate_input: n.on_activate_input.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_input_key: n.on_input_key.clone(),
         #[cfg(feature = "rust-ui")]
         on_width: n.on_width.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_height: n.on_height.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate
@@ -4120,6 +4517,7 @@ fn place(
         content_clip: None,
         image: n.surface.image.clone(),
         canvas: n.surface.canvas.clone(),
+        frames: n.surface.frames.clone(),
         scroll_max: [0.; 2],
         scroll_offset: [0.; 2],
         scroll: n.surface.scroll,
@@ -5805,5 +6203,222 @@ mod foundation_tests {
         );
         // Without sides the full box is still drawn, top edge included.
         assert!(red_ys(None).iter().any(|y| *y < 3.));
+    }
+}
+
+#[cfg(all(test, feature = "rust-ui"))]
+mod linked_hover_tests {
+    use super::*;
+    use crate::ui::prelude::*;
+    use crate::ui::text;
+    struct Metrics;
+    impl TextMetrics for Metrics {
+        fn measure(&mut self, text: &str, size: f32, width: f32) -> [f32; 2] {
+            [(text.len() as f32 * size * 0.5).min(width), size * 1.2]
+        }
+    }
+    fn mount(ui: Element<usize>, scale: f32) -> (Runtime, Handlers<'static, usize>) {
+        let (doc, handlers) = ui.build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        layout(&mut runtime, scale);
+        (runtime, handlers)
+    }
+    fn layout(runtime: &mut Runtime, scale: f32) {
+        runtime
+            .layout(
+                Viewport::new(600. * scale, 400. * scale, scale).unwrap(),
+                &Bindings::default(),
+                &mut Metrics,
+            )
+            .unwrap();
+    }
+    fn center(runtime: &Runtime, id: &str) -> [f32; 2] {
+        let [x, y, w, h] = runtime
+            .boxes
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap()
+            .bounds
+            .bounds();
+        [x + w / 2., y + h / 2.]
+    }
+    fn hovered(runtime: &Runtime, id: &str) -> bool {
+        let b = runtime.boxes.iter().find(|b| b.id == id).unwrap();
+        runtime.state_for_box(b).hovered
+    }
+    fn peers() -> Element<usize> {
+        vstack![
+            button("Tile")
+                .on_click(|_: &mut usize| {})
+                .key("tile")
+                .hover_link("path")
+                .on_click(|n| *n += 1),
+            hstack![
+                text("Peer"),
+                checkbox("Child", false)
+                    .key("child")
+                    .on_change(|n, _| *n += 10)
+            ]
+            .key("row")
+            .hover_link("path")
+            .height(40.)
+            .hover_style(|s| s.background("#123456")),
+            button("Other")
+                .on_click(|_: &mut usize| {})
+                .key("other")
+                .hover_link("other")
+                .on_click(|n| *n += 100),
+            button("Disabled")
+                .on_click(|_: &mut usize| {})
+                .key("disabled")
+                .hover_link("path")
+                .enabled(false),
+        ]
+        .width(400.)
+        .into()
+    }
+    #[test]
+    fn linked_hover_is_bidirectional_paint_only_and_edge_triggered_at_both_scales() {
+        for scale in [1., 2.] {
+            let (mut runtime, mut handlers) = mount(peers(), scale);
+            let mut app = 0;
+            let focus = runtime.focused.clone();
+            let [x, y] = center(&runtime, "tile");
+            let outcome = runtime
+                .pointer_move_outcome(x, y, &mut handlers, &mut app)
+                .unwrap();
+            assert!(outcome.changed && !outcome.activated);
+            assert!(hovered(&runtime, "tile") && hovered(&runtime, "row"));
+            assert!(!hovered(&runtime, "disabled") && !hovered(&runtime, "other"));
+            assert!(!runtime.pointer_move(x + 1., y));
+            assert_eq!(app, 0);
+            assert_eq!(runtime.focused, focus);
+            assert!(runtime.capture.is_none());
+            let [x, y] = center(&runtime, "child");
+            runtime.pointer_move(x, y);
+            assert!(hovered(&runtime, "tile") && hovered(&runtime, "row"));
+            assert_eq!(app, 0, "hovering a nested checkbox must not toggle it");
+            assert!(runtime.pointer_leave());
+            assert!(!hovered(&runtime, "tile") && !hovered(&runtime, "row"));
+            assert!(!runtime.pointer_leave());
+        }
+    }
+    #[test]
+    fn nearest_nested_group_wins_and_cancel_clears_all_peers() {
+        let (mut r, _) = mount(
+            vstack![
+                vstack![button("inner")
+                    .on_click(|_: &mut usize| {})
+                    .key("inner")
+                    .hover_link("inner")]
+                .key("outer")
+                .hover_link("outer"),
+                text("a").key("a").hover_link("outer"),
+                text("b").key("b").hover_link("inner"),
+            ]
+            .into(),
+            1.,
+        );
+        let [x, y] = center(&r, "inner");
+        r.pointer_move(x, y);
+        assert!(hovered(&r, "b"));
+        assert!(!hovered(&r, "a"));
+        assert!(r.cancel_input());
+        assert!(!hovered(&r, "b"));
+    }
+    #[test]
+    fn disabled_hidden_and_clipped_sources_do_not_link() {
+        let ui = vstack![
+            vstack![button("Cut off")
+                .on_click(|_: &mut usize| {})
+                .key("cut")
+                .hover_link("path")]
+            .height(0.)
+            .clip_contents(true),
+            button("hidden")
+                .on_click(|_: &mut usize| {})
+                .key("hidden")
+                .hover_link("path")
+                .visible(false),
+            button("disabled")
+                .on_click(|_: &mut usize| {})
+                .key("disabled")
+                .hover_link("path")
+                .enabled(false),
+            text("Peer").key("peer").hover_link("path"),
+        ];
+        let (mut r, _) = mount(ui.into(), 1.);
+        assert!(!r.boxes.iter().any(|b| b.id == "hidden"));
+        let [x, y] = center(&r, "disabled");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "peer"));
+        r.pointer_move(550., 350.);
+        assert!(!hovered(&r, "peer"));
+    }
+    #[test]
+    fn replacing_tree_never_retains_old_group_or_disabled_peer() {
+        let (mut r, _) = mount(peers(), 1.);
+        let [x, y] = center(&r, "tile");
+        r.pointer_move(x, y);
+        assert!(hovered(&r, "row"));
+        let next: Element<usize> = vstack![
+            button("new")
+                .on_click(|_: &mut usize| {})
+                .key("tile")
+                .hover_link("new"),
+            text("peer").key("row").hover_link("path")
+        ]
+        .into();
+        let (doc, h) = next.build().unwrap().into_parts();
+        r.replace_document(doc, &h, &Bindings::default()).unwrap();
+        layout(&mut r, 1.);
+        assert!(!hovered(&r, "row"));
+        let [x, y] = center(&r, "tile");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "row"));
+    }
+    #[test]
+    fn popup_scope_blocks_background_hover_peers() {
+        let (mut r, _) = mount(
+            vstack![
+                button("background")
+                    .on_click(|_: &mut usize| {})
+                    .key("background")
+                    .hover_link("path"),
+                context_menu(
+                    button("anchor").on_click(|_: &mut usize| {}).key("anchor"),
+                    [menu_item(1, "Action").key("action")]
+                )
+                .key("menu")
+                .open(true)
+                .position([200., 100.])
+                .on_action(|_: &mut usize, _| {})
+                .on_open_change(|_: &mut usize, _| {})
+                .on_context_open(|_: &mut usize, _| {})
+            ]
+            .into(),
+            1.,
+        );
+        let [x, y] = center(&r, "background");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "background"));
+        let [x, y] = center(&r, "action");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "background"));
+    }
+    #[test]
+    fn keys_are_bounded_and_linking_does_not_create_callbacks() {
+        for key in [String::new(), "x".repeat(129)] {
+            let ui: Element<usize> = text("bad").hover_link(key).into();
+            assert!(ui.build().is_err());
+        }
+        let ui: Element<usize> = text("valid").hover_link("folder/Unicode-☀").into();
+        assert!(ui.build().is_ok());
+        let (mut r, mut h) = mount(text("passive").key("passive").hover_link("path").into(), 1.);
+        let [x, y] = center(&r, "passive");
+        let mut app = 0;
+        let outcome = r.pointer_move_outcome(x, y, &mut h, &mut app).unwrap();
+        assert!(!outcome.activated);
+        assert_eq!(app, 0);
     }
 }

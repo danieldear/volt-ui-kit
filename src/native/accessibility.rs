@@ -36,6 +36,7 @@ pub(super) fn tree_update(
     nodes: &[AccessNode],
     title: &str,
     size: [f32; 2],
+    multiselectable: &[String],
 ) -> (TreeUpdate, HashMap<NodeId, String>) {
     let ids: Vec<NodeId> = nodes.iter().map(|n| node_id(&n.id)).collect();
     let mut children: Vec<Vec<NodeId>> = vec![Vec::new(); nodes.len()];
@@ -79,6 +80,9 @@ pub(super) fn tree_update(
             AccessRole::TreeItem => Role::TreeItem,
         };
         let mut node = Node::new(role);
+        if multiselectable.contains(&n.id) {
+            node.set_multiselectable();
+        }
         let [x, y, w, h] = n.bounds.map(f64::from);
         node.set_bounds(Rect::new(x, y, x + w, y + h));
         let input = matches!(
@@ -308,7 +312,7 @@ mod tests {
         slider.numeric = Some([3., 0., 10., 1.]);
         slider.focused = true;
         let nodes = vec![node("list", AccessRole::ScrollView, None), slider];
-        let (update, ids) = tree_update(&nodes, "App", [800., 600.]);
+        let (update, ids) = tree_update(&nodes, "App", [800., 600.], &[]);
         assert_eq!(update.focus, node_id("volume"));
         let root = &update.nodes[0].1;
         assert_eq!(root.children(), &[node_id("list")]);
@@ -350,7 +354,7 @@ mod tests {
     fn disabled_controls_offer_no_actions_and_ids_are_stable() {
         let mut save = node("save", AccessRole::Button, None);
         save.enabled = false;
-        let (update, _) = tree_update(&[save], "App", [10., 10.]);
+        let (update, _) = tree_update(&[save], "App", [10., 10.], &[]);
         assert!(update.nodes[1].1.is_disabled());
         assert!(!update.nodes[1].1.supports_action(Action::Click));
         assert_eq!(node_id("save"), node_id("save"));
@@ -368,7 +372,7 @@ mod tests {
         input.placeholder = Some("Your full name".into());
         let mut branch = node("src", AccessRole::TreeItem, None);
         branch.expanded = Some(false);
-        let (tree, ids) = tree_update(&[scroll, tab, input, branch], "Catalog", [800., 600.]);
+        let (tree, ids) = tree_update(&[scroll, tab, input, branch], "Catalog", [800., 600.], &[]);
         let find = |key: &str| {
             &tree
                 .nodes
@@ -445,7 +449,7 @@ mod tests {
             column: Some(1),
             ..AccessTableInfo::default()
         });
-        let (tree, _) = tree_update(&[table, header, row, cell], "Catalog", [800., 600.]);
+        let (tree, _) = tree_update(&[table, header, row, cell], "Catalog", [800., 600.], &[]);
         let get = |key: &str| {
             &tree
                 .nodes

@@ -481,3 +481,38 @@ fn containers_report_their_width_after_layout_when_it_changes() {
     );
     assert_eq!(seen, [500., 320.], "logical points, padding included");
 }
+#[test]
+fn flexible_containers_report_their_height_after_layout_when_it_changes() {
+    // A header of fixed height, and a body that takes the rest of the window.
+    let page: Element<Vec<f32>> = vstack![
+        text("header").height(40.),
+        vstack![text("body")]
+            .key("body")
+            .flex(1.)
+            .on_height(|seen: &mut Vec<f32>, h| seen.push(h))
+    ]
+    .key("page")
+    .height_fraction(1.)
+    .into();
+    let (d, mut h) = page.build().unwrap().into_parts();
+    let mut rt = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    let mut seen: Vec<f32> = Vec::new();
+    let at = |height: f32,
+              rt: &mut Runtime,
+              h: &mut Handlers<'static, Vec<f32>>,
+              seen: &mut Vec<f32>| {
+        let vp = Viewport::new(800., height * 2., 2.).unwrap();
+        rt.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
+        rt.dispatch_widths(h, seen).unwrap()
+    };
+    assert!(at(500., &mut rt, &mut h, &mut seen), "first layout reports");
+    assert!(
+        !at(500., &mut rt, &mut h, &mut seen),
+        "same height: no report"
+    );
+    assert!(
+        at(700., &mut rt, &mut h, &mut seen),
+        "a taller window reports again"
+    );
+    assert_eq!(seen, [460., 660.], "logical points, what the header leaves");
+}

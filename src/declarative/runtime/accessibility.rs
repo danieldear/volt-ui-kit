@@ -88,6 +88,21 @@ impl Runtime {
             b.id == id && b.enabled && !b.departing && width > 0. && height > 0.
         })
     }
+    /// IDs of mounted, enabled scopes that explicitly support multi-selection.
+    /// Kept separate from AccessNode to preserve its existing public struct shape.
+    pub fn accessibility_multiselectable_ids(&self) -> Vec<String> {
+        fn visit(n: &Node, r: &Runtime, ids: &mut Vec<String>) {
+            if n.access_multiselectable && r.access_target(&n.id).is_some() {
+                ids.push(n.id.clone());
+            }
+            for child in &n.children {
+                visit(child, r, ids);
+            }
+        }
+        let mut ids = Vec::new();
+        visit(self.document.root(), self, &mut ids);
+        ids
+    }
     /// The current accessibility tree. While a modal overlay is open only its
     /// contents are exposed, matching what pointer and keyboard can reach.
     pub fn accessibility_nodes(&self) -> Vec<AccessNode> {
@@ -122,6 +137,7 @@ impl Runtime {
                     Kind::Text | Kind::Badge if !b.text.trim().is_empty() => {
                         Some(AccessRole::Label)
                     }
+                    _ if b.on_activate_input.is_some() => Some(AccessRole::Button),
                     _ if b.scroll.is_some() => Some(AccessRole::ScrollView),
                     _ if b.accessible_label.is_some() => Some(AccessRole::Group),
                     _ => None,
@@ -154,7 +170,9 @@ impl Runtime {
                 parent,
                 role,
                 table: b.access_table,
-                clickable: interactive(b.kind) && b.editor.is_none() && b.slider.is_none(),
+                clickable: (interactive(b.kind) || b.on_activate_input.is_some())
+                    && b.editor.is_none()
+                    && b.slider.is_none(),
                 label: b.accessible_label.clone().unwrap_or(label),
                 placeholder: editor.map(|e| e.placeholder.clone()),
                 value: value.or_else(|| numeric.map(|n| format!("{}", n[0]))),
@@ -258,14 +276,23 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
-        if !self
-            .access_target(id)
-            .is_some_and(|b| interactive(b.kind) && b.editor.is_none() && b.slider.is_none())
-        {
+        if !self.access_target(id).is_some_and(|b| {
+            (interactive(b.kind) || b.on_activate_input.is_some())
+                && b.editor.is_none()
+                && b.slider.is_none()
+        }) {
             return Ok(InputOutcome::default());
         }
         let focused = self.accessibility_focus(id);
-        let activated = self.activate(id, handlers, context)?;
+        let activated = self.activate_with_input(
+            id,
+            PointerActivation {
+                modifiers: InputModifiers::default(),
+                source: InputSource::Accessibility,
+            },
+            handlers,
+            context,
+        )?;
         Ok(InputOutcome {
             changed: focused || activated,
             activated,

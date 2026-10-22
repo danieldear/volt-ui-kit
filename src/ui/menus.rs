@@ -104,6 +104,23 @@ impl<T> MenuItem<T> {
 type Action<C, T> = Rc<RefCell<dyn FnMut(&mut C, T)>>;
 type Open<C> = Rc<RefCell<dyn FnMut(&mut C, bool)>>;
 type SubmenuChange<C> = Rc<RefCell<dyn FnMut(&mut C, Option<String>)>>;
+#[derive(Clone)]
+struct PopupLayout {
+    padding: f32,
+    gap: f32,
+    item_height: f32,
+    max_height: f32,
+}
+impl Default for PopupLayout {
+    fn default() -> Self {
+        Self {
+            padding: 6.,
+            gap: 2.,
+            item_height: 34.,
+            max_height: 480.,
+        }
+    }
+}
 struct MenuOptions<C, T> {
     items: Vec<MenuItem<T>>,
     open: bool,
@@ -112,6 +129,8 @@ struct MenuOptions<C, T> {
     change: Option<Open<C>>,
     submenu: Option<String>,
     on_submenu: Option<SubmenuChange<C>>,
+    surface: Option<String>,
+    layout: PopupLayout,
 }
 impl<C, T> MenuOptions<C, T> {
     fn new(items: impl IntoIterator<Item = MenuItem<T>>) -> Self {
@@ -123,6 +142,8 @@ impl<C, T> MenuOptions<C, T> {
             change: None,
             submenu: None,
             on_submenu: None,
+            surface: None,
+            layout: PopupLayout::default(),
         }
     }
 }
@@ -181,6 +202,38 @@ macro_rules! menu_options {
                 self.$field.submenu = key.map(Into::into);
                 self
             }
+            /// The popup card's fill (default `Base200`). Over a translucent
+            /// window palette, a near-opaque fill keeps items legible; the
+            /// card then also floats on a soft shadow.
+            pub fn surface(mut self, color: impl Into<String>) -> Self {
+                self.$field.surface = Some(color.into());
+                self
+            }
+            /// Alias for `.surface(..)`: style the popup card, not its trigger.
+            pub fn popup_background(self, color: impl Into<String>) -> Self {
+                self.surface(color)
+            }
+            /// Popup content inset in logical pixels (default 6).
+            pub fn popup_padding(mut self, value: f32) -> Self {
+                self.$field.layout.padding = value;
+                self
+            }
+            /// Space between popup rows, including separators (default 2).
+            pub fn item_gap(mut self, value: f32) -> Self {
+                self.$field.layout.gap = value;
+                self
+            }
+            /// Height of each action/submenu row (default 34; minimum 24).
+            pub fn item_height(mut self, value: f32) -> Self {
+                self.$field.layout.item_height = value;
+                self
+            }
+            /// Maximum popup height (default 480). The viewport may constrain
+            /// it further; overflowing rows remain scrollable and keyboard reachable.
+            pub fn popup_max_height(mut self, value: f32) -> Self {
+                self.$field.layout.max_height = value;
+                self
+            }
             /// Called with a submenu key when one opens, `None` to go back.
             pub fn on_submenu(
                 mut self,
@@ -206,6 +259,18 @@ impl<C, T> ContextMenu<C, T> {
     }
 }
 fn error<C, T>(root: &Element<C>, options: &MenuOptions<C, T>) -> Option<String> {
+    let layout = &options.layout;
+    if !layout.padding.is_finite()
+        || !(0. ..=256.).contains(&layout.padding)
+        || !layout.gap.is_finite()
+        || !(0. ..=128.).contains(&layout.gap)
+        || !layout.item_height.is_finite()
+        || !(24. ..=512.).contains(&layout.item_height)
+        || !layout.max_height.is_finite()
+        || !(24. ..=8192.).contains(&layout.max_height)
+    {
+        return Some("popup spacing must be finite: padding 0..256, gap 0..128, item height 24..512, max height 24..8192".into());
+    }
     if root.auto_id {
         return Some("menu requires a stable .key(...)".into());
     }
@@ -270,7 +335,6 @@ fn open_submenu<T>(
     }
     found.ok_or(rest)
 }
-const ROW: f32 = 34.;
 /// A decorated row: the button stays the first child so menu keyboard
 /// navigation and focus target it; glyphs and hints sit above, passthrough.
 fn decorated<C>(
@@ -278,6 +342,7 @@ fn decorated<C>(
     leading: Option<Element<C>>,
     trailing: Option<Element<C>>,
     width: f32,
+    row_height: f32,
 ) -> Element<C> {
     let key = format!("{}-row", b.node.id);
     let mut parts: Vec<Element<C>> = Vec::new();
@@ -291,7 +356,7 @@ fn decorated<C>(
         hstack(parts)
             .key(format!("{key}-decor"))
             .width(width)
-            .height(ROW)
+            .height(row_height)
             .padding(10., Edge::Horizontal)
             .gap(8., Axis::Horizontal)
             .align(Align::Center)
@@ -299,7 +364,7 @@ fn decorated<C>(
     ]
     .key(key)
     .width(width)
-    .height(ROW)
+    .height(row_height)
     .into()
 }
 struct Popup<C, T> {
@@ -310,6 +375,8 @@ struct Popup<C, T> {
     change: Open<C>,
     submenu: Option<String>,
     on_submenu: Option<SubmenuChange<C>>,
+    surface: Option<String>,
+    layout: PopupLayout,
 }
 fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>) -> Element<C> {
     let Popup {
@@ -320,22 +387,35 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
         change,
         submenu,
         on_submenu,
+        surface,
+        layout,
     } = p;
+    let row_height = layout.item_height;
     let mut card = Element::new(Kind::Panel);
     card.node.id = format!("{key}-content");
     card.auto_id = false;
     card.node.width = Some(width);
-    card.node.padding = 6.;
-    card.node.gap = 2.;
+    card.node.padding = layout.padding;
+    card.node.gap = layout.gap;
     card.node.surface.scroll = Some(Scroll::Vertical);
     card.node.style.radius = Some(Rounding::Radius(10.));
-    card.node.style.background = Some(ColorToken::Base200.into());
+    if let Some(fill) = surface {
+        card.node.style.background = Some(fill);
+        card.node.effects.base.shadow = Some(
+            crate::declarative::effects::Shadow::new()
+                .color("#00000038")
+                .blur(18.)
+                .offset(0., 6.),
+        );
+    } else {
+        card.node.style.background = Some(ColorToken::Base200.into());
+    }
     card.node.style.border_color = Some(ColorToken::Border.into());
     card.node.style.border_width = Some(1.);
-    let inner = (width - 12.).max(0.);
+    let inner = (width - 2. * layout.padding).max(0.);
     let row_button = |label: String| {
         button(label)
-            .height(ROW)
+            .height(row_height)
             .width(inner)
             .rounded(6)
             .background("#00000000")
@@ -345,7 +425,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
             .hover_style(|s| s.background(ColorToken::Base300))
     };
     let mut rows: Vec<Element<C>> = Vec::new();
-    let mut height = 12.;
+    let mut height = 2. * layout.padding;
     // Drill into the open submenu, with a back row first.
     let drilled = match submenu.as_deref() {
         Some(k) => open_submenu(items, k),
@@ -365,9 +445,10 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
                 Some(icon(Icon::ChevronLeft).size(14.).into()),
                 None,
                 inner,
+                row_height,
             ));
             rows.push(separator().height(9.).into());
-            height += ROW + 9.;
+            height += row_height + 9.;
             sub
         }
         Err(items) => items,
@@ -381,7 +462,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
                 separator().height(9.).into()
             }
             ItemKind::Submenu { key: k, label, .. } => {
-                height += ROW;
+                height += row_height;
                 let open = on_submenu.clone().unwrap();
                 let mut b: Element<C> = row_button(label)
                     .on_click(move |app: &mut C| (open.borrow_mut())(app, Some(k.clone())))
@@ -401,6 +482,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
                             .into(),
                     ),
                     inner,
+                    row_height,
                 );
                 rows.push(row);
                 continue;
@@ -414,13 +496,13 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
                 checked,
                 icon: glyph,
             } => {
-                height += ROW;
+                height += row_height;
                 let action = action.clone();
                 let change = change.clone();
                 let reset = on_submenu.clone();
                 let plain = shortcut.is_none() && checked.is_none() && glyph.is_none();
                 let mut b = button(label)
-                    .height(ROW)
+                    .height(row_height)
                     .width(inner)
                     .rounded(6)
                     .background("#00000000")
@@ -468,7 +550,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
                     };
                     let trailing = shortcut
                         .map(|hint| text(hint).font_size(12.).color(ColorToken::Muted).into());
-                    rows.push(decorated(b, leading, trailing, inner));
+                    rows.push(decorated(b, leading, trailing, inner, row_height));
                     continue;
                 }
             }
@@ -481,7 +563,9 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
     }
     let count = rows.len();
     card.children = rows;
-    card.node.height = Some((height + 2. * count.saturating_sub(1) as f32).min(360.));
+    // Room for a full context menu (about a dozen rows); longer lists scroll.
+    card.node.height =
+        Some((height + layout.gap * count.saturating_sub(1) as f32).min(layout.max_height));
     let close = change.clone();
     let reset = on_submenu;
     let mut root = super::dialogs::overlay_scope(
@@ -531,6 +615,8 @@ impl<C: 'static, T: Clone + 'static> From<Menu<C, T>> for Element<C> {
                     change,
                     submenu: menu.2.submenu,
                     on_submenu: menu.2.on_submenu,
+                    surface: menu.2.surface,
+                    layout: menu.2.layout,
                 },
             ));
         }
@@ -576,6 +662,8 @@ impl<C: 'static, T: Clone + 'static> From<ContextMenu<C, T>> for Element<C> {
                     change: menu.2.change.unwrap(),
                     submenu: menu.2.submenu,
                     on_submenu: menu.2.on_submenu,
+                    surface: menu.2.surface,
+                    layout: menu.2.layout,
                 },
             );
             popup.node.overlay.as_mut().unwrap().position = Some(menu.3);

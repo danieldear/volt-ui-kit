@@ -167,6 +167,20 @@ let desktop = DesktopConfig::new(&quot;My app&quot;).menu(DesktopMenu::new(
 ));
 // Application::new(..).commands(..).desktop(desktop, |_app, _unregistered_id| {})</code></pre></div><p>The menu includes the standard About, Services, Hide and Quit items. A
 <code>TrayConfig</code> adds a menu-bar icon (RGBA, up to 128×128) with its own commands.</p>
+<p><code>native::file_dialog::reveal_file(&amp;absolute_path)</code> asks Finder to select an
+existing file or folder without opening its contents. It requires
+<code>native-desktop</code> on macOS and the UI thread; other platforms return
+<code>Unsupported</code>. Success reports dispatch, not an observed Finder window.</p>
+<h3 id="tray-resident-window-visibility">Tray-resident window visibility</h3>
+<p>Use <code>.window_visibility_from_state(|app| !app.hidden)</code> with a tray command that
+clears <code>hidden</code>. In <code>.on_close_request</code>, set <code>hidden = true</code> and return
+<code>CloseDecision::KeepOpen</code> for <code>CloseReason::Window</code>; allow <code>Quit</code> to close.
+Hiding changes the native window&#39;s visibility without shutting down the worker
+queues. A false-to-true transition restores and focuses the window. Visibility
+is not focus-stealing on every message: it is applied only on a transition.</p>
+<p>This opt-in does not install a tray icon, login item or daemon automatically.
+Always provide an explicit Open and Quit path. Existing applications retain
+normal close-to-exit behavior unless they opt into a close guard.</p>
 <h2 id="notifications">Notifications</h2>
 <p>With <code>native-notifications</code> on macOS:</p>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use std::time::Duration;
@@ -221,6 +235,16 @@ position too. Use any format for the saved string.</li>
 <li><code>theme_file</code> reloads the palette whenever the file changes, without a rebuild.</li>
 <li>The dev loop runs your project&#39;s build scripts; use it on code you trust.</li>
 </ul>
+<h3 id="explicit-macos-trash">Explicit macOS Trash</h3>
+<p><code>native::file_dialog::move_to_trash(&amp;absolute_path)</code> moves one item to macOS
+Trash through Foundation, without permanently deleting it or emptying Trash.
+It requires <code>native-desktop</code> on macOS; other builds report <code>Unsupported</code>.
+The caller must own the confirmation UI, protected-location policy and
+concurrent-change validation. Run preflight and the filesystem operation on a
+worker, not in the rendering callback. The helper never falls back to deletion.
+Moving synced content can propagate to other devices; returning success does
+not guarantee immediate free-space recovery. The OS API is documented by
+<a href="https://developer.apple.com/documentation/foundation/filemanager/trashitem(at:resultingitemurl:)">Apple</a>.</p>
 <h2 id="packaging-and-releasing">Packaging and releasing</h2>
 <p>Describe the app once in <code>Cargo.toml</code>, then let <code>cargo volt</code> build it:</p>
 <div class="reference-code"><div>toml<span>Source</span></div><pre tabindex="0" role="region" aria-label="toml"><code>[package.metadata.volt.bundle]
@@ -307,4 +331,4 @@ every option.</p>
 <p>To receive the files Finder opens with your app (double-click, Open With,
 the Dock), install an AppKit handler in <code>Application::before_launch</code>, which
 runs once the application object exists and before launch events arrive.</p>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#menus-and-tray">Menus and tray</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#the-development-loop">The development loop</a><a href="#packaging-and-releasing">Packaging and releasing</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#menus-and-tray">Menus and tray</a><a href="#tray-resident-window-visibility">Tray-resident window visibility</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#the-development-loop">The development loop</a><a href="#explicit-macos-trash">Explicit macOS Trash</a><a href="#packaging-and-releasing">Packaging and releasing</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

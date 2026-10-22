@@ -122,6 +122,43 @@ button and drawer; <code>.material(true)</code> floats the detail over a translu
 window. It is optional: compose your own shell from stacks when you need to.</li>
 <li>With an option focused, arrow keys and Home/End move the selection.</li>
 </ul>
+<h2 id="customizing-component-spacing">Customizing component spacing</h2>
+<p>Constructor sizes are defaults, not fixed design requirements. Keep the defaults
+for a consistent starting point, or override the part you actually need. Values
+are logical pixels; explicit <code>0.</code> works, edge/axis arrays are supported, and the
+last setter affecting an edge or axis wins. Padding is <strong>inside</strong> a component;
+gap separates its immediate children, not every nested label or icon.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Component</th><th scope="col">API / target</th><th scope="col">Unchanged default</th></tr></thead><tbody><tr><td>Button bars, toolbars, navigation</td><td><code>.gap(value, Axis::Horizontal)</code> / <code>.padding(value, edges)</code></td><td>Existing constructor spacing</td></tr><tr><td><code>tab_bar</code></td><td><code>.gap(value, Axis::Horizontal)</code> between options</td><td>2; joined controls use a 1px seam unless overridden</td></tr><tr><td><code>tabs</code></td><td><code>.tab_gap(value)</code> / <code>.tab_padding(value, edges)</code> inside the strip; <code>.gap(value, axis)</code> between strip and page</td><td>Line/contained strip gap 2; contained padding 3; strip-to-page 12</td></tr><tr><td>Menus / context menus</td><td><code>.popup_padding(..)</code>, <code>.item_gap(..)</code>, <code>.item_height(..)</code>, <code>.popup_max_height(..)</code></td><td>6 / 2 / 34 / 480</td></tr><tr><td>Dialog, popover, tooltip</td><td><code>.padding(value, edges)</code> / <code>.gap(value, axes)</code> on content card, never backdrop</td><td>Existing card defaults</td></tr><tr><td>Radio group, number input, tags, color picker, rating, form field, drop zone</td><td><code>.padding(value, edges)</code> / <code>.gap(value, axes)</code> on composite content</td><td>Existing constructor defaults</td></tr><tr><td>Collapsible, accordion, drawer, command palette</td><td><code>.padding(value, edges)</code> / <code>.gap(value, axes)</code> on section/card</td><td>Existing constructor defaults</td></tr><tr><td>Toaster</td><td><code>.gap(value, Axis::Vertical)</code> between toast cards; <code>.padding(value, edges)</code> for window inset</td><td>8 between cards / 16 window inset</td></tr><tr><td>OTP</td><td><code>.digit_gap(value)</code> between code boxes (also resizes backing input)</td><td>8</td></tr><tr><td>Combobox</td><td><code>.option_gap(value)</code> between popup results</td><td>2</td></tr><tr><td>Table</td><td><code>.row_height(..)</code>, <code>.header_height(..)</code>, <code>.cell_padding(..)</code> (horizontal); fixed <code>.padding(..)</code> / <code>.gap(..)</code> on panel</td><td>44 / 40 / 12; existing panel spacing</td></tr><tr><td>Tree</td><td><code>.row_height(..)</code>, <code>.indent_width(..)</code>; fixed <code>.padding(..)</code> / <code>.gap(..)</code> on panel</td><td>36 / 18; existing panel spacing</td></tr></tbody></table></div><div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let picker: Element&lt;()&gt; = tab_bar![tab_item(0, &quot;Space&quot;), tab_item(1, &quot;Duplicates&quot;)]
+    .key(&quot;picker&quot;).selected(0).on_select(|_: &amp;mut (), _| {})
+    .gap(responsive(2.).at(Breakpoint::Md, 8.), Axis::Horizontal)
+    .padding(4., [Edge::Top, Edge::Bottom])
+    .into();
+picker.build()?;
+let pages: Element&lt;()&gt; = tabs![
+    tab(0, &quot;Overview&quot;, text(&quot;Overview&quot;)),
+    tab(1, &quot;Details&quot;, text(&quot;Details&quot;)),
+].key(&quot;pages&quot;).selected(0).on_select(|_: &amp;mut (), _| {})
+ .tab_gap(6.).tab_padding(4., Edge::Horizontal)
+ .gap(16., Axis::Vertical).into();
+pages.build()?;
+let actions: Element&lt;()&gt; = menu(&quot;Actions&quot;, [menu_item(0, &quot;Open&quot;), menu_item(1, &quot;Copy path&quot;)])
+    .key(&quot;actions&quot;).open(false)
+    .on_open_change(|_: &amp;mut (), _| {}).on_action(|_: &amp;mut (), _| {})
+    .popup_padding(8.).item_gap(4.).item_height(38.)
+    .popup_max_height(320.).popup_background(ColorToken::Base100).into();
+actions.build()?;</code></pre></div><p>Stack-style spacing and tab strip overrides accept responsive values. Table/tree
+panel spacing and density, popup geometry, OTP and combobox result gaps are fixed
+logical values: use a responsive containing stack for their outer placement.
+Table <code>.gap(..)</code> also separates its divider children; use <code>.row_height(..)</code> for
+ordinary table density. A drawer/command-palette override targets the card, not
+its modal backdrop. Intrinsic glyph dimensions and hit-target geometry are not
+silently changed by a content gap.</p>
+<p>Non-finite, negative and out-of-range values fail <code>build()</code>. Popup item height
+must be 24–512, popup maximum height 24–8192, table/header height 24–512, tree row
+height 28–512; the viewport can shrink a popup further, with overflow scrolling.
+Zero spacing does not change callbacks, selection, keyboard behavior or defaults
+of controls which do not opt in.</p>
 <h2 id="fields-value-controls-and-dialogs">Fields, value controls and dialogs</h2>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -318,6 +355,65 @@ reports the ones it could not read; <code>set.icon(&quot;name&quot;)</code> retu
 <li>The SVG reader handles paths and basic shapes, transforms, fills and strokes.
 It never runs scripts or loads external resources.</li>
 </ul>
+<h2 id="hierarchy-charts">Hierarchy charts</h2>
+<p>Icicle bands show parent/child depth; squarified treemaps show the root&#39;s direct
+children as proportional rectangles. Both use native Volt controls, not a webview.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let nodes = vec![
+    HierarchyNode::new(&quot;root&quot;, &quot;Projects&quot;, 100, None),
+    HierarchyNode::new(&quot;rust&quot;, &quot;Rust&quot;, 60, Some(0)),
+    HierarchyNode::new(&quot;build&quot;, &quot;Build output&quot;, 40, Some(1)),
+    HierarchyNode::new(&quot;source&quot;, &quot;Source&quot;, 20, Some(1)),
+    HierarchyNode::new(&quot;web&quot;, &quot;Web&quot;, 40, Some(0)),
+];
+let explorer: Element&lt;String&gt; = icicle_chart(nodes.clone())
+    .key(&quot;folders&quot;).size(640., 240.).levels(4)
+    .on_select(|selected: &amp;mut String, key| *selected = key)
+    .into();
+explorer.build()?;
+let alternate: Element&lt;String&gt; = treemap_chart(nodes)
+    .key(&quot;space&quot;).size(640., 240.)
+    .on_select(|selected: &amp;mut String, key| *selected = key)
+    .into();
+alternate.build()?;</code></pre></div><ul>
+<li>Values are <strong>inclusive subtree totals</strong>; never add a parent total to its
+descendants. Direct children&#39;s sum must not exceed their parent&#39;s value.</li>
+<li>One root first, parents before children, unique keys, at most 4,096 nodes
+and depth 64. Zero values do not create tiles. Invalid data rejects the tree.</li>
+<li><code>.value_format(..)</code> formats exact tooltip/accessibility values. Tab/Enter
+and pointer activation return the original node key. App-owned drilldown
+replaces the data with the selected subtree; keep a companion table.</li>
+<li><code>.size(w, h)</code> uses logical pixels. Use a containing stack&#39;s <code>.on_width(..)</code>
+callback for responsive sizes; layouts are not computed every animation frame.</li>
+<li>Tiny tiles are not inflated into misleading sizes. Unrepresented child bytes
+leave blank area; provide an explicit Other node when grouping small items.</li>
+<li>Strata-style interaction is <strong>opt-in</strong>: <code>.selected_keys(..)</code> supports multiple
+selections; <code>.reviewed_keys(..)</code> adds passive review diamonds, never checkboxes;
+<code>.context_target(key)</code> shows the menu target with a dashed outline. The legacy
+<code>.selected(key)</code> still replaces the selection with one key.</li>
+<li><code>.node_colors(..)</code> accepts bounded <code>(key, color)</code> overrides; unspecified nodes
+keep the original palette. Literal custom fills choose a contrasting black or
+white foreground. <code>.hide_root(true)</code> omits the icicle root band and makes
+<code>.levels(n)</code> count visible child bands; treemap geometry is unchanged.</li>
+<li><code>.hover_linked(true)</code> links tile hover to components with
+<code>.hover_link(node_key)</code> (for example, a file-list row). Links are paint-only:
+no callbacks, recomposition, selection, focus, scrolling or peer tooltips.
+Matching enabled, mounted peers use their own <code>.hover_style(..)</code>; the nearest
+nested link wins. Keys are stable, nonempty strings up to 128 bytes. Hidden or
+unmounted counterparts do not scroll into view. Disable chart links and omit
+row links while an application-owned menu is open if its target should dominate.</li>
+<li><code>.on_context_open(|app, key, point| ..)</code> reports an action target <strong>without
+selecting it</strong>. <code>point</code> is window-logical pixels, not chart-local coordinates.
+Applications own the context menu, permissions, review and filesystem actions.</li>
+<li><code>.keyboard_navigation(true)</code> opts into roving focus: one Tab entry/exit, sibling
+Left/Right, parent Up, first visible child Down, sibling Home/End, Enter to
+activate. Native Shift-F10 / Context Menu opens the focused tile&#39;s actions.
+Disabled/removed targets and modal scopes retain their usual guards. Stable
+application node keys preserve focus identity when data reorders.</li>
+<li><code>ui::icicle_layout</code> / <code>ui::treemap_layout</code> expose pure geometry for testing or
+alternate native presentations. Treemap is one level per drilldown, not a
+claim to display every file at once.</li>
+</ul>
 <h2 id="known-limits">Known limits</h2>
 <ul>
 <li>Range sliders expose one accessibility value; arrow keys move the last thumb
@@ -328,4 +424,4 @@ Up/Down navigation through results yet.</li>
 <li><code>.offset(..)</code> and slide/ambient motion move pixels only; layout and hit
 targets stay where they were.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#buttons-and-actions">Buttons and actions</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#known-limits">Known limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#buttons-and-actions">Buttons and actions</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

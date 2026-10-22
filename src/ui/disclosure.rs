@@ -16,6 +16,7 @@ fn invalid<C>(message: &str) -> Element<C> {
 
 /// A header button that shows or hides its content.
 pub struct Collapsible<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     title: String,
     content: Element<C>,
@@ -24,6 +25,7 @@ pub struct Collapsible<C> {
 }
 pub fn collapsible<C>(title: impl Into<String>, content: impl Into<Element<C>>) -> Collapsible<C> {
     Collapsible {
+        spacing: RootSpacing::default(),
         key: None,
         title: title.into(),
         content: content.into(),
@@ -32,6 +34,7 @@ pub fn collapsible<C>(title: impl Into<String>, content: impl Into<Element<C>>) 
     }
 }
 impl<C> Collapsible<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -94,14 +97,14 @@ impl<C: 'static> From<Collapsible<C>> for Element<C> {
             return invalid("collapsible requires on_toggle");
         };
         let open = c.open;
-        section(
+        c.spacing.apply(section(
             &key,
             c.title,
             c.content,
             open,
             Box::new(move |app: &mut C| toggle(app, !open)),
             false,
-        )
+        ))
     }
 }
 
@@ -110,6 +113,7 @@ impl<C: 'static> From<Collapsible<C>> for Element<C> {
 type Expanded<C> = Rc<RefCell<dyn FnMut(&mut C, Vec<usize>)>>;
 /// Stacked collapsible sections. Single mode (default) keeps one open.
 pub struct Accordion<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     sections: Vec<(String, Element<C>)>,
     expanded: Vec<usize>,
@@ -120,6 +124,7 @@ pub fn accordion<C>(
     sections: impl IntoIterator<Item = (impl Into<String>, Element<C>)>,
 ) -> Accordion<C> {
     Accordion {
+        spacing: RootSpacing::default(),
         key: None,
         sections: sections.into_iter().map(|(t, c)| (t.into(), c)).collect(),
         expanded: Vec::new(),
@@ -128,6 +133,7 @@ pub fn accordion<C>(
     }
 }
 impl<C> Accordion<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -192,7 +198,7 @@ impl<C: 'static> From<Accordion<C>> for Element<C> {
                 )
             })
             .collect();
-        vstack(rows).key(key).into()
+        a.spacing.apply(vstack(rows).key(key).into())
     }
 }
 
@@ -209,6 +215,7 @@ pub enum DrawerSide {
 }
 /// A modal panel attached to a window edge (a "sheet" in some libraries).
 pub struct Drawer<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     content: Element<C>,
     title: Option<String>,
@@ -219,6 +226,7 @@ pub struct Drawer<C> {
 }
 pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
     Drawer {
+        spacing: RootSpacing::default(),
         key: None,
         content: content.into(),
         title: None,
@@ -229,6 +237,7 @@ pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
     }
 }
 impl<C> Drawer<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -329,7 +338,7 @@ impl<C: 'static> From<Drawer<C>> for Element<C> {
             card.height(d.size)
         };
         let mut root = super::dialogs::overlay_scope(
-            card.into(),
+            d.spacing.apply(card.into()),
             key,
             OverlayKind::Modal,
             Box::new(move |app: &mut C| (dismiss.borrow_mut())(app)),
@@ -390,6 +399,7 @@ type ToastEvent<C> = Rc<RefCell<dyn FnMut(&mut C, u64)>>;
 /// a `zstack!`; the page underneath stays interactive. Timing is the app's:
 /// remove a toast after a delay (e.g. via `UiSender`) for auto-dismissal.
 pub struct Toaster<C> {
+    spacing: RootSpacing,
     key: String,
     toasts: Vec<Toast>,
     position: ToastPosition,
@@ -398,6 +408,7 @@ pub struct Toaster<C> {
 }
 pub fn toaster<C>(toasts: &[Toast]) -> Toaster<C> {
     Toaster {
+        spacing: RootSpacing::default(),
         key: "toaster".into(),
         toasts: toasts.iter().rev().take(5).rev().cloned().collect(),
         position: ToastPosition::BottomRight,
@@ -406,6 +417,7 @@ pub fn toaster<C>(toasts: &[Toast]) -> Toaster<C> {
     }
 }
 impl<C> Toaster<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = key.into();
         self
@@ -500,15 +512,31 @@ impl<C: 'static> From<Toaster<C>> for Element<C> {
             ToastPosition::BottomCenter => Flow::Bottom,
             ToastPosition::BottomLeft => Flow::BottomLeft,
         };
-        zstack![vstack(cards)
-            .key(format!("{key}-stack"))
-            .gap(8., Axis::Vertical)
-            .scroll_passthrough(true)]
-        .key(key)
-        .flow(flow)
-        .padding(16., Edge::All)
-        .scroll_passthrough(true)
-        .into()
+        // Padding belongs to the viewport overlay; gap belongs to the cards,
+        // not the outer ZStack (whose layout intentionally ignores gaps).
+        let stack_spacing = RootSpacing {
+            gap: t.spacing.gap,
+            ..RootSpacing::default()
+        };
+        let overlay_spacing = RootSpacing {
+            padding: t.spacing.padding,
+            ..RootSpacing::default()
+        };
+        let stack = stack_spacing.apply(
+            vstack(cards)
+                .key(format!("{key}-stack"))
+                .gap(8., Axis::Vertical)
+                .scroll_passthrough(true)
+                .into(),
+        );
+        overlay_spacing.apply(
+            zstack![stack]
+                .key(key)
+                .flow(flow)
+                .padding(16., Edge::All)
+                .scroll_passthrough(true)
+                .into(),
+        )
     }
 }
 
@@ -584,6 +612,7 @@ type Run<C, T> = Rc<RefCell<dyn FnMut(&mut C, T)>>;
 type Access<C, S> = Rc<dyn Fn(&mut C) -> &mut S>;
 /// A searchable modal list of commands (⌘K). Enter runs the best match.
 pub struct CommandPalette<C, T> {
+    spacing: RootSpacing,
     key: String,
     commands: Vec<Command<T>>,
     snapshot: CommandPaletteState,
@@ -596,6 +625,7 @@ pub fn command_palette<C, T>(
     state: &CommandPaletteState,
 ) -> CommandPalette<C, T> {
     CommandPalette {
+        spacing: RootSpacing::default(),
         key: "command-palette".into(),
         commands: commands.into_iter().collect(),
         snapshot: state.clone(),
@@ -605,6 +635,7 @@ pub fn command_palette<C, T>(
     }
 }
 impl<C, T> CommandPalette<C, T> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = key.into();
         self
@@ -759,7 +790,7 @@ impl<C: 'static, T: Clone + 'static> From<CommandPalette<C, T>> for Element<C> {
             .transition(Transition::slide(0., -8.).duration_ms(160));
         let dismiss = state;
         let mut root = super::dialogs::overlay_scope(
-            card.into(),
+            p.spacing.apply(card.into()),
             key,
             OverlayKind::Modal,
             Box::new(move |app: &mut C| close(dismiss(app))),

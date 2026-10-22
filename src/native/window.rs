@@ -1118,6 +1118,56 @@ impl<C: 'static> App<C> {
     }
     /// Cmd/Ctrl+C copies and Cmd/Ctrl+A selects all selectable text when no
     /// editor has focus.
+    fn input_modifiers(&self) -> crate::declarative::InputModifiers {
+        crate::declarative::InputModifiers {
+            shift: self.modifiers.shift_key(),
+            control: self.modifiers.control_key(),
+            alt: self.modifiers.alt_key(),
+            meta: self.modifiers.super_key(),
+        }
+    }
+    /// Narrow focused-control keys only. Commands, editors, value controls and
+    /// overlay/modal scope retain priority; Tab never reaches application rows.
+    fn control_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
+        use crate::declarative::{InputKey, InputKeyEvent};
+        let modifiers = self.input_modifiers();
+        let key = match &event.logical_key {
+            Key::Named(NamedKey::ArrowUp) => InputKey::ArrowUp,
+            Key::Named(NamedKey::ArrowDown) => InputKey::ArrowDown,
+            Key::Named(NamedKey::ArrowLeft) => InputKey::ArrowLeft,
+            Key::Named(NamedKey::ArrowRight) => InputKey::ArrowRight,
+            Key::Named(NamedKey::Home) => InputKey::Home,
+            Key::Named(NamedKey::End) => InputKey::End,
+            Key::Named(NamedKey::Enter) => InputKey::Enter,
+            Key::Named(NamedKey::Space) => InputKey::Space,
+            Key::Named(NamedKey::Escape) => InputKey::Escape,
+            Key::Character(c)
+                if modifiers.primary()
+                    && !modifiers.alt
+                    && !modifiers.shift
+                    && c.eq_ignore_ascii_case("a") =>
+            {
+                InputKey::SelectAll
+            }
+            _ => return Ok(false),
+        };
+        let roving_key = self.runtime.is_roving_key(key);
+        let outcome = self
+            .runtime
+            .input_key(
+                InputKeyEvent {
+                    key,
+                    modifiers,
+                    repeat: event.repeat,
+                },
+                &mut self.handlers,
+                &mut self.context,
+            )
+            .map_err(|e| e.to_string())?;
+        let consumed = outcome.activated || roving_key;
+        self.after_input(outcome)?;
+        Ok(consumed)
+    }
     fn selection_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
         if self.runtime.editing_focus() {
             return Ok(false);
@@ -1378,6 +1428,7 @@ impl<C: 'static> App<C> {
                 &runtime.accessibility_nodes(),
                 title,
                 [size.width as f32, size.height as f32],
+                &runtime.accessibility_multiselectable_ids(),
             );
             *ids = map;
             update
@@ -1455,14 +1506,43 @@ impl<C: 'static> App<C> {
         else {
             return Ok(());
         };
+        // An app-chosen appearance: apply it to the window once per change.
+        let chosen = self
+            .extensions
+            .appearance
+            .as_ref()
+            .map(|f| f(&self.context));
+        if let Some(chosen) = chosen {
+            if self.extensions.applied_appearance != Some(chosen) {
+                self.extensions.applied_appearance = Some(chosen);
+                w.set_theme(match chosen {
+                    ThemeMode::Light => Some(winit::window::Theme::Light),
+                    ThemeMode::Dark => Some(winit::window::Theme::Dark),
+                    ThemeMode::System => None,
+                });
+                if chosen == ThemeMode::System {
+                    // While forced, theme events reported the forced look.
+                    self.system_theme = if w.theme() == Some(winit::window::Theme::Light) {
+                        ThemeMode::Light
+                    } else {
+                        ThemeMode::Dark
+                    };
+                }
+            }
+        }
+        let mode = match chosen {
+            Some(ThemeMode::Light) => ThemeMode::Light,
+            Some(ThemeMode::Dark) => ThemeMode::Dark,
+            _ => self.system_theme,
+        };
         let ui = self.theme_fn.as_ref().map_or_else(
-            || self.options.resolve_theme(self.system_theme),
-            |f| f(&self.context, self.system_theme),
+            || self.options.resolve_theme(mode),
+            |f| f(&self.context, mode),
         );
         if !ui.palette.is_valid() {
             return Err("theme callback returned invalid palette".into());
         }
-        if self.theme_fn.is_some() && self.options.theme != ThemeMode::System {
+        if self.theme_fn.is_some() && self.options.theme != ThemeMode::System && chosen.is_none() {
             let bg = ui.palette.base[0];
             w.set_theme(Some(if bg[0] + bg[1] + bg[2] > 1.5 {
                 winit::window::Theme::Light
@@ -2086,9 +2166,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     }
                                     let outcome = self
                                         .runtime
-                                        .pointer_down_outcome(
+                                        .pointer_down_outcome_with_modifiers(
                                             x,
                                             y,
+                                            self.input_modifiers(),
                                             &mut self.handlers,
                                             &mut self.context,
                                         )
@@ -2185,13 +2266,36 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     {
                         return Ok(());
                     }
-                    if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
-                        return Ok(());
+                    if event.state == ElementState::Pressed
+                        && !event.repeat
+                        && (event.logical_key == Key::Named(NamedKey::ContextMenu)
+                            || (event.logical_key == Key::Named(NamedKey::F10)
+                                && self.modifiers.shift_key()
+                                && !self.modifiers.alt_key()
+                                && !self.modifiers.control_key()
+                                && !self.modifiers.super_key()))
+                    {
+                        let outcome = self
+                            .runtime
+                            .context_menu_focused(&mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?;
+                        if outcome.activated {
+                            self.activation_key = None;
+                            self.after_input(outcome)?;
+                            return Ok(());
+                        }
                     }
                     if event.state == ElementState::Pressed && self.editor_keyboard(&event)? {
                         return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.value_keyboard(&event)? {
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.control_keyboard(&event)? {
+                        self.activation_key = None;
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
                         return Ok(());
                     }
                     if let Key::Named(key) = event.logical_key {
@@ -2276,6 +2380,17 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if event_loop.exiting() {
             return;
+        }
+        if let (Some(visible), Some(window)) = (&self.extensions.window_visible, &self.window) {
+            let desired = visible(&self.context);
+            if self.extensions.last_window_visible != Some(desired) {
+                window.set_visible(desired);
+                if desired {
+                    window.set_minimized(false);
+                    window.focus_window();
+                }
+                self.extensions.last_window_visible = Some(desired);
+            }
         }
         if let Some(messages) = self.messages.as_mut() {
             messages.finish_turn();

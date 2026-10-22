@@ -128,7 +128,7 @@ pub use crate::declarative::{
 };
 
 pub use crate::graphics::{
-    BackgroundImage, Canvas, Clip, Image, ImageFit, ImagePosition, VectorPath,
+    BackgroundImage, Canvas, CanvasFrames, Clip, Image, ImageFit, ImagePosition, VectorPath,
 };
 pub use crate::{ColorToken, Palette, ThemeMode, UiTheme};
 
@@ -252,6 +252,8 @@ pub enum FontStyle {
 }
 
 type Click<C> = Box<dyn FnMut(&mut C)>;
+type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation)>;
+type InputKeyCallback<C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool>;
 type Change<C> = Box<dyn FnMut(&mut C, bool)>;
 type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
 type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
@@ -281,8 +283,97 @@ enum Callback<C> {
     Files(FilesCallback<C>),
     Link(ChangeText<C>),
 }
+// Opt-in spacing for composites whose public builder is not an Element wrapper.
+// Empty overrides leave every constructor default intact.
+#[derive(Clone, Default)]
+struct RootSpacing {
+    padding: [Option<Responsive<f32>>; 4],
+    gap: [Option<Responsive<f32>>; 2],
+}
+impl RootSpacing {
+    fn padding(&mut self, value: impl Into<Responsive<f32>>, edges: impl Into<Edges>) {
+        let value = value.into();
+        let mask = edges.into().0;
+        for i in (0..4).filter(|i| mask & (1 << i) != 0) {
+            self.padding[i] = Some(value.clone());
+        }
+    }
+    fn gap(&mut self, value: impl Into<Responsive<f32>>, axes: impl Into<Axes>) {
+        let value = value.into();
+        let mask = axes.into().0;
+        for i in (0..2).filter(|i| mask & (1 << i) != 0) {
+            self.gap[i] = Some(value.clone());
+        }
+    }
+    fn apply<C>(self, mut element: Element<C>) -> Element<C> {
+        for (dst, rule) in element.node.responsive.padding.iter_mut().zip(self.padding) {
+            if rule.is_some() {
+                *dst = rule;
+            }
+        }
+        for (dst, rule) in element.node.responsive.gap.iter_mut().zip(self.gap) {
+            if rule.is_some() {
+                *dst = rule;
+            }
+        }
+        element
+    }
+}
+macro_rules! wrapper_spacing_methods {
+    ($target:ident $(, [$($generic:ident),*])?) => {
+        impl<C $(, $($generic),*)?> $target<C $(, $($generic),*)?> {
+            /// Content padding, independent of the overlay backdrop.
+            pub fn padding(mut self, value: impl Into<Responsive<f32>>, edges: impl Into<Edges>) -> Self {
+                let mut spacing = RootSpacing::default();
+                spacing.padding(value, edges);
+                self.0 = spacing.apply(self.0); self
+            }
+            /// Space between immediate content children; does not change label/icon insets.
+            pub fn gap(mut self, value: impl Into<Responsive<f32>>, axes: impl Into<Axes>) -> Self {
+                let mut spacing = RootSpacing::default();
+                spacing.gap(value, axes);
+                self.0 = spacing.apply(self.0); self
+            }
+        }
+    };
+}
+macro_rules! root_spacing_methods {
+    () => {
+        /// Override the composite's outer content padding; defaults stay intact
+        /// until explicitly set. The last setter affecting an edge wins.
+        pub fn padding(
+            mut self,
+            value: impl Into<Responsive<f32>>,
+            edges: impl Into<Edges>,
+        ) -> Self {
+            self.spacing.padding(value, edges);
+            self
+        }
+        /// Override spacing between the composite's immediate content children.
+        /// Does not change icon/text insets or logical cell/row geometry.
+        pub fn gap(mut self, value: impl Into<Responsive<f32>>, axes: impl Into<Axes>) -> Self {
+            self.spacing.gap(value, axes);
+            self
+        }
+    };
+}
 mod bars;
 mod charts;
+mod hierarchy;
+mod selection;
+mod sunburst;
+pub use crate::declarative::{
+    InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation,
+};
+pub use hierarchy::{
+    icicle_chart, icicle_layout, treemap_chart, treemap_layout, HierarchyChart, HierarchyNode,
+    HierarchyRect,
+};
+pub use selection::{
+    selectable_list, selectable_row, SelectableList, SelectableRow, SelectionAction,
+    SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
+};
+pub use sunburst::{rainbow, sunburst_chart, sunburst_layout, SunburstArc, SunburstChart};
 mod data;
 mod dates;
 mod dialogs;
@@ -359,7 +450,11 @@ pub struct Element<C> {
     select_text: Option<ChangeText<C>>,
     /// Containers: the laid-out width changed.
     width: Option<ChangeNumber<C>>,
+    /// Containers: the laid-out height changed.
+    height: Option<ChangeNumber<C>>,
     validation_error: Option<String>,
+    input_activation: Option<ClickWith<C>>,
+    input_key: Option<InputKeyCallback<C>>,
 }
 impl<C> Element<C> {
     fn new(kind: Kind) -> Self {
@@ -376,7 +471,10 @@ impl<C> Element<C> {
             callback: None,
             select_text: None,
             width: None,
+            height: None,
             validation_error: None,
+            input_activation: None,
+            input_key: None,
         }
     }
 }
@@ -414,7 +512,10 @@ impl<C: 'static> Element<C> {
                 callback,
                 select_text,
                 width,
+                height,
                 validation_error,
+                input_activation,
+                input_key,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -435,6 +536,27 @@ impl<C: 'static> Element<C> {
                     .on_value_changed(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_width = Some(name);
+            }
+            if let Some(f) = height {
+                let name = format!("rust-height-{}", *count);
+                handlers
+                    .on_value_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_height = Some(name);
+            }
+            if let Some(f) = input_activation {
+                let name = format!("rust-input-{}", *count);
+                handlers
+                    .on_activate_with(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_activate_input = Some(name);
+            }
+            if let Some(f) = input_key {
+                let name = format!("rust-key-input-{}", *count);
+                handlers
+                    .on_input_key(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_input_key = Some(name);
             }
             if let Some(callback) = callback {
                 let name = format!("rust-action-{}", *count);
@@ -672,6 +794,10 @@ macro_rules! modifiers {
             pub fn opacity(mut self, value:f32) -> Self { self.$($field)*.effects.base.opacity=Some(value); self }
             pub fn shadow(mut self, value:Shadow) -> Self { self.$($field)*.effects.base.shadow=Some(value); self }
             pub fn glow(mut self, value:Glow) -> Self { self.$($field)*.effects.base.glow=Some(value); self }
+            /// Share paint-only hover with enabled, mounted peers having this key.
+            /// Does not dispatch callbacks, select, focus, scroll or open tooltips
+            /// on peers. Use stable 1..128-byte keys; nearest nested link wins.
+            pub fn hover_link(mut self, key: impl Into<String>) -> Self { self.$($field)*.hover_link=Some(key.into());self }
             pub fn hover_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[0]=patch(VisualStyle::default()); self }
             /// Appearance while disabled (`disabled:` variant).
             pub fn disabled_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.disabled=patch(VisualStyle::default()); self }
@@ -732,6 +858,23 @@ modifiers!(Stack, [0.node], [0.auto_id]);
 pub fn canvas<C>(draw: impl FnOnce(&mut Canvas)) -> Element<C> {
     let mut element = Element::new(Kind::Canvas);
     draw(&mut element.node.surface.canvas);
+    element
+}
+/// A canvas that plays `frames` once, `frame_ms` apart, at paint time (a
+/// tween precomputed while composing), then keeps the last frame. It
+/// restarts only when `revision` changes for this element's key, so
+/// unrelated recompositions don't replay it. Reduced motion shows the last
+/// frame at once. Give it a stable `.key(...)`.
+pub fn canvas_frames<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64) -> Element<C> {
+    let mut element = Element::new(Kind::Canvas);
+    element.node.surface.canvas = frames.last().cloned().unwrap_or_default();
+    if frames.len() > 1 {
+        element.node.surface.frames = Some(CanvasFrames {
+            frames: frames.into(),
+            frame_ms: frame_ms.clamp(8, 1000),
+            revision,
+        });
+    }
     element
 }
 pub fn text<C>(value: impl Into<String>) -> Text<C> {
@@ -919,7 +1062,36 @@ impl<C> Button<C> {
         self
     }
     pub fn on_click(mut self, callback: impl FnMut(&mut C) + 'static) -> Self {
+        self.0.input_activation = None;
         self.0.callback = Some(Callback::Click(Box::new(callback)));
+        self
+    }
+}
+impl<C> Button<C> {
+    /// Opt-in activation with press-time modifiers and an honest input source.
+    /// Replaces `.on_click`; calling `.on_click` later replaces this handler.
+    pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+        self.0.callback = None;
+        self.0.input_activation = Some(Box::new(f));
+        self
+    }
+    /// Include this control in ordinary Tab traversal (default true). Pointer
+    /// and accessibility activation stay available when false. Roving composites
+    /// may choose one current member rather than each member's individual value.
+    pub fn tab_stop(mut self, value: bool) -> Self {
+        self.0.node.tab_stop = value;
+        self
+    }
+    /// Focus this control when true first appears or changes from false to
+    /// true for its stable key. Unchanged true never steals focus back from Tab.
+    pub fn focus_when(mut self, value: bool) -> Self {
+        self.0.node.input_focus = value;
+        self
+    }
+    /// Only exact focused-control navigation/action keys reach this callback.
+    /// Return false without mutation to retain the host's normal handling.
+    pub fn on_input_key(mut self, f: impl FnMut(&mut C, InputKeyEvent) -> bool + 'static) -> Self {
+        self.0.input_key = Some(Box::new(f));
         self
     }
 }
@@ -985,6 +1157,24 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// Make a rich container an activation target; descendants that are
+            /// independently interactive take precedence. Supply an accessible label.
+            pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+                self.0.input_activation = Some(Box::new(f));
+                self
+            }
+            /// Rising-edge focus request for a stable keyed interactive row.
+            /// Unchanged true never steals focus back after normal Tab traversal.
+            pub fn focus_when(mut self, value: bool) -> Self {
+                self.0.node.input_focus = value;
+                self
+            }
+            /// Opt-in focused-control key handling, separate from editor keys.
+            /// Return false without mutation to retain legacy/default behavior.
+            pub fn on_input_key(mut self, f: impl FnMut(&mut C, InputKeyEvent) -> bool + 'static) -> Self {
+                self.0.input_key = Some(Box::new(f));
+                self
+            }
             /// Selectable containers: called with the selected text when the
             /// selection changes (empty when it is cleared).
             pub fn on_select_text(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
@@ -997,6 +1187,12 @@ macro_rules! container_modifiers {
             /// fit. The host recomposes once after such a report.
             pub fn on_width(mut self, f: impl FnMut(&mut C, f32) + 'static) -> Self {
                 self.0.width = Some(Box::new(f));
+                self
+            }
+            /// Like [`on_width`](Self::on_width), for the laid-out height: for
+            /// content sized to the room a flexible parent gives it.
+            pub fn on_height(mut self, f: impl FnMut(&mut C, f32) + 'static) -> Self {
+                self.0.height = Some(Box::new(f));
                 self
             }
             /// Logical inner spacing. The last setter affecting an edge wins,
@@ -1112,6 +1308,8 @@ macro_rules! zstack { ($($child:expr),* $(,)?) => { $crate::ui::zstack(vec![$($c
 #[macro_export]
 macro_rules! grid { ($($child:expr),* $(,)?) => { $crate::ui::grid(vec![$($crate::ui::Element::from($child)),*]) }; }
 pub use crate::{grid, hstack, stack, vstack, zstack};
+modifiers!(SelectableList, [T], [0.node], [0.auto_id]);
+container_modifiers!(SelectableList, [T]);
 modifiers!(ButtonBar, [0.node], [0.auto_id]);
 modifiers!(Toolbar, [0.node], [0.auto_id]);
 modifiers!(SelectionControl, [T], [0.node], [0.auto_id]);
@@ -1130,6 +1328,9 @@ modifiers!(Table, [T, K], [0.node], [0.auto_id]);
 modifiers!(TreeView, [T], [0.node], [0.auto_id]);
 modifiers!(Progress, [0.node], [0.auto_id]);
 modifiers!(SplitPane, [0.node], [0.auto_id]);
+wrapper_spacing_methods!(Dialog);
+wrapper_spacing_methods!(Popover);
+wrapper_spacing_methods!(Tooltip);
 container_modifiers!(ButtonBar);
 container_modifiers!(Toolbar);
 modifiers!(Navigation, [T], [0.node], [0.auto_id]);
@@ -1157,22 +1358,23 @@ pub mod prelude {
     };
     pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
     pub use super::{
-        badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
-        divider, grid, hstack, lazy_list, loading, menu, menu_item, menu_separator, menu_submenu,
-        navigation, navigation_item, panel, popover, progress, progress_indeterminate,
-        range_slider, responsive, row, segmented_control, select, select_item, separator, slider,
-        spacer, spinner, split, stack, tab, tab_bar, tab_item, table, table_column, table_row,
-        tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node, tree_view,
-        virtual_list, vstack, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage,
-        BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
-        ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge,
-        Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image, ImageFit,
-        ImagePosition, Interaction, Justify, LazyList, Menu, MenuItem, Navigation, NavigationItem,
-        NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
-        Select, SelectItem, SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle,
-        SplitPane, Tab, TabItem, TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs,
-        TextAlign, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
-        UiTheme, VectorPath, VirtualList, VisualStyle,
+        badge, button, button_bar, canvas, canvas_frames, checkbox, column, context_menu,
+        data_item, dialog, divider, grid, hstack, lazy_list, loading, menu, menu_item,
+        menu_separator, menu_submenu, navigation, navigation_item, panel, popover, progress,
+        progress_indeterminate, range_slider, responsive, row, segmented_control, select,
+        select_item, separator, slider, spacer, spinner, split, stack, tab, tab_bar, tab_item,
+        table, table_column, table_row, tabs, text, text_area, text_field, toggle, toolbar,
+        tooltip, tree_node, tree_view, virtual_list, vstack, zstack, Align, Ambient, Animation,
+        Axes, Axis, BackgroundImage, BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas,
+        Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem,
+        Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient,
+        GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, Menu,
+        MenuItem, Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress,
+        Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
+        Sides, Slider, SortDirection, SplitHandle, SplitPane, Tab, TabItem, TabPlacement,
+        TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone,
+        Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
+        VisualStyle,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
@@ -1182,7 +1384,14 @@ pub mod prelude {
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
+    pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
+    pub use super::{
+        selectable_list, selectable_row, SelectableList, SelectableRow, SelectionAction,
+        SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
+    };
+    pub use super::{sunburst_chart, SunburstChart};
+    pub use super::{InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation};
 }

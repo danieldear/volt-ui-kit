@@ -122,6 +122,8 @@ pub(crate) struct Motion {
     seen: BTreeMap<String, Kind>,
     mounts: BTreeMap<String, Fade>,
     pub exits: Vec<Exit>,
+    /// Frame sequences by element id: revision, start and length.
+    frames: BTreeMap<String, (u64, Duration, Duration)>,
 }
 impl Motion {
     pub fn value(
@@ -233,8 +235,49 @@ impl Motion {
             }
         }
         self.mounts.retain(|id, _| live.contains_key(id));
+        // A new revision (or a new element) starts its sequence now; the
+        // same revision keeps playing across recompositions.
+        let now = self.now;
+        for b in boxes {
+            if let Some(f) = &b.frames {
+                let length = if self.reduced {
+                    Duration::ZERO
+                } else {
+                    f.duration()
+                };
+                let entry = self
+                    .frames
+                    .entry(b.id.clone())
+                    .or_insert((f.revision, now, length));
+                if entry.0 != f.revision {
+                    *entry = (f.revision, now, length);
+                }
+            }
+        }
+        self.frames
+            .retain(|id, _| boxes.iter().any(|b| b.frames.is_some() && &b.id == id));
         self.seen = live;
         self.prune();
+    }
+    /// Some frame sequence is still playing.
+    pub fn frames_playing(&self) -> bool {
+        !self.reduced
+            && self
+                .frames
+                .values()
+                .any(|(_, start, length)| self.now.saturating_sub(*start) < *length)
+    }
+    /// The frame an element's sequence shows now, while it plays.
+    pub fn frame<'a>(
+        &self,
+        id: &str,
+        frames: &'a crate::graphics::CanvasFrames,
+    ) -> Option<&'a crate::graphics::Canvas> {
+        let (revision, start, length) = self.frames.get(id)?;
+        let elapsed = self.now.saturating_sub(*start);
+        (*revision == frames.revision && elapsed < *length && !self.reduced)
+            .then(|| frames.at(elapsed))
+            .flatten()
     }
     pub fn remove(&mut self, old: &[LayoutBox], next: &BTreeSet<String>) {
         if !self.reduced {
@@ -414,11 +457,15 @@ impl Motion {
         !self.reduced
             && (self.tracks.values().any(|t| t.active(self.now))
                 || self.mounts.values().any(|f| f.progress(self.now) < 1.)
-                || !self.exits.is_empty())
+                || !self.exits.is_empty()
+                || self.frames_playing())
     }
     pub fn settle(&mut self) {
         self.mounts.clear();
         self.exits.clear();
+        for f in self.frames.values_mut() {
+            f.2 = Duration::ZERO;
+        }
         for t in self.tracks.values_mut() {
             t.from = t.to;
         }

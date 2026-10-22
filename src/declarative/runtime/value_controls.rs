@@ -697,7 +697,8 @@ impl Runtime {
         })
     }
     /// Called after layout by hosts: reports each `on_width` element's width
-    /// in whole logical points when it changed since the last report.
+    /// (and each `on_height` element's height) in whole logical points when
+    /// it changed since the last report.
     /// Returns whether any handler ran (the host then recomposes once).
     #[cfg(feature = "rust-ui")]
     pub fn dispatch_widths<C>(
@@ -713,6 +714,15 @@ impl Runtime {
             let width = (b.bounds.bounds()[2] / self.scale).round();
             if self.reported_widths.insert(b.id.clone(), width) != Some(width) {
                 events.push((name.clone(), width));
+            }
+        }
+        for b in &self.layout_boxes {
+            let Some(name) = &b.on_height else {
+                continue;
+            };
+            let height = (b.bounds.bounds()[3] / self.scale).round();
+            if self.reported_heights.insert(b.id.clone(), height) != Some(height) {
+                events.push((name.clone(), height));
             }
         }
         let any = !events.is_empty();

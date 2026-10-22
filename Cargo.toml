@@ -21,7 +21,7 @@ default = []
 declarative = ["dep:serde", "dep:serde_json"]
 rust-ui = ["declarative", "dep:unicode-segmentation"]
 native = ["rust-ui", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:cosmic-text", "dep:image", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
-native-desktop = ["native", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL"]
+native-desktop = ["native", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL", "objc2-foundation?/NSFileManager", "objc2-foundation?/NSError", "objc2-foundation?/NSPathUtilities", "dep:rustix"]
 native-notifications = ["native", "dep:objc2-user-notifications", "dep:block2", "objc2-foundation?/NSBundle", "objc2-foundation?/NSURL"]
 dev-tools = ["dep:serde_json"]
 native-gpu = ["native", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
@@ -51,6 +51,8 @@ cosmic-text = { version = "0.14.2", optional = true }
 
 # One native compute backend per platform; no unused GLES/WebGPU backend.
 [target.'cfg(target_os = "macos")'.dependencies]
+# Safe local-volume metadata queries for opt-in checked Trash; already locked transitively.
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs"], optional = true }
 # Narrow, independent modern local-notification adapter; no delegate/actions/locations.
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger"], optional = true }
 block2 = { version = "=0.6.2", default-features = false, features = ["std"], optional = true }

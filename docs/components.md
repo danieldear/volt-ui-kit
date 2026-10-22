@@ -140,6 +140,67 @@ view(&App::default()).build()?;
   window. It is optional: compose your own shell from stacks when you need to.
 - With an option focused, arrow keys and Home/End move the selection.
 
+## Customizing component spacing
+
+Constructor sizes are defaults, not fixed design requirements. Keep the defaults
+for a consistent starting point, or override the part you actually need. Values
+are logical pixels; explicit `0.` works, edge/axis arrays are supported, and the
+last setter affecting an edge or axis wins. Padding is **inside** a component;
+gap separates its immediate children, not every nested label or icon.
+
+| Component | API / target | Unchanged default |
+|---|---|---|
+| Button bars, toolbars, navigation | `.gap(value, Axis::Horizontal)` / `.padding(value, edges)` | Existing constructor spacing |
+| `tab_bar` | `.gap(value, Axis::Horizontal)` between options | 2; joined controls use a 1px seam unless overridden |
+| `tabs` | `.tab_gap(value)` / `.tab_padding(value, edges)` inside the strip; `.gap(value, axis)` between strip and page | Line/contained strip gap 2; contained padding 3; strip-to-page 12 |
+| Menus / context menus | `.popup_padding(..)`, `.item_gap(..)`, `.item_height(..)`, `.popup_max_height(..)` | 6 / 2 / 34 / 480 |
+| Dialog, popover, tooltip | `.padding(value, edges)` / `.gap(value, axes)` on content card, never backdrop | Existing card defaults |
+| Radio group, number input, tags, color picker, rating, form field, drop zone | `.padding(value, edges)` / `.gap(value, axes)` on composite content | Existing constructor defaults |
+| Collapsible, accordion, drawer, command palette | `.padding(value, edges)` / `.gap(value, axes)` on section/card | Existing constructor defaults |
+| Toaster | `.gap(value, Axis::Vertical)` between toast cards; `.padding(value, edges)` for window inset | 8 between cards / 16 window inset |
+| OTP | `.digit_gap(value)` between code boxes (also resizes backing input) | 8 |
+| Combobox | `.option_gap(value)` between popup results | 2 |
+| Table | `.row_height(..)`, `.header_height(..)`, `.cell_padding(..)` (horizontal); fixed `.padding(..)` / `.gap(..)` on panel | 44 / 40 / 12; existing panel spacing |
+| Tree | `.row_height(..)`, `.indent_width(..)`; fixed `.padding(..)` / `.gap(..)` on panel | 36 / 18; existing panel spacing |
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let picker: Element<()> = tab_bar![tab_item(0, "Space"), tab_item(1, "Duplicates")]
+    .key("picker").selected(0).on_select(|_: &mut (), _| {})
+    .gap(responsive(2.).at(Breakpoint::Md, 8.), Axis::Horizontal)
+    .padding(4., [Edge::Top, Edge::Bottom])
+    .into();
+picker.build()?;
+let pages: Element<()> = tabs![
+    tab(0, "Overview", text("Overview")),
+    tab(1, "Details", text("Details")),
+].key("pages").selected(0).on_select(|_: &mut (), _| {})
+ .tab_gap(6.).tab_padding(4., Edge::Horizontal)
+ .gap(16., Axis::Vertical).into();
+pages.build()?;
+let actions: Element<()> = menu("Actions", [menu_item(0, "Open"), menu_item(1, "Copy path")])
+    .key("actions").open(false)
+    .on_open_change(|_: &mut (), _| {}).on_action(|_: &mut (), _| {})
+    .popup_padding(8.).item_gap(4.).item_height(38.)
+    .popup_max_height(320.).popup_background(ColorToken::Base100).into();
+actions.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+Stack-style spacing and tab strip overrides accept responsive values. Table/tree
+panel spacing and density, popup geometry, OTP and combobox result gaps are fixed
+logical values: use a responsive containing stack for their outer placement.
+Table `.gap(..)` also separates its divider children; use `.row_height(..)` for
+ordinary table density. A drawer/command-palette override targets the card, not
+its modal backdrop. Intrinsic glyph dimensions and hit-target geometry are not
+silently changed by a content gap.
+
+Non-finite, negative and out-of-range values fail `build()`. Popup item height
+must be 24–512, popup maximum height 24–8192, table/header height 24–512, tree row
+height 28–512; the viewport can shrink a popup further, with overflow scrolling.
+Zero spacing does not change callbacks, selection, keyboard behavior or defaults
+of controls which do not opt in.
+
 ## Fields, value controls and dialogs
 
 ```rust
@@ -397,6 +458,71 @@ row.build()?;
   reports the ones it could not read; `set.icon("name")` returns an element.
 - The SVG reader handles paths and basic shapes, transforms, fills and strokes.
   It never runs scripts or loads external resources.
+
+## Hierarchy charts
+
+Icicle bands show parent/child depth; squarified treemaps show the root's direct
+children as proportional rectangles. Both use native Volt controls, not a webview.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let nodes = vec![
+    HierarchyNode::new("root", "Projects", 100, None),
+    HierarchyNode::new("rust", "Rust", 60, Some(0)),
+    HierarchyNode::new("build", "Build output", 40, Some(1)),
+    HierarchyNode::new("source", "Source", 20, Some(1)),
+    HierarchyNode::new("web", "Web", 40, Some(0)),
+];
+let explorer: Element<String> = icicle_chart(nodes.clone())
+    .key("folders").size(640., 240.).levels(4)
+    .on_select(|selected: &mut String, key| *selected = key)
+    .into();
+explorer.build()?;
+let alternate: Element<String> = treemap_chart(nodes)
+    .key("space").size(640., 240.)
+    .on_select(|selected: &mut String, key| *selected = key)
+    .into();
+alternate.build()?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+- Values are **inclusive subtree totals**; never add a parent total to its
+  descendants. Direct children's sum must not exceed their parent's value.
+- One root first, parents before children, unique keys, at most 4,096 nodes
+  and depth 64. Zero values do not create tiles. Invalid data rejects the tree.
+- `.value_format(..)` formats exact tooltip/accessibility values. Tab/Enter
+  and pointer activation return the original node key. App-owned drilldown
+  replaces the data with the selected subtree; keep a companion table.
+- `.size(w, h)` uses logical pixels. Use a containing stack's `.on_width(..)`
+  callback for responsive sizes; layouts are not computed every animation frame.
+- Tiny tiles are not inflated into misleading sizes. Unrepresented child bytes
+  leave blank area; provide an explicit Other node when grouping small items.
+- Strata-style interaction is **opt-in**: `.selected_keys(..)` supports multiple
+  selections; `.reviewed_keys(..)` adds passive review diamonds, never checkboxes;
+  `.context_target(key)` shows the menu target with a dashed outline. The legacy
+  `.selected(key)` still replaces the selection with one key.
+- `.node_colors(..)` accepts bounded `(key, color)` overrides; unspecified nodes
+  keep the original palette. Literal custom fills choose a contrasting black or
+  white foreground. `.hide_root(true)` omits the icicle root band and makes
+  `.levels(n)` count visible child bands; treemap geometry is unchanged.
+- `.hover_linked(true)` links tile hover to components with
+  `.hover_link(node_key)` (for example, a file-list row). Links are paint-only:
+  no callbacks, recomposition, selection, focus, scrolling or peer tooltips.
+  Matching enabled, mounted peers use their own `.hover_style(..)`; the nearest
+  nested link wins. Keys are stable, nonempty strings up to 128 bytes. Hidden or
+  unmounted counterparts do not scroll into view. Disable chart links and omit
+  row links while an application-owned menu is open if its target should dominate.
+- `.on_context_open(|app, key, point| ..)` reports an action target **without
+  selecting it**. `point` is window-logical pixels, not chart-local coordinates.
+  Applications own the context menu, permissions, review and filesystem actions.
+- `.keyboard_navigation(true)` opts into roving focus: one Tab entry/exit, sibling
+  Left/Right, parent Up, first visible child Down, sibling Home/End, Enter to
+  activate. Native Shift-F10 / Context Menu opens the focused tile's actions.
+  Disabled/removed targets and modal scopes retain their usual guards. Stable
+  application node keys preserve focus identity when data reorders.
+- `ui::icicle_layout` / `ui::treemap_layout` expose pure geometry for testing or
+  alternate native presentations. Treemap is one level per drilldown, not a
+  claim to display every file at once.
 
 ## Known limits
 
