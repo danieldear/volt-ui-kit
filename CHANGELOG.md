@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Add `code_view(line_count)`, a controlled, virtualized code surface for
+  editors (built for Volt Editor). The application keeps the document and
+  supplies only the lines around the visible window (`.lines(first, ..)`)
+  with coloured byte spans (`.palette(..)`), plus every selection.
+  - **Drawing:** the view draws the gutter and line numbers, the
+    current-line band, selections, several carets, input-method
+    composition at the caret, and a thin scrollbar. Only visible lines are
+    shaped, so per-frame work doesn't grow with the file.
+  - **Input:** every key (with its modifiers), typed or committed text,
+    paste, press (with click count), drag, Copy and Cut reaches one
+    `on_input` handler as a `CodeInput`. Copy and Cut return the selected
+    text for the clipboard. Read-only views select, scroll and copy.
+  - **Scrolling:** wheel and trackpad scrolling, drag auto-scroll,
+    `.reveal(request)` (keep the primary caret on screen) and
+    `.scroll_to(line, request)`. `CodeInput::Visible` asks for lines only
+    when the view leaves the supplied window or its height changes.
+  - **Focus and theming:** `.focus_when(..)` takes focus as it turns on.
+    Palette entries may be `"light|dark"` pairs, picked by the theme in
+    effect. Presses and scrolling pass through transparent layers above
+    the view, such as the row holding a find bar.
+  - **Additive:** new files `runtime/code_view.rs`, `ui/code_view.rs` and
+    `native/window/code_input.rs`, plus small hooks in focus, scrolling,
+    painting, IME and the native key and pointer routing. Existing
+    components are unchanged. Tests: `tests/code_view.rs`.
+
 - Add opt-in content padding/gap to forms and disclosure composites, dialogs,
   popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and
   combobox `option_gap` where generic container gaps would not affect the

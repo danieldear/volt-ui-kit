@@ -228,6 +228,9 @@ pub(crate) struct NodeExtras {
     pub spans: Vec<TextSpan>,
     /// Rich text: handler for clicked links.
     pub on_link: Option<String>,
+    /// Code views: the lines, selections and input handler to draw with.
+    #[cfg(feature = "rust-ui")]
+    pub code: Option<std::sync::Arc<super::runtime::code_view::CodeViewProps>>,
 }
 impl NodeExtras {
     pub(crate) fn valid(&self) -> bool {
@@ -270,5 +273,14 @@ impl NodeExtras {
                 })
                 .is_ok()
             })
+            && self.code_valid()
+    }
+    #[cfg(feature = "rust-ui")]
+    fn code_valid(&self) -> bool {
+        self.code.as_ref().is_none_or(|c| c.valid())
+    }
+    #[cfg(not(feature = "rust-ui"))]
+    fn code_valid(&self) -> bool {
+        true
     }
 }

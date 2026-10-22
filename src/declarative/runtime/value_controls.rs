@@ -737,7 +737,9 @@ impl Runtime {
                 )
                 .map_err(|e| DocumentError(e.to_string()))?;
         }
-        Ok(any)
+        // Code views report their visible lines once they have a size.
+        let windows = self.dispatch_code_windows(handlers, context)?;
+        Ok(any || windows)
     }
     /// Called after layout/scrolling by hosts; proposed windows are always bounded.
     pub fn dispatch_virtual_windows<C>(
@@ -755,6 +757,7 @@ impl Runtime {
         for b in candidates {
             activated |= self.dispatch_virtual_window(&b, handlers, context)?;
         }
+        activated |= self.dispatch_code_windows(handlers, context)?;
         Ok(activated)
     }
     pub(super) fn dispatch_virtual_window<C>(

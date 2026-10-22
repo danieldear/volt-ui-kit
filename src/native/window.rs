@@ -8,6 +8,7 @@ use crate::{
     Palette, Theme, ThemeMode, UiTheme, Viewport,
 };
 use softbuffer::{Context, Surface};
+mod code_input;
 use std::{
     io::Read,
     num::NonZeroU32,
@@ -2037,6 +2038,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                     }
                     self.pointer = Some([position.x as f32, position.y as f32]);
+                    if self.code_pointer_drag(position.x as f32, position.y as f32)? {
+                        self.update_cursor(position.x as f32, position.y as f32);
+                        return Ok(());
+                    }
                     if self.runtime.text_selecting() {
                         if self.runtime.text_select_drag(
                             position.x as f32,
@@ -2158,6 +2163,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                         }
                                     }
                                 } else {
+                                    if self.code_pointer_down(x, y)? {
+                                        self.redraw();
+                                        return Ok(());
+                                    }
                                     if self.modifiers.shift_key()
                                         && self.runtime.editor_pointer_down(x, y, true)
                                     {
@@ -2194,6 +2203,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                 self.redraw();
                             }
                             ElementState::Released => {
+                                self.code_pointer_up();
                                 if self.runtime.text_select_release() {
                                     self.after_selection()?;
                                 }
@@ -2284,6 +2294,9 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                             self.after_input(outcome)?;
                             return Ok(());
                         }
+                    }
+                    if event.state == ElementState::Pressed && self.code_keyboard(&event)? {
+                        return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.editor_keyboard(&event)? {
                         return Ok(());

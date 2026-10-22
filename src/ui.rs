@@ -262,6 +262,7 @@ type WindowCallback<C> = Box<dyn FnMut(&mut C, std::ops::Range<usize>)>;
 type FilesCallback<C> = Box<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>;
 type SelectionCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::TextSelection)>;
 type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
+type CodeCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::CodeInput) -> Option<String>>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
@@ -282,6 +283,7 @@ enum Callback<C> {
     Window(WindowCallback<C>),
     Files(FilesCallback<C>),
     Link(ChangeText<C>),
+    Code(CodeCallback<C>),
 }
 // Opt-in spacing for composites whose public builder is not an Element wrapper.
 // Empty overrides leave every constructor default intact.
@@ -396,6 +398,7 @@ pub use display::{
     line_chart, pagination, skeleton, skeleton_text, sparkline, stat, steps, timeline, Alert,
     Avatar, Breadcrumb, Carousel, Pagination, Presence, Severity, Stat, TimelineItem,
 };
+mod code_view;
 mod icons;
 mod inputs;
 mod menus;
@@ -426,6 +429,7 @@ pub use data::{
     VirtualList,
 };
 pub use dialogs::{dialog, Dialog};
+pub use code_view::{code_view, CodeView};
 pub use inputs::{text_area, text_field, TextInput};
 pub use menus::{
     context_menu, menu, menu_item, menu_separator, menu_submenu, ContextMenu, Menu, MenuItem,
@@ -665,6 +669,14 @@ impl<C: 'static> Element<C> {
                             .on_link(&name, f)
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.ext.on_link = Some(name);
+                    }
+                    Callback::Code(f) => {
+                        handlers
+                            .on_code_input(&name, f)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        if let Some(code) = node.ext.code.as_mut() {
+                            std::sync::Arc::make_mut(code).on_input = Some(name);
+                        }
                     }
                     Callback::Dismiss(f) => {
                         handlers
@@ -1326,6 +1338,7 @@ modifiers!(VirtualList, [T, F], [0.node], [0.auto_id]);
 modifiers!(LazyList, [F], [0.node], [0.auto_id]);
 modifiers!(Table, [T, K], [0.node], [0.auto_id]);
 modifiers!(TreeView, [T], [0.node], [0.auto_id]);
+modifiers!(CodeView, [0.node], [0.auto_id]);
 modifiers!(Progress, [0.node], [0.auto_id]);
 modifiers!(SplitPane, [0.node], [0.auto_id]);
 wrapper_spacing_methods!(Dialog);
@@ -1384,6 +1397,7 @@ pub mod prelude {
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
+    pub use super::{code_view, CodeView};
     pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};

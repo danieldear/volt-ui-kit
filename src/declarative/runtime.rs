@@ -19,6 +19,8 @@ use std::{
 #[cfg(feature = "rust-ui")]
 pub(super) mod accessibility;
 #[cfg(feature = "rust-ui")]
+pub(super) mod code_view;
+#[cfg(feature = "rust-ui")]
 mod drops;
 #[cfg(feature = "rust-ui")]
 pub(super) mod editing;
@@ -337,6 +339,9 @@ pub(crate) struct BoxExtras {
     /// rectangles relative to the box origin (span index, [x, y, w, h]).
     pub on_link: Option<String>,
     pub links: Vec<(usize, [f32; 4])>,
+    /// Code views: what to draw and how to report input.
+    #[cfg(feature = "rust-ui")]
+    pub code: Option<std::sync::Arc<code_view::CodeViewProps>>,
 }
 #[derive(Clone)]
 struct ScrollbarCapture {
@@ -460,6 +465,9 @@ pub struct Runtime {
     overlays: overlays::OverlayState,
     #[cfg(feature = "rust-ui")]
     text_selection: selection::TextSelectionState,
+    /// Code views: scroll offsets, input-method text and drags, by id.
+    #[cfg(feature = "rust-ui")]
+    code_views: RefCell<BTreeMap<String, code_view::CodeViewState>>,
 }
 impl Runtime {
     /// Native application shortcuts must not bypass modal/menu scope or IME.
@@ -532,6 +540,8 @@ impl Runtime {
             overlays: overlays::OverlayState::default(),
             #[cfg(feature = "rust-ui")]
             text_selection: Default::default(),
+            #[cfg(feature = "rust-ui")]
+            code_views: RefCell::new(BTreeMap::new()),
         };
         #[cfg(feature = "rust-ui")]
         let mut runtime = runtime;
@@ -1269,6 +1279,10 @@ impl Runtime {
         }
         #[cfg(feature = "rust-ui")]
         let mut changed = self.editor_scroll_at(x, y, &mut delta);
+        #[cfg(feature = "rust-ui")]
+        {
+            changed |= self.code_view_scroll_at(x, y, &mut delta);
+        }
         #[cfg(not(feature = "rust-ui"))]
         let mut changed = false;
         let Some(mut index) = self.boxes.iter().rposition(|b| {
@@ -2416,6 +2430,11 @@ impl Runtime {
             if let Some(highlight) = self.paint_text_selection(p, ui, b) {
                 out.push(highlight);
             }
+            #[cfg(feature = "rust-ui")]
+            if b.ext.code.is_some() {
+                self.push_code_view(p, ui, b, out);
+                continue;
+            }
             let batch = self.paint_one(p, ui, b, treatment.then_some(visual));
             #[cfg(feature = "rust-ui")]
             let mut batch = batch;
@@ -3304,16 +3323,21 @@ fn paint_scrollbars<P: Painter>(
     }
 }
 fn interactive_node(n: &Node) -> bool {
+    #[cfg(feature = "rust-ui")]
+    let code = n.ext.code.is_some();
+    #[cfg(not(feature = "rust-ui"))]
+    let code = false;
     interactive(n.kind)
         || n.editor.is_some()
         || n.slider.is_some()
         || n.split_handle.is_some()
         || n.on_activate_input.is_some()
         || n.on_input_key.is_some()
+        || code
 }
 fn interactive_box(b: &LayoutBox) -> bool {
     #[cfg(feature = "rust-ui")]
-    let custom = b.on_activate_input.is_some() || b.on_input_key.is_some();
+    let custom = b.on_activate_input.is_some() || b.on_input_key.is_some() || b.ext.code.is_some();
     #[cfg(not(feature = "rust-ui"))]
     let custom = false;
     interactive(b.kind)
@@ -4543,6 +4567,8 @@ fn place(
             spans: n.ext.spans.clone(),
             on_link: n.ext.on_link.clone(),
             links: Vec::new(),
+            #[cfg(feature = "rust-ui")]
+            code: n.ext.code.clone(),
         },
     });
     let index = out.len() - 1;

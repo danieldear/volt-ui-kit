@@ -58,10 +58,14 @@ pub struct InputKeyEvent {
 
 type ActivationCallback<'a, C> = Box<dyn FnMut(&mut C, PointerActivation) + 'a>;
 type KeyInputCallback<'a, C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool + 'a>;
+type CodeInputCallback<'a, C> =
+    Box<dyn FnMut(&mut C, super::CodeInput) -> Option<String> + 'a>;
 
 pub(super) enum InputCallback<'a, C> {
     Activate(ActivationCallback<'a, C>),
     Key(KeyInputCallback<'a, C>),
+    /// A code view's edits; returns clipboard text for Copy and Cut.
+    Code(CodeInputCallback<'a, C>),
 }
 impl<'a, C> Handlers<'a, C> {
     fn insert_input(
@@ -97,6 +101,27 @@ impl<'a, C> Handlers<'a, C> {
         f: impl FnMut(&mut C, InputKeyEvent) -> bool + 'a,
     ) -> Result<(), HandlerError> {
         self.insert_input(name, InputCallback::Key(Box::new(f)))
+    }
+    /// A code view's input handler. Return the selected text for
+    /// `CodeInput::Copy` and `CodeInput::Cut`; `None` otherwise.
+    pub fn on_code_input(
+        &mut self,
+        name: &str,
+        f: impl FnMut(&mut C, super::CodeInput) -> Option<String> + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert_input(name, InputCallback::Code(Box::new(f)))
+    }
+    pub(crate) fn dispatch_code_input(
+        &mut self,
+        name: &str,
+        input: super::CodeInput,
+        context: &mut C,
+    ) -> Result<Option<String>, HandlerError> {
+        match self.input_entries.get_mut(name) {
+            Some(InputCallback::Code(f)) => Ok(f(context, input)),
+            Some(_) => Err(HandlerError::InvalidValue),
+            None => Err(HandlerError::Missing(name.into())),
+        }
     }
     pub(crate) fn validate_input(&self, name: &str, key: bool) -> Result<(), HandlerError> {
         match self.input_entries.get(name) {
