@@ -26,6 +26,19 @@
     `native/window/code_input.rs`, plus small hooks in focus, scrolling,
     painting, IME and the native key and pointer routing. Existing
     components are unchanged. Tests: `tests/code_view.rs`.
+- Add `.caret_band(height)` to `code_view`. The view reports
+  `CodeInput::CaretBand(Some([x, width]))` (whole window points) while the
+  primary caret is on screen within its bottom `height` points, and `None`
+  once it leaves. Reports are sent only when that changes, so a surface
+  floating over the bottom of an editor can keep clear of the caret.
+  Additive; covered in `tests/code_view.rs`.
+- Add `.on_hover(|state, inside|)` to containers. The container learns when
+  the pointer enters or leaves its bounds, with descendants counting as
+  inside, so a floating panel can stay open while it's in use. Hosts call
+  the new `Runtime::dispatch_hover_regions(pointer, ..)` after pointer
+  motion; the native window does this on cursor moves and when the cursor
+  leaves the window. Additive: new file `runtime/hover.rs`, plus one field on
+  elements, nodes and layout boxes. Tests: `tests/hover_regions.rs`.
 
 - Add opt-in content padding/gap to forms and disclosure composites, dialogs,
   popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and

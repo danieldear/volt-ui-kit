@@ -93,6 +93,13 @@ impl<C> CodeView<C> {
         self.props().scroll_to = Some((line, request));
         self
     }
+    /// Watch the bottom `height` points of the view for the caret and report
+    /// `CodeInput::CaretBand` as it enters or leaves: for a surface that
+    /// floats over that band and must keep clear of the caret.
+    pub fn caret_band(mut self, height: f32) -> Self {
+        self.props().caret_band = Some(height);
+        self
+    }
     pub fn selection_color(mut self, value: impl Into<String>) -> Self {
         self.props().selection_color = Some(value.into());
         self
@@ -119,7 +126,10 @@ impl<C> CodeView<C> {
     }
     /// Every edit, movement, click and clipboard request. Return the
     /// selected text for `CodeInput::Copy` and `CodeInput::Cut`.
-    pub fn on_input(mut self, f: impl FnMut(&mut C, CodeInput) -> Option<String> + 'static) -> Self {
+    pub fn on_input(
+        mut self,
+        f: impl FnMut(&mut C, CodeInput) -> Option<String> + 'static,
+    ) -> Self {
         self.1 = Some(Box::new(f));
         self
     }

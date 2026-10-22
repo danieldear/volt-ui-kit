@@ -24,6 +24,8 @@ struct Doc {
     /// Lay a transparent row holding a solid bar over the view.
     overlay: bool,
     focus: bool,
+    /// Watch this many points at the bottom for the caret.
+    band: Option<f32>,
 }
 impl Doc {
     fn new(lines: usize) -> Self {
@@ -51,7 +53,9 @@ fn view(d: &Doc) -> Element<Doc> {
         .palette([d.palette.clone().unwrap_or_else(|| "#ff0000".into())])
         .focus_when(d.focus)
         .selections(
-            vec![d.selection.unwrap_or(CodeSelection::caret(CodePosition::default()))],
+            vec![d
+                .selection
+                .unwrap_or(CodeSelection::caret(CodePosition::default()))],
             0,
         )
         .reveal(d.reveal)
@@ -72,6 +76,9 @@ fn view(d: &Doc) -> Element<Doc> {
         .height(400.);
     if let Some((line, request)) = d.scroll {
         v = v.scroll_to(line, request);
+    }
+    if let Some(height) = d.band {
+        v = v.caret_band(height);
     }
     if !d.overlay {
         return v.into();
@@ -167,7 +174,11 @@ impl Mounted {
             self.runtime
                 .layout(vp, &Bindings::default(), &mut self.painter)
                 .unwrap();
-            if !self.runtime.dispatch_widths(&mut self.handlers, doc).unwrap() {
+            if !self
+                .runtime
+                .dispatch_widths(&mut self.handlers, doc)
+                .unwrap()
+            {
                 return;
             }
             self.rebuild(doc);
@@ -183,9 +194,7 @@ impl Mounted {
     }
     fn paint(&mut self) -> Vec<String> {
         self.painter.texts.clear();
-        let _ = self
-            .runtime
-            .paint_ui(&mut self.painter, &UiTheme::dark());
+        let _ = self.runtime.paint_ui(&mut self.painter, &UiTheme::dark());
         std::mem::take(&mut self.painter.texts)
     }
     /// The span colours drawn for line 0 under `theme`.
@@ -250,7 +259,13 @@ fn scrolling_moves_the_text_and_asks_for_lines_only_outside_the_supplied_window(
     // Within the 120 supplied lines: no recomposition is needed.
     let outcome = m
         .runtime
-        .scroll_outcome(x + w / 2., y + h / 2., [0., 400.], &mut m.handlers, &mut doc)
+        .scroll_outcome(
+            x + w / 2.,
+            y + h / 2.,
+            [0., 400.],
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
     assert!(outcome.changed && !outcome.activated);
     assert_eq!(doc.inputs.len(), reports);
@@ -261,7 +276,13 @@ fn scrolling_moves_the_text_and_asks_for_lines_only_outside_the_supplied_window(
     // Far beyond them, the view reports the new window.
     let outcome = m
         .runtime
-        .scroll_outcome(x + w / 2., y + h / 2., [0., 16_000.], &mut m.handlers, &mut doc)
+        .scroll_outcome(
+            x + w / 2.,
+            y + h / 2.,
+            [0., 16_000.],
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
     assert!(outcome.activated);
     assert_eq!(doc.visible, Some((820, 840)));
@@ -281,7 +302,14 @@ fn a_press_focuses_the_view_and_reports_line_and_column() {
     let (px, py) = (x + 64. + 12. + 6.5 * 5., y + 20. * 3. + 10.);
     let outcome = m
         .runtime
-        .code_pointer_down(px, py, 2, InputModifiers::default(), &mut m.handlers, &mut doc)
+        .code_pointer_down(
+            px,
+            py,
+            2,
+            InputModifiers::default(),
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
     assert!(outcome.is_some_and(|o| o.activated));
     assert!(m.runtime.code_view_focused());
@@ -311,7 +339,14 @@ fn a_press_focuses_the_view_and_reports_line_and_column() {
     // Outside any code view the host handles the press itself.
     assert!(m
         .runtime
-        .code_pointer_down(x - 1., y - 1., 1, InputModifiers::default(), &mut m.handlers, &mut doc)
+        .code_pointer_down(
+            x - 1.,
+            y - 1.,
+            1,
+            InputModifiers::default(),
+            &mut m.handlers,
+            &mut doc
+        )
         .unwrap()
         .is_none());
 }
@@ -322,7 +357,14 @@ fn keys_and_text_go_to_the_focused_view_and_read_only_views_only_copy() {
     let mut m = Mounted::new(&mut doc);
     let [x, y, _, _] = m.bounds();
     m.runtime
-        .code_pointer_down(x + 100., y + 5., 1, InputModifiers::default(), &mut m.handlers, &mut doc)
+        .code_pointer_down(
+            x + 100.,
+            y + 5.,
+            1,
+            InputModifiers::default(),
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
     m.runtime.code_pointer_up();
     let shift = InputModifiers {
@@ -333,7 +375,9 @@ fn keys_and_text_go_to_the_focused_view_and_read_only_views_only_copy() {
         key: CodeKey::PageDown,
         modifiers: shift,
     };
-    m.runtime.code_input(key.clone(), &mut m.handlers, &mut doc).unwrap();
+    m.runtime
+        .code_input(key.clone(), &mut m.handlers, &mut doc)
+        .unwrap();
     m.runtime
         .code_input(CodeInput::Insert("é".into()), &mut m.handlers, &mut doc)
         .unwrap();
@@ -342,7 +386,10 @@ fn keys_and_text_go_to_the_focused_view_and_read_only_views_only_copy() {
         .code_input(CodeInput::Copy, &mut m.handlers, &mut doc)
         .unwrap();
     assert_eq!(copied.as_deref(), Some("copied"));
-    assert_eq!(&doc.inputs[doc.inputs.len() - 3..], &[key, CodeInput::Insert("é".into()), CodeInput::Copy]);
+    assert_eq!(
+        &doc.inputs[doc.inputs.len() - 3..],
+        &[key, CodeInput::Insert("é".into()), CodeInput::Copy]
+    );
 
     doc.read_only = true;
     m.rebuild(&mut doc);
@@ -372,7 +419,14 @@ fn input_method_composition_is_visual_until_committed() {
     m.rebuild(&mut doc);
     m.settle(&mut doc);
     m.runtime
-        .code_pointer_down(x + 100., y + 5., 1, InputModifiers::default(), &mut m.handlers, &mut doc)
+        .code_pointer_down(
+            x + 100.,
+            y + 5.,
+            1,
+            InputModifiers::default(),
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
     m.runtime.code_pointer_up();
     assert!(m.runtime.editing_ime_allowed());
@@ -400,16 +454,28 @@ fn reveal_and_scroll_requests_bring_lines_into_view() {
     doc.reveal = 1;
     m.rebuild(&mut doc);
     m.settle(&mut doc);
-    assert_eq!(m.runtime.code_view_offset("code"), Some([0., 301. * 20. - 400.]));
+    assert_eq!(
+        m.runtime.code_view_offset("code"),
+        Some([0., 301. * 20. - 400.])
+    );
     assert_eq!(doc.visible, Some((281, 301)));
     // The same request number does nothing more.
     let [x, y, w, h] = m.bounds();
     m.runtime
-        .scroll_outcome(x + w / 2., y + h / 2., [0., -100.], &mut m.handlers, &mut doc)
+        .scroll_outcome(
+            x + w / 2.,
+            y + h / 2.,
+            [0., -100.],
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
     m.rebuild(&mut doc);
     m.settle(&mut doc);
-    assert_eq!(m.runtime.code_view_offset("code"), Some([0., 301. * 20. - 500.]));
+    assert_eq!(
+        m.runtime.code_view_offset("code"),
+        Some([0., 301. * 20. - 500.])
+    );
     // Go to line: a third of the way down.
     doc.scroll = Some((2000, 1));
     m.rebuild(&mut doc);
@@ -427,14 +493,23 @@ fn light_and_dark_palette_pairs_follow_the_theme_in_effect() {
     doc.palette = Some("#112233|#DDEEFF".into());
     let mut m = Mounted::new(&mut doc);
     let rgb = |r: u8, g: u8, b: u8| [r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.];
-    assert_eq!(m.first_line_colors(&UiTheme::dark()), vec![rgb(0xDD, 0xEE, 0xFF)]);
-    assert_eq!(m.first_line_colors(&UiTheme::light()), vec![rgb(0x11, 0x22, 0x33)]);
+    assert_eq!(
+        m.first_line_colors(&UiTheme::dark()),
+        vec![rgb(0xDD, 0xEE, 0xFF)]
+    );
+    assert_eq!(
+        m.first_line_colors(&UiTheme::light()),
+        vec![rgb(0x11, 0x22, 0x33)]
+    );
     // A plain entry is the same in both.
     doc.palette = Some("#FF0000".into());
     m.rebuild(&mut doc);
     m.settle(&mut doc);
     assert_eq!(m.first_line_colors(&UiTheme::dark()), vec![rgb(0xFF, 0, 0)]);
-    assert_eq!(m.first_line_colors(&UiTheme::light()), vec![rgb(0xFF, 0, 0)]);
+    assert_eq!(
+        m.first_line_colors(&UiTheme::light()),
+        vec![rgb(0xFF, 0, 0)]
+    );
 }
 
 #[test]
@@ -448,7 +523,14 @@ fn presses_pass_through_transparent_layers_but_not_solid_ones() {
     let [bx, by, bw, bh] = m.bounds_of("bar");
     let hit_bar = m
         .runtime
-        .code_pointer_down(bx + bw / 2., by + bh / 2., 1, none, &mut m.handlers, &mut doc)
+        .code_pointer_down(
+            bx + bw / 2.,
+            by + bh / 2.,
+            1,
+            none,
+            &mut m.handlers,
+            &mut doc,
+        )
         .unwrap();
     assert!(hit_bar.is_none(), "the solid bar keeps its press");
     assert!(!m.runtime.code_view_focused());
@@ -457,7 +539,10 @@ fn presses_pass_through_transparent_layers_but_not_solid_ones() {
         .runtime
         .code_pointer_down(x + 100., y + 200., 1, none, &mut m.handlers, &mut doc)
         .unwrap();
-    assert!(hit_code.is_some_and(|o| o.activated), "the empty layer lets it through");
+    assert!(
+        hit_code.is_some_and(|o| o.activated),
+        "the empty layer lets it through"
+    );
     assert!(matches!(doc.inputs.last(), Some(CodeInput::Press { .. })));
     m.runtime.code_pointer_up();
     // Scrolling passes through the same way.
@@ -475,4 +560,40 @@ fn focus_when_takes_focus_as_it_turns_on() {
     m.settle(&mut doc);
     assert!(m.runtime.code_view_focused());
     assert!(m.runtime.editing_ime_allowed());
+}
+
+#[test]
+fn the_caret_band_reports_when_the_caret_enters_and_leaves_the_bottom_of_the_view() {
+    let mut doc = Doc::new(200);
+    doc.band = Some(60.);
+    let mut m = Mounted::new(&mut doc);
+    m.paint();
+    let band = |doc: &Doc| {
+        doc.inputs.iter().rev().find_map(|i| match i {
+            CodeInput::CaretBand(span) => Some(*span),
+            _ => None,
+        })
+    };
+    // Line 0 is far from the bottom 60 points (lines 17 to 19).
+    assert_eq!(band(&doc), Some(None));
+    let [x, _, _, _] = m.bounds();
+    doc.selection = Some(CodeSelection::caret(CodePosition::new(18, 4)));
+    m.rebuild(&mut doc);
+    m.settle(&mut doc);
+    // Text starts after the 64-point gutter and a 12-point inset; at 13 pt a
+    // column is 6.5 points wide.
+    let expected = (x + 64. + 12. + 6.5 * 4.).round() as i32;
+    assert_eq!(band(&doc), Some(Some([expected, 7])));
+    // Unchanged geometry is not reported again.
+    let reports = doc.inputs.len();
+    m.rebuild(&mut doc);
+    m.settle(&mut doc);
+    assert_eq!(doc.inputs.len(), reports);
+    // Scrolling the caret line up out of the band reports that it left.
+    let [bx, by, bw, bh] = m.bounds();
+    m.runtime
+        .scroll_outcome(bx + bw / 2., by + bh / 2., [0., 100.], &mut m.handlers, &mut doc)
+        .unwrap();
+    m.runtime.dispatch_widths(&mut m.handlers, &mut doc).unwrap();
+    assert_eq!(band(&doc), Some(None));
 }

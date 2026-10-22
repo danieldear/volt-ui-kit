@@ -918,6 +918,20 @@ impl<C: 'static> App<C> {
         let _ = previous;
         Ok(())
     }
+    /// Report `on_hover` regions the pointer entered or left.
+    fn hover_regions(&mut self, pointer: Option<[f32; 2]>) -> Result<(), String> {
+        let ran = self
+            .runtime
+            .dispatch_hover_regions(pointer, &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if ran {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
+        Ok(())
+    }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
         let result = self.content.after_input(
             outcome,
@@ -2070,6 +2084,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                         self.redraw();
                     }
+                    self.hover_regions(Some([position.x as f32, position.y as f32]))?;
                     self.update_cursor(position.x as f32, position.y as f32);
                 }
                 WindowEvent::ThemeChanged(theme) => {
@@ -2122,6 +2137,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     if self.runtime.pointer_leave() {
                         self.redraw();
                     }
+                    self.hover_regions(None)?;
                 }
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,

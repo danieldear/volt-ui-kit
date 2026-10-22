@@ -99,13 +99,24 @@ pub enum CodeInput {
         modifiers: InputModifiers,
     },
     /// The pointer moved with the button held after a press.
-    Drag { at: CodePosition },
+    Drag {
+        at: CodePosition,
+    },
     Copy,
     Cut,
     /// Lines `first..last` are on screen (the application supplies lines
     /// around them). Sent when the window moves outside the supplied lines
     /// or its height changes.
-    Visible { first: usize, last: usize },
+    Visible {
+        first: usize,
+        last: usize,
+    },
+    /// With `caret_band`: the primary caret's horizontal span `[x, width]`
+    /// in whole window logical points while it is on screen within the
+    /// view's bottom band, `None` once it isn't. Sent only when that
+    /// changes, so a surface floating over the band can keep clear of the
+    /// caret.
+    CaretBand(Option<[i32; 2]>),
 }
 
 /// Most lines one document may carry; supply a window around the visible one.
@@ -129,6 +140,8 @@ pub(crate) struct CodeViewProps {
     pub highlight_line: bool,
     pub reveal: u32,
     pub scroll_to: Option<(usize, u32)>,
+    /// Height of the bottom band watched for the caret (`CodeInput::CaretBand`).
+    pub caret_band: Option<f32>,
     pub selection_color: Option<String>,
     pub caret_color: Option<String>,
     pub line_color: Option<String>,
@@ -152,6 +165,7 @@ impl Default for CodeViewProps {
             highlight_line: true,
             reveal: 0,
             scroll_to: None,
+            caret_band: None,
             selection_color: None,
             caret_color: None,
             line_color: None,
@@ -174,6 +188,7 @@ impl CodeViewProps {
             && finite(self.font_size, 4., 96.)
             && finite(self.line_height, self.font_size, 4. * self.font_size)
             && self.font_family.len() <= 256
+            && self.caret_band.is_none_or(|h| finite(h, 0., 4096.))
             && self.lines.iter().all(|l| {
                 l.text.len() <= MAX_CODE_LINE
                     && l.spans.windows(2).all(|w| w[0].1 <= w[1].0)
@@ -199,6 +214,8 @@ pub(crate) struct CodeViewState {
     /// Scroll offset in logical points.
     offset: [f32; 2],
     reported: Option<(usize, usize)>,
+    /// The last caret band report, in whole logical points.
+    band: Option<Option<[i32; 2]>>,
     reveal: u32,
     scroll: u32,
     preedit: String,
@@ -251,7 +268,12 @@ impl Runtime {
             scale: s,
         }
     }
-    fn code_max_offset(&self, b: &LayoutBox, props: &CodeViewProps, state: &CodeViewState) -> [f32; 2] {
+    fn code_max_offset(
+        &self,
+        b: &LayoutBox,
+        props: &CodeViewProps,
+        state: &CodeViewState,
+    ) -> [f32; 2] {
         let f = self.code_frame(b, props, state);
         let s = self.scale;
         // The last line may scroll up to the top of the view.
@@ -265,12 +287,22 @@ impl Runtime {
         let x = (longest * f.advance / s + 48. - f.text_width() / s).max(0.);
         [x, y]
     }
-    fn code_visible(&self, b: &LayoutBox, props: &CodeViewProps, state: &CodeViewState) -> (usize, usize) {
+    fn code_visible(
+        &self,
+        b: &LayoutBox,
+        props: &CodeViewProps,
+        state: &CodeViewState,
+    ) -> (usize, usize) {
         let height = b.bounds.bounds()[3] / self.scale;
         let first = (state.offset[1] / props.line_height).floor().max(0.) as usize;
-        let last = ((state.offset[1] + height) / props.line_height).ceil().max(0.) as usize;
+        let last = ((state.offset[1] + height) / props.line_height)
+            .ceil()
+            .max(0.) as usize;
         let first = first.min(props.line_count.saturating_sub(1));
-        (first, last.clamp(first + 1, props.line_count.max(first + 1)))
+        (
+            first,
+            last.clamp(first + 1, props.line_count.max(first + 1)),
+        )
     }
     fn code_box_at(&self, x: f32, y: f32) -> Option<&LayoutBox> {
         // The topmost box that covers the point visibly: transparent layout
@@ -531,6 +563,7 @@ impl Runtime {
         let mut activated = false;
         for b in views {
             let props = b.ext.code.as_deref().unwrap();
+            let mut band = None;
             let report = {
                 let mut states = self.code_views.borrow_mut();
                 let st = states.entry(b.id.clone()).or_default();
@@ -567,12 +600,18 @@ impl Runtime {
                 }
                 st.offset[0] = st.offset[0].clamp(0., max[0]);
                 st.offset[1] = st.offset[1].clamp(0., max[1]);
+                if let Some(height) = props.caret_band {
+                    let span = self.code_caret_in_band(&f, props, st, height);
+                    let whole = span.map(|[x, w]| [x.round() as i32, w.ceil() as i32]);
+                    if st.band != Some(whole) {
+                        st.band = Some(whole);
+                        band = Some(CodeInput::CaretBand(whole));
+                    }
+                }
                 let (first, last) = self.code_visible(&b, props, st);
                 let supplied = props.first..props.first + props.lines.len();
                 let covered = supplied.contains(&first) && last <= supplied.end;
-                let page_changed = st
-                    .reported
-                    .is_none_or(|(a, z)| z - a != last - first);
+                let page_changed = st.reported.is_none_or(|(a, z)| z - a != last - first);
                 if (!covered || page_changed) && st.reported != Some((first, last)) {
                     st.reported = Some((first, last));
                     Some(CodeInput::Visible { first, last })
@@ -580,16 +619,42 @@ impl Runtime {
                     None
                 }
             };
-            if let Some(input) = report {
+            for input in report.into_iter().chain(band) {
                 activated |= self.dispatch_code(&b.id, input, handlers, ctx)?.0.activated;
             }
         }
         Ok(activated)
     }
+    /// The primary caret's `[x, width]` in window logical points when it is
+    /// on screen within the bottom `height` points of the view.
+    fn code_caret_in_band(
+        &self,
+        f: &Frame,
+        props: &CodeViewProps,
+        st: &CodeViewState,
+        height: f32,
+    ) -> Option<[f32; 2]> {
+        let head = props.selections[props.primary].head;
+        let x = st
+            .stops
+            .get(&head.line)
+            .and_then(|s| s.get(head.column).copied())
+            .unwrap_or(head.column as f32 * f.advance / f.scale);
+        let left = f.text_x + (x - st.offset[0]) * f.scale;
+        let top = f.bounds[1] + (head.line as f32 * props.line_height - st.offset[1]) * f.scale;
+        let bottom = f.bounds[1] + f.bounds[3];
+        let on_screen = left >= f.text_x && left <= f.bounds[0] + f.bounds[2] && top + f.line_height > f.bounds[1] && top < bottom;
+        (on_screen && top + f.line_height > bottom - height * f.scale)
+            .then(|| [left / f.scale, (f.advance / f.scale).max(1.)])
+    }
 
     // ---- Input methods ------------------------------------------------------
 
-    pub(super) fn code_ime_preedit(&mut self, text: &str, cursor: Option<(usize, usize)>) -> Option<bool> {
+    pub(super) fn code_ime_preedit(
+        &mut self,
+        text: &str,
+        cursor: Option<(usize, usize)>,
+    ) -> Option<bool> {
         let id = self.focused_code()?.id.clone();
         if self.code_view_read_only() {
             return Some(false);
@@ -599,7 +664,10 @@ impl Runtime {
         let changed = st.preedit != text || st.preedit_cursor != cursor;
         st.preedit = text.into();
         st.preedit_cursor = cursor.filter(|(a, b)| {
-            *a <= text.len() && *b <= text.len() && text.is_char_boundary(*a) && text.is_char_boundary(*b)
+            *a <= text.len()
+                && *b <= text.len()
+                && text.is_char_boundary(*a)
+                && text.is_char_boundary(*b)
         });
         drop(states);
         if !text.is_empty() {
@@ -687,7 +755,10 @@ impl Runtime {
         let y_of = |line: usize| by + line as f32 * lh - offset[1] * s;
         let x_scroll = offset[0] * s;
         let resolve = |value: &Option<String>, fallback: [f32; 4]| {
-            value.as_deref().and_then(|v| ui.resolve(v)).unwrap_or(fallback)
+            value
+                .as_deref()
+                .and_then(|v| ui.resolve(v))
+                .unwrap_or(fallback)
         };
         let text_color = b.style.color.unwrap_or(c.text);
         let with_alpha = |mut color: [f32; 4], a: f32| {
@@ -706,7 +777,13 @@ impl Runtime {
             .iter()
             .map(|v| {
                 let v = match v.split_once('|') {
-                    Some((light, night)) => if dark { night } else { light },
+                    Some((light, night)) => {
+                        if dark {
+                            night
+                        } else {
+                            light
+                        }
+                    }
                     None => v.as_str(),
                 };
                 ui.resolve(v.trim())
@@ -730,7 +807,9 @@ impl Runtime {
             .collect();
         if props.highlight_line {
             for &line in caret_lines.range(first..last) {
-                if let Some(r) = Rect::new(bx, y_of(line), bw, lh).and_then(|r| intersection(r, b.clip)) {
+                if let Some(r) =
+                    Rect::new(bx, y_of(line), bw, lh).and_then(|r| intersection(r, b.clip))
+                {
                     let [x, y, w, h] = r.bounds();
                     p.draw_rect(&mut shapes, x, y, w, h, line_color);
                 }
@@ -741,8 +820,13 @@ impl Runtime {
             shapes,
             glyphs: vec![],
         });
-        let text_clip = Rect::new(f.text_x - TEXT_INSET * s, by, (bx + bw - f.text_x + TEXT_INSET * s).max(0.1), bh)
-            .and_then(|r| intersection(r, b.clip));
+        let text_clip = Rect::new(
+            f.text_x - TEXT_INSET * s,
+            by,
+            (bx + bw - f.text_x + TEXT_INSET * s).max(0.1),
+            bh,
+        )
+        .and_then(|r| intersection(r, b.clip));
         let Some(text_clip) = text_clip else {
             return;
         };
@@ -751,7 +835,8 @@ impl Runtime {
         // shaped advances otherwise (wide and combining characters).
         st.stops.retain(|line, _| (first..last).contains(line));
         let primary_head = props.selections[props.primary].head;
-        let preedit = (focused && !st.preedit.is_empty()).then(|| (st.preedit.clone(), st.preedit_cursor));
+        let preedit =
+            (focused && !st.preedit.is_empty()).then(|| (st.preedit.clone(), st.preedit_cursor));
         let measure = style.clone();
         let stop_map = &mut st.stops;
         let advance = f.advance;
@@ -767,10 +852,7 @@ impl Runtime {
                     .map(|x| x / s)
                     .collect()
             });
-            stops
-                .get(column)
-                .or(stops.last())
-                .map_or(0., |x| x * s)
+            stops.get(column).or(stops.last()).map_or(0., |x| x * s)
         };
 
         // 2. Selections and text.
@@ -784,15 +866,25 @@ impl Runtime {
             for line in start.line.max(first)..=end.line.min(last.saturating_sub(1)) {
                 let text = props.line(line).map_or("", |l| l.text.as_str());
                 let chars = text.chars().count();
-                let a = if line == start.line { start.column.min(chars) } else { 0 };
-                let z = if line == end.line { end.column.min(chars) } else { chars };
+                let a = if line == start.line {
+                    start.column.min(chars)
+                } else {
+                    0
+                };
+                let z = if line == end.line {
+                    end.column.min(chars)
+                } else {
+                    chars
+                };
                 let x0 = f.text_x - x_scroll + x_at(line, text, a, p);
                 let mut x1 = f.text_x - x_scroll + x_at(line, text, z, p);
                 if line != end.line {
                     // The line break is part of the selection.
                     x1 += f.advance * 0.6;
                 }
-                if let Some(r) = Rect::new(x0, y_of(line), (x1 - x0).max(0.), lh).and_then(|r| intersection(r, text_clip)) {
+                if let Some(r) = Rect::new(x0, y_of(line), (x1 - x0).max(0.), lh)
+                    .and_then(|r| intersection(r, text_clip))
+                {
                     let [x, y, w, h] = r.bounds();
                     p.draw_rect(&mut shapes, x, y, w, h, selection_color);
                 }
@@ -835,8 +927,14 @@ impl Runtime {
                     }
                 }
                 let x0 = f.text_x - x_scroll + x_at(line, &code.text, primary_head.column, p);
-                let width = p.line_advances(pre, &style, &[pre.len()]).first().copied().unwrap_or(0.);
-                if let Some(r) = Rect::new(x0, y + lh - 2. * s, width.max(s), s.max(1.)).and_then(|r| intersection(r, text_clip)) {
+                let width = p
+                    .line_advances(pre, &style, &[pre.len()])
+                    .first()
+                    .copied()
+                    .unwrap_or(0.);
+                if let Some(r) = Rect::new(x0, y + lh - 2. * s, width.max(s), s.max(1.))
+                    .and_then(|r| intersection(r, text_clip))
+                {
                     let [x, y, w, h] = r.bounds();
                     p.draw_rect(&mut shapes, x, y, w, h, text_color);
                 }
@@ -873,10 +971,17 @@ impl Runtime {
                 let mut x = f.text_x - x_scroll + x_at(head.line, text, head.column, p);
                 if let (Some((pre, cursor)), true) = (&preedit, head == primary_head) {
                     let upto = cursor.map_or(pre.len(), |c| c.1);
-                    x += p.line_advances(pre, &style, &[upto]).first().copied().unwrap_or(0.);
+                    x += p
+                        .line_advances(pre, &style, &[upto])
+                        .first()
+                        .copied()
+                        .unwrap_or(0.);
                 }
                 let width = (2. * s).round().max(1.);
-                if let Some(r) = Rect::new(x - width / 2., y_of(head.line) + 2. * s, width, lh - 4. * s).and_then(|r| intersection(r, text_clip)) {
+                if let Some(r) =
+                    Rect::new(x - width / 2., y_of(head.line) + 2. * s, width, lh - 4. * s)
+                        .and_then(|r| intersection(r, text_clip))
+                {
                     let [x, y, w, h] = r.bounds();
                     p.draw_rect(&mut shapes, x, y, w, h, caret_color);
                 }
@@ -890,7 +995,9 @@ impl Runtime {
 
         // 4. Line numbers, right-aligned in the gutter.
         if props.gutter {
-            if let Some(gutter_clip) = Rect::new(bx, by, f.gutter, bh).and_then(|r| intersection(r, b.clip)) {
+            if let Some(gutter_clip) =
+                Rect::new(bx, by, f.gutter, bh).and_then(|r| intersection(r, b.clip))
+            {
                 let mut glyphs = Vec::new();
                 let right = bx + f.gutter - 18. * s;
                 let mut number_style = style.clone();
@@ -898,7 +1005,11 @@ impl Runtime {
                 for line in first..last.min(props.line_count) {
                     let label = (line + 1).to_string();
                     let width = label.len() as f32 * f.advance * (number_style.size / style.size);
-                    let color = if caret_lines.contains(&line) { text_color } else { gutter_color };
+                    let color = if caret_lines.contains(&line) {
+                        text_color
+                    } else {
+                        gutter_color
+                    };
                     p.ui_text_styled(
                         &mut glyphs,
                         &label,
@@ -921,12 +1032,21 @@ impl Runtime {
             let track = bh - 8. * s;
             let length = (track * bh / content).clamp(24. * s, track);
             let max = (props.line_count.saturating_sub(1)) as f32 * props.line_height;
-            let t = if max > 0. { (offset[1] / max).clamp(0., 1.) } else { 0. };
+            let t = if max > 0. {
+                (offset[1] / max).clamp(0., 1.)
+            } else {
+                0.
+            };
             let top = by + 4. * s + (track - length) * t;
             let mut shapes = Vec::new();
             let mut thumb = text_color;
             thumb[3] = 0.22;
-            p.card_round(&mut shapes, [bx + bw - 7. * s, top, 4. * s, length], 2. * s, thumb);
+            p.card_round(
+                &mut shapes,
+                [bx + bw - 7. * s, top, 4. * s, length],
+                2. * s,
+                thumb,
+            );
             out.push(PaintBatch {
                 clip: b.clip,
                 shapes,

@@ -456,6 +456,8 @@ pub struct Element<C> {
     width: Option<ChangeNumber<C>>,
     /// Containers: the laid-out height changed.
     height: Option<ChangeNumber<C>>,
+    /// Containers: the pointer entered (true) or left (false) the bounds.
+    hover: Option<Change<C>>,
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
@@ -476,6 +478,7 @@ impl<C> Element<C> {
             select_text: None,
             width: None,
             height: None,
+            hover: None,
             validation_error: None,
             input_activation: None,
             input_key: None,
@@ -517,6 +520,7 @@ impl<C: 'static> Element<C> {
                 select_text,
                 width,
                 height,
+                hover,
                 validation_error,
                 input_activation,
                 input_key,
@@ -547,6 +551,13 @@ impl<C: 'static> Element<C> {
                     .on_value_changed(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_height = Some(name);
+            }
+            if let Some(f) = hover {
+                let name = format!("rust-hover-{}", *count);
+                handlers
+                    .on_toggle_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_hover = Some(name);
             }
             if let Some(f) = input_activation {
                 let name = format!("rust-input-{}", *count);
@@ -1205,6 +1216,16 @@ macro_rules! container_modifiers {
             /// content sized to the room a flexible parent gives it.
             pub fn on_height(mut self, f: impl FnMut(&mut C, f32) + 'static) -> Self {
                 self.0.height = Some(Box::new(f));
+                self
+            }
+            /// Called with true when the pointer enters the container's bounds
+            /// and false when it leaves them (or the window). Descendants
+            /// count as inside, so a panel and its controls form one region:
+            /// for surfaces that stay open while the pointer is over them.
+            /// Reports follow pointer motion; a region that appears under a
+            /// still pointer reports on the next move.
+            pub fn on_hover(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+                self.0.hover = Some(Box::new(f));
                 self
             }
             /// Logical inner spacing. The last setter affecting an edge wins,

@@ -23,6 +23,8 @@ pub(super) mod code_view;
 #[cfg(feature = "rust-ui")]
 mod drops;
 #[cfg(feature = "rust-ui")]
+mod hover;
+#[cfg(feature = "rust-ui")]
 pub(super) mod editing;
 #[cfg(feature = "rust-ui")]
 mod overlays;
@@ -268,6 +270,8 @@ pub struct LayoutBox {
     pub(crate) on_width: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_height: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_hover: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -402,6 +406,9 @@ pub struct Runtime {
     /// The last height reported to each `on_height` element, by id.
     #[cfg(feature = "rust-ui")]
     reported_heights: std::collections::HashMap<String, f32>,
+    /// `on_hover` regions the pointer was last reported inside, by id.
+    #[cfg(feature = "rust-ui")]
+    hover_regions: BTreeSet<String>,
     scrollbar_capture: Option<ScrollbarCapture>,
     focused: Option<String>,
     roving_focus: BTreeMap<String, String>,
@@ -491,6 +498,8 @@ impl Runtime {
             reported_widths: std::collections::HashMap::new(),
             #[cfg(feature = "rust-ui")]
             reported_heights: std::collections::HashMap::new(),
+            #[cfg(feature = "rust-ui")]
+            hover_regions: BTreeSet::new(),
             scrollbar_capture: None,
             focused: None,
             roving_focus: BTreeMap::new(),
@@ -4506,6 +4515,8 @@ fn place(
         on_width: n.on_width.clone(),
         #[cfg(feature = "rust-ui")]
         on_height: n.on_height.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_hover: n.on_hover.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate

@@ -299,6 +299,9 @@ pub struct Node {
     /// Reports the laid-out height when it changes.
     #[serde(skip)]
     pub(crate) on_height: Option<String>,
+    /// Reports the pointer entering (true) or leaving (false) the bounds.
+    #[serde(skip)]
+    pub(crate) on_hover: Option<String>,
     #[serde(skip)]
     pub(crate) on_key: Option<String>,
     #[serde(skip)]
@@ -586,6 +589,7 @@ impl Node {
             on_select_text: None,
             on_width: None,
             on_height: None,
+            on_hover: None,
             on_key: None,
             on_activate_input: None,
             on_input_key: None,
@@ -826,6 +830,7 @@ impl Document {
                 (&n.on_select_text, EventKind::TextChanged),
                 (&n.on_width, EventKind::ValueChanged),
                 (&n.on_height, EventKind::ValueChanged),
+                (&n.on_hover, EventKind::ToggleChanged),
                 (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
@@ -1387,6 +1392,7 @@ fn check_node(
         &n.on_select_text,
         &n.on_width,
         &n.on_height,
+        &n.on_hover,
         &n.on_key,
         &n.on_activate_input,
         &n.on_input_key,
