@@ -51,4 +51,82 @@ impl Runtime {
         }
         Ok(any)
     }
+
+    /// Called by hosts after input that may have moved keyboard focus:
+    /// reports each `on_focus_within` container that focus entered (it or a
+    /// descendant is focused) or left since the last call. Returns whether
+    /// any handler ran.
+    pub fn dispatch_focus_regions<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        let mut names = BTreeMap::new();
+        for b in &self.boxes {
+            if let Some(name) = &b.on_focus_within {
+                names.insert(b.id.clone(), name.clone());
+            }
+        }
+        let mut inside = BTreeSet::new();
+        if let Some(mut index) = self
+            .focused
+            .as_deref()
+            .and_then(|id| self.boxes.iter().position(|b| b.id == id))
+        {
+            loop {
+                let b = &self.boxes[index];
+                if names.contains_key(&b.id) {
+                    inside.insert(b.id.clone());
+                }
+                if b.depth == 0 {
+                    break;
+                }
+                let depth = b.depth - 1;
+                let Some(parent) = self.boxes[..index].iter().rposition(|p| p.depth == depth) else {
+                    break;
+                };
+                index = parent;
+            }
+        }
+        let mut events = Vec::new();
+        for id in inside.difference(&self.focus_regions) {
+            events.push((names[id].clone(), true));
+        }
+        for id in self.focus_regions.difference(&inside) {
+            if let Some(name) = names.get(id) {
+                events.push((name.clone(), false));
+            }
+        }
+        self.focus_regions = inside;
+        let any = !events.is_empty();
+        for (name, entered) in events {
+            handlers
+                .dispatch(&name, Event::ToggleChanged(entered), context)
+                .map_err(|e| DocumentError(e.to_string()))?;
+        }
+        Ok(any)
+    }
+
+    /// Called by hosts for an Escape nothing else used (no editor, menu or
+    /// dialog took it): the last `on_escape` container in the document that
+    /// the open scope allows gets it. Returns whether one did.
+    pub fn dispatch_escape<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        let Some(name) = self
+            .boxes
+            .iter()
+            .rev()
+            .find(|b| b.on_escape.is_some() && self.scope_allows_id(&b.id))
+            .and_then(|b| b.on_escape.clone())
+        else {
+            return Ok(false);
+        };
+        handlers
+            .dispatch(&name, Event::Activate, context)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        Ok(true)
+    }
 }

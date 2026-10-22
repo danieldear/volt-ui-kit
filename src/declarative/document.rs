@@ -302,6 +302,12 @@ pub struct Node {
     /// Reports the pointer entering (true) or leaving (false) the bounds.
     #[serde(skip)]
     pub(crate) on_hover: Option<String>,
+    /// Reports keyboard focus entering (true) or leaving (false) the subtree.
+    #[serde(skip)]
+    pub(crate) on_focus_within: Option<String>,
+    /// Takes an Escape nothing else used.
+    #[serde(skip)]
+    pub(crate) on_escape: Option<String>,
     #[serde(skip)]
     pub(crate) on_key: Option<String>,
     #[serde(skip)]
@@ -590,6 +596,8 @@ impl Node {
             on_width: None,
             on_height: None,
             on_hover: None,
+            on_focus_within: None,
+            on_escape: None,
             on_key: None,
             on_activate_input: None,
             on_input_key: None,
@@ -831,6 +839,8 @@ impl Document {
                 (&n.on_width, EventKind::ValueChanged),
                 (&n.on_height, EventKind::ValueChanged),
                 (&n.on_hover, EventKind::ToggleChanged),
+                (&n.on_focus_within, EventKind::ToggleChanged),
+                (&n.on_escape, EventKind::Activate),
                 (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
@@ -1393,6 +1403,8 @@ fn check_node(
         &n.on_width,
         &n.on_height,
         &n.on_hover,
+        &n.on_focus_within,
+        &n.on_escape,
         &n.on_key,
         &n.on_activate_input,
         &n.on_input_key,

@@ -918,6 +918,20 @@ impl<C: 'static> App<C> {
         let _ = previous;
         Ok(())
     }
+    /// Report `on_focus_within` regions keyboard focus entered or left.
+    fn focus_regions(&mut self) -> Result<(), String> {
+        let ran = self
+            .runtime
+            .dispatch_focus_regions(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if ran {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
+        Ok(())
+    }
     /// Report `on_hover` regions the pointer entered or left.
     fn hover_regions(&mut self, pointer: Option<[f32; 2]>) -> Result<(), String> {
         let ran = self
@@ -2387,8 +2401,18 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     .runtime
                                     .dismiss_overlay(&mut self.handlers, &mut self.context)
                                     .map_err(|e| e.to_string())?;
+                                let escaped = !outcome.activated
+                                    && self
+                                        .runtime
+                                        .dispatch_escape(&mut self.handlers, &mut self.context)
+                                        .map_err(|e| e.to_string())?;
                                 if outcome.activated {
                                     self.after_input(outcome)?;
+                                } else if escaped {
+                                    self.after_input(InputOutcome {
+                                        changed: true,
+                                        activated: true,
+                                    })?;
                                 } else if self.runtime.cancel_input() {
                                     self.redraw();
                                 }
@@ -2399,6 +2423,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 }
                 _ => {}
             }
+            self.focus_regions()?;
             self.sync_ime();
             Ok(())
         })();

@@ -458,6 +458,10 @@ pub struct Element<C> {
     height: Option<ChangeNumber<C>>,
     /// Containers: the pointer entered (true) or left (false) the bounds.
     hover: Option<Change<C>>,
+    /// Containers: keyboard focus entered (true) or left (false) the subtree.
+    focus_within: Option<Change<C>>,
+    /// Containers: Escape that nothing else used.
+    escape: Option<Click<C>>,
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
@@ -479,6 +483,8 @@ impl<C> Element<C> {
             width: None,
             height: None,
             hover: None,
+            focus_within: None,
+            escape: None,
             validation_error: None,
             input_activation: None,
             input_key: None,
@@ -521,6 +527,8 @@ impl<C: 'static> Element<C> {
                 width,
                 height,
                 hover,
+                focus_within,
+                escape,
                 validation_error,
                 input_activation,
                 input_key,
@@ -558,6 +566,20 @@ impl<C: 'static> Element<C> {
                     .on_toggle_changed(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_hover = Some(name);
+            }
+            if let Some(f) = focus_within {
+                let name = format!("rust-focus-within-{}", *count);
+                handlers
+                    .on_toggle_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_focus_within = Some(name);
+            }
+            if let Some(f) = escape {
+                let name = format!("rust-escape-{}", *count);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_escape = Some(name);
             }
             if let Some(f) = input_activation {
                 let name = format!("rust-input-{}", *count);
@@ -1226,6 +1248,22 @@ macro_rules! container_modifiers {
             /// still pointer reports on the next move.
             pub fn on_hover(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
                 self.0.hover = Some(Box::new(f));
+                self
+            }
+            /// Called with true when keyboard focus moves onto the container
+            /// or one of its descendants, and false when it moves elsewhere:
+            /// for a surface that stays open while it is being used from the
+            /// keyboard.
+            pub fn on_focus_within(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+                self.0.focus_within = Some(Box::new(f));
+                self
+            }
+            /// Called for an Escape that no editor, menu or dialog used, while
+            /// the container is shown. The last such container in the
+            /// document (the topmost) gets it: for dismissing a non-modal
+            /// floating surface.
+            pub fn on_escape(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+                self.0.escape = Some(Box::new(f));
                 self
             }
             /// Logical inner spacing. The last setter affecting an edge wins,

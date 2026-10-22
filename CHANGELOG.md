@@ -39,6 +39,16 @@
   motion; the native window does this on cursor moves and when the cursor
   leaves the window. Additive: new file `runtime/hover.rs`, plus one field on
   elements, nodes and layout boxes. Tests: `tests/hover_regions.rs`.
+- Add `.on_focus_within(|state, inside|)` and `.on_escape(|state|)` to
+  containers, for non-modal floating surfaces:
+  - **Focus within:** the container learns when keyboard focus moves onto
+    it or a descendant, and when focus leaves, so it can stay open while
+    it's used from the keyboard. The native window reports this after each
+    event through `Runtime::dispatch_focus_regions`.
+  - **Escape:** an Escape that no editor, menu or dialog used goes to the
+    last `on_escape` container in the document, through
+    `Runtime::dispatch_escape`.
+  - Additive, in `runtime/hover.rs`. Tests: `tests/hover_regions.rs`.
 
 - Add opt-in content padding/gap to forms and disclosure composites, dialogs,
   popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and

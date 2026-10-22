@@ -272,6 +272,10 @@ pub struct LayoutBox {
     pub(crate) on_height: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_hover: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_focus_within: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_escape: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -409,6 +413,9 @@ pub struct Runtime {
     /// `on_hover` regions the pointer was last reported inside, by id.
     #[cfg(feature = "rust-ui")]
     hover_regions: BTreeSet<String>,
+    /// `on_focus_within` regions focus was last reported inside, by id.
+    #[cfg(feature = "rust-ui")]
+    focus_regions: BTreeSet<String>,
     scrollbar_capture: Option<ScrollbarCapture>,
     focused: Option<String>,
     roving_focus: BTreeMap<String, String>,
@@ -500,6 +507,8 @@ impl Runtime {
             reported_heights: std::collections::HashMap::new(),
             #[cfg(feature = "rust-ui")]
             hover_regions: BTreeSet::new(),
+            #[cfg(feature = "rust-ui")]
+            focus_regions: BTreeSet::new(),
             scrollbar_capture: None,
             focused: None,
             roving_focus: BTreeMap::new(),
@@ -4517,6 +4526,10 @@ fn place(
         on_height: n.on_height.clone(),
         #[cfg(feature = "rust-ui")]
         on_hover: n.on_hover.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_focus_within: n.on_focus_within.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_escape: n.on_escape.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate
