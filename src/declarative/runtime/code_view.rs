@@ -188,6 +188,13 @@ pub(crate) struct CodeViewProps {
     /// Height of the bottom band watched for the caret (`CodeInput::CaretBand`).
     pub caret_band: Option<f32>,
     pub decorations: Vec<CodeDecoration>,
+    /// Palette indices drawn in italic (comments, say).
+    pub italic: Vec<u8>,
+    /// Columns per indentation level, drawing a guide at each level.
+    pub indent_guides: Option<usize>,
+    /// Lines marked in the scrollbar's track, with their colours.
+    pub scroll_marks: Vec<(usize, String)>,
+    pub guide_color: Option<String>,
     pub selection_color: Option<String>,
     pub caret_color: Option<String>,
     pub line_color: Option<String>,
@@ -213,6 +220,10 @@ impl Default for CodeViewProps {
             scroll_to: None,
             caret_band: None,
             decorations: vec![],
+            italic: vec![],
+            indent_guides: None,
+            scroll_marks: vec![],
+            guide_color: None,
             selection_color: None,
             caret_color: None,
             line_color: None,
@@ -241,6 +252,12 @@ impl CodeViewProps {
                 .decorations
                 .iter()
                 .all(|d| d.start <= d.end && d.color.len() <= 64)
+            && self.italic.len() <= 64
+            && self
+                .indent_guides
+                .is_none_or(|unit| (1..=16).contains(&unit))
+            && self.scroll_marks.len() <= MAX_CODE_DECORATIONS
+            && self.scroll_marks.iter().all(|(_, c)| c.len() <= 64)
             && self.lines.iter().all(|l| {
                 l.text.len() <= MAX_CODE_LINE
                     && l.spans.windows(2).all(|w| w[0].1 <= w[1].0)
@@ -1002,9 +1019,34 @@ impl Runtime {
             }
         }
 
-        // 2. Decoration fills, selections and text.
+        // 2. Indent guides, decoration fills, selections and text.
         let mut shapes = Vec::new();
         let mut glyphs = Vec::new();
+        if let Some(unit) = props.indent_guides {
+            let guide = resolve(&props.guide_color, with_alpha(text_color, 0.08));
+            let thin = s.round().max(1.);
+            let indent = |line: usize| -> Option<usize> {
+                let text = &props.line(line)?.text;
+                let spaces = text.len() - text.trim_start_matches(' ').len();
+                (spaces < text.len()).then_some(spaces)
+            };
+            for line in first..last {
+                // A blank line takes the indentation of the code after it.
+                let depth = (line..last + 64)
+                    .take_while(|&l| props.line(l).is_some())
+                    .find_map(indent)
+                    .unwrap_or(0);
+                for level in 0..depth / unit {
+                    let x = f.text_x - x_scroll + (level * unit) as f32 * f.advance;
+                    if let Some(r) =
+                        Rect::new(x, y_of(line), thin, lh).and_then(|r| intersection(r, text_clip))
+                    {
+                        let [x, y, w, h] = r.bounds();
+                        p.draw_rect(&mut shapes, x, y, w, h, guide);
+                    }
+                }
+            }
+        }
         let painted = fills
             .into_iter()
             .chain(selected.into_iter().map(|r| (r, selection_color)));
@@ -1029,6 +1071,7 @@ impl Runtime {
                         start: a as usize,
                         end: z as usize,
                         color: Some(color),
+                        italic: props.italic.contains(&i).then_some(true),
                         ..TextRun::default()
                     })
                 })
@@ -1165,27 +1208,41 @@ impl Runtime {
             }
         }
 
-        // 5. A thin overlay scrollbar when the document is taller than the view.
+        // 5. An overlay scrollbar when the document is taller than the view,
+        // with the marked lines (search matches, say) along its track.
         let content = props.line_count as f32 * lh + bh - lh;
-        if content > bh * 1.01 {
-            let track = bh - 8. * s;
-            let length = (track * bh / content).clamp(24. * s, track);
-            let max = (props.line_count.saturating_sub(1)) as f32 * props.line_height;
-            let t = if max > 0. {
-                (offset[1] / max).clamp(0., 1.)
-            } else {
-                0.
-            };
-            let top = by + 4. * s + (track - length) * t;
+        let scrolls = content > bh * 1.01;
+        if scrolls || !props.scroll_marks.is_empty() {
+            let track = bh - 12. * s;
             let mut shapes = Vec::new();
-            let mut thumb = text_color;
-            thumb[3] = 0.22;
-            p.card_round(
-                &mut shapes,
-                [bx + bw - 7. * s, top, 4. * s, length],
-                2. * s,
-                thumb,
-            );
+            if scrolls {
+                let length = (track * bh / content).clamp(24. * s, track);
+                let max = (props.line_count.saturating_sub(1)) as f32 * props.line_height;
+                let t = if max > 0. {
+                    (offset[1] / max).clamp(0., 1.)
+                } else {
+                    0.
+                };
+                let top = by + 6. * s + (track - length) * t;
+                p.card_round(
+                    &mut shapes,
+                    [bx + bw - 11. * s, top, 7. * s, length],
+                    3.5 * s,
+                    with_alpha(text_color, 0.14),
+                );
+            }
+            let rows = props.line_count.max(1) as f32;
+            for (line, color) in &props.scroll_marks {
+                if let Some(color) = pick(color) {
+                    let y = by + 6. * s + track * (*line as f32 / rows).min(1.);
+                    p.card_round(
+                        &mut shapes,
+                        [bx + bw - 12. * s, y, 9. * s, 2. * s],
+                        s,
+                        color,
+                    );
+                }
+            }
             out.push(PaintBatch {
                 clip: b.clip,
                 shapes,

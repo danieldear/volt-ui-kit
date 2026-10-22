@@ -106,6 +106,27 @@ impl<C> CodeView<C> {
         self.props().decorations = list;
         self
     }
+    /// Palette indices drawn in italic, such as comments.
+    pub fn italic_palette(mut self, indices: impl IntoIterator<Item = u8>) -> Self {
+        self.props().italic = indices.into_iter().collect();
+        self
+    }
+    /// A guide at each indentation level of `unit` columns (1–16). A blank
+    /// line takes the indentation of the code after it.
+    pub fn indent_guides(mut self, unit: usize) -> Self {
+        self.props().indent_guides = Some(unit);
+        self
+    }
+    pub fn guide_color(mut self, value: impl Into<String>) -> Self {
+        self.props().guide_color = Some(value.into());
+        self
+    }
+    /// Lines marked along the scrollbar's track, each with a colour (a token,
+    /// hex or `"light|dark"`): search matches, changes. At most 10,000.
+    pub fn scroll_marks(mut self, marks: Vec<(usize, String)>) -> Self {
+        self.props().scroll_marks = marks;
+        self
+    }
     pub fn selection_color(mut self, value: impl Into<String>) -> Self {
         self.props().selection_color = Some(value.into());
         self

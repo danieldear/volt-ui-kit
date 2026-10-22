@@ -61,6 +61,13 @@
     are resolved and painted.
   - Additive: one field and builder; selections share the new range
     geometry and look the same. Tests: `tests/code_view.rs`.
+- Add `code_view` looks for editors that follow a design closely:
+  `.italic_palette(..)` draws chosen palette entries in italic (comments),
+  `.indent_guides(unit)` draws a guide at each indentation level (a blank
+  line takes the depth of the code after it), and `.scroll_marks(..)`
+  marks lines along the scrollbar's track (search matches, changes).
+  The overlay scrollbar is now a 7pt rounded thumb in a track inset 6pt.
+  Additive apart from that look. Tests: `tests/code_view.rs`.
 
 - Add opt-in content padding/gap to forms and disclosure composites, dialogs,
   popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and

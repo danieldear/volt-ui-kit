@@ -27,6 +27,11 @@ struct Doc {
     /// Watch this many points at the bottom for the caret.
     band: Option<f32>,
     decorations: Vec<CodeDecoration>,
+    /// Indentation guides every this many columns, palette 0 in italic, and
+    /// lines marked along the scrollbar.
+    guides: Option<usize>,
+    italic: bool,
+    marks: Vec<(usize, String)>,
 }
 impl Doc {
     fn new(lines: usize) -> Self {
@@ -45,7 +50,7 @@ fn view(d: &Doc) -> Element<Doc> {
         .iter()
         .map(|t| CodeLine {
             text: t.clone(),
-            spans: vec![(0, 4, 0)],
+            spans: vec![(0, 4.min(t.len() as u32), 0)],
         })
         .collect();
     let mut v = code_view(d.lines.len())
@@ -62,6 +67,8 @@ fn view(d: &Doc) -> Element<Doc> {
         .reveal(d.reveal)
         .read_only(d.read_only)
         .decorations(d.decorations.clone())
+        .scroll_marks(d.marks.clone())
+        .italic_palette(d.italic.then_some(0))
         .on_input(|d: &mut Doc, input| {
             if let CodeInput::Visible { first, .. } = &input {
                 d.visible = match &input {
@@ -81,6 +88,9 @@ fn view(d: &Doc) -> Element<Doc> {
     }
     if let Some(height) = d.band {
         v = v.caret_band(height);
+    }
+    if let Some(unit) = d.guides {
+        v = v.indent_guides(unit);
     }
     if !d.overlay {
         return v.into();
@@ -107,6 +117,8 @@ struct Recorder {
     texts: Vec<String>,
     /// Each styled text's run colours.
     runs: Vec<(String, Vec<[f32; 4]>)>,
+    /// Each styled text's runs drawn in italic.
+    italics: Vec<(String, Vec<bool>)>,
     /// Every rectangle drawn, in order: bounds and colour.
     rects: std::cell::RefCell<Vec<([f32; 4], [f32; 4])>>,
 }
@@ -153,6 +165,8 @@ impl DocumentPainter for Recorder {
         self.texts.push(text.into());
         let colors = style.runs.iter().filter_map(|r| r.color).collect();
         self.runs.push((text.into(), colors));
+        let italic = style.runs.iter().map(|r| r.italic == Some(true)).collect();
+        self.italics.push((text.into(), italic));
     }
 }
 
@@ -702,5 +716,61 @@ fn decorations_fill_outline_underline_and_tint_lines_by_mark() {
     assert!(view(&doc).build().is_err());
     doc.decorations = vec![doc.decorations[0].clone(); 10_001];
     doc.decorations[0].start = at(0, 0);
+    assert!(view(&doc).build().is_err());
+}
+
+#[test]
+fn italic_spans_indent_guides_and_scrollbar_marks() {
+    let mut doc = Doc::new(200);
+    doc.lines[1] = "    if x {".into();
+    doc.lines[2] = String::new();
+    doc.lines[3] = "        y();".into();
+    doc.lines[4] = "    }".into();
+    doc.guides = Some(4);
+    doc.italic = true;
+    doc.marks = vec![(100, "#FF0000".into()), (150, "#00FF00|#0000FF".into())];
+    let mut m = Mounted::new(&mut doc);
+    m.painter.rects.borrow_mut().clear();
+    m.paint();
+    let rects = m.painter.rects.take();
+    let [bx, by, bw, bh] = m.bounds();
+    // Palette 0 is italic.
+    assert!(m
+        .painter
+        .italics
+        .iter()
+        .any(|(t, i)| t == "line 0 = value;" && i == &[true]));
+    // One guide per 4 columns of indentation; the blank line takes the
+    // depth of the line after it. Guides are 1pt wide, a line tall.
+    let text_x = bx + 76.;
+    let guides: Vec<[f32; 4]> = rects
+        .iter()
+        .map(|(r, _)| *r)
+        .filter(|r| r[2] == 1. && r[3] == 20. && r[0] >= text_x && r[1] < by + 100.)
+        .collect();
+    let at = |line: f32, column: f32| [text_x + column * 6.5, by + line * 20., 1., 20.];
+    for g in [
+        at(1., 0.),
+        at(2., 0.),
+        at(2., 4.),
+        at(3., 0.),
+        at(3., 4.),
+        at(4., 0.),
+    ] {
+        assert!(guides.contains(&g), "{g:?} in {guides:?}");
+    }
+    assert_eq!(guides.len(), 6);
+    // Marks sit along the track by line, in their colours (dark half).
+    let track = bh - 12.;
+    let red = rects
+        .iter()
+        .find(|(_, c)| *c == [1., 0., 0., 1.])
+        .unwrap()
+        .0;
+    assert_eq!(red, [bx + bw - 11., by + 6. + track * 0.5, 7., 2.]);
+    assert!(rects.iter().any(|(_, c)| *c == [0., 0., 1., 1.]));
+    assert!(!rects.iter().any(|(_, c)| *c == [0., 1., 0., 1.]));
+    // Out of range is invalid.
+    doc.guides = Some(0);
     assert!(view(&doc).build().is_err());
 }
