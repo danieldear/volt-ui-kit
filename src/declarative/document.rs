@@ -1073,7 +1073,7 @@ fn check_style(style: &NodeStyle, path: &str) -> Result<(), DocumentError> {
     ] {
         if value
             .as_ref()
-            .is_some_and(|v| parse_color(v).is_none() && crate::ColorToken::parse(v).is_none())
+            .is_some_and(|v| !crate::theme::is_color_value(v))
         {
             return Err(error(&format!("{path}.{name}"), "invalid style value"));
         }
@@ -1175,7 +1175,7 @@ fn check_node(
     if n.surface.canvas.paths.len() > crate::graphics::MAX_CANVAS_PATHS
         || n.surface.canvas.paths.iter().any(|p| {
             !p.path.is_valid()
-                || (parse_color(&p.color).is_none() && crate::ColorToken::parse(&p.color).is_none())
+                || !crate::theme::is_color_value(&p.color)
                 || p.stroke
                     .is_some_and(|w| !w.is_finite() || !(0. ..=256.).contains(&w))
         })

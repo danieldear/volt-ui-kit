@@ -68,6 +68,12 @@
   marks lines along the scrollbar's track (search matches, changes).
   The overlay scrollbar is now a 7pt rounded thumb in a track inset 6pt.
   Additive apart from that look. Tests: `tests/code_view.rs`.
+- Element style colours (text, background, border, accent) may be
+  `"light|dark"` pairs of hex values or tokens, as `code_view` palettes
+  already could. `UiTheme::resolve` picks the half for the theme in
+  effect (light text means a dark theme), so System appearance needs no
+  recomposition. Additive: one shared check in style and canvas validation.
+  Tests: `tests/theme_pairs.rs`.
 
 - Add opt-in content padding/gap to forms and disclosure composites, dialogs,
   popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and
