@@ -34,6 +34,8 @@ struct Doc {
     marks: Vec<(usize, String)>,
     observe_caret: bool,
     carets: Vec<Option<[f32; 4]>>,
+    /// 1 for a block caret, 2 for an underline.
+    caret_shape: u8,
 }
 impl Doc {
     fn new(lines: usize) -> Self {
@@ -104,6 +106,11 @@ fn view(d: &Doc) -> Element<Doc> {
     if let Some(unit) = d.guides {
         v = v.indent_guides(unit);
     }
+    v = match d.caret_shape {
+        1 => v.block_caret(),
+        2 => v.underline_caret(),
+        _ => v,
+    };
     if !d.overlay {
         return v.into();
     }
@@ -921,4 +928,27 @@ fn italic_spans_indent_guides_and_scrollbar_marks() {
     // Out of range is invalid.
     doc.guides = Some(0);
     assert!(view(&doc).build().is_err());
+}
+
+#[test]
+fn the_caret_can_be_a_line_a_block_or_an_underline() {
+    let mut doc = Doc::new(20);
+    doc.focus = true;
+    doc.selection = Some(CodeSelection::caret(CodePosition::new(2, 4)));
+    let mut m = Mounted::new(&mut doc);
+    let [x, y, _, _] = m.bounds();
+    // Line 2's top, and the column-4 edge: past the gutter, four 6.5pt advances.
+    let (top, edge) = (y + 40., x + 64. + 12. + 26.);
+    let mut caret = |doc: &mut Doc, shape: u8| {
+        doc.caret_shape = shape;
+        m.rebuild(doc);
+        m.settle(doc);
+        m.painter.rects.borrow_mut().clear();
+        m.paint();
+        let rects = m.painter.rects.take();
+        rects.into_iter().map(|(r, _)| r).filter(|r| (r[0] - edge).abs() < 1.5 && r[1] >= top && r[1] < top + 20.).collect::<Vec<_>>()
+    };
+    assert!(caret(&mut doc, 0).contains(&[edge - 1., top + 2., 2., 16.]), "a 2pt line before the character");
+    assert!(caret(&mut doc, 1).contains(&[edge, top + 2., 6.5, 16.]), "a block one character wide");
+    assert!(caret(&mut doc, 2).contains(&[edge, top + 16., 6.5, 2.]), "an underline beneath it");
 }

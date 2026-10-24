@@ -148,6 +148,16 @@ impl<C> CodeView<C> {
         self.props().caret_color = Some(value.into());
         self
     }
+    /// A block caret over the character, instead of a line before it.
+    pub fn block_caret(mut self) -> Self {
+        self.props().caret_shape = 1;
+        self
+    }
+    /// An underline caret beneath the character.
+    pub fn underline_caret(mut self) -> Self {
+        self.props().caret_shape = 2;
+        self
+    }
     /// The current-line band.
     pub fn line_color(mut self, value: impl Into<String>) -> Self {
         self.props().line_color = Some(value.into());

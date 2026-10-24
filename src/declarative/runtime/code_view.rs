@@ -197,6 +197,9 @@ pub(crate) struct CodeViewProps {
     pub guide_color: Option<String>,
     pub selection_color: Option<String>,
     pub caret_color: Option<String>,
+    /// The caret's shape: 0 a line, 1 a block over the character, 2 an
+    /// underline beneath it.
+    pub caret_shape: u8,
     pub line_color: Option<String>,
     pub gutter_color: Option<String>,
     pub on_input: Option<String>,
@@ -228,6 +231,7 @@ impl Default for CodeViewProps {
             guide_color: None,
             selection_color: None,
             caret_color: None,
+            caret_shape: 0,
             line_color: None,
             gutter_color: None,
             on_input: None,
@@ -1265,12 +1269,16 @@ impl Runtime {
                         .unwrap_or(0.);
                 }
                 let width = (2. * s).round().max(1.);
-                if let Some(r) =
-                    Rect::new(x - width / 2., y_of(head.line) + 2. * s, width, lh - 4. * s)
-                        .and_then(|r| intersection(r, text_clip))
-                {
+                let top = y_of(head.line);
+                // A block is translucent so the character under it stays legible.
+                let (rect, color) = match props.caret_shape {
+                    1 => (Rect::new(x, top + 2. * s, f.advance, lh - 4. * s), [caret_color[0], caret_color[1], caret_color[2], caret_color[3] * 0.45]),
+                    2 => (Rect::new(x, top + lh - 2. * s - width, f.advance, width), caret_color),
+                    _ => (Rect::new(x - width / 2., top + 2. * s, width, lh - 4. * s), caret_color),
+                };
+                if let Some(r) = rect.and_then(|r| intersection(r, text_clip)) {
                     let [x, y, w, h] = r.bounds();
-                    p.draw_rect(&mut shapes, x, y, w, h, caret_color);
+                    p.draw_rect(&mut shapes, x, y, w, h, color);
                 }
             }
             out.push(PaintBatch {
