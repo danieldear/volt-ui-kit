@@ -34,3 +34,11 @@ fn elements_accept_pairs_and_reject_bad_halves() {
         assert!(e.build().is_err(), "{bad} should be rejected");
     }
 }
+
+#[test]
+fn rich_text_spans_accept_pairs_too() {
+    let ok: Element<Doc> = rich_text([span("a").color("#112233|@primary"), span("b").background("#D6960029|#FFCB6B2B")]).into();
+    assert!(ok.build().is_ok());
+    let bad: Element<Doc> = rich_text([span("a").background("#000000|nope")]).into();
+    assert!(bad.build().is_err());
+}
