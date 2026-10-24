@@ -311,6 +311,15 @@ pub fn register_font(data: Vec<u8>) -> Result<Vec<String>, String> {
     fonts.push(data);
     Ok(families)
 }
+/// A glyph placed with its origin on a whole device pixel. Quarter-pixel
+/// positions put most vertical stems across two pixel columns, so text read
+/// soft next to CoreText, which draws a line's glyphs on the pixel grid. No
+/// glyph moves by more than half a pixel, which spacing hides; layout,
+/// carets and hit-testing keep the exact positions.
+fn on_pixel(shaped: &cosmic_text::LayoutGlyph) -> cosmic_text::PhysicalGlyph {
+    let x = shaped.x + shaped.font_size * shaped.x_offset;
+    shaped.physical((x.round() - x, 0.), 1.)
+}
 /// Installed and registered font families, sorted, for font pickers.
 /// Hidden system faces (names starting with `.`) are left out. This scans
 /// the system font folders, so call it when a picker opens, not per frame.
@@ -565,7 +574,7 @@ impl RasterPainter {
                 if shaped.x >= gw || shaped.x + shaped.w < 0. {
                     continue;
                 }
-                let p = shaped.physical((0., 0.), 1.);
+                let p = on_pixel(&shaped);
                 out.push((
                     p.cache_key,
                     [
@@ -604,7 +613,7 @@ impl RasterPainter {
                     continue;
                 }
                 overflow |= shaped.x < 0. || shaped.x + shaped.w > gw;
-                let p = shaped.physical((0., 0.), 1.);
+                let p = on_pixel(&shaped);
                 let k = p.cache_key;
                 let size = f32::from_bits(k.font_size_bits);
                 let fake_italic = k.flags.contains(cosmic_text::CacheKeyFlags::FAKE_ITALIC);
@@ -1984,7 +1993,7 @@ impl RasterPainter {
                             continue;
                         }
                         let c = colors.at(run.line_i, shaped.start);
-                        let physical = shaped.physical((0., 0.), 1.);
+                        let physical = on_pixel(&shaped);
                         if self.glyph_bytes > 16 * 1024 * 1024
                             || self.swash.image_cache.len() > 4096
                         {
