@@ -42,3 +42,14 @@ fn rich_text_spans_accept_pairs_too() {
     let bad: Element<Doc> = rich_text([span("a").background("#000000|nope")]).into();
     assert!(bad.build().is_err());
 }
+
+#[test]
+fn a_command_palette_card_can_be_given_an_opaque_surface() {
+    let state = CommandPaletteState { open: true, ..CommandPaletteState::default() };
+    let palette: Element<Doc> = command_palette([command(1u8, "One")], &state)
+        .surface("#FFFFFF|#1A2338")
+        .state(|_: &mut Doc| unreachable!())
+        .on_run(|_: &mut Doc, _| {})
+        .into();
+    assert!(palette.build().is_ok());
+}

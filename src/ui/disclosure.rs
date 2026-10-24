@@ -619,6 +619,7 @@ pub struct CommandPalette<C, T> {
     state: Option<Access<C, CommandPaletteState>>,
     on_run: Option<Run<C, T>>,
     placeholder: String,
+    surface: Option<String>,
 }
 pub fn command_palette<C, T>(
     commands: impl IntoIterator<Item = Command<T>>,
@@ -632,6 +633,7 @@ pub fn command_palette<C, T>(
         state: None,
         on_run: None,
         placeholder: "Type a command or search…".into(),
+        surface: None,
     }
 }
 impl<C, T> CommandPalette<C, T> {
@@ -650,6 +652,12 @@ impl<C, T> CommandPalette<C, T> {
     }
     pub fn placeholder(mut self, value: impl Into<String>) -> Self {
         self.placeholder = value.into();
+        self
+    }
+    /// The card's colour, `base-200` by default. Nothing behind the card is
+    /// blurred, so over busy content give it an opaque one.
+    pub fn surface(mut self, color: impl Into<String>) -> Self {
+        self.surface = Some(color.into());
         self
     }
 }
@@ -783,7 +791,7 @@ impl<C: 'static, T: Clone + 'static> From<CommandPalette<C, T>> for Element<C> {
             .gap(8., Axis::Vertical)
             .padding(10., Edge::All)
             .rounded(14.)
-            .background(ColorToken::Base200)
+            .background(p.surface.clone().unwrap_or_else(|| ColorToken::Base200.into()))
             .border_color(ColorToken::Border)
             .border_width(1.)
             .shadow(tokens::shadow::xl2())
