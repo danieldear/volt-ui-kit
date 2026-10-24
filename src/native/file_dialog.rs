@@ -5,21 +5,34 @@ use std::{fmt, path::PathBuf};
 pub struct FileDialogOptions {
     title: String,
     suggested_name: Option<String>,
+    directory: Option<PathBuf>,
 }
 impl FileDialogOptions {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
             suggested_name: None,
+            directory: None,
         }
     }
     pub fn suggested_name(mut self, name: impl Into<String>) -> Self {
         self.suggested_name = Some(name.into());
         self
     }
+    /// Start the panel in this absolute directory instead of the OS's last
+    /// remembered location. Existing callers retain their default behavior.
+    pub fn directory(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.directory = Some(directory.into());
+        self
+    }
     /// Pure configuration validation; never initializes AppKit or opens a panel.
     pub fn validate(&self) -> Result<(), FileDialogError> {
         if self.title.trim().is_empty()
+            || self.directory.as_ref().is_some_and(|p| {
+                !p.is_absolute()
+                    || p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+                    || p.as_os_str().as_encoded_bytes().contains(&0)
+            })
             || self.title.len() > 256
             || self.title.chars().any(char::is_control)
             || self.suggested_name.as_ref().is_some_and(|name| {
@@ -47,7 +60,7 @@ pub enum FileDialogError {
 impl fmt::Display for FileDialogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::InvalidOptions => "invalid file dialog title or suggested name",
+            Self::InvalidOptions => "invalid file dialog title, suggested name, or directory",
             Self::Unsupported => "file dialogs require native-desktop on macOS",
             Self::WrongThread => "AppKit file dialogs require the main thread",
             Self::NativeFailure => "native file panel failed or returned an invalid file URL",
@@ -424,6 +437,14 @@ fn show(options: &FileDialogOptions, kind: Panel) -> Result<Option<PathBuf>, Fil
         &open
     };
     p.setTitle(Some(&NSString::from_str(&options.title)));
+    if let Some(directory) = &options.directory {
+        if !directory.is_dir() {
+            return Err(FileDialogError::InvalidOptions);
+        }
+        let url = objc2_foundation::NSURL::from_file_path(directory)
+            .ok_or(FileDialogError::InvalidOptions)?;
+        p.setDirectoryURL(Some(&url));
+    }
     if let Some(name) = &options.suggested_name {
         p.setNameFieldStringValue(&NSString::from_str(name));
     }
@@ -451,6 +472,17 @@ fn show(options: &FileDialogOptions, kind: Panel) -> Result<Option<PathBuf>, Fil
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn starting_directory_is_opt_in_and_validated_without_opening_a_panel() {
+        assert!(FileDialogOptions::new("Save").directory.is_none());
+        let absolute = std::env::temp_dir();
+        let options = FileDialogOptions::new("Save").directory(&absolute);
+        assert_eq!(options.directory.as_ref(), Some(&absolute));
+        assert!(options.validate().is_ok());
+        for invalid in [PathBuf::from("relative"), absolute.join("../escape")] {
+            assert!(FileDialogOptions::new("Save").directory(invalid).validate().is_err());
+        }
+    }
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
     struct Fixture(PathBuf);
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]

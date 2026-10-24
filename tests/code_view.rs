@@ -32,6 +32,8 @@ struct Doc {
     guides: Option<usize>,
     italic: bool,
     marks: Vec<(usize, String)>,
+    observe_caret: bool,
+    carets: Vec<Option<[f32; 4]>>,
 }
 impl Doc {
     fn new(lines: usize) -> Self {
@@ -50,7 +52,14 @@ fn view(d: &Doc) -> Element<Doc> {
         .iter()
         .map(|t| CodeLine {
             text: t.clone(),
-            spans: vec![(0, 4.min(t.len() as u32), 0)],
+            spans: vec![(
+                0,
+                (0..=4.min(t.len()))
+                    .rev()
+                    .find(|i| t.is_char_boundary(*i))
+                    .unwrap_or(0) as u32,
+                0,
+            )],
         })
         .collect();
     let mut v = code_view(d.lines.len())
@@ -89,6 +98,9 @@ fn view(d: &Doc) -> Element<Doc> {
     if let Some(height) = d.band {
         v = v.caret_band(height);
     }
+    if d.observe_caret {
+        v = v.on_caret_rect(|d: &mut Doc, rect| d.carets.push(rect));
+    }
     if let Some(unit) = d.guides {
         v = v.indent_guides(unit);
     }
@@ -114,6 +126,7 @@ fn view(d: &Doc) -> Element<Doc> {
 /// Monospace metrics (half the font size per character) that record text.
 #[derive(Default)]
 struct Recorder {
+    shaped: bool,
     texts: Vec<String>,
     /// Each styled text's run colours.
     runs: Vec<(String, Vec<[f32; 4]>)>,
@@ -125,6 +138,25 @@ struct Recorder {
 impl TextMetrics for Recorder {
     fn measure(&mut self, t: &str, size: f32, w: f32) -> [f32; 2] {
         [(t.chars().count() as f32 * size * 0.5).min(w), size * 1.2]
+    }
+    fn line_advances(&mut self, text: &str, style: &TextStyle, offsets: &[usize]) -> Vec<f32> {
+        offsets
+            .iter()
+            .map(|at| {
+                let text = text.get(..*at).unwrap_or("");
+                if self.shaped {
+                    text.chars()
+                        .map(|c| match c {
+                            '\u{301}' => 0.,
+                            '🦀' | '界' => style.size,
+                            _ => style.size * 0.5,
+                        })
+                        .sum()
+                } else {
+                    self.measure_styled(text, style, 1_000_000.)[0]
+                }
+            })
+            .collect()
     }
 }
 impl Painter for Recorder {
@@ -624,6 +656,122 @@ fn the_caret_band_reports_when_the_caret_enters_and_leaves_the_bottom_of_the_vie
         .dispatch_widths(&mut m.handlers, &mut doc)
         .unwrap();
     assert_eq!(band(&doc), Some(None));
+}
+
+#[test]
+fn painted_caret_observer_is_opt_in_and_does_not_recompose_unchanged_frames() {
+    let mut doc = Doc::new(200);
+    let mut m = Mounted::new(&mut doc);
+    m.paint();
+    assert!(!m
+        .runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap());
+    assert!(doc.carets.is_empty());
+    doc.observe_caret = true;
+    doc.selection = Some(CodeSelection::caret(CodePosition::new(2, 4)));
+    m.rebuild(&mut doc);
+    m.settle(&mut doc);
+    m.paint();
+    assert!(m
+        .runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap());
+    let [x, y, _, _] = m.bounds();
+    assert_eq!(
+        doc.carets.last(),
+        Some(&Some([x + 64. + 12. + 26. - 1., y + 42., 2., 16.]))
+    );
+    let reports = doc.carets.len();
+    for _ in 0..4 {
+        m.rebuild(&mut doc);
+        m.settle(&mut doc);
+        m.paint();
+        assert!(!m
+            .runtime
+            .dispatch_code_carets(&mut m.handlers, &mut doc)
+            .unwrap());
+    }
+    assert_eq!(doc.carets.len(), reports);
+}
+
+#[test]
+fn painted_caret_observer_tracks_scroll_and_reports_offscreen_once() {
+    let mut doc = Doc::new(200);
+    doc.observe_caret = true;
+    doc.lines[0] = "a".repeat(400);
+    doc.selection = Some(CodeSelection::caret(CodePosition::new(0, 50)));
+    let mut m = Mounted::new(&mut doc);
+    m.paint();
+    m.runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap();
+    let before = doc.carets.last().unwrap().unwrap();
+    let [x, y, w, h] = m.bounds();
+    m.runtime
+        .scroll_outcome(
+            x + w / 2.,
+            y + h / 2.,
+            [100., 0.],
+            &mut m.handlers,
+            &mut doc,
+        )
+        .unwrap();
+    m.settle(&mut doc);
+    m.paint();
+    assert!(m
+        .runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap());
+    let after = doc.carets.last().unwrap().unwrap();
+    assert_eq!(before[0] - after[0], 100.);
+    m.runtime
+        .scroll_outcome(
+            x + w / 2.,
+            y + h / 2.,
+            [0., 100.],
+            &mut m.handlers,
+            &mut doc,
+        )
+        .unwrap();
+    m.settle(&mut doc);
+    m.paint();
+    assert!(m
+        .runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap());
+    assert_eq!(doc.carets.last(), Some(&None));
+    assert!(!m
+        .runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap());
+}
+
+#[test]
+fn painted_caret_uses_shaped_unicode_stops_after_text_changes() {
+    let mut doc = Doc::new(20);
+    doc.observe_caret = true;
+    doc.lines[0] = "a🦀e\u{301}b".into();
+    doc.selection = Some(CodeSelection::caret(CodePosition::new(0, 4)));
+    let mut m = Mounted::new(&mut doc);
+    m.painter.shaped = true;
+    m.paint();
+    m.runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap();
+    let before = doc.carets.last().unwrap().unwrap();
+    let [x, _, _, _] = m.bounds();
+    // a + a double-width emoji + e + zero-advance combining mark.
+    assert_eq!(before[0], x + 64. + 12. + 26. - 1.);
+    doc.lines[0] = "a界界界b".into();
+    m.rebuild(&mut doc);
+    m.settle(&mut doc);
+    m.paint();
+    m.runtime
+        .dispatch_code_carets(&mut m.handlers, &mut doc)
+        .unwrap();
+    let after = doc.carets.last().unwrap().unwrap();
+    assert_eq!(after[0], x + 64. + 12. + 45.5 - 1.);
 }
 
 #[test]

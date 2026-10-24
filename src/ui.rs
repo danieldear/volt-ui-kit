@@ -263,6 +263,7 @@ type FilesCallback<C> = Box<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>;
 type SelectionCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::TextSelection)>;
 type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
 type CodeCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::CodeInput) -> Option<String>>;
+type CodeCaretCallback<C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>)>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
@@ -283,7 +284,10 @@ enum Callback<C> {
     Window(WindowCallback<C>),
     Files(FilesCallback<C>),
     Link(ChangeText<C>),
-    Code(CodeCallback<C>),
+    Code {
+        input: CodeCallback<C>,
+        caret: Option<CodeCaretCallback<C>>,
+    },
 }
 // Opt-in spacing for composites whose public builder is not an Element wrapper.
 // Empty overrides leave every constructor default intact.
@@ -703,12 +707,20 @@ impl<C: 'static> Element<C> {
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.ext.on_link = Some(name);
                     }
-                    Callback::Code(f) => {
+                    Callback::Code { input, caret } => {
                         handlers
-                            .on_code_input(&name, f)
+                            .on_code_input(&name, input)
                             .map_err(|e| DocumentError(e.to_string()))?;
                         if let Some(code) = node.ext.code.as_mut() {
-                            std::sync::Arc::make_mut(code).on_input = Some(name);
+                            let code = std::sync::Arc::make_mut(code);
+                            if let Some(caret) = caret {
+                                let caret_name = format!("{name}-caret");
+                                handlers
+                                    .on_code_caret(&caret_name, caret)
+                                    .map_err(|e| DocumentError(e.to_string()))?;
+                                code.on_caret_rect = Some(caret_name);
+                            }
+                            code.on_input = Some(name);
                         }
                     }
                     Callback::Dismiss(f) => {

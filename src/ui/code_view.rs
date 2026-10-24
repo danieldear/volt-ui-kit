@@ -12,8 +12,13 @@ use crate::declarative::{CodeDecoration, CodeInput, CodeLine, CodeSelection, Cod
 use std::sync::Arc;
 
 type CodeCallback<C> = Box<dyn FnMut(&mut C, CodeInput) -> Option<String>>;
+type CodeCaretCallback<C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>)>;
 
-pub struct CodeView<C>(pub(super) Element<C>, Option<CodeCallback<C>>);
+pub struct CodeView<C>(
+    pub(super) Element<C>,
+    Option<CodeCallback<C>>,
+    Option<CodeCaretCallback<C>>,
+);
 
 /// A code view over a document of `line_count` lines (at least one). It
 /// needs a stable `.key(...)`, lines from `.lines(...)` and an `.on_input`.
@@ -26,7 +31,7 @@ pub fn code_view<C>(line_count: usize) -> CodeView<C> {
     }));
     e.node.ext.cursor = Some(Cursor::Text);
     e.node.access_role = Some(crate::declarative::AccessRole::MultilineTextInput);
-    CodeView(e, None)
+    CodeView(e, None, None)
 }
 impl<C> CodeView<C> {
     fn props(&mut self) -> &mut CodeViewProps {
@@ -98,6 +103,14 @@ impl<C> CodeView<C> {
     /// floats over that band and must keep clear of the caret.
     pub fn caret_band(mut self, height: f32) -> Self {
         self.props().caret_band = Some(height);
+        self
+    }
+    /// Observe the primary caret's actual painted rectangle `[x, y, width,
+    /// height]` in window logical points. Shaping, scroll and text clipping are
+    /// accounted for; `None` means offscreen. Opt-in, changed reports only.
+    /// Hosts dispatch this after paint through `Runtime::dispatch_code_carets`.
+    pub fn on_caret_rect(mut self, f: impl FnMut(&mut C, Option<[f32; 4]>) + 'static) -> Self {
+        self.2 = Some(Box::new(f));
         self
     }
     /// Marked ranges: search matches, diagnostics, changed lines. Like the
@@ -176,7 +189,10 @@ impl<C: 'static> From<CodeView<C>> for Element<C> {
             view.0.validation_error = Some(message.into());
         }
         if let Some(f) = view.1.take() {
-            view.0.callback = Some(Callback::Code(f));
+            view.0.callback = Some(Callback::Code {
+                input: f,
+                caret: view.2.take(),
+            });
         }
         view.0
     }

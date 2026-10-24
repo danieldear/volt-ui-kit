@@ -1745,6 +1745,18 @@ impl<C: 'static> App<C> {
         self.frames += 1;
         self.update_access();
         self.animation_clock.presented(Instant::now());
+        // Geometry from actual shaping is available only after paint. Opt-in
+        // caret observers request one corrective frame, never an idle loop.
+        if self
+            .runtime
+            .dispatch_code_carets(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?
+        {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
         if let Some(start) = started {
             let presented = Instant::now();
             let layout = layout_done.unwrap();

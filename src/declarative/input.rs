@@ -61,11 +61,15 @@ type KeyInputCallback<'a, C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool + 'a
 type CodeInputCallback<'a, C> =
     Box<dyn FnMut(&mut C, super::CodeInput) -> Option<String> + 'a>;
 
+type CodeCaretCallback<'a, C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>) + 'a>;
+
 pub(super) enum InputCallback<'a, C> {
     Activate(ActivationCallback<'a, C>),
     Key(KeyInputCallback<'a, C>),
     /// A code view's edits; returns clipboard text for Copy and Cut.
     Code(CodeInputCallback<'a, C>),
+    /// Opt-in painted caret geometry, independent of editing events.
+    CodeCaret(CodeCaretCallback<'a, C>),
 }
 impl<'a, C> Handlers<'a, C> {
     fn insert_input(
@@ -119,6 +123,31 @@ impl<'a, C> Handlers<'a, C> {
     ) -> Result<Option<String>, HandlerError> {
         match self.input_entries.get_mut(name) {
             Some(InputCallback::Code(f)) => Ok(f(context, input)),
+            Some(_) => Err(HandlerError::InvalidValue),
+            None => Err(HandlerError::Missing(name.into())),
+        }
+    }
+    /// Receive the visible primary caret's painted rectangle in window logical
+    /// points, or `None` when outside the clipped text viewport. Reports happen
+    /// only after painting and only when geometry changes.
+    pub fn on_code_caret(
+        &mut self,
+        name: &str,
+        f: impl FnMut(&mut C, Option<[f32; 4]>) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert_input(name, InputCallback::CodeCaret(Box::new(f)))
+    }
+    pub(crate) fn dispatch_code_caret(
+        &mut self,
+        name: &str,
+        rect: Option<[f32; 4]>,
+        context: &mut C,
+    ) -> Result<(), HandlerError> {
+        match self.input_entries.get_mut(name) {
+            Some(InputCallback::CodeCaret(f)) => {
+                f(context, rect);
+                Ok(())
+            }
             Some(_) => Err(HandlerError::InvalidValue),
             None => Err(HandlerError::Missing(name.into())),
         }

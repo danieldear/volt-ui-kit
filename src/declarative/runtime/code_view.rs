@@ -200,6 +200,8 @@ pub(crate) struct CodeViewProps {
     pub line_color: Option<String>,
     pub gutter_color: Option<String>,
     pub on_input: Option<String>,
+    /// Separate opt-in geometry callback; never a new editing event variant.
+    pub on_caret_rect: Option<String>,
 }
 impl Default for CodeViewProps {
     fn default() -> Self {
@@ -229,6 +231,7 @@ impl Default for CodeViewProps {
             line_color: None,
             gutter_color: None,
             on_input: None,
+            on_caret_rect: None,
         }
     }
 }
@@ -285,6 +288,9 @@ pub(crate) struct CodeViewState {
     reported: Option<(usize, usize)>,
     /// The last caret band report, in whole logical points.
     band: Option<Option<[i32; 2]>>,
+    /// Outer None means no paint has measured this optional geometry yet.
+    painted_caret: Option<Option<[f32; 4]>>,
+    reported_caret: Option<Option<[f32; 4]>>,
     reveal: u32,
     scroll: u32,
     preedit: String,
@@ -295,6 +301,8 @@ pub(crate) struct CodeViewState {
     /// Caret stops (logical x per character boundary) of painted lines that
     /// aren't plain ASCII, for exact hit-testing.
     stops: BTreeMap<usize, Vec<f32>>,
+    stop_texts: BTreeMap<usize, String>,
+    stop_font: Option<(String, u32, u32)>,
 }
 
 /// Geometry of one view in physical pixels.
@@ -692,7 +700,45 @@ impl Runtime {
                 activated |= self.dispatch_code(&b.id, input, handlers, ctx)?.0.activated;
             }
         }
-        Ok(activated)
+        Ok(activated | self.dispatch_code_carets(handlers, ctx)?)
+    }
+    /// Dispatch opt-in primary-caret geometry measured during the latest paint.
+    /// Call after `paint_ui` so font shaping, DPI and clipping are current. An
+    /// unchanged frame never invokes the callback or requests recomposition.
+    pub fn dispatch_code_carets<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        ctx: &mut C,
+    ) -> Result<bool, DocumentError> {
+        let mut reports = Vec::new();
+        {
+            let mut states = self.code_views.borrow_mut();
+            for b in &self.boxes {
+                if !self.scope_allows_id(&b.id) {
+                    continue;
+                }
+                let Some(name) = b.ext.code.as_ref().and_then(|p| p.on_caret_rect.as_ref()) else {
+                    continue;
+                };
+                let Some(st) = states.get_mut(&b.id) else {
+                    continue;
+                };
+                let Some(rect) = st.painted_caret else {
+                    continue;
+                };
+                if st.reported_caret != Some(rect) {
+                    st.reported_caret = Some(rect);
+                    reports.push((name.clone(), rect));
+                }
+            }
+        }
+        let changed = !reports.is_empty();
+        for (name, rect) in reports {
+            handlers
+                .dispatch_code_caret(&name, rect, ctx)
+                .map_err(|e| DocumentError(e.to_string()))?;
+        }
+        Ok(changed)
     }
     /// The primary caret's `[x, width]` in window logical points when it is
     /// on screen within the bottom `height` points of the view.
@@ -807,6 +853,9 @@ impl Runtime {
         let mut states = self.code_views.borrow_mut();
         let st = states.entry(b.id.clone()).or_default();
         // Measure the font once per size: every column is one advance wide.
+        if props.on_caret_rect.is_some() {
+            st.painted_caret = Some(None);
+        }
         let mut style = TextStyle {
             family: props.font_family.clone(),
             size: props.font_size * s,
@@ -941,18 +990,40 @@ impl Runtime {
 
         // Caret stops for this frame's lines: monospace arithmetic for ASCII,
         // shaped advances otherwise (wide and combining characters).
-        st.stops.retain(|line, _| (first..last).contains(line));
+        // Cached positions must follow text/font changes at the same line id.
+        // Keeping old cluster advances would misplace both hit tests and anchors.
+        let font = (
+            props.font_family.clone(),
+            props.font_size.to_bits(),
+            s.to_bits(),
+        );
+        if st.stop_font.as_ref() != Some(&font) {
+            st.stops.clear();
+            st.stop_texts.clear();
+            st.stop_font = Some(font);
+        }
+        let stop_texts = &st.stop_texts;
+        st.stops.retain(|line, _| {
+            (first..last).contains(line)
+                && props
+                    .line(*line)
+                    .is_some_and(|text| stop_texts.get(line) == Some(&text.text))
+        });
+        let stops = &st.stops;
+        st.stop_texts.retain(|line, _| stops.contains_key(line));
         let primary_head = props.selections[props.primary].head;
         let preedit =
             (focused && !st.preedit.is_empty()).then(|| (st.preedit.clone(), st.preedit_cursor));
         let measure = style.clone();
         let stop_map = &mut st.stops;
+        let stop_text_map = &mut st.stop_texts;
         let advance = f.advance;
         let mut x_at = |line: usize, text: &str, column: usize, p: &mut P| -> f32 {
             if text.is_ascii() {
                 return column.min(text.len()) as f32 * advance;
             }
             let stops = stop_map.entry(line).or_insert_with(|| {
+                stop_text_map.insert(line, text.to_owned());
                 let mut offsets: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
                 offsets.push(text.len());
                 p.line_advances(text, &measure, &offsets)
@@ -1139,6 +1210,40 @@ impl Runtime {
                 shapes,
                 glyphs: vec![],
             });
+        }
+
+        // Measure the optional anchor with the same shaped caret stops and
+        // clipped rectangle as painting, including input-method composition.
+        if props.on_caret_rect.is_some() && (first..last).contains(&primary_head.line) {
+            if let Some(code) = props.line(primary_head.line) {
+                let mut x = f.text_x - x_scroll
+                    + x_at(primary_head.line, &code.text, primary_head.column, p);
+                if let Some((pre, cursor)) = &preedit {
+                    let upto = cursor.map_or(pre.len(), |c| c.1);
+                    x += p
+                        .line_advances(pre, &style, &[upto])
+                        .first()
+                        .copied()
+                        .unwrap_or(0.);
+                }
+                let width = (2. * s).round().max(1.);
+                let rect = Rect::new(
+                    x - width / 2.,
+                    y_of(primary_head.line) + 2. * s,
+                    width,
+                    lh - 4. * s,
+                )
+                .and_then(|r| intersection(r, text_clip));
+                st.painted_caret = Some(
+                    rect.filter(|r| {
+                        let [x, y, w, h] = r.bounds();
+                        b.clip_regions
+                            .iter()
+                            .all(|region| region.contains(x + w / 2., y + h / 2.))
+                    })
+                    .map(|r| r.bounds().map(|v| v / s)),
+                );
+            }
         }
 
         // 3. Carets above the text, only while focused.
