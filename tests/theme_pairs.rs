@@ -53,3 +53,16 @@ fn a_command_palette_card_can_be_given_an_opaque_surface() {
         .into();
     assert!(palette.build().is_ok());
 }
+
+#[test]
+fn a_select_list_can_be_given_an_opaque_surface() {
+    let open: Element<Doc> = select([select_item(1u8, "One"), select_item(2, "Two")])
+        .key("pick")
+        .open(true)
+        .surface("#FFFFFF|#1A2338")
+        .on_select(|_: &mut Doc, _| {})
+        .on_open_change(|_: &mut Doc, _| {})
+        .into();
+    let (document, _) = open.build().expect("an opaque list builds").into_parts();
+    assert!(format!("{document:?}").contains("#FFFFFF|#1A2338"), "the list is painted with it");
+}
