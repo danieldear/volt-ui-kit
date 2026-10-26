@@ -2120,6 +2120,15 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     }
                     self.hover_regions(Some([position.x as f32, position.y as f32]))?;
                     self.update_cursor(position.x as f32, position.y as f32);
+                    if let Some(outcome) = self
+                        .runtime
+                        .code_pointer_hover(Some([position.x as f32, position.y as f32]), &mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?
+                    {
+                        if outcome.activated || outcome.changed {
+                            self.after_input(outcome)?;
+                        }
+                    }
                 }
                 WindowEvent::ThemeChanged(theme) => {
                     self.system_theme = if theme == winit::window::Theme::Light {
@@ -2172,6 +2181,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.redraw();
                     }
                     self.hover_regions(None)?;
+                    if let Some(outcome) = self.runtime.code_pointer_hover(None, &mut self.handlers, &mut self.context).map_err(|e| e.to_string())? {
+                        if outcome.activated || outcome.changed {
+                            self.after_input(outcome)?;
+                        }
+                    }
                 }
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,
@@ -2182,6 +2196,15 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.activation_key = None;
                     self.runtime.cancel_input();
                     if let Some([x, y]) = self.pointer {
+                        // Over code, the caret moves to what was clicked first.
+                        if let Some(outcome) = self
+                            .runtime
+                            .code_context_press(x, y, &mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?
+                        {
+                            self.after_input(outcome)?;
+                            self.layout()?;
+                        }
                         let outcome = self
                             .runtime
                             .context_menu_at(x, y, &mut self.handlers, &mut self.context)

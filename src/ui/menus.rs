@@ -248,6 +248,13 @@ macro_rules! menu_options {
 menu_options!(Menu, 2);
 menu_options!(ContextMenu, 2);
 impl<C, T> ContextMenu<C, T> {
+    /// The target fills the wrapper: for a flexible target, such as a code
+    /// view, that takes the room the wrapper is given. Without it the target
+    /// keeps its own size, and empty wrapper space opens no menu.
+    pub fn fill(mut self) -> Self {
+        self.0.node.align = crate::declarative::Align::Stretch;
+        self
+    }
     pub fn position(mut self, point: [f32; 2]) -> Self {
         self.3 = point;
         self
@@ -414,7 +421,8 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
     // check or an icon, otherwise just inside the row.
     let glyphs = items.iter().any(|i| matches!(i.kind, ItemKind::Action { checked: Some(_), .. } | ItemKind::Action { icon: Some(_), .. }));
     let label_inset = if glyphs || submenu.is_some() { 34. } else { 10. };
-    let row_button = |label: String| {
+    // The back row has a glyph; a submenu row lines up with the actions.
+    let row_button = |label: String, inset: f32| {
         button(label)
             .height(row_height)
             .width(inner)
@@ -424,7 +432,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
             .font_size(12.5)
             .font_weight(400)
             .label_align(Align::Start)
-            .label_inset(34.)
+            .label_inset(inset)
             .hover_style(|s| s.background(ColorToken::Primary.alpha(14)))
             .focus_style(|s| s.background(ColorToken::Primary.alpha(14)).border_width(0.))
     };
@@ -438,7 +446,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
     let items = match drilled {
         Ok((label, sub)) => {
             let back = on_submenu.clone().unwrap();
-            let b: Element<C> = row_button(label)
+            let b: Element<C> = row_button(label, 34.)
                 .key(format!("{key}-back"))
                 .accessible_label("Back")
                 .font_weight(600)
@@ -468,7 +476,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
             ItemKind::Submenu { key: k, label, .. } => {
                 height += row_height;
                 let open = on_submenu.clone().unwrap();
-                let mut b: Element<C> = row_button(label)
+                let mut b: Element<C> = row_button(label, label_inset)
                     .on_click(move |app: &mut C| (open.borrow_mut())(app, Some(k.clone())))
                     .into();
                 b.node.access_expanded = Some(false);

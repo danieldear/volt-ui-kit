@@ -98,6 +98,12 @@ impl<C> CodeView<C> {
         self.props().scroll_to = Some((line, request));
         self
     }
+    /// Report the text position under the resting pointer as
+    /// `CodeInput::Hover`, for explanations of what is there.
+    pub fn report_hover(mut self, value: bool) -> Self {
+        self.props().report_hover = value;
+        self
+    }
     /// Watch the bottom `height` points of the view for the caret and report
     /// `CodeInput::CaretBand` as it enters or leaves: for a surface that
     /// floats over that band and must keep clear of the caret.

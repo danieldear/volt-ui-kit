@@ -37,6 +37,7 @@ struct Doc {
     carets: Vec<Option<[f32; 4]>>,
     /// 1 for a block caret, 2 for an underline.
     caret_shape: u8,
+    hover: bool,
 }
 impl Doc {
     fn new(lines: usize) -> Self {
@@ -81,6 +82,7 @@ fn view(d: &Doc) -> Element<Doc> {
         .decorations(d.decorations.clone())
         .scroll_marks(d.marks.clone())
         .italic_palette(d.italic.then_some(0))
+        .report_hover(d.hover)
         .on_input(|d: &mut Doc, input| {
             if let CodeInput::Visible { first, .. } = &input {
                 d.visible = match &input {
@@ -1036,4 +1038,48 @@ fn themed_floating_surfaces_block_code_press_and_wheel_but_transparent_ones_do_n
             );
         }
     }
+}
+
+#[test]
+fn hover_reports_the_position_under_the_pointer_when_it_changes_and_when_it_leaves() {
+    let mut doc = Doc::new(100);
+    doc.hover = true;
+    let mut m = Mounted::new(&mut doc);
+    let [x, y, _, _] = m.bounds();
+    m.paint();
+    let at = |line: f32, col: f32| [x + 64. + 12. + 6.5 * col, y + 20. * line + 10.];
+    let hovers = |d: &Doc| d.inputs.iter().filter_map(|i| match i { CodeInput::Hover { at, .. } => Some(*at), _ => None }).collect::<Vec<_>>();
+    m.runtime.code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut doc).unwrap();
+    m.runtime.code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut doc).unwrap();
+    m.runtime.code_pointer_hover(Some(at(4., 8.)), &mut m.handlers, &mut doc).unwrap();
+    m.runtime.code_pointer_hover(None, &mut m.handlers, &mut doc).unwrap();
+    assert_eq!(
+        hovers(&doc),
+        [Some(CodePosition::new(3, 5)), Some(CodePosition::new(4, 8)), None],
+        "each change once, then leaving"
+    );
+    // A view that didn't ask hears nothing.
+    let mut quiet = Doc::new(100);
+    let mut m = Mounted::new(&mut quiet);
+    m.paint();
+    m.runtime.code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut quiet).unwrap();
+    assert!(hovers(&quiet).is_empty());
+}
+
+#[test]
+fn a_right_click_outside_the_selection_moves_the_caret_and_inside_keeps_it() {
+    let mut doc = Doc::new(100);
+    doc.selection = Some(CodeSelection { anchor: CodePosition::new(3, 2), head: CodePosition::new(3, 9) });
+    let mut m = Mounted::new(&mut doc);
+    let [x, y, _, _] = m.bounds();
+    m.paint();
+    let at = |line: f32, col: f32| [x + 64. + 12. + 6.5 * col, y + 20. * line + 10.];
+    let presses = |d: &Doc| d.inputs.iter().filter(|i| matches!(i, CodeInput::Press { .. })).count();
+    let [px, py] = at(3., 5.);
+    assert!(m.runtime.code_context_press(px, py, &mut m.handlers, &mut doc).unwrap().is_some());
+    assert_eq!(presses(&doc), 0, "inside the selection: it stays");
+    let [px, py] = at(6., 1.);
+    m.runtime.code_context_press(px, py, &mut m.handlers, &mut doc).unwrap();
+    assert_eq!(doc.inputs.last(), Some(&CodeInput::Press { at: CodePosition::new(6, 1), clicks: 1, modifiers: InputModifiers::default() }));
+    assert!(m.runtime.code_view_focused());
 }

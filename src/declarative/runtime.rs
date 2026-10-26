@@ -1164,7 +1164,10 @@ impl Runtime {
                 continue;
             };
             let s = self.scale;
-            let mut offset = container.scroll_offset;
+            // A wheel scroll shifts boxes in place: the container's own
+            // offset can lag the one in effect, which the target reflects.
+            let current = self.scroll_offsets.get(&view).copied().unwrap_or(container.scroll_offset);
+            let mut offset = current;
             let top = container.bounds.bounds()[1] + container.style.layout.padding[0];
             let left = container.bounds.bounds()[0] + container.style.layout.padding[3];
             let [tx, ty, _, _] = target.bounds.bounds();
@@ -1175,7 +1178,7 @@ impl Runtime {
             if axes[0] {
                 offset[0] = (offset[0] + (tx - left) / s).clamp(0., container.scroll_max[0]);
             }
-            if offset != container.scroll_offset {
+            if offset != current {
                 self.scroll_offsets.insert(view, offset);
                 moved = true;
             }
@@ -6510,6 +6513,25 @@ mod foundation_tests {
         )
         .unwrap();
         assert_eq!(r.scroll_offset("list")[1], 220.);
+    }
+    #[test]
+    fn scroll_to_after_a_wheel_scroll_lands_on_the_key_not_off_by_the_scroll() {
+        let make = |request| -> Element<App> {
+            vstack((0..20).map(|i| -> Element<App> { vstack![].key(format!("item-{i}")).height(40.).into() }))
+                .key("list")
+                .height(200.)
+                .scroll(Scroll::Vertical)
+                .scroll_to("item-0", request)
+                .into()
+        };
+        let (mut r, _) = mount(make(0));
+        // Wheel to the end: boxes shift in place, without a full layout.
+        r.scroll_at(10., 10., [0., 600.]);
+        assert_eq!(r.scroll_offset("list")[1], 600.);
+        let (d, h) = make(1).build().unwrap().into_parts();
+        r.replace_document(d, &h, &Bindings::default()).unwrap();
+        r.layout(Viewport::new(400., 400., 1.).unwrap(), &Bindings::default(), &mut Rec).unwrap();
+        assert_eq!(r.scroll_offset("list")[1], 0., "back at the top, as asked");
     }
     #[test]
     fn gradients_and_single_side_dashed_borders_paint() {

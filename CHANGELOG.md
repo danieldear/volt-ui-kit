@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Code views report what the pointer rests on when asked:
+  `report_hover(true)` sends `CodeInput::Hover { at, point }` as the
+  position changes and `at: None` when it leaves. Hosts call
+  `Runtime::code_pointer_hover`; the native window does.
+- A right-click over code outside the selection moves the caret there
+  first (`Runtime::code_context_press`), so a context menu's actions apply
+  to what was clicked; inside a selection it keeps it.
+- `ContextMenu::fill()` lets a flexible target, such as a code view, fill
+  the wrapper; without it the target keeps its size and empty wrapper space
+  opens no menu.
+- A submenu row's label lines up with the other rows instead of always
+  leaving room for a glyph.
+- `scroll_to` after a wheel scroll lands on its key: it measured from the
+  container's stale offset and could leave the view where it was. Tests:
+  `tests/code_view.rs`, `runtime.rs` foundation tests.
 - Arrow keys and Page Up/Down that no control takes scroll the view you
   last pressed in, or the one under the pointer: a line, or the view's
   height less a line. `Runtime::key_scroll_steps` gives both. Tests:

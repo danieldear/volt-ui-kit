@@ -160,6 +160,14 @@ pub enum CodeInput {
     /// changes, so a surface floating over the band can keep clear of the
     /// caret.
     CaretBand(Option<[i32; 2]>),
+    /// With `report_hover`: the text position under the resting pointer, or
+    /// `None` once it leaves the text, and the pointer in whole window
+    /// logical points (to place an explanation beside it). Sent when the
+    /// position changes, never while a button is held.
+    Hover {
+        at: Option<CodePosition>,
+        point: [i32; 2],
+    },
 }
 
 /// Most lines one document may carry; supply a window around the visible one.
@@ -189,6 +197,8 @@ pub(crate) struct CodeViewProps {
     pub scroll_to: Option<(usize, u32)>,
     /// Height of the bottom band watched for the caret (`CodeInput::CaretBand`).
     pub caret_band: Option<f32>,
+    /// Report the position under the pointer (`CodeInput::Hover`).
+    pub report_hover: bool,
     pub decorations: Vec<CodeDecoration>,
     /// Palette indices drawn in italic (comments, say).
     pub italic: Vec<u8>,
@@ -226,6 +236,7 @@ impl Default for CodeViewProps {
             reveal: 0,
             scroll_to: None,
             caret_band: None,
+            report_hover: false,
             decorations: vec![],
             italic: vec![],
             indent_guides: None,
@@ -302,6 +313,8 @@ pub(crate) struct CodeViewState {
     preedit: String,
     preedit_cursor: Option<(usize, usize)>,
     dragging: bool,
+    /// The last `Hover` reported.
+    hovered: Option<CodePosition>,
     /// While the scrollbar's thumb is held: where in it (physical, from its
     /// top) the pointer took hold.
     thumb: Option<f32>,
@@ -609,6 +622,83 @@ impl Runtime {
             ctx,
         )?;
         Ok(Some(outcome))
+    }
+    /// A secondary press at physical `x`, `y`, before its context menu opens.
+    /// Outside every selection it moves the caret there, as a plain press
+    /// would, so the menu's actions apply to what was clicked; inside one it
+    /// keeps the selection. `None` when no code view's text is there.
+    pub fn code_context_press<C>(
+        &mut self,
+        x: f32,
+        y: f32,
+        handlers: &mut Handlers<'_, C>,
+        ctx: &mut C,
+    ) -> Result<Option<InputOutcome>, DocumentError> {
+        let Some(b) = self.code_box_at(x, y).cloned() else {
+            return Ok(None);
+        };
+        if self.code_scrollbar_at(x, y) {
+            return Ok(None);
+        }
+        let at = self.code_position_at(&b, x, y);
+        let props = b.ext.code.as_deref().unwrap();
+        let inside = props.selections.iter().any(|s| {
+            let (start, end) = if s.anchor <= s.head { (s.anchor, s.head) } else { (s.head, s.anchor) };
+            start != end && start <= at && at <= end
+        });
+        self.focused = Some(b.id.clone());
+        self.focus_visible = false;
+        if inside {
+            return Ok(Some(InputOutcome { changed: true, activated: false }));
+        }
+        self.ime_cancel();
+        let (outcome, _) = self.dispatch_code(&b.id, CodeInput::Press { at, clicks: 1, modifiers: InputModifiers::default() }, handlers, ctx)?;
+        Ok(Some(outcome))
+    }
+    /// The pointer rests at physical `x`, `y` (`None`: it left the window).
+    /// Views with `report_hover` hear `CodeInput::Hover` when what is under
+    /// it changes; the view it left hears `None`.
+    pub fn code_pointer_hover<C>(
+        &mut self,
+        point: Option<[f32; 2]>,
+        handlers: &mut Handlers<'_, C>,
+        ctx: &mut C,
+    ) -> Result<Option<InputOutcome>, DocumentError> {
+        let here = point.and_then(|[x, y]| {
+            let b = self.code_box_at(x, y)?;
+            let props = b.ext.code.as_deref()?;
+            (props.report_hover && !self.code_scrollbar_at(x, y)).then(|| (b.id.clone(), self.code_position_at(b, x, y)))
+        });
+        let mut reports: Vec<(String, Option<CodePosition>)> = Vec::new();
+        {
+            let states = self.code_views.borrow();
+            for (id, st) in states.iter() {
+                if st.dragging {
+                    return Ok(None);
+                }
+                if st.hovered.is_some() && here.as_ref().is_none_or(|(h, _)| h != id) {
+                    reports.push((id.clone(), None));
+                }
+            }
+            if let Some((id, at)) = &here {
+                if states.get(id).and_then(|st| st.hovered) != Some(*at) {
+                    reports.push((id.clone(), Some(*at)));
+                }
+            }
+        }
+        let mut result: Option<InputOutcome> = None;
+        let point = point.map_or([0, 0], |[x, y]| [(x / self.scale).round() as i32, (y / self.scale).round() as i32]);
+        for (id, at) in reports {
+            self.code_views.borrow_mut().entry(id.clone()).or_default().hovered = at;
+            if !self.boxes.iter().any(|b| b.id == id && b.ext.code.is_some()) {
+                continue;
+            }
+            let (outcome, _) = self.dispatch_code(&id, CodeInput::Hover { at, point }, handlers, ctx)?;
+            let r = result.get_or_insert(InputOutcome::default());
+            r.changed |= outcome.changed;
+            r.activated |= outcome.activated;
+        }
+        Ok(result)
     }
     /// The pointer moved. While dragging from a press in a code view, reports
     /// the position under it (scrolling when it leaves the view).
