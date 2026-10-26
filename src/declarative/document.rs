@@ -325,6 +325,9 @@ pub struct Node {
     pub(crate) hover_link: Option<String>,
     #[serde(skip)]
     pub(crate) access_multiselectable: bool,
+    /// Link semantics, separate from the public AccessRole enum for compatibility.
+    #[serde(skip)]
+    pub(crate) access_link: Option<String>,
     #[serde(skip)]
     pub(crate) slider: Option<SliderProps>,
     #[serde(skip)]
@@ -606,6 +609,7 @@ impl Node {
             roving: None,
             hover_link: None,
             access_multiselectable: false,
+            access_link: None,
             slider: None,
             overlay: None,
             on_context: None,

@@ -1217,8 +1217,11 @@ impl Runtime {
             });
         }
         if self.code_view_focused() {
-            let (mut outcome, _) =
-                self.code_input(super::code_view::CodeInput::Insert(text.into()), handlers, ctx)?;
+            let (mut outcome, _) = self.code_input(
+                super::code_view::CodeInput::Insert(text.into()),
+                handlers,
+                ctx,
+            )?;
             outcome.changed |= cancelled;
             return Ok(outcome);
         }

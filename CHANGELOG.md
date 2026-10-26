@@ -74,6 +74,26 @@
   effect (light text means a dark theme), so System appearance needs no
   recomposition. Additive: one shared check in style and canvas validation.
   Tests: `tests/theme_pairs.rs`.
+- Add finite damped-spring timing, configurable `Spring`, additive stagger delays
+  and stable-key `transition_revision` replay, without adding Easing variants or
+  dependencies. Add polished, action-driven Catalog motion workflows and guides.
+- Fix delay-aware animation scheduling, early pruning of overshooting curves,
+  bounded opacity/color interpolation, reverse offset animation to zero, and
+  paint-only sliding exits. Resolve themed colors consistently across offset
+  and final paint passes to prevent continuous animation restarts, and present
+  completed endpoints before sleeping through a stagger gap.
+  Reduced motion settles everything immediately;
+  the macOS native host also samples the system preference at startup.
+
+- Add optional typed `NavigationHistory`, validated serializable checkpoints,
+  `navigation_link` and `navigation_stack`. Existing navigation controls and
+  public accessibility enums/structs retain their shapes and behavior.
+- Add standalone themed `link` controls with keyboard/accessibility activation,
+  conservative HTTP(S) targets and explicit public-API macOS browser dispatch
+  (`native-desktop`); unsupported builds report capability/errors. No new
+  dependencies or automatic browser/network activity.
+- Add interactive navigation/link Catalog workflows, responsive preview coverage,
+  lifecycle/security regression tests and matching component/service guides.
 
 - Add opt-in content padding/gap to forms and disclosure composites, dialogs,
   popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and

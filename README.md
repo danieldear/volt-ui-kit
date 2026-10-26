@@ -75,6 +75,11 @@ macOS, the command-line tools. Individual library features remain optional.
   bundles (macOS first).
 - **Accessible.** Roles, labels, values and actions go to screen readers
   through AccessKit, with full keyboard navigation.
+- **App-owned navigation.** Typed route links, bounded Back/Forward history and
+  standalone keyboard-accessible web links. Browser opening is explicit; see
+  [navigation and links](docs/components.md#typed-navigation-and-web-links).
+- **Deliberate motion.** Finite spring responses, staggered entrances and explicit
+  replay, with reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
 - **A fast dev loop.** `cargo volt dev` rebuilds on save and restarts the app
   with its state and window position intact.
 

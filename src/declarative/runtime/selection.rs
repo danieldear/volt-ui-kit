@@ -55,8 +55,14 @@ impl Runtime {
     /// Whether the last press left nothing captured (no control, link,
     /// editor, scrollbar, divider or slider), so it may select text.
     pub fn press_was_free(&self) -> bool {
+        self.link_capture.is_none() && self.press_allows_text_selection()
+    }
+
+    /// A read-only text press may also begin on a link. Keep its pending
+    /// click until selection actually expands, so clicking still follows
+    /// the link while dragging copies its label instead.
+    pub fn press_allows_text_selection(&self) -> bool {
         self.capture.is_none()
-            && self.link_capture.is_none()
             && self.scrollbar_capture.is_none()
             && self.split_capture.is_none()
             && self.slider_capture.is_none()
@@ -127,6 +133,9 @@ impl Runtime {
         }
         s.dragging = true;
         self.refresh_text_selection(m);
+        if self.selected_text().is_some() {
+            self.link_capture = None;
+        }
         true
     }
 
@@ -172,6 +181,9 @@ impl Runtime {
         self.text_selection.anchor = Some(anchor);
         self.text_selection.focus = Some(focus);
         self.refresh_text_selection(m);
+        if self.selected_text().is_some() {
+            self.link_capture = None;
+        }
         true
     }
 

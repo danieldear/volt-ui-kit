@@ -121,7 +121,7 @@ fn bounded_semantic_name(text: &str, fallback: &str) -> String {
 }
 pub use crate::declarative::{
     responsive, Align, Ambient, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
-    Responsive, Rounding, Scroll, Scrollbars, Shadow, Tone, Transition, VisualStyle,
+    Responsive, Rounding, Scroll, Scrollbars, Shadow, Spring, Tone, Transition, VisualStyle,
 };
 pub use crate::declarative::{
     BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
@@ -407,6 +407,11 @@ mod icons;
 mod inputs;
 mod menus;
 mod navigation;
+mod routing;
+pub use routing::{
+    link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError, NavigationHistory,
+    NavigationLink, NavigationSnapshot, UrlError,
+};
 mod popovers;
 mod progress;
 mod split;
@@ -427,13 +432,13 @@ pub use bars::{
     button_bar, segmented_control, tab, tab_bar, tab_item, tabs, toolbar, ButtonBar,
     SelectionControl, Tab, TabItem, TabPlacement, TabVariant, Tabs, Toolbar,
 };
+pub use code_view::{code_view, CodeView};
 pub use data::{
     data_item, lazy_list, table, table_column, table_row, tree_node, tree_view, virtual_list,
     DataItem, LazyList, SortDirection, Table, TableColumn, TableRow, TreeNode, TreeView,
     VirtualList,
 };
 pub use dialogs::{dialog, Dialog};
-pub use code_view::{code_view, CodeView};
 pub use inputs::{text_area, text_field, TextInput};
 pub use menus::{
     context_menu, menu, menu_item, menu_separator, menu_submenu, ContextMenu, Menu, MenuItem,
@@ -864,6 +869,9 @@ macro_rules! modifiers {
             /// Animate explicit appearance changes for the same key after recomposition.
             pub fn animation(mut self, animation:Animation) -> Self { self.$($field)*.effects.animation=Some(animation); self }
             pub fn transition(mut self, transition:Transition) -> Self { self.$($field)*.effects.transition=Some(transition); self }
+            /// Replay an enter transition without changing keys or page/input state.
+            /// The same revision is stable across ordinary recompositions.
+            pub fn transition_revision(mut self, revision: u64) -> Self { self.$($field)*.effects.transition_revision=revision; self }
             /// Continuous decorative motion; see [`Ambient`].
             pub fn ambient(mut self, ambient:Ambient) -> Self { self.$($field)*.effects.ambient=Some(ambient); self }
             pub fn font_family(mut self, value: impl Into<String>) -> Self { self.$($field)*.style.font_family = Some(value.into()); self }
@@ -1418,6 +1426,8 @@ wrapper_spacing_methods!(Tooltip);
 container_modifiers!(ButtonBar);
 container_modifiers!(Toolbar);
 modifiers!(Navigation, [T], [0.node], [0.auto_id]);
+modifiers!(Link, [0.node], [0.auto_id]);
+modifiers!(NavigationLink, [T], [0.node], [0.auto_id]);
 modifiers!(NavigationSplitView, [0.node], [0.auto_id]);
 container_modifiers!(Navigation, [T]);
 
@@ -1455,7 +1465,7 @@ pub mod prelude {
         GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, Menu,
         MenuItem, Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress,
         Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
-        Sides, Slider, SortDirection, SplitHandle, SplitPane, Tab, TabItem, TabPlacement,
+        Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
         TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone,
         Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
         VisualStyle,
@@ -1464,13 +1474,17 @@ pub mod prelude {
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
         DateRange, TimeOfDay,
     };
+    pub use super::{code_view, CodeView};
     pub use super::{
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
-    pub use super::{code_view, CodeView};
     pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
+    pub use super::{
+        link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
+        NavigationHistory, NavigationLink, NavigationSnapshot, UrlError,
+    };
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
     pub use super::{

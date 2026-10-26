@@ -58,9 +58,7 @@ pub struct InputKeyEvent {
 
 type ActivationCallback<'a, C> = Box<dyn FnMut(&mut C, PointerActivation) + 'a>;
 type KeyInputCallback<'a, C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool + 'a>;
-type CodeInputCallback<'a, C> =
-    Box<dyn FnMut(&mut C, super::CodeInput) -> Option<String> + 'a>;
-
+type CodeInputCallback<'a, C> = Box<dyn FnMut(&mut C, super::CodeInput) -> Option<String> + 'a>;
 type CodeCaretCallback<'a, C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>) + 'a>;
 
 pub(super) enum InputCallback<'a, C> {

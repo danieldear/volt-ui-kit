@@ -175,6 +175,33 @@ if let Some(path) = file_dialog::open_file(&FileDialogOptions::new("Open notes")
 - These helpers are for small UTF-8 text files (up to 8 KiB). Use `std::fs`
   directly for anything larger.
 
+## Opening web links
+
+Composition never launches another application. A link's callback can capture,
+confirm or reject the target, or explicitly call the native adapter:
+
+```rust,no_run
+use volt_ui_kit::{native::links, ui::prelude::*};
+#[derive(Default)]
+struct App { status: String }
+let ui: Element<App> = link("Project website ↗", "https://example.com")
+    .key("website")
+    .on_open(|app: &mut App, url| {
+        app.status = match links::open_url(&url) {
+            Ok(()) => "Browser request accepted".into(),
+            Err(error) => error.to_string(),
+        };
+    }).into();
+```
+
+`native::links::available()` reports compiled support: currently macOS with
+`native-desktop`. Dispatch requires the main thread and uses public
+`NSWorkspace`/`NSURL` APIs, not a shell or subprocess. Other builds return
+`OpenUrlError::Unsupported`. Success means the OS accepted the request, not
+that a browser loaded the page. Volt itself makes no network request. Custom
+schemes, email actions, app deep-link registration and embedded browsing are not
+part of this HTTP(S)-only adapter.
+
 ## Menus and tray
 
 With `native-desktop` on macOS, add an application menu and a tray item. Their

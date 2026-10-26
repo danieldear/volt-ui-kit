@@ -761,6 +761,22 @@
   {
     "api": [
       [
+        "navigation_link(label, route).on_navigate(f)",
+        "Focusable typed destination; application decides how to navigate"
+      ],
+      [
+        "NavigationHistory / navigation_stack",
+        "Bounded Back/Forward history; mount only the current route"
+      ],
+      [
+        "link(label, url).on_open(f)",
+        "Validated HTTP(S) links; no automatic I/O"
+      ],
+      [
+        "native::links::open_url(&url)",
+        "Explicit macOS browser dispatch with native-desktop; Unsupported elsewhere"
+      ],
+      [
         "navigation(items)",
         "Controlled, typed destinations"
       ],
@@ -800,6 +816,24 @@
     "group": "Components",
     "sections": [
       {
+        "code": "// App: history: NavigationHistory<Route>\nnavigation_link(\"Activity\", Route::Activity)\n    .key(\"activity\")\n    .on_navigate(|app: &mut App, route| { app.history.push(route); });\n\nnavigation_stack(&app.history, |route| match route {\n    Route::Workspace => workspace_view(app),\n    Route::Activity => activity_view(app),\n}).key(\"current-page\");\n// app.history.back(); app.history.forward();\n// app.history.snapshot(); app.history.restore(checkpoint)?;",
+        "height": 443,
+        "id": "navigation-history",
+        "image": "navigation-navigation-history.png",
+        "note": "Typed destinations with bounded Back/Forward history. Only the current route is mounted; your application owns persistent page data.",
+        "title": "A route, not a workaround",
+        "width": 1000
+      },
+      {
+        "code": "link(\"Documentation ↗\", \"https://example.com/docs\")\n    .key(\"documentation\")\n    .on_open(|app: &mut App, url| {\n        // Your policy: capture, confirm, or explicitly dispatch.\n        app.status = match volt_ui_kit::native::links::open_url(&url) {\n            Ok(()) => \"Browser request accepted\".into(),\n            Err(error) => error.to_string(),\n        };\n    });\n// HTTP(S) only. No credentials, file URLs or executable schemes.",
+        "height": 459,
+        "id": "navigation-links",
+        "image": "navigation-navigation-links.png",
+        "note": "Theme-aware, keyboard-focusable links with native accessibility semantics. This demo intercepts activation first; browser dispatch is a separate, explicit action.",
+        "title": "External links, without surprises",
+        "width": 1000
+      },
+      {
         "code": "navigation([\n    navigation_item(Page::Inbox, \"Inbox\").key(\"inbox\").section(\"Mail\").badge(\"3\"),\n    navigation_item(Page::Sent, \"Sent\").key(\"sent\").section(\"Mail\"),\n]).key(\"navigation\").selected(app.page)\n  .placement(NavigationPlacement::Sidebar)\n  .on_select(|app: &mut App, page| app.page = page)\n// Use Rail or Bottom; compose independently with ordinary stacks/panels.",
         "height": 488,
         "id": "navigation-layouts",
@@ -819,7 +853,7 @@
       }
     ],
     "slug": "navigation",
-    "summary": "Destination lists in sidebar, rail or bottom placement, and the app shell around them.",
+    "summary": "Typed routes, Back/Forward history, accessible links and adaptable application navigation.",
     "title": "Navigation"
   },
   {
@@ -2163,6 +2197,18 @@
   {
     "api": [
       [
+        "Animation::spring() / spring_with(Spring)",
+        "Finite damped response; positional overshoot, bounded colors/opacity"
+      ],
+      [
+        ".stagger(index, interval_ms)",
+        "Adds per-item delay; overflow is rejected during build"
+      ],
+      [
+        ".transition_revision(revision)",
+        "Replay an entrance without remounting or changing keys"
+      ],
+      [
         ".shadow(Shadow) / .glow(Glow) / .opacity(o)",
         "Paint-only effects."
       ],
@@ -2185,6 +2231,33 @@
     ],
     "group": "Components",
     "sections": [
+      {
+        "code": "panel![task_content(app)].key(\"task\")\n    .offset(if app.ready { 64. } else { 0. }, 0.)\n    .animation(Animation::spring().duration_ms(520));\n// Or tune the response without adding a timer:\n// Animation::spring_with(Spring::new().damping_ratio(0.7))\n// Retargeting preserves painted position, not physical velocity.",
+        "height": 451,
+        "id": "fx-motion-workspace",
+        "image": "effects-motion-fx-motion-workspace.png",
+        "note": "Compare smooth, spring and instant timing. Reverse the task while it moves; hit targets, focus and layout never follow decorative paint offsets.",
+        "title": "Motion that explains a change",
+        "width": 1000
+      },
+      {
+        "code": "row.key(format!(\"step-{index}\"))\n    .transition(Transition::slide(0., 10.)\n        .animation(Animation::ease_out().duration_ms(320))\n        .stagger(index, 70))\n    .transition_revision(app.replay_revision);\n// Replay button: app.replay_revision = app.replay_revision.wrapping_add(1);\n// Unchanged revision keeps the current transition's clock.",
+        "height": 453,
+        "id": "fx-motion-sequence",
+        "image": "effects-motion-fx-motion-sequence.png",
+        "note": "Stagger related updates and replay an entrance explicitly. When the last item settles, this preview stops requesting animation frames.",
+        "title": "A sequence, not a loop",
+        "width": 1000
+      },
+      {
+        "code": "button(\"Save changes\").key(\"save\")\n    .hover_style(|s| s.offset(0., -2.)\n        .glow(Glow::new().color(ColorToken::Primary.alpha(25)).blur(12.)))\n    .pressed_style(|s| s.offset(0., 1.).opacity(0.8))\n    .animate_on(Interaction::Hover, Animation::spring().duration_ms(280))\n    .animate_on(Interaction::Pressed, Animation::ease_out().duration_ms(90))\n    .on_click(save_changes);",
+        "height": 226,
+        "id": "fx-motion-feedback",
+        "image": "effects-motion-fx-motion-feedback.png",
+        "note": "A restrained glow and two-pixel lift. Press and hover can interrupt one another; the callback runs only when the button activates.",
+        "title": "Tactile state feedback",
+        "width": 1000
+      },
       {
         "code": ".shadow(Shadow::new().color(\"#00000022\").blur(18.).offset(0., 6.))",
         "height": 200,
@@ -2214,7 +2287,7 @@
       }
     ],
     "slug": "effects-motion",
-    "summary": "Shadows, glows, state styles, keyed animation and transitions.",
+    "summary": "Finite spring motion, staggered entrances, interaction feedback, shadows and glows.",
     "title": "Effects & motion"
   },
   {

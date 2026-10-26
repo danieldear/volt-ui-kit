@@ -122,6 +122,68 @@ button and drawer; <code>.material(true)</code> floats the detail over a translu
 window. It is optional: compose your own shell from stacks when you need to.</li>
 <li>With an option focused, arrow keys and Home/End move the selection.</li>
 </ul>
+<h2 id="typed-navigation-and-web-links">Typed navigation and web links</h2>
+<p><code>navigation</code> still controls destination selection; routing is optional. For
+Back/Forward navigation, keep <code>NavigationHistory&lt;Route&gt;</code> in your app state.
+<code>navigation_link</code> passes a typed destination to your callback, and
+<code>navigation_stack</code> composes only the current route.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+
+#[derive(Clone, PartialEq)]
+enum Route { Home, Activity }
+struct App { history: NavigationHistory&lt;Route&gt; }
+
+fn view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    vstack![
+        navigation_link(&quot;Activity&quot;, Route::Activity).key(&quot;activity&quot;)
+            .on_navigate(|app: &amp;mut App, route| { app.history.push(route); }),
+        button(&quot;Back&quot;).key(&quot;back&quot;).enabled(app.history.can_go_back())
+            .on_click(|app: &amp;mut App| { app.history.back(); }),
+        navigation_stack(&amp;app.history, |route| match route {
+            Route::Home =&gt; text(&quot;Home&quot;).key(&quot;home-page&quot;).into(),
+            Route::Activity =&gt; text(&quot;Activity&quot;).key(&quot;activity-page&quot;).into(),
+        }).key(&quot;current-page&quot;),
+    ].into()
+}
+let mut history = NavigationHistory::new(Route::Home);
+history.push(Route::Activity);
+let checkpoint = history.snapshot();
+assert!(history.back());
+history.restore(checkpoint).unwrap();
+assert!(matches!(history.current(), Route::Activity));</code></pre></div><p>History defaults to 128 entries; <code>with_capacity(root, 1..=1024)</code> customizes the
+bound. Pushing the current route does nothing, including preserving Forward.
+Pushing after Back discards the forward branch; overflow removes the oldest
+entry. <code>replace(route)</code> changes only the current entry; <code>reset(root)</code> clears
+history. <code>NavigationSnapshot</code> supports Serde; <code>restore</code> validates its length and
+index before changing anything. Bound serialized input before deserializing.
+Persistent page models, scroll/focus restoration, route decoding and OS deep-link
+registration are <strong>application responsibilities</strong>, not automatic behavior.
+Use route-specific keys for independent page controls.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+#[derive(Default)]
+struct App { destination: Option&lt;ExternalUrl&gt; }
+let ui: Element&lt;App&gt; = link(&quot;Read the guide ↗&quot;, &quot;https://example.com/guide&quot;)
+    .key(&quot;guide&quot;)
+    .on_open(|app: &amp;mut App, url| app.destination = Some(url))
+    .into();
+ui.build().unwrap(); // Does not open a browser or perform I/O.</code></pre></div><p>Standalone links require a nonempty label, stable key and callback. They support
+shared style modifiers, theme colors, hover/press/focus feedback, Tab/Shift-Tab
+and Enter activation, plus <code>.enabled(false)</code>. Native AccessKit exposes a Link
+role and the external URL. Custom hosts can read <code>Runtime::accessibility_links()</code>
+alongside <code>accessibility_nodes()</code>; the legacy <code>AccessNode</code>/<code>AccessRole</code> shapes are
+unchanged. A <code>None</code> URL denotes an internal navigation link. Removed, disabled
+or out-of-modal-scope links cannot activate through the runtime.</p>
+<p><code>ExternalUrl::parse</code> accepts absolute ASCII HTTP(S) URLs up to 4096 bytes. It
+rejects credentials, malformed ports/escapes, whitespace/control characters and
+executable/local-file/custom schemes. Encode Unicode domains/paths first.
+Validation does not imply that a website is trustworthy. Inline <code>span(..).link(..)</code>
+remains a separate rich-text callback API; standalone-link keyboard behavior does
+not make individual inline spans focusable. See <a href="../guides/app-services.html#opening-web-links">browser dispatch</a>
+for explicit native opening. Try both workflows on the Catalog&#39;s Navigation page.</p>
+<h2 id="motion-and-effects">Motion and effects</h2>
+<p>See <a href="../guides/styling-and-themes.html#animation-and-transitions">animation and transitions</a>
+for finite springs, staggered entrances, replay revisions, interaction feedback
+and reduced-motion behavior. Try the Catalog’s <strong>Effects &amp; motion</strong> page.</p>
 <h2 id="customizing-component-spacing">Customizing component spacing</h2>
 <p>Constructor sizes are defaults, not fixed design requirements. Keep the defaults
 for a consistent starting point, or override the part you actually need. Values
@@ -424,4 +486,4 @@ Up/Down navigation through results yet.</li>
 <li><code>.offset(..)</code> and slide/ambient motion move pixels only; layout and hit
 targets stay where they were.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#buttons-and-actions">Buttons and actions</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#buttons-and-actions">Buttons and actions</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#typed-navigation-and-web-links">Typed navigation and web links</a><a href="#motion-and-effects">Motion and effects</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

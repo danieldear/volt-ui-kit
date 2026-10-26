@@ -162,20 +162,89 @@ save.build()?;
 
 ## Animation and transitions
 
-- `animate_on(Interaction::Hover, Animation::ease_out().duration_ms(120))`
-  animates the change into a state style.
-- `.animation(..)` animates appearance changes after recomposition, for
-  elements with a stable key.
-- `.transition(Transition::fade().duration_ms(180))` fades an element in and out
-  as it is added and removed; `Transition::slide(dx, dy)` slides it.
-- `Ambient::pulse(0.4)` pulses opacity, for skeleton loaders.
-- Curves: `linear`, `ease_out`, `ease_in_out` and `Easing::CubicBezier(..)`,
-  with optional `delay_ms`.
+Use motion to explain a state change, not as a permanent decoration. These
+animations use the host's monotonic clock, never call `view` or your callbacks,
+and return to idle after finishing. All values are logical pixels.
 
-Colours, borders and opacity interpolate. Animation never calls `view` or
-your callbacks, and the app goes back to idle when motion ends.
-`Application::reduced_motion(true)` (or `VOLT_UI_REDUCED_MOTION=1`) jumps
-straight to final states.
+```rust
+use volt_ui_kit::ui::prelude::*;
+let task: Element<()> = panel![text("Ready for review")].key("task")
+    .offset(64., 0.)
+    .animation(Animation::spring().duration_ms(520))
+    .into();
+task.build().unwrap();
+```
+
+`.animation(..)` interpolates appearance and offset changes for a stable key.
+`animate_on(Interaction::Hover, ..)` (also Pressed or Focus) supplies timing for
+interaction patches. Interruptions start from the current painted value. Only
+position overshoots; opacity, colors and border widths stay bounded. Existing
+linear/ease-in/ease-out/ease-in-out and `Easing::CubicBezier(..)` curves remain
+available. Explicit `.easing(..)` replaces any spring timing on that animation.
+
+`Animation::spring_with(Spring::new().damping_ratio(0.7))` tunes bounce. The valid
+damping range is 0.4..=2, default 0.8; 1 is critically damped. This is a finite,
+normalized damped response: duration controls settling time, and interruptions
+preserve position **not physical velocity**. It is not a layout/sizing animation
+or a physics simulation. Small offsets suit controls; larger movement is best
+kept to decorative or noninteractive content because hit targets do not move.
+
+### Entrances, exits and stagger
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let replay_revision = 0u64; // owned by the application
+let rows: Element<()> = vstack((0..3).map(|index| -> Element<()> {
+    text(format!("Update {}", index + 1)).key(format!("update-{index}"))
+        .transition(Transition::slide(0., 10.)
+            .animation(Animation::ease_out().duration_ms(320))
+            .stagger(index, 70))
+        .transition_revision(replay_revision)
+        .into()
+})).into();
+rows.build().unwrap();
+```
+
+- `Transition::fade()` fades a keyed subtree in/out; `slide(dx, dy)` adds an
+  offset. `.animation(Animation)` shares timing configuration, including springs.
+- `.delay_ms(..)` waits before starting. `.stagger(index, interval_ms)` adds
+  `index * interval` to that delay on either `Animation` or `Transition`.
+  A transition uses this timing on both entrance and exit. Invalid or overflowing
+  configurations are rejected during build; values never wrap to a short delay.
+- Animation durations are at most 10 seconds and delays at most 60 seconds.
+  Scheduling covers the entire delay plus duration, including zero-duration
+  delayed changes. Overshooting curves do not end a track prematurely.
+- `.transition_revision(revision)` replays an entrance when the revision changes
+  without changing identity, editor selection or focus. The same revision stays
+  stable across ordinary recompositions. Increment it in an explicit action;
+  never generate it from the clock inside `view`.
+- Departing subtrees are paint-only snapshots. Removed controls cannot activate
+  through pointer, keyboard or accessibility, even while their exit is visible.
+- `.offset`, slide and ambient effects move pixels, **not layout or hit targets**.
+  No scale/rotation transforms, layout tweening or automatic FLIP are implied.
+
+### Reduced motion and idle
+
+`Application::reduced_motion(true)`, `VOLT_UI_REDUCED_MOTION=1`, or
+`Runtime::set_reduced_motion(true)` settles finite transitions immediately and
+stops decorative ambient motion. Delayed-only scenes sleep until the first
+useful update rather than render unchanged frames; custom hosts can use
+`Runtime::animation_wait()` (None for idle, zero for frame pacing, or a positive
+delay). The macOS native host also samples the system
+Reduce Motion preference at startup. It does not monitor live system preference
+changes yet. Unfocused, occluded or minimized native windows already settle
+animations rather than requesting invisible frames.
+
+`Ambient::pulse(0.4)`, `float(..)` and canvas-only `spin()` are intentionally
+continuous while visible; opt into them only where useful and remove loading
+indicators when finished. They stop under reduced motion. Shadows and glows
+remain optional; geometry stays fixed during alpha/color animation so native
+blur masks can be reused.
+
+The Catalog's **Effects & motion** page has Smooth/Spring/Instant comparison,
+reversible task motion, a replayable three-step sequence, and hover/press/focus
+feedback. Instant previews are local to those demos; the launch/runtime reduced
+motion controls apply to the entire app.
 
 ## Images
 

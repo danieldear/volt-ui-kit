@@ -103,6 +103,34 @@ impl Runtime {
         visit(self.document.root(), self, &mut ids);
         ids
     }
+    /// Link semantics for the current accessibility tree, separate from
+    /// AccessNode/AccessRole to preserve their existing public shape. A missing
+    /// URL denotes a typed internal navigation link. Disabled links are included.
+    pub fn accessibility_links(&self) -> Vec<(String, Option<String>)> {
+        let mounted: std::collections::BTreeSet<_> = self
+            .layout_boxes
+            .iter()
+            .filter(|b| !b.departing && self.scope_allows_id(&b.id))
+            .map(|b| b.id.as_str())
+            .collect();
+        fn visit(
+            n: &Node,
+            mounted: &std::collections::BTreeSet<&str>,
+            out: &mut Vec<(String, Option<String>)>,
+        ) {
+            if let Some(url) = &n.access_link {
+                if mounted.contains(n.id.as_str()) {
+                    out.push((n.id.clone(), (!url.is_empty()).then(|| url.clone())));
+                }
+            }
+            for child in &n.children {
+                visit(child, mounted, out);
+            }
+        }
+        let mut out = Vec::new();
+        visit(self.document.root(), &mounted, &mut out);
+        out
+    }
     /// The current accessibility tree. While a modal overlay is open only its
     /// contents are exposed, matching what pointer and keyboard can reach.
     pub fn accessibility_nodes(&self) -> Vec<AccessNode> {

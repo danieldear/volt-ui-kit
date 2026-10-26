@@ -105,7 +105,14 @@ impl<C: 'static> App<C> {
         let modifiers = self.input_modifiers();
         let outcome = self
             .runtime
-            .code_pointer_down(x, y, clicks, modifiers, &mut self.handlers, &mut self.context)
+            .code_pointer_down(
+                x,
+                y,
+                clicks,
+                modifiers,
+                &mut self.handlers,
+                &mut self.context,
+            )
             .map_err(|e| e.to_string())?;
         match outcome {
             Some(outcome) => {

@@ -156,6 +156,26 @@ file changed on disk since you read it; <code>ApprovedReplacement</code> overwri
 <li>These helpers are for small UTF-8 text files (up to 8 KiB). Use <code>std::fs</code>
 directly for anything larger.</li>
 </ul>
+<h2 id="opening-web-links">Opening web links</h2>
+<p>Composition never launches another application. A link&#39;s callback can capture,
+confirm or reject the target, or explicitly call the native adapter:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::links, ui::prelude::*};
+#[derive(Default)]
+struct App { status: String }
+let ui: Element&lt;App&gt; = link(&quot;Project website ↗&quot;, &quot;https://example.com&quot;)
+    .key(&quot;website&quot;)
+    .on_open(|app: &amp;mut App, url| {
+        app.status = match links::open_url(&amp;url) {
+            Ok(()) =&gt; &quot;Browser request accepted&quot;.into(),
+            Err(error) =&gt; error.to_string(),
+        };
+    }).into();</code></pre></div><p><code>native::links::available()</code> reports compiled support: currently macOS with
+<code>native-desktop</code>. Dispatch requires the main thread and uses public
+<code>NSWorkspace</code>/<code>NSURL</code> APIs, not a shell or subprocess. Other builds return
+<code>OpenUrlError::Unsupported</code>. Success means the OS accepted the request, not
+that a browser loaded the page. Volt itself makes no network request. Custom
+schemes, email actions, app deep-link registration and embedded browsing are not
+part of this HTTP(S)-only adapter.</p>
 <h2 id="menus-and-tray">Menus and tray</h2>
 <p>With <code>native-desktop</code> on macOS, add an application menu and a tray item. Their
 items share IDs with your registered commands, so they enable, disable and run
@@ -331,4 +351,4 @@ every option.</p>
 <p>To receive the files Finder opens with your app (double-click, Open With,
 the Dock), install an AppKit handler in <code>Application::before_launch</code>, which
 runs once the application object exists and before launch events arrive.</p>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#menus-and-tray">Menus and tray</a><a href="#tray-resident-window-visibility">Tray-resident window visibility</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#the-development-loop">The development loop</a><a href="#explicit-macos-trash">Explicit macOS Trash</a><a href="#packaging-and-releasing">Packaging and releasing</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#opening-web-links">Opening web links</a><a href="#menus-and-tray">Menus and tray</a><a href="#tray-resident-window-visibility">Tray-resident window visibility</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#the-development-loop">The development loop</a><a href="#explicit-macos-trash">Explicit macOS Trash</a><a href="#packaging-and-releasing">Packaging and releasing</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

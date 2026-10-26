@@ -10,8 +10,10 @@ pub use commands::{
 };
 mod assets;
 pub mod clipboard;
+pub mod text_menu;
 pub mod file_dialog;
 pub mod files;
+pub mod links;
 #[cfg(target_os = "macos")]
 mod macos_chrome;
 #[cfg(all(target_os = "macos", feature = "native-gpu"))]

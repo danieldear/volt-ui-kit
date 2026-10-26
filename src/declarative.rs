@@ -423,7 +423,9 @@ pub use extras::{
     BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
 };
 mod responsive;
-pub use effects::{Ambient, Animation, Easing, Glow, Interaction, Shadow, Transition, VisualStyle};
+pub use effects::{
+    Ambient, Animation, Easing, Glow, Interaction, Shadow, Spring, Transition, VisualStyle,
+};
 mod motion;
 mod runtime;
 pub use document::{
@@ -439,12 +441,12 @@ pub use runtime::{
 #[cfg(feature = "rust-ui")]
 pub use runtime::accessibility::{AccessNode, AccessRole, AccessTableInfo, AccessValue};
 #[cfg(feature = "rust-ui")]
-pub use runtime::editing::EditKey;
+pub(crate) use runtime::code_view::CodeViewProps;
 #[cfg(feature = "rust-ui")]
 pub use runtime::code_view::{
     CodeDecoration, CodeInput, CodeKey, CodeLine, CodeMark, CodePosition, CodeSelection,
 };
 #[cfg(feature = "rust-ui")]
-pub(crate) use runtime::code_view::CodeViewProps;
+pub use runtime::editing::EditKey;
 #[cfg(feature = "rust-ui")]
 pub use runtime::value_controls::ValueKey;

@@ -574,7 +574,7 @@ impl RasterPainter {
                 if shaped.x >= gw || shaped.x + shaped.w < 0. {
                     continue;
                 }
-                let p = on_pixel(&shaped);
+                let p = on_pixel(shaped);
                 out.push((
                     p.cache_key,
                     [
@@ -613,7 +613,7 @@ impl RasterPainter {
                     continue;
                 }
                 overflow |= shaped.x < 0. || shaped.x + shaped.w > gw;
-                let p = on_pixel(&shaped);
+                let p = on_pixel(shaped);
                 let k = p.cache_key;
                 let size = f32::from_bits(k.font_size_bits);
                 let fake_italic = k.flags.contains(cosmic_text::CacheKeyFlags::FAKE_ITALIC);
@@ -1993,7 +1993,7 @@ impl RasterPainter {
                             continue;
                         }
                         let c = colors.at(run.line_i, shaped.start);
-                        let physical = on_pixel(&shaped);
+                        let physical = on_pixel(shaped);
                         if self.glyph_bytes > 16 * 1024 * 1024
                             || self.swash.image_cache.len() > 4096
                         {

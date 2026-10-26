@@ -49,17 +49,18 @@ fn shadow(a: Option<ResolvedShadow>, b: Option<ResolvedShadow>, t: f32) -> Optio
 }
 impl Visual {
     fn interpolate(self, to: Self, t: f32) -> Self {
-        if t >= 1. {
+        if t == 1. {
             return to;
         }
+        let bounded = t.clamp(0., 1.);
         Self {
-            color: color(self.color, to.color, t),
-            background: color(self.background, to.background, t),
-            border: color(self.border, to.border, t),
-            width: mix(self.width, to.width, t),
-            opacity: mix(self.opacity, to.opacity, t),
-            shadow: shadow(self.shadow, to.shadow, t),
-            glow: shadow(self.glow, to.glow, t),
+            color: color(self.color, to.color, bounded),
+            background: color(self.background, to.background, bounded),
+            border: color(self.border, to.border, bounded),
+            width: mix(self.width, to.width, bounded),
+            opacity: mix(self.opacity, to.opacity, bounded),
+            shadow: shadow(self.shadow, to.shadow, bounded),
+            glow: shadow(self.glow, to.glow, bounded),
             offset: [
                 mix(self.offset[0], to.offset[0], t),
                 mix(self.offset[1], to.offset[1], t),
@@ -86,7 +87,10 @@ impl Track {
     }
     fn active(&self, now: Duration) -> bool {
         self.from != self.to
-            && now.saturating_sub(self.start).as_millis() < u128::from(self.animation.duration)
+            && self
+                .animation
+                .wait(now.saturating_sub(self.start))
+                .is_some()
     }
 }
 #[derive(Clone, Copy)]
@@ -99,7 +103,15 @@ struct Fade {
 }
 impl Fade {
     fn value(self, now: Duration) -> f32 {
+        self.raw_value(now).clamp(0., 1.)
+    }
+    fn raw_value(self, now: Duration) -> f32 {
         self.from + (1. - self.from) * self.progress(now)
+    }
+    fn active(self, now: Duration) -> bool {
+        self.animation
+            .wait(now.saturating_sub(self.start))
+            .is_some()
     }
     fn progress(self, now: Duration) -> f32 {
         self.animation
@@ -119,7 +131,7 @@ pub(crate) struct Motion {
     /// Physical pixels per logical pixel, for slide offsets.
     pub scale: f32,
     tracks: BTreeMap<String, Track>,
-    seen: BTreeMap<String, Kind>,
+    seen: BTreeMap<String, (Kind, u64)>,
     mounts: BTreeMap<String, Fade>,
     pub exits: Vec<Exit>,
     /// Frame sequences by element id: revision, start and length.
@@ -175,21 +187,19 @@ impl Motion {
             let f = fade.value(now);
             value.opacity *= f;
             let s = self.scale.max(0.25);
-            value.offset[0] += fade.slide[0] * s * (1. - f);
-            value.offset[1] += fade.slide[1] * s * (1. - f);
+            value.offset[0] += fade.slide[0] * s * (1. - fade.raw_value(now));
+            value.offset[1] += fade.slide[1] * s * (1. - fade.raw_value(now));
         }
         value
     }
     pub fn exit_value(&self, b: &LayoutBox, mut target: Visual) -> Visual {
         if let Some(value) = b.detached_visual {
-            return value;
+            target = value;
+        } else {
+            target.opacity *= b.detached_mount;
         }
-        target.opacity *= b.detached_mount;
-        if let Some(t) = b.effects.transition {
-            let s = self.scale.max(0.25);
-            target.offset[0] += t.1[0] * s * (1. - b.detached_mount);
-            target.offset[1] += t.1[1] * s * (1. - b.detached_mount);
-        }
+        target.offset[0] += b.detached_offset[0];
+        target.offset[1] += b.detached_offset[1];
         target
     }
     fn sampled_opacity(&self, b: &LayoutBox) -> f32 {
@@ -201,14 +211,20 @@ impl Motion {
             * self.mounts.get(&b.id).map_or(1., |f| f.value(self.now))
     }
     pub fn reconcile(&mut self, boxes: &[LayoutBox]) {
-        let live: BTreeMap<_, _> = boxes.iter().map(|b| (b.id.clone(), b.kind)).collect();
+        let live: BTreeMap<_, _> = boxes
+            .iter()
+            .map(|b| (b.id.clone(), (b.kind, b.effects.transition_revision)))
+            .collect();
         let mut restoring = BTreeMap::new();
         for e in &self.exits {
             if let Some(root) = e.boxes.first() {
-                if live.get(&root.id) == Some(&root.kind) {
+                if live
+                    .get(&root.id)
+                    .is_some_and(|(kind, _)| *kind == root.kind)
+                {
                     restoring.insert(
                         root.id.clone(),
-                        root.detached_mount * (1. - e.fade.progress(self.now)),
+                        root.detached_mount * (1. - e.fade.progress(self.now).clamp(0., 1.)),
                     );
                 }
             }
@@ -219,7 +235,7 @@ impl Motion {
             e.boxes.retain(|b| !live.contains_key(&b.id));
         }
         for b in boxes {
-            let fresh = self.seen.get(&b.id) != Some(&b.kind);
+            let fresh = self.seen.get(&b.id) != Some(&(b.kind, b.effects.transition_revision));
             if (fresh || restoring.contains_key(&b.id)) && !self.reduced {
                 if let Some(transition) = b.effects.transition {
                     self.mounts.insert(
@@ -305,6 +321,11 @@ impl Motion {
                                     });
                                 box_.detached_mount =
                                     self.mounts.get(&b.id).map_or(1., |f| f.value(self.now));
+                                if let Some(fade) = self.mounts.get(&b.id) {
+                                    box_.detached_offset = fade.slide.map(|v| {
+                                        v * self.scale.max(0.25) * (1. - fade.raw_value(self.now))
+                                    });
+                                }
                                 box_.detached_visual = self.tracks.get(&b.id).map(|t| {
                                     let mut v = t.sample(self.now);
                                     v.opacity *= box_.detached_mount;
@@ -425,7 +446,11 @@ impl Motion {
                 b.depth = depth + (b.depth - root.depth);
             }
             if let Some(b) = detached.first_mut() {
-                let opacity = missing * (1. - e.fade.progress(self.now));
+                let progress = e.fade.progress(self.now);
+                let opacity = missing * (1. - progress.clamp(0., 1.));
+                for axis in 0..2 {
+                    b.detached_offset[axis] += e.fade.slide[axis] * self.scale.max(0.25) * progress;
+                }
                 if let Some(v) = &mut b.detached_visual {
                     v.opacity *= opacity;
                 } else {
@@ -439,8 +464,8 @@ impl Motion {
     pub fn advance(&mut self, now: Duration) -> bool {
         let was = self.active();
         self.now = self.now.max(now);
-        self.mounts.retain(|_, f| f.progress(self.now) < 1.);
-        self.exits.retain(|e| e.fade.progress(self.now) < 1.);
+        self.mounts.retain(|_, f| f.active(self.now));
+        self.exits.retain(|e| e.fade.active(self.now));
         self.prune();
         was || self.active()
     }
@@ -453,10 +478,40 @@ impl Motion {
         self.tracks
             .retain(|id, _| self.seen.contains_key(id) || retained.contains(id));
     }
+    /// Zero means use the host's next frame; a positive delay can sleep without
+    /// drawing. No wait is needed for settled or reduced-motion scenes.
+    pub fn animation_wait(&self) -> Option<Duration> {
+        if self.reduced {
+            return None;
+        }
+        if self.frames_playing() {
+            return Some(Duration::ZERO);
+        }
+        self.tracks
+            .values()
+            .filter(|t| t.from != t.to)
+            .filter_map(|t| t.animation.wait(self.now.saturating_sub(t.start)))
+            .chain(
+                self.mounts
+                    .values()
+                    .filter_map(|f| f.animation.wait(self.now.saturating_sub(f.start))),
+            )
+            .chain(
+                self.exits
+                    .iter()
+                    .filter_map(|e| e.fade.animation.wait(self.now.saturating_sub(e.fade.start))),
+            )
+            .min()
+    }
+    pub fn has_offsets(&self) -> bool {
+        self.tracks
+            .values()
+            .any(|track| track.sample(self.now).offset != [0.; 2])
+    }
     pub fn active(&self) -> bool {
         !self.reduced
             && (self.tracks.values().any(|t| t.active(self.now))
-                || self.mounts.values().any(|f| f.progress(self.now) < 1.)
+                || self.mounts.values().any(|f| f.active(self.now))
                 || !self.exits.is_empty()
                 || self.frames_playing())
     }

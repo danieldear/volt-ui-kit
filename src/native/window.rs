@@ -431,6 +431,9 @@ fn run_host<C: 'static>(
         options.reduced_motion,
         std::env::var("VOLT_UI_REDUCED_MOTION").ok().as_deref(),
     );
+    #[cfg(target_os = "macos")]
+    let reduced_motion = reduced_motion
+        || objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
     runtime.set_reduced_motion(reduced_motion);
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     if let Some(messages) = messages.as_mut() {
@@ -1458,6 +1461,7 @@ impl<C: 'static> App<C> {
                 title,
                 [size.width as f32, size.height as f32],
                 &runtime.accessibility_multiselectable_ids(),
+                &runtime.accessibility_links(),
             );
             *ids = map;
             update
@@ -2229,7 +2233,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     // click places, two pick a word, three
                                     // the paragraph; Shift extends.
                                     let clicks = self.count_click([x, y]);
-                                    let selected = self.runtime.press_was_free()
+                                    let selected = self.runtime.press_allows_text_selection()
                                         && self.runtime.text_select_press(
                                             x,
                                             y,
@@ -2479,8 +2483,14 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
         }
         let now = Instant::now();
+        let previous_wait = self.runtime.animation_wait();
         let changed = self.advance_animations(now);
-        let active = self.animations_can_run() && self.runtime.is_animating();
+        let wait = if self.animations_can_run() {
+            self.runtime.animation_wait()
+        } else {
+            None
+        };
+        let active = wait == Some(Duration::ZERO);
         if active {
             self.update_pacing(now);
         }
@@ -2489,10 +2499,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             // Consume this deadline even if the platform coalesces the redraw;
             // never repeatedly wake at a deadline that is already in the past.
             self.animation_clock.presented(now);
-        } else if changed && !active {
+        } else if motion_needs_final_frame(changed, previous_wait, wait) {
             self.redraw();
         }
         let mut deadline = self.animation_clock.deadline(now, active);
+        if let Some(delay) = wait.filter(|delay| !delay.is_zero()) {
+            deadline = Some(now + delay);
+        }
         #[cfg(feature = "native-gpu")]
         {
             if self.gpu_retry.due(now) {
@@ -2609,6 +2622,16 @@ fn reduced_motion_enabled(option: bool, environment: Option<&str>) -> bool {
 }
 
 const ANIMATION_FRAME: Duration = Duration::from_nanos(16_666_667);
+// Present the endpoint even when another animation is waiting in a stagger gap.
+// Delayed-only scenes otherwise stay asleep without redrawing unchanged paint.
+fn motion_needs_final_frame(
+    changed: bool,
+    before: Option<Duration>,
+    after: Option<Duration>,
+) -> bool {
+    changed && after != Some(Duration::ZERO) && (after.is_none() || before == Some(Duration::ZERO))
+}
+
 /// Paces animation frames. Under vsync (GPU, FIFO presentation) the display
 /// sets the rate: the next frame is requested right after each present and
 /// the swap chain waits for the next refresh — 120 Hz on ProMotion — with no
@@ -2842,6 +2865,17 @@ mod tests {
         assert!(!reduced_motion_enabled(false, Some("0")));
         assert!(!reduced_motion_enabled(false, Some("true")));
         assert!(!reduced_motion_enabled(false, None));
+    }
+    #[test]
+    fn animation_endpoint_is_presented_before_a_stagger_gap_sleeps() {
+        let frame = Some(Duration::ZERO);
+        let delay = Some(Duration::from_millis(200));
+        assert!(motion_needs_final_frame(true, frame, delay));
+        assert!(motion_needs_final_frame(true, frame, None));
+        assert!(!motion_needs_final_frame(true, delay, delay));
+        assert!(!motion_needs_final_frame(true, frame, frame));
+        assert!(!motion_needs_final_frame(false, frame, delay));
+        assert!(!motion_needs_final_frame(false, None, None));
     }
     #[test]
     fn animation_clock_follows_vsync_or_a_drift_free_refresh_cadence() {

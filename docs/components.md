@@ -140,6 +140,83 @@ view(&App::default()).build()?;
   window. It is optional: compose your own shell from stacks when you need to.
 - With an option focused, arrow keys and Home/End move the selection.
 
+## Typed navigation and web links
+
+`navigation` still controls destination selection; routing is optional. For
+Back/Forward navigation, keep `NavigationHistory<Route>` in your app state.
+`navigation_link` passes a typed destination to your callback, and
+`navigation_stack` composes only the current route.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+
+#[derive(Clone, PartialEq)]
+enum Route { Home, Activity }
+struct App { history: NavigationHistory<Route> }
+
+fn view(app: &App) -> Element<App> {
+    vstack![
+        navigation_link("Activity", Route::Activity).key("activity")
+            .on_navigate(|app: &mut App, route| { app.history.push(route); }),
+        button("Back").key("back").enabled(app.history.can_go_back())
+            .on_click(|app: &mut App| { app.history.back(); }),
+        navigation_stack(&app.history, |route| match route {
+            Route::Home => text("Home").key("home-page").into(),
+            Route::Activity => text("Activity").key("activity-page").into(),
+        }).key("current-page"),
+    ].into()
+}
+let mut history = NavigationHistory::new(Route::Home);
+history.push(Route::Activity);
+let checkpoint = history.snapshot();
+assert!(history.back());
+history.restore(checkpoint).unwrap();
+assert!(matches!(history.current(), Route::Activity));
+```
+
+History defaults to 128 entries; `with_capacity(root, 1..=1024)` customizes the
+bound. Pushing the current route does nothing, including preserving Forward.
+Pushing after Back discards the forward branch; overflow removes the oldest
+entry. `replace(route)` changes only the current entry; `reset(root)` clears
+history. `NavigationSnapshot` supports Serde; `restore` validates its length and
+index before changing anything. Bound serialized input before deserializing.
+Persistent page models, scroll/focus restoration, route decoding and OS deep-link
+registration are **application responsibilities**, not automatic behavior.
+Use route-specific keys for independent page controls.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+#[derive(Default)]
+struct App { destination: Option<ExternalUrl> }
+let ui: Element<App> = link("Read the guide ↗", "https://example.com/guide")
+    .key("guide")
+    .on_open(|app: &mut App, url| app.destination = Some(url))
+    .into();
+ui.build().unwrap(); // Does not open a browser or perform I/O.
+```
+
+Standalone links require a nonempty label, stable key and callback. They support
+shared style modifiers, theme colors, hover/press/focus feedback, Tab/Shift-Tab
+and Enter activation, plus `.enabled(false)`. Native AccessKit exposes a Link
+role and the external URL. Custom hosts can read `Runtime::accessibility_links()`
+alongside `accessibility_nodes()`; the legacy `AccessNode`/`AccessRole` shapes are
+unchanged. A `None` URL denotes an internal navigation link. Removed, disabled
+or out-of-modal-scope links cannot activate through the runtime.
+
+`ExternalUrl::parse` accepts absolute ASCII HTTP(S) URLs up to 4096 bytes. It
+rejects credentials, malformed ports/escapes, whitespace/control characters and
+executable/local-file/custom schemes. Encode Unicode domains/paths first.
+Validation does not imply that a website is trustworthy. Inline `span(..).link(..)`
+remains a separate rich-text callback API; standalone-link keyboard behavior does
+not make individual inline spans focusable. See [browser dispatch](app-services.md#opening-web-links)
+for explicit native opening. Try both workflows on the Catalog's Navigation page.
+
+## Motion and effects
+
+See [animation and transitions](styling-and-themes.md#animation-and-transitions)
+for finite springs, staggered entrances, replay revisions, interaction feedback
+and reduced-motion behavior. Try the Catalog’s **Effects & motion** page.
+
 ## Customizing component spacing
 
 Constructor sizes are defaults, not fixed design requirements. Keep the defaults

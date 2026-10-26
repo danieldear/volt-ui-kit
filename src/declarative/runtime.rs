@@ -323,6 +323,7 @@ pub struct LayoutBox {
     pub(crate) progress: Option<super::document::ProgressProps>,
     pub(crate) detached_visual: Option<Visual>,
     pub(crate) detached_mount: f32,
+    pub(crate) detached_offset: [f32; 2],
     pub(crate) departing: bool,
     pub(crate) detached_state: Option<ButtonState>,
     /// Paint-only extras: cursor, translation, border sides/style, gradient.
@@ -592,6 +593,19 @@ impl Runtime {
         let active = self.progress_active() || active;
         active
     }
+    /// Next useful motion update: None when idle, zero for frame-paced motion,
+    /// or a positive wait when every finite animation is still in its delay.
+    /// Custom hosts can sleep until then rather than redraw an unchanged frame.
+    pub fn animation_wait(&self) -> Option<Duration> {
+        #[cfg(feature = "rust-ui")]
+        if self.progress_active() {
+            return Some(Duration::ZERO);
+        }
+        if self.ambient_active() {
+            return Some(Duration::ZERO);
+        }
+        self.motion.borrow().animation_wait()
+    }
     pub fn set_reduced_motion(&mut self, reduced: bool) {
         #[cfg(feature = "rust-ui")]
         self.set_progress_reduced(reduced);
@@ -716,6 +730,13 @@ impl Runtime {
         values: &Bindings,
     ) -> Result<(), DocumentError> {
         next.validate_connections(handlers, values)?;
+        // An application root is a context boundary (e.g. another chat).
+        // Virtualized rows may disappear inside the SAME root without
+        // discarding copy text, but a new root must not inherit it.
+        #[cfg(feature = "rust-ui")]
+        if self.document.root().id() != next.root().id() {
+            self.cancel_text_selection_scope();
+        }
         fn find<'a>(node: &'a Node, id: &str) -> Option<&'a Node> {
             if node.id() == id {
                 return Some(node);
@@ -879,6 +900,7 @@ impl Runtime {
         }
         self.last_viewport = Some(key);
         self.scale = viewport.scale;
+        self.motion.get_mut().scale = self.scale;
         #[cfg(feature = "rust-ui")]
         self.prepare_overlay_layout(viewport);
         let anchored = self.follow_scroll_ends();
@@ -2284,16 +2306,21 @@ impl Runtime {
         // Offsets (fixed, hover/press lifts, slide-ins) move whole subtrees at
         // paint time; layout and hit targets keep their places.
         let list = boxes.as_deref().unwrap_or(&self.boxes);
-        let moving = list.iter().any(|b| {
-            b.ext.offset != [0.; 2]
-                || b.effects.transition.is_some_and(|t| t.1 != [0.; 2])
-                || std::iter::once(&b.effects.base)
-                    .chain(&b.effects.states)
-                    .any(|s| s.offset.is_some())
-        });
+        let moving = motion.has_offsets()
+            || list.iter().any(|b| {
+                b.ext.offset != [0.; 2]
+                    || b.effects.transition.is_some_and(|t| t.1 != [0.; 2])
+                    || std::iter::once(&b.effects.base)
+                        .chain(&b.effects.states)
+                        .any(|s| s.offset.is_some())
+            });
         if moving {
             let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
             for i in 0..list.len() {
+                // Both paint passes must resolve the same target. Otherwise
+                // token colors alternate with layout fallbacks every frame,
+                // continuously restarting an otherwise finite animation.
+                list[i].style.resolve_colors(ui);
                 let b = &list[i];
                 let state = self.state_for_box(b);
                 let target = visual_target(b, state, ui, self.scale);
@@ -2609,28 +2636,15 @@ impl Runtime {
                             hovered,
                         );
                     }
-                    let style = &b.text_style;
-                    if style.underline || style.strikethrough {
-                        let size = style.size;
-                        let thickness = (size / 14.).max(self.scale).round().max(1.);
-                        for [x, baseline, width] in p.ui_text_lines(&b.text, r, style) {
-                            for (on, y) in [
-                                (style.underline, baseline + size * 0.14),
-                                (style.strikethrough, baseline - size * 0.3),
-                            ] {
-                                if on && width > 0. {
-                                    let y = y.round() + thickness * 0.5;
-                                    p.card_line(
-                                        &mut shapes,
-                                        [x, y],
-                                        [x + width, y],
-                                        thickness,
-                                        text_color,
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    paint_text_decorations(
+                        p,
+                        &mut shapes,
+                        &b.text,
+                        r,
+                        &b.text_style,
+                        text_color,
+                        self.scale,
+                    );
                 }
             }
             Kind::Button => {
@@ -2737,17 +2751,21 @@ impl Runtime {
                 let along = b
                     .label_flow
                     .map_or(default_along, |flow| flow.fractions()[0]);
-                p.ui_text_styled(
-                    &mut glyphs,
+                let label_bounds = [
+                    r[0] + lead + ((r[2] - lead - inset - chevron - w) * along).max(0.),
+                    r[1] + (r[3] - h) * 0.5,
+                    max_width,
+                    h,
+                ];
+                p.ui_text_styled(&mut glyphs, &b.text, label_bounds, &b.text_style, color);
+                paint_text_decorations(
+                    p,
+                    &mut shapes,
                     &b.text,
-                    [
-                        r[0] + lead + ((r[2] - lead - inset - chevron - w) * along).max(0.),
-                        r[1] + (r[3] - h) * 0.5,
-                        max_width,
-                        h,
-                    ],
+                    label_bounds,
                     &b.text_style,
                     color,
+                    self.scale,
                 );
             }
             Kind::Checkbox | Kind::Toggle => {
@@ -3597,6 +3615,34 @@ fn resolve_styles(
     );
     for child in &n.children {
         resolve_styles(child, &text, scale, logical_width, out, depth + 1);
+    }
+}
+/// Text and button/link labels share decoration geometry. Default controls
+/// remain unchanged; adapters without line metrics retain their existing fallback.
+fn paint_text_decorations<P: DocumentPainter>(
+    p: &mut P,
+    shapes: &mut Vec<P::Shape>,
+    text: &str,
+    bounds: [f32; 4],
+    style: &TextStyle,
+    color: [f32; 4],
+    scale: f32,
+) {
+    if !(style.underline || style.strikethrough) {
+        return;
+    }
+    let size = style.size;
+    let thickness = (size / 14.).max(scale).round().max(1.);
+    for [x, baseline, width] in p.ui_text_lines(text, bounds, style) {
+        for (on, y) in [
+            (style.underline, baseline + size * 0.14),
+            (style.strikethrough, baseline - size * 0.3),
+        ] {
+            if on && width > 0. {
+                let y = y.round() + thickness * 0.5;
+                p.card_line(shapes, [x, y], [x + width, y], thickness, color);
+            }
+        }
     }
 }
 /// Rich text: run colours, code backgrounds behind their ranges, glyphs,
@@ -4577,6 +4623,7 @@ fn place(
         progress: n.progress.clone(),
         detached_visual: None,
         detached_mount: 1.,
+        detached_offset: [0.; 2],
         departing: false,
         detached_state: None,
         ext: BoxExtras {
