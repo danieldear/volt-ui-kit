@@ -489,6 +489,7 @@ fn run_host<C: 'static>(
         last_click: None,
         painter: RasterPainter::new(Viewport::new(860., 640., 1.).unwrap()),
         pointer: None,
+        key_scroll_at: None,
         modifiers: ModifiersState::empty(),
         activation_key: None,
         dropped: Vec::new(),
@@ -602,6 +603,9 @@ struct App<C> {
     last_click: Option<(Instant, [f32; 2], u8)>,
     painter: RasterPainter,
     pointer: Option<[f32; 2]>,
+    /// Where the last left press landed: arrow and page keys no control
+    /// takes scroll the view there, else the one under the pointer.
+    key_scroll_at: Option<[f32; 2]>,
     modifiers: ModifiersState,
     activation_key: Option<NamedKey>,
     /// Files from one system drop arrive as separate events; batched per turn.
@@ -2197,6 +2201,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     if let Some([x, y]) = self.pointer {
                         match state {
                             ElementState::Pressed => {
+                                self.key_scroll_at = Some([x, y]);
                                 self.runtime.pointer_move(x, y);
                                 self.activation_key = None;
                                 if self.runtime.drag_region_hit(x, y) {
@@ -2391,6 +2396,36 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     self.activation_key = None;
                                 }
                                 self.after_input(outcome)?;
+                            }
+                            // Nothing took them: scroll the content, as a
+                            // reader expects of a page.
+                            NamedKey::ArrowUp
+                            | NamedKey::ArrowDown
+                            | NamedKey::PageUp
+                            | NamedKey::PageDown
+                                if event.state == ElementState::Pressed =>
+                            {
+                                if let Some([x, y]) = self.key_scroll_at.or(self.pointer) {
+                                    let [line, page] = self.runtime.key_scroll_steps(x, y);
+                                    let dy = match key {
+                                        NamedKey::ArrowUp => -line,
+                                        NamedKey::ArrowDown => line,
+                                        NamedKey::PageUp => -page,
+                                        _ => page,
+                                    };
+                                    let outcome = self
+                                        .runtime
+                                        .scroll_outcome(x, y, [0., dy], &mut self.handlers, &mut self.context)
+                                        .map_err(|e| e.to_string())?;
+                                    if outcome.changed || outcome.activated {
+                                        self.after_input(outcome)?;
+                                        self.layout()?;
+                                        if let Some([px, py]) = self.pointer {
+                                            self.runtime.pointer_move(px, py);
+                                        }
+                                        self.redraw();
+                                    }
+                                }
                             }
                             NamedKey::Enter | NamedKey::Space => match event.state {
                                 ElementState::Pressed

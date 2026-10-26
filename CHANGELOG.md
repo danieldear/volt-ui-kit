@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Arrow keys and Page Up/Down that no control takes scroll the view you
+  last pressed in, or the one under the pointer: a line, or the view's
+  height less a line. `Runtime::key_scroll_steps` gives both. Tests:
+  `tests/focus_scroll_polish.rs`.
 - Menus follow one design: every row's label starts on one edge (past a
   glyph column only when some row has a check or an icon), rows are 12.5
   regular, hover and keyboard focus fill with the accent at low strength

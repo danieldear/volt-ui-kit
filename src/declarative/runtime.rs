@@ -1318,6 +1318,24 @@ impl Runtime {
     pub fn scroll_offset(&self, id: &str) -> [f32; 2] {
         self.scroll_offsets.get(id).copied().unwrap_or([0.; 2])
     }
+    /// What the keys scroll at a point (physical pixels), in logical pixels:
+    /// a line, and a page (the innermost scroll view's height less a line).
+    /// Native hosts send arrows and Page Up/Down that no control took here.
+    pub fn key_scroll_steps(&self, x: f32, y: f32) -> [f32; 2] {
+        const LINE: f32 = 40.;
+        let page = self
+            .boxes
+            .iter()
+            .rev()
+            .find(|b| {
+                b.scroll.is_some()
+                    && self.scope_allows_id(&b.id)
+                    && b.clip.contains(x, y)
+                    && b.bounds.contains(x, y)
+            })
+            .map_or(LINE * 10., |b| (b.bounds.bounds()[3] / self.scale - LINE).max(LINE));
+        [LINE, page]
+    }
     /// Pointer is physical pixels; delta is logical pixels, positive toward end.
     /// Unconsumed deltas bubble from the topmost scroll view to its ancestors.
     pub fn scroll_at(&mut self, x: f32, y: f32, mut delta: [f32; 2]) -> bool {
