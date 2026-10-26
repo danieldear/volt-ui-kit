@@ -420,3 +420,15 @@ fn primary_variant_uses_the_paired_content_token() {
     let (document, _) = ui.build().unwrap().into_parts();
     assert!(format!("{:?}", document.root()).contains("@primary-content"));
 }
+
+#[test]
+fn state_colours_take_light_dark_pairs_and_tokens_like_static_styles() {
+    let good: Element<()> = text("X")
+        .hover_style(|s| s.background("#0000000D|#FFFFFF12").color("@primary/80"))
+        .pressed_style(|s| s.border_color("@border|#FFFFFF33"))
+        .shadow(Shadow::new().color("#00000022|#00000066"))
+        .into();
+    assert!(good.build().is_ok());
+    let bad: Element<()> = text("X").hover_style(|s| s.background("#000|#FFF|#123")).into();
+    assert!(bad.build().is_err(), "still only one light and one dark half");
+}

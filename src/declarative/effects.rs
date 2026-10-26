@@ -1,5 +1,4 @@
 //! Typed, opt-in appearance and time-based motion. Values use logical pixels.
-use super::document::parse_color;
 use super::DocumentError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -447,7 +446,8 @@ impl Effects {
                 .into_iter()
                 .flatten()
             {
-                if parse_color(color).is_none() && crate::ColorToken::parse(color).is_none() {
+                // Hex, a token, or a "light|dark" pair, as static styles take.
+                if !crate::theme::is_color_value(color) {
                     return Err(invalid());
                 }
             }
@@ -461,8 +461,7 @@ impl Effects {
                 return Err(invalid());
             }
             for shadow in style.shadow.iter().chain(style.glow.iter().map(|v| &v.0)) {
-                if (parse_color(&shadow.color).is_none()
-                    && crate::ColorToken::parse(&shadow.color).is_none())
+                if !crate::theme::is_color_value(&shadow.color)
                     || !shadow.blur.is_finite()
                     || !(0. ..=64.).contains(&shadow.blur)
                     || !shadow.spread.is_finite()

@@ -8,7 +8,7 @@ them.
 
 | Area | Modifiers |
 | --- | --- |
-| Text | `font_family`, `font_size`, `font_weight`, `italic`, `color`, `line_height`, `letter_spacing`, `text_align`, `uppercase`, `underline`, `strikethrough`, `max_lines` (ellipsis), `no_wrap` |
+| Text | `font_family`, `font_size`, `text_scale`, `font_weight`, `italic`, `color`, `line_height`, `letter_spacing`, `text_align`, `uppercase`, `underline`, `strikethrough`, `max_lines` (ellipsis), `no_wrap` |
 | Surface | `background`, `background_gradient`, `border_color`, `border_width`, `border_style`, `border_sides`, `rounded`, `rounded_on` |
 | Effects | `shadow`, `glow`, `opacity`, `hover_style`, `pressed_style`, `focus_style`, `disabled_style` |
 | Interaction | `accent_color`, `cursor`, `enabled` |
@@ -137,6 +137,11 @@ println!("registered {families:?}");
 
 Up to 64 font files (256 MiB in total) can be registered.
 
+
+`text_scale(f)` multiplies every font size beneath it, explicit sizes
+included, and nested scales multiply (clamped to 0.5–2). Put it on the root
+to offer an interface text-size setting; code views keep their own size.
+
 ## Effects and interaction states
 
 ```rust
@@ -159,6 +164,11 @@ save.build()?;
 - `.opacity(..)` fades a whole subtree as one layer. It does not disable input.
 - State styles apply in the order focus, hover, pressed; disabled controls use
   `disabled_style` instead. Focus rings appear only after keyboard navigation.
+
+
+State styles accept the same colour values as static ones: `#RRGGBB[AA]`, a
+token such as `@primary/80`, or a `"light|dark"` pair, so a hover follows the
+appearance in effect. Shadows take pairs too.
 
 ## Animation and transitions
 

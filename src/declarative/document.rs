@@ -125,6 +125,10 @@ pub(crate) struct NodeStyle {
     pub corners: Option<[Rounding; 4]>,
     pub font_family: Option<String>,
     pub font_size: Option<f32>,
+    /// Rust-only: multiplies every font size beneath, including explicit
+    /// ones, so one setting can enlarge an interface; schema 1 unchanged.
+    #[serde(skip)]
+    pub text_scale: Option<f32>,
     pub font_weight: Option<u16>,
     pub font_style: Option<FontSlant>,
     /// Rust-only tracking in em (fraction of the font size); schema 1 unchanged.

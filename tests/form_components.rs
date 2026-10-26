@@ -23,6 +23,8 @@ struct App {
     quantity: f64,
     fruit: Option<u8>,
     combo: ComboboxState,
+    many: ComboboxState,
+    font: Option<u8>,
     tags: Vec<String>,
     tag_state: TagInputState,
     colour: String,
@@ -52,6 +54,15 @@ fn view(app: &App) -> Element<App> {
             .selected(app.fruit)
             .state(|app: &mut App| &mut app.combo)
             .on_select(|app: &mut App, v| app.fruit = Some(v)),
+        combobox((0u8..20).map(|i| (i, format!("Font {i}"))), &app.many)
+            .key("many")
+            .selected(app.font)
+            .max_results(20)
+            .height(30.)
+            .font_size(12.5)
+            .surface("#202020")
+            .state(|app: &mut App| &mut app.many)
+            .on_select(|app: &mut App, v| app.font = Some(v)),
         tag_input(&app.tags, &app.tag_state)
             .key("tags")
             .state(|app: &mut App| &mut app.tag_state)
@@ -210,6 +221,18 @@ fn combobox_filters_and_picks_with_click_or_enter() {
     assert_eq!(h.app.fruit, Some(2), "Enter picks the best match");
     h.click("fruit-toggle");
     assert!(h.app.combo.open && h.app.combo.query.is_empty());
+}
+
+#[test]
+fn a_combobox_can_list_every_option_and_still_filters() {
+    let mut h = Harness::new();
+    h.click("many-toggle");
+    assert!(h.app.many.open);
+    assert!(h.has("many-option-0") && h.has("many-option-8"), "more than eight listed; the rest scroll into view");
+    h.type_into("many-field", "font 1");
+    assert!(h.has("many-option-1") && h.has("many-option-12") && !h.has("many-option-2"));
+    h.enter();
+    assert_eq!(h.app.font, Some(1), "the prefix match comes first");
 }
 
 #[test]

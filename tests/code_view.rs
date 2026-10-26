@@ -952,3 +952,36 @@ fn the_caret_can_be_a_line_a_block_or_an_underline() {
     assert!(caret(&mut doc, 1).contains(&[edge, top + 2., 6.5, 16.]), "a block one character wide");
     assert!(caret(&mut doc, 2).contains(&[edge, top + 16., 6.5, 2.]), "an underline beneath it");
 }
+
+#[test]
+fn the_scrollbar_thumb_drags_and_the_track_jumps_without_moving_the_caret() {
+    let mut doc = Doc::new(1000);
+    let mut m = Mounted::new(&mut doc);
+    let [x, y, w, h] = m.bounds();
+    m.paint();
+    let none = InputModifiers::default();
+    let strip = x + w - 6.;
+    // Hold the thumb at the top of the track and drag it halfway down.
+    let held = m
+        .runtime
+        .code_pointer_down(strip, y + 10., 1, none, &mut m.handlers, &mut doc)
+        .unwrap();
+    assert!(held.is_some(), "the scrollbar takes the press");
+    let pressed = |d: &Doc| d.inputs.iter().any(|i| matches!(i, CodeInput::Press { .. } | CodeInput::Drag { .. }));
+    assert!(!pressed(&doc), "no caret press reaches the application");
+    m.runtime
+        .code_pointer_drag(strip, y + h / 2., &mut m.handlers, &mut doc)
+        .unwrap();
+    let mid = m.runtime.code_view_offset("code").unwrap()[1];
+    let max = 999. * 20.;
+    assert!(mid > max * 0.35 && mid < max * 0.65, "halfway down the track is halfway through: {mid}");
+    assert!(m.runtime.code_pointer_up());
+    // Pressing the track brings the thumb there.
+    m.runtime
+        .code_pointer_down(strip, y + h - 4., 1, none, &mut m.handlers, &mut doc)
+        .unwrap();
+    m.runtime.code_pointer_up();
+    let end = m.runtime.code_view_offset("code").unwrap()[1];
+    assert!(end > max * 0.95, "the bottom of the track is the end: {end}");
+    assert!(!pressed(&doc));
+}

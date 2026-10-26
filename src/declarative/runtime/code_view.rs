@@ -164,6 +164,8 @@ pub enum CodeInput {
 
 /// Most lines one document may carry; supply a window around the visible one.
 pub(crate) const MAX_CODE_LINES: usize = 4096;
+/// How far in from the right edge a press counts as on the scrollbar.
+const SCROLLBAR_HIT: f32 = 14.;
 /// Longest line text accepted; longer lines should be cut by the application.
 pub(crate) const MAX_CODE_LINE: usize = 64 * 1024;
 /// Most decorations one view may carry; supply those near the window.
@@ -300,6 +302,9 @@ pub(crate) struct CodeViewState {
     preedit: String,
     preedit_cursor: Option<(usize, usize)>,
     dragging: bool,
+    /// While the scrollbar's thumb is held: where in it (physical, from its
+    /// top) the pointer took hold.
+    thumb: Option<f32>,
     /// Character advance (logical) measured for the font at the last paint.
     advance: Option<f32>,
     /// Caret stops (logical x per character boundary) of painted lines that
@@ -348,6 +353,39 @@ impl Runtime {
             advance: advance * s,
             scale: s,
         }
+    }
+    /// The overlay scrollbar, physical: `[x, track top, track length,
+    /// thumb length, thumb top]`, or `None` when everything fits.
+    fn code_scrollbar(&self, b: &LayoutBox, props: &CodeViewProps, offset_y: f32) -> Option<[f32; 5]> {
+        let s = self.scale;
+        let [bx, by, bw, bh] = b.bounds.bounds();
+        let lh = props.line_height * s;
+        let content = props.line_count as f32 * lh + bh - lh;
+        if content <= bh * 1.01 {
+            return None;
+        }
+        let track = bh - 12. * s;
+        let length = (track * bh / content).clamp(24. * s, track);
+        let max = (props.line_count.saturating_sub(1)) as f32 * props.line_height;
+        let t = if max > 0. { (offset_y / max).clamp(0., 1.) } else { 0. };
+        let top = by + 6. * s;
+        Some([bx + bw - SCROLLBAR_HIT * s, top, track, length, top + (track - length) * t])
+    }
+    /// Moves a held thumb so the pointer keeps its hold at physical `y`.
+    fn code_drag_thumb(&self, b: &LayoutBox, props: &CodeViewProps, y: f32, grab: f32) -> bool {
+        let mut states = self.code_views.borrow_mut();
+        let Some(st) = states.get_mut(&b.id) else {
+            return false;
+        };
+        let Some([_, top, track, length, _]) = self.code_scrollbar(b, props, st.offset[1]) else {
+            return false;
+        };
+        let room = (track - length).max(1.);
+        let t = ((y - grab - top) / room).clamp(0., 1.);
+        let max = (props.line_count.saturating_sub(1)) as f32 * props.line_height;
+        let old = st.offset[1];
+        st.offset[1] = (t * max).round();
+        st.offset[1] != old
     }
     fn code_max_offset(
         &self,
@@ -411,6 +449,15 @@ impl Runtime {
         self.boxes
             .iter()
             .find(|b| b.id == id && b.ext.code.is_some() && b.enabled)
+    }
+    /// Whether physical `x`, `y` is over a code view's scrollbar, which takes
+    /// presses for itself (and shows the arrow, not the I-beam).
+    pub(super) fn code_scrollbar_at(&self, x: f32, y: f32) -> bool {
+        let held = self.code_views.borrow().values().any(|st| st.thumb.is_some());
+        held || self.code_box_at(x, y).is_some_and(|b| {
+            let offset = self.code_views.borrow().get(&b.id).map_or(0., |st| st.offset[1]);
+            self.code_scrollbar(b, b.ext.code.as_deref().unwrap(), offset).is_some_and(|[left, ..]| x >= left)
+        })
     }
     /// Whether a press at physical `x`, `y` lands on a code view.
     pub fn code_view_at(&self, x: f32, y: f32) -> bool {
@@ -535,6 +582,18 @@ impl Runtime {
         let Some(b) = self.code_box_at(x, y).cloned() else {
             return Ok(None);
         };
+        // The scrollbar strip: hold the thumb and drag it, or press the
+        // track to bring the thumb under the pointer and keep dragging.
+        let props = b.ext.code.as_deref().unwrap();
+        let offset = self.code_views.borrow().get(&b.id).map_or(0., |st| st.offset[1]);
+        if let Some([left, _, _, length, thumb]) = self.code_scrollbar(&b, props, offset) {
+            if x >= left {
+                let grab = if (thumb..thumb + length).contains(&y) { y - thumb } else { length / 2. };
+                self.code_views.borrow_mut().entry(b.id.clone()).or_default().thumb = Some(grab);
+                let changed = self.code_drag_thumb(&b, props, y, grab);
+                return Ok(Some(InputOutcome { changed: true, activated: changed }));
+            }
+        }
         self.ime_cancel();
         let at = self.code_position_at(&b, x, y);
         self.focused = Some(b.id.clone());
@@ -567,6 +626,18 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         ctx: &mut C,
     ) -> Result<Option<InputOutcome>, DocumentError> {
+        let held = self
+            .code_views
+            .borrow()
+            .iter()
+            .find_map(|(id, st)| st.thumb.map(|grab| (id.clone(), grab)));
+        if let Some((id, grab)) = held {
+            let Some(b) = self.boxes.iter().find(|b| b.id == id && b.ext.code.is_some()).cloned() else {
+                return Ok(None);
+            };
+            let changed = self.code_drag_thumb(&b, b.ext.code.as_deref().unwrap(), y, grab);
+            return Ok(Some(InputOutcome { changed, activated: changed }));
+        }
         let Some(b) = self.focused_code().cloned() else {
             return Ok(None);
         };
@@ -606,6 +677,7 @@ impl Runtime {
         let mut changed = false;
         for st in self.code_views.get_mut().values_mut() {
             changed |= std::mem::take(&mut st.dragging);
+            changed |= st.thumb.take().is_some();
         }
         changed
     }
@@ -1337,11 +1409,13 @@ impl Runtime {
                     0.
                 };
                 let top = by + 6. * s + (track - length) * t;
+                // Held, it widens and darkens so it reads as grabbed.
+                let (w, a) = if st.thumb.is_some() { (9., 0.3) } else { (7., 0.14) };
                 p.card_round(
                     &mut shapes,
-                    [bx + bw - 11. * s, top, 7. * s, length],
-                    3.5 * s,
-                    with_alpha(text_color, 0.14),
+                    [bx + bw - (4. + w) * s, top, w * s, length],
+                    w / 2. * s,
+                    with_alpha(text_color, a),
                 );
             }
             let rows = props.line_count.max(1) as f32;

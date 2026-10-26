@@ -1450,6 +1450,10 @@ impl Runtime {
                 Cursor::ResizeRow
             };
         }
+        #[cfg(feature = "rust-ui")]
+        if self.code_scrollbar_at(x, y) {
+            return Cursor::Default;
+        }
         // Start from the control that would receive the press (as hover
         // does), so full-window passthrough layers such as toast stacks do
         // not hide the cursor of what lies beneath them.
@@ -3514,6 +3518,8 @@ struct InheritedStyle {
     select_handler: Option<String>,
     family: Option<String>,
     size: Option<f32>,
+    /// The product of every `text_scale` above.
+    scale: Option<f32>,
     weight: Option<u16>,
     italic: Option<bool>,
     tracking: Option<f32>,
@@ -3534,6 +3540,9 @@ fn resolve_styles(
         text.family = Some(family.clone());
     }
     text.size = n.style.font_size.or(n.font_size).or(text.size);
+    if let Some(k) = n.style.text_scale {
+        text.scale = Some(text.scale.unwrap_or(1.) * k);
+    }
     text.weight = n.style.font_weight.or(text.weight);
     text.italic = n
         .style
@@ -3571,7 +3580,7 @@ fn resolve_styles(
             layout: ResolvedLayout::new(n, scale, logical_width),
             text: TextStyle {
                 family: text.family.clone().unwrap_or_else(|| "system".into()),
-                size: text.size.unwrap_or(default_size) * scale,
+                size: text.size.unwrap_or(default_size) * text.scale.unwrap_or(1.) * scale,
                 weight: text.weight.unwrap_or(400),
                 italic: text.italic.unwrap_or(false),
                 tracking: text.tracking.unwrap_or(0.),
@@ -5478,6 +5487,65 @@ mod style_component_tests {
             .bounds
             .bounds();
         [x + w * 0.5, y + h * 0.5]
+    }
+    #[cfg(feature = "rust-ui")]
+    #[test]
+    fn padded_children_of_a_wrapping_row_keep_both_insets() {
+        use crate::ui::prelude::*;
+        let chip = |k: &str| -> crate::ui::Element<()> {
+            hstack([text("Hello").key(format!("{k}-label")).into()])
+                .key(k.to_string())
+                .justify(Justify::Center)
+                .align(Align::Center)
+                .height(28.)
+                .min_width(28.)
+                .rounded(6.)
+                .background("#00000010")
+                .accessible_label("Hello")
+                .padding(12., Edge::Left)
+                .padding(12., Edge::Right)
+                .hover_style(|s| s.background("#00000020"))
+                .on_click_with(|_: &mut (), _| {})
+                .into()
+        };
+        let tree: crate::ui::Element<()> = vstack([
+            hstack([chip("a"), chip("b")]).key("plain").gap(8., Axis::Horizontal).into(),
+            hstack([chip("c"), chip("d")]).key("wrapping").gap(8., Axis::Horizontal).wrap(true).justify(Justify::Center).into(),
+        ])
+        .key("root")
+        .into();
+        let (doc, h) = tree.build().unwrap().into_parts();
+        let v = Bindings::default();
+        let mut r = Runtime::new(doc, &h, &v).unwrap();
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder).unwrap();
+        let b = |id: &str| r.boxes().iter().find(|b| b.id == id).unwrap().bounds.bounds();
+        for k in ["a", "c"] {
+            let (outer, label) = (b(k), b(&format!("{k}-label")));
+            let (left, right) = (label[0] - outer[0], outer[0] + outer[2] - label[0] - label[2]);
+            assert!((left - 12.).abs() < 0.5 && (right - 12.).abs() < 0.5, "{k}: insets {left} and {right}, outer {outer:?} label {label:?}");
+        }
+    }
+    #[cfg(feature = "rust-ui")]
+    #[test]
+    fn text_scale_multiplies_explicit_and_inherited_sizes_and_nests() {
+        use crate::ui::prelude::*;
+        let tree: crate::ui::Element<()> = vstack([
+            text("Inherited").key("inherited").into(),
+            text("Explicit").key("explicit").font_size(12.).into(),
+            vstack([text("Nested").key("nested").font_size(10.).into()]).key("inner").text_scale(2.).into(),
+        ])
+        .key("root")
+        .font_size(16.)
+        .text_scale(1.25)
+        .into();
+        let (doc, h) = tree.build().unwrap().into_parts();
+        let v = Bindings::default();
+        let mut r = Runtime::new(doc, &h, &v).unwrap();
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder).unwrap();
+        let size = |id: &str| r.boxes().iter().find(|b| b.id == id).unwrap().text_style.size;
+        assert_eq!(size("inherited"), 20.);
+        assert_eq!(size("explicit"), 15.);
+        assert_eq!(size("nested"), 25.);
     }
     #[test]
     fn typography_inherits_and_local_overrides_take_precedence() {

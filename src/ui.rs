@@ -876,6 +876,8 @@ macro_rules! modifiers {
             pub fn ambient(mut self, ambient:Ambient) -> Self { self.$($field)*.effects.ambient=Some(ambient); self }
             pub fn font_family(mut self, value: impl Into<String>) -> Self { self.$($field)*.style.font_family = Some(value.into()); self }
             pub fn font_size(mut self, value: f32) -> Self { self.$($field)*.style.font_size = Some(value); self }
+            /// Multiplies every font size beneath, explicit ones included (code views keep their own size). Nested scales multiply; clamped to 0.5..=2.
+            pub fn text_scale(mut self, value: f32) -> Self { self.$($field)*.style.text_scale = Some(if value.is_finite() { value.clamp(0.5, 2.) } else { 1. }); self }
             pub fn font_weight(mut self, value: u16) -> Self { self.$($field)*.style.font_weight = Some(value); self }
             /// Horizontal alignment of text lines within the element (inherited).
             pub fn text_align(mut self, value: TextAlign) -> Self { self.$($field)*.style.text_align = Some(value); self }

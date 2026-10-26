@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The code view's scrollbar can be held and dragged, and pressing its track
+  brings the thumb under the pointer. The held thumb widens and darkens,
+  the pointer shows the arrow over the scrollbar, and no caret press reaches
+  the application. Tests: `tests/code_view.rs`.
+- Add `text_scale(f)`: multiplies every font size beneath, explicit ones
+  included, for an interface text-size setting.
+- `combobox` takes `.max_results(n)` (up to 128, scrolling past nine rows),
+  `.surface(..)`, `.height(..)` and `.font_size(..)`, so it can replace a
+  select you type into.
+- Hover, pressed, focus and disabled styles, and shadows, accept tokens and
+  `"light|dark"` pairs like static styles instead of failing validation.
 - Add `code_view(line_count)`, a controlled, virtualized code surface for
   editors (built for Volt Editor). The application keeps the document and
   supplies only the lines around the visible window (`.lines(first, ..)`)

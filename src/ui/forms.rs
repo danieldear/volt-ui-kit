@@ -336,6 +336,10 @@ pub struct Combobox<C, T> {
     on_select: Option<Select<C, T>>,
     placeholder: String,
     width: f32,
+    height: f32,
+    font_size: Option<f32>,
+    surface: Option<String>,
+    max_results: usize,
 }
 pub fn combobox<C, T>(
     items: impl IntoIterator<Item = (T, impl Into<String>)>,
@@ -351,6 +355,10 @@ pub fn combobox<C, T>(
         on_select: None,
         placeholder: "Search…".into(),
         width: 240.,
+        height: 36.,
+        font_size: None,
+        surface: None,
+        max_results: 8,
     }
 }
 impl<C, T> Combobox<C, T> {
@@ -382,6 +390,28 @@ impl<C, T> Combobox<C, T> {
     }
     pub fn width(mut self, value: f32) -> Self {
         self.width = value;
+        self
+    }
+    /// The field's height (default 36).
+    pub fn height(mut self, value: f32) -> Self {
+        self.height = value;
+        self
+    }
+    /// The field's and the options' text size.
+    pub fn font_size(mut self, value: f32) -> Self {
+        self.font_size = Some(value);
+        self
+    }
+    /// The open list's colour, `base-200` by default; give it an opaque one
+    /// over busy content, as with `select`.
+    pub fn surface(mut self, color: impl Into<String>) -> Self {
+        self.surface = Some(color.into());
+        self
+    }
+    /// Most matches listed (default 8, at most 128). Past about nine the list
+    /// scrolls, so a combobox can stand in for a select of every option.
+    pub fn max_results(mut self, value: usize) -> Self {
+        self.max_results = value.clamp(1, 128);
         self
     }
 }
@@ -443,7 +473,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
         };
         let matches: Vec<(usize, String)> = filter_items(&c.items, &c.snapshot.query)
             .into_iter()
-            .take(8)
+            .take(c.max_results)
             .map(|(i, l)| (i, l.to_owned()))
             .collect();
         let first = matches.first().map(|(i, _)| c.items[*i].0.clone());
@@ -451,12 +481,16 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
             (state.clone(), state.clone(), state.clone(), select.clone());
         let open = c.snapshot.open;
         let chosen_label = label.clone();
-        let field = text_field(shown)
+        let mut field = text_field(shown)
             .key(format!("{key}-field"))
             .accessible_label(label.unwrap_or_else(|| c.placeholder.clone()))
             .placeholder(c.placeholder.clone())
             .width(c.width)
-            .height(36.)
+            .height(c.height);
+        if let Some(size) = c.font_size {
+            field = field.font_size(size);
+        }
+        let field = field
             .trailing_action(
                 format!("{key}-toggle"),
                 if open {
@@ -489,18 +523,26 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
                 s.open = false;
                 s.query.clear();
             });
+        let font_size = c.font_size;
+        let rows = matches.len().max(1) as f32;
         let mut options: Vec<Element<C>> = matches
             .into_iter()
             .map(|(i, l)| {
                 let (value, pick, close) = (c.items[i].0.clone(), select.clone(), state.clone());
                 let chosen = c.selected.as_ref() == Some(&value);
+                let mut option = button(l)
+                    .key(format!("{key}-option-{i}"))
+                    .variant(ButtonVariant::Ghost)
+                    .label_align(Align::Start)
+                    .height(30.)
+                    .rounded(6.)
+                    .font_weight(if chosen { 600 } else { 400 })
+                    .flex(1.);
+                if let Some(size) = font_size {
+                    option = option.font_size(size);
+                }
                 hstack![
-                    button(l)
-                        .key(format!("{key}-option-{i}"))
-                        .variant(ButtonVariant::Ghost)
-                        .label_align(Align::Start)
-                        .height(32.)
-                        .flex(1.)
+                    option
                         .on_click(move |app: &mut C| {
                             (pick.borrow_mut())(app, value.clone());
                             let s = close(app);
@@ -529,12 +571,20 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
             );
         }
         let close = state;
-        let pop = popover(vstack(options).gap(c.option_gap, Axis::Vertical))
+        let mut pop = popover(vstack(options).gap(c.option_gap, Axis::Vertical))
             .key(format!("{key}-popover"))
             .anchor(format!("{key}-field"))
             .keep_anchor_interactive(true)
             .open(open)
             .width(c.width)
+            .padding(6., Edge::All)
+            .rounded(10)
+            // Nine rows, then it scrolls.
+            .height((rows * (30. + c.option_gap) + 12.).min(9. * (30. + c.option_gap) + 12.));
+        if let Some(surface) = c.surface {
+            pop = pop.background(surface);
+        }
+        let pop = pop
             .on_dismiss(move |app: &mut C| {
                 let s = close(app);
                 s.open = false;

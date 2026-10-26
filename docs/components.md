@@ -328,7 +328,10 @@ text or code editor.
 Page and Home/End keys. `range_slider(lo, hi)` has two thumbs that cannot cross.
 
 **Select** shows 1–128 typed options in a popup that flips above its trigger
-near the window edge and scrolls long lists. `combobox` adds type-to-filter.
+near the window edge and scrolls long lists. `combobox` adds type-to-filter;
+with `.max_results(n)` it lists up to 128 matches (scrolling past nine), so it
+can stand in for a select you type into. It takes `.surface(..)`,
+`.height(..)` and `.font_size(..)` like a select.
 
 **Dialogs** are modal inside the window: they trap Tab, restore focus on close,
 and dismiss with Escape or a backdrop click unless you disable either. Place the
@@ -340,7 +343,7 @@ dialog after the content it covers in a root `zstack!`.
 | --- | --- |
 | `radio_group([(value, "Label")])` | `.selected(..)`, `.on_select(..)`, descriptions, horizontal layout |
 | `number_input(v)` | `.range(0., 10.)`, `.step(1.)`, `.decimals(1)`, `.suffix(" kg")` |
-| `combobox(items, &state)` | Type to filter, Enter picks the best match |
+| `combobox(items, &state)` | Type to filter, Enter picks the best match; `.max_results(n)`, `.surface(..)`, `.height(..)`, `.font_size(..)` |
 | `tag_input(&tags, &state)` | Enter adds a tag, × removes one |
 | `color_picker("#3B82F6")` | Swatches, hue/saturation/lightness sliders and a hex field |
 | `otp_input(code, 6)` | One-time codes; `.on_complete(..)` |
