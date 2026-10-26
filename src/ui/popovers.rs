@@ -91,7 +91,9 @@ pub fn tooltip<C>(label: impl Into<String>, target: impl Into<Element<C>>) -> To
         .rounded(8)
         .background(ColorToken::Base300)
         .border_color(ColorToken::Border)
-        .border_width(1.);
+        .border_width(1.)
+        // It floats over whatever is under the pointer.
+        .shadow(super::tokens::shadow::md());
     Tooltip(card.into(), target.into())
 }
 /// A richer hover preview: any noninteractive content shown while the

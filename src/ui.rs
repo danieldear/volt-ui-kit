@@ -474,6 +474,8 @@ pub struct Element<C> {
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
+    /// Containers: a drag began on them; the offset from the press.
+    drag: Option<Box<dyn FnMut(&mut C, [f32; 2])>>,
 }
 impl<C> Element<C> {
     fn new(kind: Kind) -> Self {
@@ -497,6 +499,7 @@ impl<C> Element<C> {
             validation_error: None,
             input_activation: None,
             input_key: None,
+            drag: None,
         }
     }
 }
@@ -541,6 +544,7 @@ impl<C: 'static> Element<C> {
                 validation_error,
                 input_activation,
                 input_key,
+                drag,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -568,6 +572,13 @@ impl<C: 'static> Element<C> {
                     .on_value_changed(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_height = Some(name);
+            }
+            if let Some(f) = drag {
+                let name = format!("rust-drag-{}", *count);
+                handlers
+                    .on_context_requested(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag = Some(name);
             }
             if let Some(f) = hover {
                 let name = format!("rust-hover-{}", *count);
@@ -1270,6 +1281,14 @@ macro_rules! container_modifiers {
             /// still pointer reports on the next move.
             pub fn on_hover(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
                 self.0.hover = Some(Box::new(f));
+                self
+            }
+            /// A drag grip: called with `[0, 0]` when the pointer is pressed on
+            /// this container (not on a control inside it), then with its offset
+            /// from the press, in logical points, as it moves. Note the size at
+            /// `[0, 0]` and add the offset; the drag ends on release.
+            pub fn on_drag(mut self, f: impl FnMut(&mut C, [f32; 2]) + 'static) -> Self {
+                self.0.drag = Some(Box::new(f));
                 self
             }
             /// Called with true when keyboard focus moves onto the container

@@ -181,7 +181,7 @@ the visible rows are built.</p>
 <h2 id="validation-and-limits">Validation and limits</h2>
 <p><code>build()</code> checks the whole tree before it is installed: unique keys, connected
 callbacks, valid colours and sizes, and these limits:</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Limit</th><th scope="col">Value</th></tr></thead><tbody><tr><td>Elements per tree</td><td>4,096 (virtual lists do not count unmounted rows)</td></tr><tr><td>Nesting depth</td><td>48</td></tr><tr><td>Text per element</td><td>8 KiB</td></tr><tr><td>Font size / weight</td><td>8–96 / 100–900 in steps of 100</td></tr><tr><td>Corner radius / border width</td><td>0–256 / 0–16</td></tr><tr><td>Sizes and spacing</td><td>0–16,384 logical pixels</td></tr></tbody></table></div><p>If a later <code>view</code> produces an invalid tree, the host prints the error, keeps the
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Limit</th><th scope="col">Value</th></tr></thead><tbody><tr><td>Elements per tree</td><td>16,384 (virtual lists do not count unmounted rows)</td></tr><tr><td>Nesting depth</td><td>48</td></tr><tr><td>Text per element</td><td>8 KiB</td></tr><tr><td>Font size / weight</td><td>8–96 / 100–900 in steps of 100</td></tr><tr><td>Corner radius / border width</td><td>0–256 / 0–16</td></tr><tr><td>Sizes and spacing</td><td>0–16,384 logical pixels</td></tr></tbody></table></div><p>If a later <code>view</code> produces an invalid tree, the host prints the error, keeps the
 last valid screen and recovers on the next valid update. State that a callback
 already changed is not rolled back.</p>
 <h2 id="custom-hosts">Custom hosts</h2>

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_DOCUMENT_BYTES: usize = 262_144;
 /// Per-document limits. Large collections should use virtual lists, which mount
 /// only their visible window of rows.
-pub(crate) const MAX_NODES: usize = 4096;
+pub(crate) const MAX_NODES: usize = 16384;
 pub(crate) const MAX_DEPTH: usize = 48;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -303,6 +303,9 @@ pub struct Node {
     /// Reports the laid-out height when it changes.
     #[serde(skip)]
     pub(crate) on_height: Option<String>,
+    /// Reports a drag that began on this container: the offset from the press.
+    #[serde(skip)]
+    pub(crate) on_drag: Option<String>,
     /// Reports the pointer entering (true) or leaving (false) the bounds.
     #[serde(skip)]
     pub(crate) on_hover: Option<String>,
@@ -602,6 +605,7 @@ impl Node {
             on_select_text: None,
             on_width: None,
             on_height: None,
+            on_drag: None,
             on_hover: None,
             on_focus_within: None,
             on_escape: None,
@@ -846,6 +850,7 @@ impl Document {
                 (&n.on_select_text, EventKind::TextChanged),
                 (&n.on_width, EventKind::ValueChanged),
                 (&n.on_height, EventKind::ValueChanged),
+                (&n.on_drag, EventKind::ContextRequested),
                 (&n.on_hover, EventKind::ToggleChanged),
                 (&n.on_focus_within, EventKind::ToggleChanged),
                 (&n.on_escape, EventKind::Activate),
@@ -1410,6 +1415,7 @@ fn check_node(
         &n.on_select_text,
         &n.on_width,
         &n.on_height,
+        &n.on_drag,
         &n.on_hover,
         &n.on_focus_within,
         &n.on_escape,

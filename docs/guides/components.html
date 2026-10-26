@@ -440,7 +440,7 @@ let alternate: Element&lt;String&gt; = treemap_chart(nodes)
 alternate.build()?;</code></pre></div><ul>
 <li>Values are <strong>inclusive subtree totals</strong>; never add a parent total to its
 descendants. Direct children&#39;s sum must not exceed their parent&#39;s value.</li>
-<li>One root first, parents before children, unique keys, at most 4,096 nodes
+<li>One root first, parents before children, unique keys, at most 16,384 nodes
 and depth 64. Zero values do not create tiles. Invalid data rejects the tree.</li>
 <li><code>.value_format(..)</code> formats exact tooltip/accessibility values. Tab/Enter
 and pointer activation return the original node key. App-owned drilldown

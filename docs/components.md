@@ -568,7 +568,7 @@ alternate.build()?;
 
 - Values are **inclusive subtree totals**; never add a parent total to its
   descendants. Direct children's sum must not exceed their parent's value.
-- One root first, parents before children, unique keys, at most 4,096 nodes
+- One root first, parents before children, unique keys, at most 16,384 nodes
   and depth 64. Zero values do not create tiles. Invalid data rejects the tree.
 - `.value_format(..)` formats exact tooltip/accessibility values. Tab/Enter
   and pointer activation return the original node key. App-owned drilldown

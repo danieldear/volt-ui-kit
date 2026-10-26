@@ -271,6 +271,8 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) on_height: Option<String>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag: Option<String>,
+    #[cfg(feature = "rust-ui")]
     pub(crate) on_hover: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_focus_within: Option<String>,
@@ -462,6 +464,9 @@ pub struct Runtime {
     ime_cancelled: bool,
     #[cfg(feature = "rust-ui")]
     slider_capture: Option<String>,
+    /// A container's drag in progress: its handler and the press point.
+    #[cfg(feature = "rust-ui")]
+    drag_capture: Option<(String, [f32; 2])>,
     #[cfg(feature = "rust-ui")]
     slider_values: BTreeMap<String, f32>,
     /// Range slider whose lower thumb is active (pointer or keys).
@@ -543,6 +548,8 @@ impl Runtime {
             ime_cancelled: false,
             #[cfg(feature = "rust-ui")]
             slider_capture: None,
+            #[cfg(feature = "rust-ui")]
+            drag_capture: None,
             #[cfg(feature = "rust-ui")]
             slider_values: BTreeMap::new(),
             #[cfg(feature = "rust-ui")]
@@ -1638,6 +1645,13 @@ impl Runtime {
             let activated = self.dispatch_virtual_windows(handlers, context)?;
             return Ok(InputOutcome { changed, activated });
         }
+        if let Some((name, [x0, y0])) = self.drag_capture.clone() {
+            let offset = [(x - x0) / self.scale, (y - y0) / self.scale];
+            handlers
+                .dispatch(&name, Event::ContextRequested { x_bits: offset[0].to_bits(), y_bits: offset[1].to_bits() }, context)
+                .map_err(|e| DocumentError(e.to_string()))?;
+            return Ok(InputOutcome { changed: true, activated: true });
+        }
         if let Some(outcome) = self.split_pointer_move(x, y, handlers, context)? {
             return Ok(outcome);
         }
@@ -1678,6 +1692,25 @@ impl Runtime {
         if let Some(outcome) = self.slider_pointer_down(x, y, handlers, context)? {
             self.sync_tooltip_visibility();
             return Ok(outcome);
+        }
+        // A drag grip: the topmost container under the press that reports
+        // drags, unless a control inside it takes the press.
+        if self.hit(x, y).is_none() {
+            let grip = self.boxes.iter().rev().find(|b| {
+                b.on_drag.is_some()
+                    && self.scope_allows_id(&b.id)
+                    && b.clip.contains(x, y)
+                    && b.clip_regions.iter().all(|r| r.contains(x, y))
+                    && b.bounds.contains(x, y)
+            });
+            if let Some(name) = grip.and_then(|b| b.on_drag.clone()) {
+                // The press itself reports a zero offset: where the drag starts.
+                handlers
+                    .dispatch(&name, Event::ContextRequested { x_bits: 0f32.to_bits(), y_bits: 0f32.to_bits() }, context)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                self.drag_capture = Some((name, [x, y]));
+                return Ok(InputOutcome { changed: true, activated: true });
+            }
         }
         Ok(InputOutcome {
             changed: self.pointer_down(x, y),
@@ -1807,6 +1840,9 @@ impl Runtime {
     ) -> Result<InputOutcome, DocumentError> {
         #[cfg(feature = "rust-ui")]
         {
+            if self.drag_capture.take().is_some() {
+                return Ok(InputOutcome { changed: true, activated: false });
+            }
             if let Some(outcome) = self.overlay_pointer_up(x, y, handlers, context)? {
                 return Ok(outcome);
             }
@@ -1947,6 +1983,7 @@ impl Runtime {
             self.editor_pointer_up();
             self.slider_capture = None;
             self.split_capture = None;
+            self.drag_capture = None;
             self.cancel_overlay_capture();
         }
         self.capture = None;
@@ -1979,6 +2016,7 @@ impl Runtime {
         let changed = changed
             | self.slider_capture.take().is_some()
             | self.split_capture.take().is_some()
+            | self.drag_capture.take().is_some()
             | self.editor_pointer_up()
             | self.cancel_overlay_capture();
         changed
@@ -4579,6 +4617,8 @@ fn place(
         on_width: n.on_width.clone(),
         #[cfg(feature = "rust-ui")]
         on_height: n.on_height.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_drag: n.on_drag.clone(),
         #[cfg(feature = "rust-ui")]
         on_hover: n.on_hover.clone(),
         #[cfg(feature = "rust-ui")]

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Menus follow one design: every row's label starts on one edge (past a
+  glyph column only when some row has a check or an icon), rows are 12.5
+  regular, hover and keyboard focus fill with the accent at low strength
+  instead of a ring, and the card always casts a shadow.
+- Tooltips cast a shadow, so they read as floating over content.
+- Add `on_drag(|app, [dx, dy]|)` for containers: `[0, 0]` at the press,
+  then the offset from it as the pointer moves, until release. For
+  resize grips. Tests: `tests/form_components.rs`.
+- The document budget is 16,384 nodes (was 4,096), depth 48 unchanged, so
+  long documents and transcripts render whole.
 - The code view's scrollbar can be held and dragged, and pressing its track
   brings the thumb under the pointer. The held thumb widens and darkens,
   the pointer shows the arrow over the scrollbar, and no caret press reaches

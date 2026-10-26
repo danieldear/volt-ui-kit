@@ -399,20 +399,21 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
     card.node.gap = layout.gap;
     card.node.surface.scroll = Some(Scroll::Vertical);
     card.node.style.radius = Some(Rounding::Radius(10.));
-    if let Some(fill) = surface {
-        card.node.style.background = Some(fill);
-        card.node.effects.base.shadow = Some(
-            crate::declarative::effects::Shadow::new()
-                .color("#00000038")
-                .blur(18.)
-                .offset(0., 6.),
-        );
-    } else {
-        card.node.style.background = Some(ColorToken::Base200.into());
-    }
+    card.node.style.background = Some(surface.unwrap_or_else(|| ColorToken::Base200.into()));
+    // A menu floats: it always casts a shadow.
+    card.node.effects.base.shadow = Some(
+        crate::declarative::effects::Shadow::new()
+            .color("#00000026|#00000073")
+            .blur(24.)
+            .offset(0., 10.),
+    );
     card.node.style.border_color = Some(ColorToken::Border.into());
     card.node.style.border_width = Some(1.);
     let inner = (width - 2. * layout.padding).max(0.);
+    // Rows share one label edge: past a glyph column when any row has a
+    // check or an icon, otherwise just inside the row.
+    let glyphs = items.iter().any(|i| matches!(i.kind, ItemKind::Action { checked: Some(_), .. } | ItemKind::Action { icon: Some(_), .. }));
+    let label_inset = if glyphs || submenu.is_some() { 34. } else { 10. };
     let row_button = |label: String| {
         button(label)
             .height(row_height)
@@ -420,9 +421,12 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
             .rounded(6)
             .background("#00000000")
             .border_width(0.)
+            .font_size(12.5)
+            .font_weight(400)
             .label_align(Align::Start)
             .label_inset(34.)
-            .hover_style(|s| s.background(ColorToken::Base300))
+            .hover_style(|s| s.background(ColorToken::Primary.alpha(14)))
+            .focus_style(|s| s.background(ColorToken::Primary.alpha(14)).border_width(0.))
     };
     let mut rows: Vec<Element<C>> = Vec::new();
     let mut height = 2. * layout.padding;
@@ -507,8 +511,13 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
                     .rounded(6)
                     .background("#00000000")
                     .border_width(0.)
+                    .font_size(12.5)
+                    .font_weight(400)
                     .enabled(enabled)
-                    .hover_style(|s| s.background(ColorToken::Base300))
+                    .label_align(Align::Start)
+                    .label_inset(label_inset)
+                    .hover_style(|s| s.background(ColorToken::Primary.alpha(14)))
+                    .focus_style(|s| s.background(ColorToken::Primary.alpha(14)).border_width(0.))
                     .on_click(move |app: &mut C| {
                         (action.borrow_mut())(app, value.clone());
                         (change.borrow_mut())(app, false);
@@ -516,9 +525,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
                             (reset.borrow_mut())(app, None);
                         }
                     });
-                if !plain {
-                    b = b.label_align(Align::Start).label_inset(34.);
-                }
+
                 if danger {
                     b = b.color(ColorToken::Error);
                 }

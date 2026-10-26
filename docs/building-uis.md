@@ -249,7 +249,7 @@ callbacks, valid colours and sizes, and these limits:
 
 | Limit | Value |
 | --- | --- |
-| Elements per tree | 4,096 (virtual lists do not count unmounted rows) |
+| Elements per tree | 16,384 (virtual lists do not count unmounted rows) |
 | Nesting depth | 48 |
 | Text per element | 8 KiB |
 | Font size / weight | 8–96 / 100–900 in steps of 100 |
