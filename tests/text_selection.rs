@@ -432,3 +432,42 @@ fn a_new_root_context_clears_selection_even_when_descendant_keys_are_reused() {
     r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
     assert_eq!(r.selected_text(), None);
 }
+
+#[test]
+fn a_floating_surface_blocks_selection_of_read_only_text_behind_its_blank_space() {
+    let ui: Element<()> = zstack([
+        vstack([text("Underlying document text").key("under").into()])
+            .selectable(true)
+            .width(300.)
+            .height(160.)
+            .into(),
+        hstack([panel([])
+            .key("floating")
+            .width(120.)
+            .height(80.)
+            .background("#FFFFFF|#202020")
+            .into()]).align(Align::Start).width(300.).height(160.).into(),
+    ])
+    .align(Align::Start)
+    .width(300.)
+    .height(160.)
+    .into();
+    let (doc, handlers) = ui.build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(300., 160., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    let a = bounds(&r, "under");
+    assert!(!r.text_select_press(a[0] + 5., a[1] + 5., 3, false, &mut Metrics),"text={a:?}, floating={:?}",bounds(&r,"floating"));
+    assert!(
+        r.selected_text().is_none(),
+        "blank popup must not select hidden document text"
+    );
+    // Still inside the same paragraph, but beyond the floating surface.
+    assert!(r.text_select_press(a[0] + 150., a[1] + 5., 3, false, &mut Metrics));
+    r.text_select_release();
+    assert_eq!(r.selected_text(), Some("Underlying document text"));
+}

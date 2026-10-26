@@ -442,6 +442,9 @@ pub struct Runtime {
     cache: Option<([f32; 3], Bindings)>,
     last_viewport: Option<[f32; 3]>,
     motion: RefCell<Motion>,
+    /// The last painted palette also governs input occlusion. Layout stores
+    /// token/pair specifications, not their active theme's resolved colours.
+    input_theme: RefCell<UiTheme>,
     scroll_offsets: BTreeMap<String, [f32; 2]>,
     /// Variable-height lists: measured row heights per list key.
     lazy_heights: BTreeMap<String, LazyHeights>,
@@ -534,6 +537,7 @@ impl Runtime {
             cache: None,
             last_viewport: None,
             motion: RefCell::new(Motion::default()),
+            input_theme: RefCell::new(UiTheme::light()),
             scroll_offsets: BTreeMap::new(),
             lazy_heights: BTreeMap::new(),
             scroll_ends: BTreeMap::new(),
@@ -1534,21 +1538,61 @@ impl Runtime {
         }
         fallback.unwrap_or(Cursor::Default)
     }
-    fn hit(&self, x: f32, y: f32) -> Option<String> {
-        self.boxes
+    /// The same colour syntax the painter accepts must also block input.
+    /// A transparent positioning wrapper is not a surface; an enabled or
+    /// disabled control still owns its rectangle even with no painted fill.
+    fn input_surface(&self, b: &LayoutBox) -> bool {
+        if interactive_box(b) {
+            return true;
+        }
+        let theme = self.input_theme.borrow();
+        let visible = |index: usize| {
+            b.style.color_specs[index]
+                .as_deref()
+                .and_then(|spec| theme.resolve(spec))
+                .is_some_and(|color| color[3] > 0.)
+        };
+        (b.style.background_opacity > 0. && visible(1))
+            || (b.style.border_width.is_some_and(|w| w > 0.) && visible(2))
+    }
+    /// Layout boxes are in paint/preorder. Only a later *separate* subtree
+    /// can cover a target: a button's own painted children must not block it.
+    fn input_occluded(&self, index: usize, x: f32, y: f32) -> bool {
+        let depth = self.boxes[index].depth;
+        self.boxes[index + 1..]
             .iter()
-            .rev()
-            .find(|b| {
+            .skip_while(|b| b.depth > depth)
+            .any(|b| {
                 self.scope_allows_id(&b.id)
-                    && interactive_box(b)
-                    && b.enabled
-                    && (!self.portal_passthrough(&b.id))
+                    && !self.portal_passthrough(&b.id)
                     && b.clip.contains(x, y)
                     && b.clip_regions.iter().all(|r| r.contains(x, y))
                     && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
                     && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                    && self.input_surface(b)
             })
-            .map(|b| b.id.clone())
+    }
+    fn hit(&self, x: f32, y: f32) -> Option<String> {
+        let index = self.boxes.iter().rposition(|b| {
+            self.scope_allows_id(&b.id)
+                && interactive_box(b)
+                && b.enabled
+                && !self.portal_passthrough(&b.id)
+                && b.clip.contains(x, y)
+                && b.clip_regions.iter().all(|r| r.contains(x, y))
+                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+        })?;
+        let target = &self.boxes[index];
+        // Decorated buttons intentionally place passive painted glyphs over
+        // their hit rectangle. Do not change that established composite
+        // control contract. Text/code surfaces, unlike buttons, must not
+        // acquire focus or capture a selection through a floating surface.
+        #[cfg(feature = "rust-ui")]
+        let text_surface = target.editor.is_some() || target.ext.code.is_some();
+        #[cfg(not(feature = "rust-ui"))]
+        let text_surface = target.editor.is_some();
+        (!text_surface || !self.input_occluded(index, x, y)).then(|| target.id.clone())
     }
     /// The rich text link under the point, when the topmost box there is a
     /// text with a link run at that position: (text box id, span index).
@@ -2337,6 +2381,7 @@ impl Runtime {
         p: &mut P,
         ui: &UiTheme,
     ) -> Vec<PaintBatch<P::Shape, P::Glyph>> {
+        self.input_theme.replace(ui.clone());
         let mut out = Vec::new();
         let mut motion = self.motion.borrow_mut();
         motion.scale = self.scale;

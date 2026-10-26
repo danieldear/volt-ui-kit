@@ -44,14 +44,18 @@ fn word_at(text: &str, at: usize) -> (usize, usize) {
 
 impl Runtime {
     fn selectable_at(&self, x: f32, y: f32) -> Option<&LayoutBox> {
-        self.boxes.iter().rev().find(|b| {
-            selectable(b)
+        self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
+            (selectable(b)
                 && contains(b.bounds.bounds(), x, y)
-                && contains(b.clip.bounds(), x, y)
+                && b.clip.contains(x, y)
+                && b.clip_regions.iter().all(|r| r.contains(x, y))
+                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
                 && self.scope_allows_id(&b.id)
+                && !self.portal_passthrough(&b.id)
+                && !self.input_occluded(index, x, y))
+            .then_some(b)
         })
     }
-
     /// Whether the last press left nothing captured (no control, link,
     /// editor, scrollbar, divider or slider), so it may select text.
     pub fn press_was_free(&self) -> bool {

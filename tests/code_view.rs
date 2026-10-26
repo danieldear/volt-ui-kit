@@ -23,6 +23,7 @@ struct Doc {
     palette: Option<String>,
     /// Lay a transparent row holding a solid bar over the view.
     overlay: bool,
+    overlay_fill: Option<String>,
     focus: bool,
     /// Watch this many points at the bottom for the caret.
     band: Option<f32>,
@@ -118,7 +119,7 @@ fn view(d: &Doc) -> Element<Doc> {
         .key("bar")
         .width(200.)
         .height(40.)
-        .background("#202020");
+        .background(d.overlay_fill.clone().unwrap_or_else(|| "#202020".into()));
     let layer = hstack([spacer().into(), bar.into()])
         .key("layer")
         .align(Align::Start);
@@ -984,4 +985,55 @@ fn the_scrollbar_thumb_drags_and_the_track_jumps_without_moving_the_caret() {
     let end = m.runtime.code_view_offset("code").unwrap()[1];
     assert!(end > max * 0.95, "the bottom of the track is the end: {end}");
     assert!(!pressed(&doc));
+}
+
+#[test]
+fn themed_floating_surfaces_block_code_press_and_wheel_but_transparent_ones_do_not() {
+    for (fill, light_blocked, dark_blocked) in [
+        ("#FFFFFF|#202020", true, true),
+        ("@base-200", true, true),
+        ("#00000000|#00000000", false, false),
+        ("#00000000|#202020", false, true),
+        ("@base-200/0", false, false),
+    ] {
+        let mut doc = Doc::new(100);
+        doc.overlay = true;
+        doc.overlay_fill = Some(fill.into());
+        let mut m = Mounted::new(&mut doc);
+        m.paint();
+        // Theme changes must update hit-testing without rebuilding the tree.
+        for (ui, blocked) in [
+            (UiTheme::light(), light_blocked),
+            (UiTheme::dark(), dark_blocked),
+        ] {
+            let _ = m.runtime.paint_ui(&mut m.painter, &ui);
+            let [x, y, w, h] = m.bounds_of("bar");
+            let p = [x + w / 2., y + h / 2.];
+            assert_eq!(
+                m.runtime.code_view_at(p[0], p[1]),
+                !blocked,
+                "code hit under {fill}"
+            );
+            let hit = m
+                .runtime
+                .code_pointer_down(
+                    p[0],
+                    p[1],
+                    1,
+                    InputModifiers::default(),
+                    &mut m.handlers,
+                    &mut doc,
+                )
+                .unwrap();
+            assert_eq!(hit.is_some(), !blocked, "press under {fill}");
+            m.runtime.code_pointer_up();
+            let before = m.runtime.code_view_offset("code").unwrap();
+            m.runtime.scroll_at(p[0], p[1], [0., 80.]);
+            assert_eq!(
+                m.runtime.code_view_offset("code").unwrap()[1] > before[1],
+                !blocked,
+                "wheel under {fill}"
+            );
+        }
+    }
 }

@@ -426,21 +426,14 @@ impl Runtime {
     fn code_box_at(&self, x: f32, y: f32) -> Option<&LayoutBox> {
         // The topmost box that covers the point visibly: transparent layout
         // layers (a row holding a find bar over the view) let presses through.
-        let solid = |b: &LayoutBox| {
-            b.ext.code.is_some()
-                || interactive_box(b)
-                || b.style.background.is_some_and(|c| c[3] > 0.)
-                || b.style.border_width.is_some_and(|w| w > 0.)
-                    && b.style.border_color.is_some_and(|c| c[3] > 0.)
-        };
         let top = self.boxes.iter().rev().find(|b| {
             self.scope_allows_id(&b.id)
                 && !self.portal_passthrough(&b.id)
                 && b.clip.contains(x, y)
                 && b.clip_regions.iter().all(|r| r.contains(x, y))
                 && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                && b.bounds.contains(x, y)
-                && solid(b)
+                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.input_surface(b)
         })?;
         (top.ext.code.is_some() && top.enabled).then_some(top)
     }
