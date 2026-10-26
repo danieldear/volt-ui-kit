@@ -476,6 +476,7 @@ pub struct Element<C> {
     input_key: Option<InputKeyCallback<C>>,
     /// Containers: a drag began on them; the offset from the press.
     drag: Option<Box<dyn FnMut(&mut C, [f32; 2])>>,
+    drag_start: Option<Click<C>>,
 }
 impl<C> Element<C> {
     fn new(kind: Kind) -> Self {
@@ -500,6 +501,7 @@ impl<C> Element<C> {
             input_activation: None,
             input_key: None,
             drag: None,
+            drag_start: None,
         }
     }
 }
@@ -545,6 +547,7 @@ impl<C: 'static> Element<C> {
                 input_activation,
                 input_key,
                 drag,
+                drag_start,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -572,6 +575,11 @@ impl<C: 'static> Element<C> {
                     .on_value_changed(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_height = Some(name);
+            }
+            if let Some(f) = drag_start {
+                let name = format!("rust-drag-start-{}", *count);
+                handlers.on_activate(&name, f).map_err(|e|DocumentError(e.to_string()))?;
+                node.on_drag_start=Some(name);
             }
             if let Some(f) = drag {
                 let name = format!("rust-drag-{}", *count);
@@ -1283,10 +1291,17 @@ macro_rules! container_modifiers {
                 self.0.hover = Some(Box::new(f));
                 self
             }
+            /// Called once on a grip press, before its first `on_drag` offset.
+            /// Use this to record resize anchors; a later zero offset means
+            /// the pointer returned to the origin, not that a new drag began.
+            pub fn on_drag_start(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+                self.0.drag_start = Some(Box::new(f)); self
+            }
             /// A drag grip: called with `[0, 0]` when the pointer is pressed on
             /// this container (not on a control inside it), then with its offset
-            /// from the press, in logical points, as it moves. Note the size at
-            /// `[0, 0]` and add the offset; the drag ends on release.
+            /// from the press, in logical points, as it moves. Use
+            /// `on_drag_start` to record a resize anchor once: returning to
+            /// `[0, 0]` during movement is not a new press. Ends on release.
             pub fn on_drag(mut self, f: impl FnMut(&mut C, [f32; 2]) + 'static) -> Self {
                 self.0.drag = Some(Box::new(f));
                 self

@@ -70,6 +70,7 @@ impl Runtime {
             && self.scrollbar_capture.is_none()
             && self.split_capture.is_none()
             && self.slider_capture.is_none()
+            && self.drag_capture.is_none()
             && !self.editors.borrow().values().any(|e| e.dragging())
     }
 

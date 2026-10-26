@@ -273,6 +273,8 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) on_drag: Option<String>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag_start: Option<String>,
+    #[cfg(feature = "rust-ui")]
     pub(crate) on_hover: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_focus_within: Option<String>,
@@ -402,6 +404,14 @@ fn scrollbar_geometry(b: &LayoutBox, s: f32, axis: usize) -> Option<ScrollbarGeo
         travel,
     })
 }
+#[cfg(feature = "rust-ui")]
+#[derive(Clone)]
+struct DragCapture {
+    id: String,
+    kind: Kind,
+    action: String,
+    origin: [f32; 2],
+}
 /// Shared document layout and event state; owns no window or background tasks.
 pub struct Runtime {
     document: Document,
@@ -467,9 +477,9 @@ pub struct Runtime {
     ime_cancelled: bool,
     #[cfg(feature = "rust-ui")]
     slider_capture: Option<String>,
-    /// A container's drag in progress: its handler and the press point.
+    /// Keyed drag owner; callback names can change after every render.
     #[cfg(feature = "rust-ui")]
-    drag_capture: Option<(String, [f32; 2])>,
+    drag_capture: Option<DragCapture>,
     #[cfg(feature = "rust-ui")]
     slider_values: BTreeMap<String, f32>,
     /// Range slider whose lower thumb is active (pointer or keys).
@@ -709,7 +719,8 @@ impl Runtime {
         self.replace_document(Document::parse(source)?, handlers, values)
     }
     /// Validate before replacing the tree. Rejected candidates leave all runtime
-    /// state untouched. Successful installs cancel transient input; focus survives
+    /// state untouched. Valid keyed drags survive; other transient input is
+    /// cancelled. Focus survives
     /// only if its key still names the same enabled interactive component kind.
     /// The host must install the matching handlers immediately on success.
     #[cfg(feature = "rust-ui")]
@@ -814,6 +825,11 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         let split_capture = self.split_capture.clone();
         #[cfg(feature = "rust-ui")]
+        let drag_capture = self
+            .drag_capture
+            .clone()
+            .filter(|_| self.document.root().id() == next.root().id());
+        #[cfg(feature = "rust-ui")]
         let composition = self.editor_composition_snapshot(&next);
         let scrollbar_capture = self.scrollbar_capture.clone();
         #[cfg(feature = "rust-ui")]
@@ -875,6 +891,37 @@ impl Runtime {
             }) && self.scope_allows_id(&capture.handle)
             {
                 self.split_capture = Some(capture);
+            }
+        }
+        #[cfg(feature = "rust-ui")]
+        if let Some(mut capture) = drag_capture {
+            fn target<'a>(
+                n: &'a Node,
+                id: &str,
+                values: &Bindings,
+                width: f32,
+            ) -> Option<&'a Node> {
+                if !enabled(n, values) || n.ext.visible.as_ref().is_some_and(|v| !*v.resolve(width))
+                {
+                    return None;
+                }
+                if n.id() == id {
+                    return Some(n);
+                }
+                n.children()
+                    .iter()
+                    .find_map(|c| target(c, id, values, width))
+            }
+            let width = self.last_viewport.map_or(0., |v| v[0] / v[2]);
+            if let Some(node) = target(self.document.root(), &capture.id, values, width)
+                .filter(|n| n.kind == capture.kind && self.scope_allows_id(&capture.id))
+            {
+                if let Some(action) = &node.on_drag {
+                    // Rebind by node identity, never by the old numeric callback
+                    // name (streaming content can insert handlers before a grip).
+                    capture.action = action.clone();
+                    self.drag_capture = Some(capture);
+                }
             }
         }
         Ok(())
@@ -1545,6 +1592,10 @@ impl Runtime {
         if interactive_box(b) {
             return true;
         }
+        #[cfg(feature = "rust-ui")]
+        if b.on_drag.is_some() {
+            return true;
+        }
         let theme = self.input_theme.borrow();
         let visible = |index: usize| {
             b.style.color_specs[index]
@@ -1554,6 +1605,15 @@ impl Runtime {
         };
         (b.style.background_opacity > 0. && visible(1))
             || (b.style.border_width.is_some_and(|w| w > 0.) && visible(2))
+    }
+    /// A grip owns its declared rectangle, not just its rounded decoration.
+    /// Ancestor clips still constrain it in the callers, as for other input.
+    fn input_contains(&self, b: &LayoutBox, x: f32, y: f32) -> bool {
+        #[cfg(feature = "rust-ui")]
+        if b.on_drag.is_some() {
+            return b.bounds.contains(x, y);
+        }
+        b.bounds.contains_corners(b.radii(self.scale), x, y)
     }
     /// Layout boxes are in paint/preorder. Only a later *separate* subtree
     /// can cover a target: a button's own painted children must not block it.
@@ -1568,7 +1628,7 @@ impl Runtime {
                     && b.clip.contains(x, y)
                     && b.clip_regions.iter().all(|r| r.contains(x, y))
                     && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                    && self.input_contains(b, x, y)
                     && self.input_surface(b)
             })
     }
@@ -1707,12 +1767,36 @@ impl Runtime {
             let activated = self.dispatch_virtual_windows(handlers, context)?;
             return Ok(InputOutcome { changed, activated });
         }
-        if let Some((name, [x0, y0])) = self.drag_capture.clone() {
-            let offset = [(x - x0) / self.scale, (y - y0) / self.scale];
+        if let Some(capture) = self.drag_capture.clone() {
+            let offset = [
+                (x - capture.origin[0]) / self.scale,
+                (y - capture.origin[1]) / self.scale,
+            ];
+            let valid = self.scope_allows_id(&capture.id)
+                && self.boxes.iter().any(|b| {
+                    b.id == capture.id && b.enabled && b.on_drag.as_ref() == Some(&capture.action)
+                });
+            if !valid || !offset.iter().all(|v| v.is_finite()) {
+                self.drag_capture = None;
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: false,
+                });
+            }
             handlers
-                .dispatch(&name, Event::ContextRequested { x_bits: offset[0].to_bits(), y_bits: offset[1].to_bits() }, context)
+                .dispatch(
+                    &capture.action,
+                    Event::ContextRequested {
+                        x_bits: offset[0].to_bits(),
+                        y_bits: offset[1].to_bits(),
+                    },
+                    context,
+                )
                 .map_err(|e| DocumentError(e.to_string()))?;
-            return Ok(InputOutcome { changed: true, activated: true });
+            return Ok(InputOutcome {
+                changed: true,
+                activated: true,
+            });
         }
         if let Some(outcome) = self.split_pointer_move(x, y, handlers, context)? {
             return Ok(outcome);
@@ -1758,20 +1842,43 @@ impl Runtime {
         // A drag grip: the topmost container under the press that reports
         // drags, unless a control inside it takes the press.
         if self.hit(x, y).is_none() {
-            let grip = self.boxes.iter().rev().find(|b| {
-                b.on_drag.is_some()
+            let grip = self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
+                (b.on_drag.is_some()
+                    && b.enabled
                     && self.scope_allows_id(&b.id)
+                    && !self.portal_passthrough(&b.id)
                     && b.clip.contains(x, y)
                     && b.clip_regions.iter().all(|r| r.contains(x, y))
-                    && b.bounds.contains(x, y)
+                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                    && self.input_contains(b, x, y)
+                    && !self.input_occluded(index, x, y))
+                .then_some(b)
             });
-            if let Some(name) = grip.and_then(|b| b.on_drag.clone()) {
-                // The press itself reports a zero offset: where the drag starts.
+            if let Some(b) = grip {
+                let capture = DragCapture {
+                    id: b.id.clone(),
+                    kind: b.kind,
+                    action: b.on_drag.clone().unwrap(),
+                    origin: [x, y],
+                };
+                if let Some(start)=&b.on_drag_start {
+                    handlers.dispatch(start,Event::Activate,context).map_err(|e|DocumentError(e.to_string()))?;
+                }
                 handlers
-                    .dispatch(&name, Event::ContextRequested { x_bits: 0f32.to_bits(), y_bits: 0f32.to_bits() }, context)
+                    .dispatch(
+                        &capture.action,
+                        Event::ContextRequested {
+                            x_bits: 0f32.to_bits(),
+                            y_bits: 0f32.to_bits(),
+                        },
+                        context,
+                    )
                     .map_err(|e| DocumentError(e.to_string()))?;
-                self.drag_capture = Some((name, [x, y]));
-                return Ok(InputOutcome { changed: true, activated: true });
+                self.drag_capture = Some(capture);
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: true,
+                });
             }
         }
         Ok(InputOutcome {
@@ -2187,11 +2294,12 @@ impl Runtime {
         self.visual_hover.clear();
         #[cfg(feature = "rust-ui")]
         {
-            let slider_changed =
-                self.slider_capture.take().is_some() | self.split_capture.take().is_some();
+            let continuous_changed = self.slider_capture.take().is_some()
+                | self.split_capture.take().is_some()
+                | self.drag_capture.take().is_some();
             let editing_changed =
                 self.editor_pointer_up() | self.ime_cancel() | self.cancel_overlay_capture();
-            changed || slider_changed || editing_changed
+            changed || continuous_changed || editing_changed
         }
         #[cfg(not(feature = "rust-ui"))]
         changed
@@ -4682,6 +4790,8 @@ fn place(
         on_height: n.on_height.clone(),
         #[cfg(feature = "rust-ui")]
         on_drag: n.on_drag.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_drag_start: n.on_drag_start.clone(),
         #[cfg(feature = "rust-ui")]
         on_hover: n.on_hover.clone(),
         #[cfg(feature = "rust-ui")]

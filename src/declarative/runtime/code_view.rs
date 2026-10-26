@@ -432,7 +432,7 @@ impl Runtime {
                 && b.clip.contains(x, y)
                 && b.clip_regions.iter().all(|r| r.contains(x, y))
                 && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.input_contains(b, x, y)
                 && self.input_surface(b)
         })?;
         (top.ext.code.is_some() && top.enabled).then_some(top)
