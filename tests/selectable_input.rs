@@ -419,3 +419,29 @@ fn old_public_event_kinds_still_allow_an_exhaustive_match() {
         | EventKind::Key => true,
     };
 }
+#[test]
+fn a_container_hears_the_keys_its_focused_rows_do_not_use() {
+    let ui: Element<App> = vstack([
+        button("Row one").key("one").on_click(|a: &mut App| a.legacy += 1).into(),
+        button("Row two").key("two").on_click(|a: &mut App| a.legacy += 1).into(),
+    ])
+    .key("list")
+    .on_input_key(|a: &mut App, event| {
+        let used = matches!(event.key, InputKey::ArrowDown | InputKey::ArrowUp);
+        if used {
+            a.keys.push(event);
+        }
+        used
+    })
+    .into();
+    let (mut r, mut h) = mount(ui);
+    let mut app = App::default();
+    let [x, y] = point(&r, "one");
+    r.pointer_down(x, y);
+    assert_eq!(r.focused(), Some("one"));
+    let key = |key| InputKeyEvent { key, modifiers: InputModifiers::default(), repeat: false };
+    assert!(r.input_key(key(InputKey::ArrowDown), &mut h, &mut app).unwrap().activated, "the list took it");
+    assert_eq!(app.keys.len(), 1);
+    assert!(!r.input_key(key(InputKey::Escape), &mut h, &mut app).unwrap().activated, "declined: the host keeps it");
+    assert_eq!(app.legacy, 0, "no row was activated by the arrow");
+}

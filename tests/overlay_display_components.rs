@@ -276,7 +276,7 @@ fn command_palette_filters_runs_and_closes() {
 }
 
 #[test]
-fn menus_show_checks_shortcuts_and_drill_into_submenus() {
+fn menus_show_checks_shortcuts_and_open_submenus_beside_them() {
     let mut h = Harness::new(App::default());
     h.click("view-trigger");
     assert!(h.has("view-popup-content"));
@@ -286,10 +286,21 @@ fn menus_show_checks_shortcuts_and_drill_into_submenus() {
     assert_ne!(h.runtime.focused().map(str::to_owned), focused);
     h.click("panels");
     assert_eq!(h.app.submenu.as_deref(), Some("panels"));
-    assert!(h.has("view-popup-back"));
-    h.click("view-popup-back");
-    assert_eq!(h.app.submenu, None);
-    h.click("panels");
+    // Its list opens beside the menu, which stays, level with the row.
+    assert!(h.has("view-popup-content") && h.has("view-popup-sub-content") && h.has("panels"));
+    let row = h.runtime.boxes().iter().find(|b| b.id == "panels").unwrap().bounds.bounds();
+    let list = h.runtime.boxes().iter().find(|b| b.id == "view-popup-sub-content").unwrap().bounds.bounds();
+    assert!(list[0] >= row[0] + row[2], "to the right of the row");
+    assert!((list[1] - (row[1] - 6.)).abs() < 1.5, "its first row level with it: {list:?} {row:?}");
+    // Resting the pointer on the row opens it too, without a click.
+    h.app.submenu = None;
+    h.rebuild();
+    assert!(!h.has("view-popup-sub-content"));
+    let [x, y, w, hh] = h.runtime.boxes().iter().find(|b| b.id == "panels").unwrap().bounds.bounds();
+    h.runtime.pointer_move_outcome(x + w * 0.5, y + hh * 0.5, &mut h.handlers, &mut h.app).unwrap();
+    h.runtime.dispatch_hover_regions(Some([x + w * 0.5, y + hh * 0.5]), &mut h.handlers, &mut h.app).unwrap();
+    assert_eq!(h.app.submenu.as_deref(), Some("panels"));
+    h.rebuild();
     h.click("files");
     assert_eq!(h.app.picked, ["files"]);
     assert!(!h.app.menu_open && h.app.submenu.is_none());

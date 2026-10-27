@@ -2368,15 +2368,25 @@ impl Runtime {
                 activated: false,
             });
         }
-        let action = self
-            .focused
-            .as_deref()
-            .and_then(|id| {
-                self.layout_boxes
-                    .iter()
-                    .find(|b| b.id == id && b.enabled && !b.departing && self.scope_allows_id(id))
-            })
-            .and_then(|b| b.on_input_key.clone());
+        // The focused control's handler, or else the nearest container's
+        // around it: a list hears the arrows its rows don't use.
+        let action = self.focused.as_deref().and_then(|id| {
+            let usable = |b: &LayoutBox| b.enabled && !b.departing && self.scope_allows_id(&b.id);
+            let mut index = self.layout_boxes.iter().position(|b| b.id == id && usable(b))?;
+            loop {
+                let b = &self.layout_boxes[index];
+                if usable(b) {
+                    if let Some(action) = &b.on_input_key {
+                        return Some(action.clone());
+                    }
+                }
+                if b.depth == 0 {
+                    return None;
+                }
+                let depth = b.depth - 1;
+                index = self.layout_boxes[..index].iter().rposition(|p| p.depth == depth)?;
+            }
+        });
         let Some(action) = action else {
             return Ok(InputOutcome::default());
         };
