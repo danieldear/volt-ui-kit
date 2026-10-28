@@ -38,6 +38,9 @@ struct Doc {
     /// 1 for a block caret, 2 for an underline.
     caret_shape: u8,
     hover: bool,
+    folds: Vec<(usize, bool)>,
+    fold_hits: Vec<usize>,
+    numbers: Vec<usize>,
 }
 impl Doc {
     fn new(lines: usize) -> Self {
@@ -69,6 +72,12 @@ fn view(d: &Doc) -> Element<Doc> {
     let mut v = code_view(d.lines.len())
         .key("code")
         .lines(d.first, lines)
+        .line_numbers(
+            d.numbers.clone(),
+            d.numbers.iter().copied().max().unwrap_or(d.lines.len()),
+        )
+        .fold_controls(d.folds.clone())
+        .on_fold(|d: &mut Doc, row| d.fold_hits.push(row))
         .palette([d.palette.clone().unwrap_or_else(|| "#ff0000".into())])
         .focus_when(d.focus)
         .selections(
@@ -216,6 +225,44 @@ struct Mounted {
     runtime: Runtime,
     handlers: Handlers<'static, Doc>,
     painter: Recorder,
+}
+#[test]
+fn projected_line_numbers_and_fold_gutter_are_opt_in_and_never_select_text() {
+    let mut doc = Doc::new(3);
+    doc.numbers = vec![1, 51, 100];
+    doc.folds = vec![(0, true)];
+    let mut m = Mounted::new(&mut doc);
+    let painted = m.paint();
+    assert!(painted.iter().any(|s| s == "51"));
+    assert!(painted.iter().any(|s| s == "100"));
+    assert!(painted.iter().any(|s| s == "▸"));
+    let [x, y, _, _] = m.bounds();
+    let before = doc.inputs.len();
+    m.runtime
+        .code_pointer_down(
+            x + 56.,
+            y + 10.,
+            1,
+            InputModifiers::default(),
+            &mut m.handlers,
+            &mut doc,
+        )
+        .unwrap();
+    assert_eq!(doc.fold_hits, [0]);
+    assert_eq!(doc.inputs.len(), before);
+    assert!(!m.runtime.code_pointer_up());
+    m.runtime
+        .code_pointer_down(
+            x + 56.,
+            y + 30.,
+            1,
+            InputModifiers::default(),
+            &mut m.handlers,
+            &mut doc,
+        )
+        .unwrap();
+    assert!(matches!(doc.inputs.last(),Some(CodeInput::Press{at,..})if at.line==1));
+    m.runtime.code_pointer_up();
 }
 impl Mounted {
     fn new(doc: &mut Doc) -> Self {

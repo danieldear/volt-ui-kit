@@ -18,6 +18,7 @@ pub struct CodeView<C>(
     pub(super) Element<C>,
     Option<CodeCallback<C>>,
     Option<CodeCaretCallback<C>>,
+    Option<CodeFoldCallback<C>>,
 );
 
 /// A code view over a document of `line_count` lines (at least one). It
@@ -31,9 +32,26 @@ pub fn code_view<C>(line_count: usize) -> CodeView<C> {
     }));
     e.node.ext.cursor = Some(Cursor::Text);
     e.node.access_role = Some(crate::declarative::AccessRole::MultilineTextInput);
-    CodeView(e, None, None)
+    CodeView(e, None, None, None)
 }
 impl<C> CodeView<C> {
+    /// Original source line numbers for the supplied window of projected rows.
+    /// Empty restores the normal sequential gutter. Numbers are one-based.
+    pub fn line_numbers(mut self, numbers: Vec<usize>, source_count: usize) -> Self {
+        self.props().line_numbers = numbers;
+        self.props().source_line_count = source_count;
+        self
+    }
+    /// Optional gutter chevrons `(projected row, collapsed)`; no text input is
+    /// synthesized when one is pressed. The application owns folding state.
+    pub fn fold_controls(mut self, controls: Vec<(usize, bool)>) -> Self {
+        self.props().fold_controls = controls;
+        self
+    }
+    pub fn on_fold(mut self, f: impl FnMut(&mut C, usize) + 'static) -> Self {
+        self.3 = Some(Box::new(f));
+        self
+    }
     fn props(&mut self) -> &mut CodeViewProps {
         Arc::make_mut(self.0.node.ext.code.as_mut().expect("code view props"))
     }
@@ -204,6 +222,16 @@ impl<C: 'static> From<CodeView<C>> for Element<C> {
             Some("code_view requires a stable .key(...)")
         } else if view.1.is_none() {
             Some("code_view requires on_input")
+        } else if view.3.is_none()
+            && view
+                .0
+                .node
+                .ext
+                .code
+                .as_ref()
+                .is_some_and(|c| !c.fold_controls.is_empty())
+        {
+            Some("code_view fold controls require on_fold")
         } else if !view.0.node.ext.code.as_ref().is_some_and(|c| c.valid()) {
             Some("code_view lines, spans, selections or font are out of range")
         } else {
@@ -216,6 +244,7 @@ impl<C: 'static> From<CodeView<C>> for Element<C> {
             view.0.callback = Some(Callback::Code {
                 input: f,
                 caret: view.2.take(),
+                fold: view.3.take(),
             });
         }
         view.0

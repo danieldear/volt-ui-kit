@@ -181,6 +181,10 @@ pub(crate) const MAX_CODE_DECORATIONS: usize = 10_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CodeViewProps {
+    pub line_numbers: Vec<usize>,
+    pub source_line_count: usize,
+    pub fold_controls: Vec<(usize, bool)>,
+    pub on_fold: Option<String>,
     pub line_count: usize,
     pub first: usize,
     pub lines: Arc<[CodeLine]>,
@@ -221,6 +225,10 @@ pub(crate) struct CodeViewProps {
 impl Default for CodeViewProps {
     fn default() -> Self {
         Self {
+            line_numbers: Vec::new(),
+            source_line_count: 0,
+            fold_controls: Vec::new(),
+            on_fold: None,
             line_count: 1,
             first: 0,
             lines: Arc::from(vec![CodeLine::default()]),
@@ -256,6 +264,18 @@ impl CodeViewProps {
     pub(crate) fn valid(&self) -> bool {
         let finite = |v: f32, lo: f32, hi: f32| v.is_finite() && (lo..=hi).contains(&v);
         self.line_count >= 1
+            && (self.line_numbers.is_empty()
+                || (self.line_numbers.len() == self.lines.len()
+                    && self.source_line_count <= 1 << 31
+                    && self
+                        .line_numbers
+                        .iter()
+                        .all(|n| *n > 0 && *n <= self.source_line_count)))
+            && self.fold_controls.len() <= MAX_CODE_LINES
+            && self
+                .fold_controls
+                .iter()
+                .all(|(row, _)| *row < self.line_count)
             && self.line_count <= 1 << 31
             && self.lines.len() <= MAX_CODE_LINES
             && self.first.saturating_add(self.lines.len()) <= self.line_count
@@ -313,6 +333,7 @@ pub(crate) struct CodeViewState {
     preedit: String,
     preedit_cursor: Option<(usize, usize)>,
     dragging: bool,
+    multi_origin: Option<[f32; 2]>,
     /// The last `Hover` reported.
     hovered: Option<CodePosition>,
     /// While the scrollbar's thumb is held: where in it (physical, from its
@@ -353,7 +374,9 @@ impl Runtime {
         let s = self.scale;
         let advance = state.advance.unwrap_or(props.font_size * 0.6);
         let gutter = if props.gutter {
-            (14. + digits(props.line_count).max(3) as f32 * advance + 18.).max(64.)
+            (14. + digits(props.line_count.max(props.source_line_count)).max(3) as f32 * advance
+                + 18.)
+                .max(64.)
         } else {
             0.
         };
@@ -514,6 +537,15 @@ impl Runtime {
         self.code_views.borrow().get(id).map(|s| s.offset)
     }
     fn code_position_at(&self, b: &LayoutBox, x: f32, y: f32) -> CodePosition {
+        self.code_position_with_affinity(b, x, y, false)
+    }
+    fn code_position_with_affinity(
+        &self,
+        b: &LayoutBox,
+        x: f32,
+        y: f32,
+        character: bool,
+    ) -> CodePosition {
         let props = b.ext.code.as_deref().unwrap();
         let states = self.code_views.borrow();
         let default = CodeViewState::default();
@@ -525,14 +557,21 @@ impl Runtime {
         let x_text = (x - f.text_x) / s + state.offset[0];
         let chars = props.line(line).map_or(0, |l| l.text.chars().count());
         let column = if let Some(stops) = state.stops.get(&line) {
-            // Nearest caret stop.
-            stops
-                .iter()
-                .enumerate()
-                .min_by(|a, b| (a.1 - x_text).abs().total_cmp(&(b.1 - x_text).abs()))
-                .map_or(0, |(i, _)| i)
+            if character {
+                stops
+                    .partition_point(|stop| *stop <= x_text)
+                    .saturating_sub(1)
+            } else {
+                // Nearest caret stop for ordinary placement/dragging.
+                stops
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| (a.1 - x_text).abs().total_cmp(&(b.1 - x_text).abs()))
+                    .map_or(0, |(i, _)| i)
+            }
         } else {
-            (x_text / (f.advance / s)).round().max(0.) as usize
+            let col = x_text / (f.advance / s);
+            (if character { col.floor() } else { col.round() }).max(0.) as usize
         };
         CodePosition::new(line, column.min(chars))
     }
@@ -640,7 +679,35 @@ impl Runtime {
             }
         }
         self.ime_cancel();
-        let at = self.code_position_at(&b, x, y);
+        let at = self.code_position_with_affinity(&b, x, y, clicks >= 2);
+        if props.gutter && props.fold_controls.iter().any(|(row, _)| *row == at.line) {
+            let default = CodeViewState::default();
+            let states = self.code_views.borrow();
+            let frame = self.code_frame(&b, props, states.get(&b.id).unwrap_or(&default));
+            let right = frame.bounds[0] + frame.gutter;
+            if x >= right - 17. * frame.scale && x < right {
+                let name = props.on_fold.clone();
+                drop(states);
+                if let Some(name) = name {
+                    self.focused = Some(b.id.clone());
+                    self.focus_visible = false;
+                    self.keyboard = None;
+                    self.capture = None;
+                    self.code_views
+                        .borrow_mut()
+                        .entry(b.id.clone())
+                        .or_default()
+                        .dragging = false;
+                    handlers
+                        .dispatch_code_fold(&name, at.line, ctx)
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                    return Ok(Some(InputOutcome {
+                        changed: true,
+                        activated: true,
+                    }));
+                }
+            }
+        }
         self.focused = Some(b.id.clone());
         self.focus_visible = false;
         self.keyboard = None;
@@ -650,6 +717,11 @@ impl Runtime {
             .entry(b.id.clone())
             .or_default()
             .dragging = true;
+        self.code_views
+            .borrow_mut()
+            .entry(b.id.clone())
+            .or_default()
+            .multi_origin = (clicks >= 2).then_some([x, y]);
         let (outcome, _) = self.dispatch_code(
             &b.id,
             CodeInput::Press {
@@ -809,6 +881,16 @@ impl Runtime {
             .is_some_and(|s| s.dragging);
         if !dragging {
             return Ok(None);
+        }
+        {
+            let mut states = self.code_views.borrow_mut();
+            let state = states.get_mut(&b.id).unwrap();
+            if let Some([px, py]) = state.multi_origin {
+                if (x - px).abs() <= 2. * self.scale && (y - py).abs() <= 2. * self.scale {
+                    return Ok(Some(InputOutcome::default()));
+                }
+                state.multi_origin = None;
+            }
         }
         // Past the top or bottom edge, scroll toward the pointer.
         let [_, by, _, bh] = b.bounds.bounds();
@@ -1545,7 +1627,12 @@ impl Runtime {
                 let mut number_style = style.clone();
                 number_style.size = (props.font_size - 1.).max(4.) * s;
                 for line in first..last.min(props.line_count) {
-                    let label = (line + 1).to_string();
+                    let label = props
+                        .line_numbers
+                        .get(line.saturating_sub(props.first))
+                        .copied()
+                        .unwrap_or(line + 1)
+                        .to_string();
                     let width = label.len() as f32 * f.advance * (number_style.size / style.size);
                     let color = if caret_lines.contains(&line) {
                         text_color
@@ -1559,6 +1646,17 @@ impl Runtime {
                         &number_style,
                         color,
                     );
+                    if let Some((_, collapsed)) =
+                        props.fold_controls.iter().find(|(row, _)| *row == line)
+                    {
+                        p.ui_text_styled(
+                            &mut glyphs,
+                            if *collapsed { "▸" } else { "▾" },
+                            [right + 3. * s, y_of(line), 15. * s, lh],
+                            &number_style,
+                            gutter_color,
+                        );
+                    }
                 }
                 out.push(PaintBatch {
                     clip: gutter_clip,
