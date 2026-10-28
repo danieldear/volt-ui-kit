@@ -60,8 +60,10 @@ type ActivationCallback<'a, C> = Box<dyn FnMut(&mut C, PointerActivation) + 'a>;
 type KeyInputCallback<'a, C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool + 'a>;
 type CodeInputCallback<'a, C> = Box<dyn FnMut(&mut C, super::CodeInput) -> Option<String> + 'a>;
 type CodeCaretCallback<'a, C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>) + 'a>;
+type CodeFoldCallback<'a, C> = Box<dyn FnMut(&mut C, usize) + 'a>;
 
 pub(super) enum InputCallback<'a, C> {
+    CodeFold(CodeFoldCallback<'a, C>),
     Activate(ActivationCallback<'a, C>),
     Key(KeyInputCallback<'a, C>),
     /// A code view's edits; returns clipboard text for Copy and Cut.
@@ -134,6 +136,29 @@ impl<'a, C> Handlers<'a, C> {
         f: impl FnMut(&mut C, Option<[f32; 4]>) + 'a,
     ) -> Result<(), HandlerError> {
         self.insert_input(name, InputCallback::CodeCaret(Box::new(f)))
+    }
+    /// Optional code-gutter action, separate from editing/selection events.
+    pub fn on_code_fold(
+        &mut self,
+        name: &str,
+        f: impl FnMut(&mut C, usize) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.insert_input(name, InputCallback::CodeFold(Box::new(f)))
+    }
+    pub(crate) fn dispatch_code_fold(
+        &mut self,
+        name: &str,
+        row: usize,
+        context: &mut C,
+    ) -> Result<(), HandlerError> {
+        match self.input_entries.get_mut(name) {
+            Some(InputCallback::CodeFold(f)) => {
+                f(context, row);
+                Ok(())
+            }
+            Some(_) => Err(HandlerError::InvalidValue),
+            None => Err(HandlerError::Missing(name.into())),
+        }
     }
     pub(crate) fn dispatch_code_caret(
         &mut self,

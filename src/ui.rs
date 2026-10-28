@@ -263,6 +263,7 @@ type FilesCallback<C> = Box<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>;
 type SelectionCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::TextSelection)>;
 type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
 type CodeCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::CodeInput) -> Option<String>>;
+type CodeFoldCallback<C> = Box<dyn FnMut(&mut C, usize)>;
 type CodeCaretCallback<C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>)>;
 enum Callback<C> {
     Click(Click<C>),
@@ -287,6 +288,7 @@ enum Callback<C> {
     Code {
         input: CodeCallback<C>,
         caret: Option<CodeCaretCallback<C>>,
+        fold: Option<CodeFoldCallback<C>>,
     },
 }
 // Opt-in spacing for composites whose public builder is not an Element wrapper.
@@ -731,12 +733,17 @@ impl<C: 'static> Element<C> {
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.ext.on_link = Some(name);
                     }
-                    Callback::Code { input, caret } => {
+                    Callback::Code { input, caret, fold } => {
                         handlers
                             .on_code_input(&name, input)
                             .map_err(|e| DocumentError(e.to_string()))?;
                         if let Some(code) = node.ext.code.as_mut() {
                             let code = std::sync::Arc::make_mut(code);
+                            if let Some(fold) = fold {
+                                let fold_name = format!("{name}-fold");
+                                handlers.on_code_fold(&fold_name, fold).map_err(|e| DocumentError(e.to_string()))?;
+                                code.on_fold = Some(fold_name);
+                            }
                             if let Some(caret) = caret {
                                 let caret_name = format!("{name}-caret");
                                 handlers
