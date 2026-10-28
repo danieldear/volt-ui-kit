@@ -704,3 +704,45 @@ fn context_targets_can_opt_into_scroll_passthrough_without_losing_right_clicks()
     );
     assert!(app.context);
 }
+#[test]
+fn a_full_context_menu_shows_every_row_on_its_own_surface() {
+    // Nine actions in four groups, like a file manager's item menu.
+    let mut items = vec![];
+    for group in 0..4 {
+        if group > 0 {
+            items.push(menu_separator());
+        }
+        for i in 0..[1, 3, 2, 3][group] {
+            items.push(
+                menu_item(Action::Save, format!("Item {group}-{i}"))
+                    .key(format!("row-{group}-{i}")),
+            );
+        }
+    }
+    let ui: Element<App> = context_menu(button("Doc").key("doc").on_click(|_: &mut App| {}), items)
+        .key("long")
+        .open(true)
+        .position([10., 10.])
+        .surface(ColorToken::Base100)
+        .on_context_open(|_: &mut App, _| {})
+        .on_open_change(|_: &mut App, _| {})
+        .on_action(|_: &mut App, _| {})
+        .into();
+    let (r, _) = mount(ui, 1.);
+    let bounds = |id: &str| {
+        r.boxes()
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap_or_else(|| panic!("{id}"))
+            .bounds
+            .bounds()
+    };
+    let card = bounds("long-popup-content");
+    let last = bounds("row-3-2");
+    // 12 padding + 9 rows of 34 + 3 separators of 9 + 2 between each of 12.
+    assert!(card[3] >= 12. + 9. * 34. + 3. * 9. + 22. - 0.5, "{card:?}");
+    assert!(
+        last[1] + last[3] <= card[1] + card[3],
+        "the last row isn't cut off"
+    );
+}

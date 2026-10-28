@@ -8,6 +8,7 @@ use crate::{
     Palette, Theme, ThemeMode, UiTheme, Viewport,
 };
 use softbuffer::{Context, Surface};
+mod code_input;
 use std::{
     io::Read,
     num::NonZeroU32,
@@ -430,6 +431,9 @@ fn run_host<C: 'static>(
         options.reduced_motion,
         std::env::var("VOLT_UI_REDUCED_MOTION").ok().as_deref(),
     );
+    #[cfg(target_os = "macos")]
+    let reduced_motion = reduced_motion
+        || objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
     runtime.set_reduced_motion(reduced_motion);
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     if let Some(messages) = messages.as_mut() {
@@ -485,6 +489,7 @@ fn run_host<C: 'static>(
         last_click: None,
         painter: RasterPainter::new(Viewport::new(860., 640., 1.).unwrap()),
         pointer: None,
+        key_scroll_at: None,
         modifiers: ModifiersState::empty(),
         activation_key: None,
         dropped: Vec::new(),
@@ -598,6 +603,9 @@ struct App<C> {
     last_click: Option<(Instant, [f32; 2], u8)>,
     painter: RasterPainter,
     pointer: Option<[f32; 2]>,
+    /// Where the last left press landed: arrow and page keys no control
+    /// takes scroll the view there, else the one under the pointer.
+    key_scroll_at: Option<[f32; 2]>,
     modifiers: ModifiersState,
     activation_key: Option<NamedKey>,
     /// Files from one system drop arrive as separate events; batched per turn.
@@ -917,6 +925,34 @@ impl<C: 'static> App<C> {
         let _ = previous;
         Ok(())
     }
+    /// Report `on_focus_within` regions keyboard focus entered or left.
+    fn focus_regions(&mut self) -> Result<(), String> {
+        let ran = self
+            .runtime
+            .dispatch_focus_regions(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if ran {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
+        Ok(())
+    }
+    /// Report `on_hover` regions the pointer entered or left.
+    fn hover_regions(&mut self, pointer: Option<[f32; 2]>) -> Result<(), String> {
+        let ran = self
+            .runtime
+            .dispatch_hover_regions(pointer, &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if ran {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
+        Ok(())
+    }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
         let result = self.content.after_input(
             outcome,
@@ -1118,6 +1154,56 @@ impl<C: 'static> App<C> {
     }
     /// Cmd/Ctrl+C copies and Cmd/Ctrl+A selects all selectable text when no
     /// editor has focus.
+    fn input_modifiers(&self) -> crate::declarative::InputModifiers {
+        crate::declarative::InputModifiers {
+            shift: self.modifiers.shift_key(),
+            control: self.modifiers.control_key(),
+            alt: self.modifiers.alt_key(),
+            meta: self.modifiers.super_key(),
+        }
+    }
+    /// Narrow focused-control keys only. Commands, editors, value controls and
+    /// overlay/modal scope retain priority; Tab never reaches application rows.
+    fn control_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
+        use crate::declarative::{InputKey, InputKeyEvent};
+        let modifiers = self.input_modifiers();
+        let key = match &event.logical_key {
+            Key::Named(NamedKey::ArrowUp) => InputKey::ArrowUp,
+            Key::Named(NamedKey::ArrowDown) => InputKey::ArrowDown,
+            Key::Named(NamedKey::ArrowLeft) => InputKey::ArrowLeft,
+            Key::Named(NamedKey::ArrowRight) => InputKey::ArrowRight,
+            Key::Named(NamedKey::Home) => InputKey::Home,
+            Key::Named(NamedKey::End) => InputKey::End,
+            Key::Named(NamedKey::Enter) => InputKey::Enter,
+            Key::Named(NamedKey::Space) => InputKey::Space,
+            Key::Named(NamedKey::Escape) => InputKey::Escape,
+            Key::Character(c)
+                if modifiers.primary()
+                    && !modifiers.alt
+                    && !modifiers.shift
+                    && c.eq_ignore_ascii_case("a") =>
+            {
+                InputKey::SelectAll
+            }
+            _ => return Ok(false),
+        };
+        let roving_key = self.runtime.is_roving_key(key);
+        let outcome = self
+            .runtime
+            .input_key(
+                InputKeyEvent {
+                    key,
+                    modifiers,
+                    repeat: event.repeat,
+                },
+                &mut self.handlers,
+                &mut self.context,
+            )
+            .map_err(|e| e.to_string())?;
+        let consumed = outcome.activated || roving_key;
+        self.after_input(outcome)?;
+        Ok(consumed)
+    }
     fn selection_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
         if self.runtime.editing_focus() {
             return Ok(false);
@@ -1378,6 +1464,8 @@ impl<C: 'static> App<C> {
                 &runtime.accessibility_nodes(),
                 title,
                 [size.width as f32, size.height as f32],
+                &runtime.accessibility_multiselectable_ids(),
+                &runtime.accessibility_links(),
             );
             *ids = map;
             update
@@ -1455,14 +1543,43 @@ impl<C: 'static> App<C> {
         else {
             return Ok(());
         };
+        // An app-chosen appearance: apply it to the window once per change.
+        let chosen = self
+            .extensions
+            .appearance
+            .as_ref()
+            .map(|f| f(&self.context));
+        if let Some(chosen) = chosen {
+            if self.extensions.applied_appearance != Some(chosen) {
+                self.extensions.applied_appearance = Some(chosen);
+                w.set_theme(match chosen {
+                    ThemeMode::Light => Some(winit::window::Theme::Light),
+                    ThemeMode::Dark => Some(winit::window::Theme::Dark),
+                    ThemeMode::System => None,
+                });
+                if chosen == ThemeMode::System {
+                    // While forced, theme events reported the forced look.
+                    self.system_theme = if w.theme() == Some(winit::window::Theme::Light) {
+                        ThemeMode::Light
+                    } else {
+                        ThemeMode::Dark
+                    };
+                }
+            }
+        }
+        let mode = match chosen {
+            Some(ThemeMode::Light) => ThemeMode::Light,
+            Some(ThemeMode::Dark) => ThemeMode::Dark,
+            _ => self.system_theme,
+        };
         let ui = self.theme_fn.as_ref().map_or_else(
-            || self.options.resolve_theme(self.system_theme),
-            |f| f(&self.context, self.system_theme),
+            || self.options.resolve_theme(mode),
+            |f| f(&self.context, mode),
         );
         if !ui.palette.is_valid() {
             return Err("theme callback returned invalid palette".into());
         }
-        if self.theme_fn.is_some() && self.options.theme != ThemeMode::System {
+        if self.theme_fn.is_some() && self.options.theme != ThemeMode::System && chosen.is_none() {
             let bg = ui.palette.base[0];
             w.set_theme(Some(if bg[0] + bg[1] + bg[2] > 1.5 {
                 winit::window::Theme::Light
@@ -1636,6 +1753,18 @@ impl<C: 'static> App<C> {
         self.frames += 1;
         self.update_access();
         self.animation_clock.presented(Instant::now());
+        // Geometry from actual shaping is available only after paint. Opt-in
+        // caret observers request one corrective frame, never an idle loop.
+        if self
+            .runtime
+            .dispatch_code_carets(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?
+        {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
         if let Some(start) = started {
             let presented = Instant::now();
             let layout = layout_done.unwrap();
@@ -1957,6 +2086,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                     }
                     self.pointer = Some([position.x as f32, position.y as f32]);
+                    if self.code_pointer_drag(position.x as f32, position.y as f32)? {
+                        self.update_cursor(position.x as f32, position.y as f32);
+                        return Ok(());
+                    }
                     if self.runtime.text_selecting() {
                         if self.runtime.text_select_drag(
                             position.x as f32,
@@ -1985,7 +2118,21 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                         self.redraw();
                     }
+                    self.hover_regions(Some([position.x as f32, position.y as f32]))?;
                     self.update_cursor(position.x as f32, position.y as f32);
+                    if let Some(outcome) = self
+                        .runtime
+                        .code_pointer_hover(
+                            Some([position.x as f32, position.y as f32]),
+                            &mut self.handlers,
+                            &mut self.context,
+                        )
+                        .map_err(|e| e.to_string())?
+                    {
+                        if outcome.activated || outcome.changed {
+                            self.after_input(outcome)?;
+                        }
+                    }
                 }
                 WindowEvent::ThemeChanged(theme) => {
                     self.system_theme = if theme == winit::window::Theme::Light {
@@ -2037,6 +2184,16 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     if self.runtime.pointer_leave() {
                         self.redraw();
                     }
+                    self.hover_regions(None)?;
+                    if let Some(outcome) = self
+                        .runtime
+                        .code_pointer_hover(None, &mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?
+                    {
+                        if outcome.activated || outcome.changed {
+                            self.after_input(outcome)?;
+                        }
+                    }
                 }
                 WindowEvent::MouseInput {
                     state: ElementState::Pressed,
@@ -2047,6 +2204,15 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.activation_key = None;
                     self.runtime.cancel_input();
                     if let Some([x, y]) = self.pointer {
+                        // Over code, the caret moves to what was clicked first.
+                        if let Some(outcome) = self
+                            .runtime
+                            .code_context_press(x, y, &mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?
+                        {
+                            self.after_input(outcome)?;
+                            self.layout()?;
+                        }
                         let outcome = self
                             .runtime
                             .context_menu_at(x, y, &mut self.handlers, &mut self.context)
@@ -2066,6 +2232,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     if let Some([x, y]) = self.pointer {
                         match state {
                             ElementState::Pressed => {
+                                self.key_scroll_at = Some([x, y]);
                                 self.runtime.pointer_move(x, y);
                                 self.activation_key = None;
                                 if self.runtime.drag_region_hit(x, y) {
@@ -2078,6 +2245,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                         }
                                     }
                                 } else {
+                                    if self.code_pointer_down(x, y)? {
+                                        self.redraw();
+                                        return Ok(());
+                                    }
                                     if self.modifiers.shift_key()
                                         && self.runtime.editor_pointer_down(x, y, true)
                                     {
@@ -2086,9 +2257,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     }
                                     let outcome = self
                                         .runtime
-                                        .pointer_down_outcome(
+                                        .pointer_down_outcome_with_modifiers(
                                             x,
                                             y,
+                                            self.input_modifiers(),
                                             &mut self.handlers,
                                             &mut self.context,
                                         )
@@ -2097,7 +2269,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     // click places, two pick a word, three
                                     // the paragraph; Shift extends.
                                     let clicks = self.count_click([x, y]);
-                                    let selected = self.runtime.press_was_free()
+                                    let selected = self.runtime.press_allows_text_selection()
                                         && self.runtime.text_select_press(
                                             x,
                                             y,
@@ -2113,6 +2285,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                 self.redraw();
                             }
                             ElementState::Released => {
+                                self.code_pointer_up();
                                 if self.runtime.text_select_release() {
                                     self.after_selection()?;
                                 }
@@ -2185,13 +2358,39 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     {
                         return Ok(());
                     }
-                    if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
+                    if event.state == ElementState::Pressed
+                        && !event.repeat
+                        && (event.logical_key == Key::Named(NamedKey::ContextMenu)
+                            || (event.logical_key == Key::Named(NamedKey::F10)
+                                && self.modifiers.shift_key()
+                                && !self.modifiers.alt_key()
+                                && !self.modifiers.control_key()
+                                && !self.modifiers.super_key()))
+                    {
+                        let outcome = self
+                            .runtime
+                            .context_menu_focused(&mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?;
+                        if outcome.activated {
+                            self.activation_key = None;
+                            self.after_input(outcome)?;
+                            return Ok(());
+                        }
+                    }
+                    if event.state == ElementState::Pressed && self.code_keyboard(&event)? {
                         return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.editor_keyboard(&event)? {
                         return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.value_keyboard(&event)? {
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.control_keyboard(&event)? {
+                        self.activation_key = None;
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
                         return Ok(());
                     }
                     if let Key::Named(key) = event.logical_key {
@@ -2229,6 +2428,42 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                 }
                                 self.after_input(outcome)?;
                             }
+                            // Nothing took them: scroll the content, as a
+                            // reader expects of a page.
+                            NamedKey::ArrowUp
+                            | NamedKey::ArrowDown
+                            | NamedKey::PageUp
+                            | NamedKey::PageDown
+                                if event.state == ElementState::Pressed =>
+                            {
+                                if let Some([x, y]) = self.key_scroll_at.or(self.pointer) {
+                                    let [line, page] = self.runtime.key_scroll_steps(x, y);
+                                    let dy = match key {
+                                        NamedKey::ArrowUp => -line,
+                                        NamedKey::ArrowDown => line,
+                                        NamedKey::PageUp => -page,
+                                        _ => page,
+                                    };
+                                    let outcome = self
+                                        .runtime
+                                        .scroll_outcome(
+                                            x,
+                                            y,
+                                            [0., dy],
+                                            &mut self.handlers,
+                                            &mut self.context,
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                    if outcome.changed || outcome.activated {
+                                        self.after_input(outcome)?;
+                                        self.layout()?;
+                                        if let Some([px, py]) = self.pointer {
+                                            self.runtime.pointer_move(px, py);
+                                        }
+                                        self.redraw();
+                                    }
+                                }
+                            }
                             NamedKey::Enter | NamedKey::Space => match event.state {
                                 ElementState::Pressed
                                     if !event.repeat && self.activation_key.is_none() =>
@@ -2254,8 +2489,18 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     .runtime
                                     .dismiss_overlay(&mut self.handlers, &mut self.context)
                                     .map_err(|e| e.to_string())?;
+                                let escaped = !outcome.activated
+                                    && self
+                                        .runtime
+                                        .dispatch_escape(&mut self.handlers, &mut self.context)
+                                        .map_err(|e| e.to_string())?;
                                 if outcome.activated {
                                     self.after_input(outcome)?;
+                                } else if escaped {
+                                    self.after_input(InputOutcome {
+                                        changed: true,
+                                        activated: true,
+                                    })?;
                                 } else if self.runtime.cancel_input() {
                                     self.redraw();
                                 }
@@ -2266,6 +2511,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 }
                 _ => {}
             }
+            self.focus_regions()?;
             self.sync_ime();
             Ok(())
         })();
@@ -2276,6 +2522,17 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if event_loop.exiting() {
             return;
+        }
+        if let (Some(visible), Some(window)) = (&self.extensions.window_visible, &self.window) {
+            let desired = visible(&self.context);
+            if self.extensions.last_window_visible != Some(desired) {
+                window.set_visible(desired);
+                if desired {
+                    window.set_minimized(false);
+                    window.focus_window();
+                }
+                self.extensions.last_window_visible = Some(desired);
+            }
         }
         if let Some(messages) = self.messages.as_mut() {
             messages.finish_turn();
@@ -2298,8 +2555,14 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
         }
         let now = Instant::now();
+        let previous_wait = self.runtime.animation_wait();
         let changed = self.advance_animations(now);
-        let active = self.animations_can_run() && self.runtime.is_animating();
+        let wait = if self.animations_can_run() {
+            self.runtime.animation_wait()
+        } else {
+            None
+        };
+        let active = wait == Some(Duration::ZERO);
         if active {
             self.update_pacing(now);
         }
@@ -2308,10 +2571,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             // Consume this deadline even if the platform coalesces the redraw;
             // never repeatedly wake at a deadline that is already in the past.
             self.animation_clock.presented(now);
-        } else if changed && !active {
+        } else if motion_needs_final_frame(changed, previous_wait, wait) {
             self.redraw();
         }
         let mut deadline = self.animation_clock.deadline(now, active);
+        if let Some(delay) = wait.filter(|delay| !delay.is_zero()) {
+            deadline = Some(now + delay);
+        }
         #[cfg(feature = "native-gpu")]
         {
             if self.gpu_retry.due(now) {
@@ -2428,6 +2694,16 @@ fn reduced_motion_enabled(option: bool, environment: Option<&str>) -> bool {
 }
 
 const ANIMATION_FRAME: Duration = Duration::from_nanos(16_666_667);
+// Present the endpoint even when another animation is waiting in a stagger gap.
+// Delayed-only scenes otherwise stay asleep without redrawing unchanged paint.
+fn motion_needs_final_frame(
+    changed: bool,
+    before: Option<Duration>,
+    after: Option<Duration>,
+) -> bool {
+    changed && after != Some(Duration::ZERO) && (after.is_none() || before == Some(Duration::ZERO))
+}
+
 /// Paces animation frames. Under vsync (GPU, FIFO presentation) the display
 /// sets the rate: the next frame is requested right after each present and
 /// the swap chain waits for the next refresh — 120 Hz on ProMotion — with no
@@ -2661,6 +2937,17 @@ mod tests {
         assert!(!reduced_motion_enabled(false, Some("0")));
         assert!(!reduced_motion_enabled(false, Some("true")));
         assert!(!reduced_motion_enabled(false, None));
+    }
+    #[test]
+    fn animation_endpoint_is_presented_before_a_stagger_gap_sleeps() {
+        let frame = Some(Duration::ZERO);
+        let delay = Some(Duration::from_millis(200));
+        assert!(motion_needs_final_frame(true, frame, delay));
+        assert!(motion_needs_final_frame(true, frame, None));
+        assert!(!motion_needs_final_frame(true, delay, delay));
+        assert!(!motion_needs_final_frame(true, frame, frame));
+        assert!(!motion_needs_final_frame(false, frame, delay));
+        assert!(!motion_needs_final_frame(false, None, None));
     }
     #[test]
     fn animation_clock_follows_vsync_or_a_drift_free_refresh_cadence() {

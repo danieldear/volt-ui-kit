@@ -48,6 +48,7 @@ fn glyph_button<C: 'static>(
 type Select<C, T> = Rc<RefCell<dyn FnMut(&mut C, T)>>;
 /// Mutually exclusive options shown as radio buttons with labels.
 pub struct RadioGroup<C, T> {
+    spacing: RootSpacing,
     key: Option<String>,
     items: Vec<(T, String, Option<String>)>,
     selected: Option<T>,
@@ -58,6 +59,7 @@ pub fn radio_group<C, T>(
     items: impl IntoIterator<Item = (T, impl Into<String>)>,
 ) -> RadioGroup<C, T> {
     RadioGroup {
+        spacing: RootSpacing::default(),
         key: None,
         items: items
             .into_iter()
@@ -69,6 +71,7 @@ pub fn radio_group<C, T>(
     }
 }
 impl<C, T> RadioGroup<C, T> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -165,7 +168,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<RadioGroup<C, T>> for Elem
         .key(key)
         .gap(4., Axis::Both);
         group.0.node.access_role = Some(AccessRole::RadioGroup);
-        group.into()
+        g.spacing.apply(group.into())
     }
 }
 
@@ -174,6 +177,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<RadioGroup<C, T>> for Elem
 type Number<C> = Rc<RefCell<dyn FnMut(&mut C, f64)>>;
 /// A numeric field with − and + steppers, clamped to a range.
 pub struct NumberInput<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     value: f64,
     min: f64,
@@ -186,6 +190,7 @@ pub struct NumberInput<C> {
 }
 pub fn number_input<C>(value: f64) -> NumberInput<C> {
     NumberInput {
+        spacing: RootSpacing::default(),
         key: None,
         value,
         min: f64::MIN,
@@ -198,6 +203,7 @@ pub fn number_input<C>(value: f64) -> NumberInput<C> {
     }
 }
 impl<C> NumberInput<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -266,7 +272,7 @@ impl<C: 'static> From<NumberInput<C>> for Element<C> {
         let step = n.step;
         let shown = format!("{v:.decimals$}{}", n.suffix);
         let suffix = n.suffix.clone();
-        hstack![
+        let row = hstack![
             glyph_button(
                 format!("{key}-dec"),
                 "Decrease",
@@ -306,8 +312,8 @@ impl<C: 'static> From<NumberInput<C>> for Element<C> {
         .key(key)
         .width(n.width)
         .gap(4., Axis::Horizontal)
-        .align(Align::Center)
-        .into()
+        .align(Align::Center);
+        n.spacing.apply(row.into())
     }
 }
 
@@ -321,6 +327,7 @@ pub struct ComboboxState {
 }
 /// A searchable select: type to filter, click or press Enter to choose.
 pub struct Combobox<C, T> {
+    option_gap: f32,
     key: Option<String>,
     items: Vec<(T, String)>,
     selected: Option<T>,
@@ -329,12 +336,17 @@ pub struct Combobox<C, T> {
     on_select: Option<Select<C, T>>,
     placeholder: String,
     width: f32,
+    height: f32,
+    font_size: Option<f32>,
+    surface: Option<String>,
+    max_results: usize,
 }
 pub fn combobox<C, T>(
     items: impl IntoIterator<Item = (T, impl Into<String>)>,
     state: &ComboboxState,
 ) -> Combobox<C, T> {
     Combobox {
+        option_gap: 2.,
         key: None,
         items: items.into_iter().map(|(v, l)| (v, l.into())).collect(),
         selected: None,
@@ -343,9 +355,19 @@ pub fn combobox<C, T>(
         on_select: None,
         placeholder: "Search…".into(),
         width: 240.,
+        height: 36.,
+        font_size: None,
+        surface: None,
+        max_results: 8,
     }
 }
 impl<C, T> Combobox<C, T> {
+    /// Logical spacing between popup option rows (default 2). This does not
+    /// add space between the input and its anchored portal.
+    pub fn option_gap(mut self, value: f32) -> Self {
+        self.option_gap = value;
+        self
+    }
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -368,6 +390,28 @@ impl<C, T> Combobox<C, T> {
     }
     pub fn width(mut self, value: f32) -> Self {
         self.width = value;
+        self
+    }
+    /// The field's height (default 36).
+    pub fn height(mut self, value: f32) -> Self {
+        self.height = value;
+        self
+    }
+    /// The field's and the options' text size.
+    pub fn font_size(mut self, value: f32) -> Self {
+        self.font_size = Some(value);
+        self
+    }
+    /// The open list's colour, `base-200` by default; give it an opaque one
+    /// over busy content, as with `select`.
+    pub fn surface(mut self, color: impl Into<String>) -> Self {
+        self.surface = Some(color.into());
+        self
+    }
+    /// Most matches listed (default 8, at most 128). Past about nine the list
+    /// scrolls, so a combobox can stand in for a select of every option.
+    pub fn max_results(mut self, value: usize) -> Self {
+        self.max_results = value.clamp(1, 128);
         self
     }
 }
@@ -413,6 +457,9 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
         let (Some(state), Some(select)) = (c.state, c.on_select) else {
             return invalid("combobox requires state(..) and on_select(..)");
         };
+        if !c.option_gap.is_finite() || !(0. ..=512.).contains(&c.option_gap) {
+            return invalid("combobox option_gap must be finite and in 0..512");
+        }
         let label = c
             .selected
             .as_ref()
@@ -426,7 +473,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
         };
         let matches: Vec<(usize, String)> = filter_items(&c.items, &c.snapshot.query)
             .into_iter()
-            .take(8)
+            .take(c.max_results)
             .map(|(i, l)| (i, l.to_owned()))
             .collect();
         let first = matches.first().map(|(i, _)| c.items[*i].0.clone());
@@ -434,12 +481,16 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
             (state.clone(), state.clone(), state.clone(), select.clone());
         let open = c.snapshot.open;
         let chosen_label = label.clone();
-        let field = text_field(shown)
+        let mut field = text_field(shown)
             .key(format!("{key}-field"))
             .accessible_label(label.unwrap_or_else(|| c.placeholder.clone()))
             .placeholder(c.placeholder.clone())
             .width(c.width)
-            .height(36.)
+            .height(c.height);
+        if let Some(size) = c.font_size {
+            field = field.font_size(size);
+        }
+        let field = field
             .trailing_action(
                 format!("{key}-toggle"),
                 if open {
@@ -472,24 +523,31 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
                 s.open = false;
                 s.query.clear();
             });
+        let font_size = c.font_size;
+        let rows = matches.len().max(1) as f32;
         let mut options: Vec<Element<C>> = matches
             .into_iter()
             .map(|(i, l)| {
                 let (value, pick, close) = (c.items[i].0.clone(), select.clone(), state.clone());
                 let chosen = c.selected.as_ref() == Some(&value);
+                let mut option = button(l)
+                    .key(format!("{key}-option-{i}"))
+                    .variant(ButtonVariant::Ghost)
+                    .label_align(Align::Start)
+                    .height(30.)
+                    .rounded(6.)
+                    .font_weight(if chosen { 600 } else { 400 })
+                    .flex(1.);
+                if let Some(size) = font_size {
+                    option = option.font_size(size);
+                }
                 hstack![
-                    button(l)
-                        .key(format!("{key}-option-{i}"))
-                        .variant(ButtonVariant::Ghost)
-                        .label_align(Align::Start)
-                        .height(32.)
-                        .flex(1.)
-                        .on_click(move |app: &mut C| {
-                            (pick.borrow_mut())(app, value.clone());
-                            let s = close(app);
-                            s.open = false;
-                            s.query.clear();
-                        }),
+                    option.on_click(move |app: &mut C| {
+                        (pick.borrow_mut())(app, value.clone());
+                        let s = close(app);
+                        s.open = false;
+                        s.query.clear();
+                    }),
                     if chosen {
                         Element::from(icon(Icon::Check).size(14.).color(ColorToken::Primary))
                     } else {
@@ -512,17 +570,24 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
             );
         }
         let close = state;
-        let pop = popover(vstack(options).gap(2., Axis::Vertical))
+        let mut pop = popover(vstack(options).gap(c.option_gap, Axis::Vertical))
             .key(format!("{key}-popover"))
             .anchor(format!("{key}-field"))
             .keep_anchor_interactive(true)
             .open(open)
             .width(c.width)
-            .on_dismiss(move |app: &mut C| {
-                let s = close(app);
-                s.open = false;
-                s.query.clear();
-            });
+            .padding(6., Edge::All)
+            .rounded(10)
+            // Nine rows, then it scrolls.
+            .height((rows * (30. + c.option_gap) + 12.).min(9. * (30. + c.option_gap) + 12.));
+        if let Some(surface) = c.surface {
+            pop = pop.background(surface);
+        }
+        let pop = pop.on_dismiss(move |app: &mut C| {
+            let s = close(app);
+            s.open = false;
+            s.query.clear();
+        });
         vstack![field, pop].key(key).into()
     }
 }
@@ -537,6 +602,7 @@ pub struct TagInputState {
 type Tags<C> = Rc<RefCell<dyn FnMut(&mut C, Vec<String>)>>;
 /// Chips plus a field: Enter adds the draft as a tag, × removes one.
 pub struct TagInput<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     tags: Vec<String>,
     snapshot: TagInputState,
@@ -547,6 +613,7 @@ pub struct TagInput<C> {
 }
 pub fn tag_input<C>(tags: &[String], state: &TagInputState) -> TagInput<C> {
     TagInput {
+        spacing: RootSpacing::default(),
         key: None,
         tags: tags.to_vec(),
         snapshot: state.clone(),
@@ -557,6 +624,7 @@ pub fn tag_input<C>(tags: &[String], state: &TagInputState) -> TagInput<C> {
     }
 }
 impl<C> TagInput<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -642,7 +710,7 @@ impl<C: 'static> From<TagInput<C>> for Element<C> {
                 })
                 .into(),
         );
-        hstack(row)
+        let row = hstack(row)
             .key(key)
             .wrap(true)
             .gap(6., Axis::Both)
@@ -650,8 +718,8 @@ impl<C: 'static> From<TagInput<C>> for Element<C> {
             .padding(6., Edge::All)
             .rounded(8.)
             .border_color(ColorToken::Border)
-            .border_width(1.)
-            .into()
+            .border_width(1.);
+        t.spacing.apply(row.into())
     }
 }
 
@@ -738,6 +806,7 @@ impl Hsl {
 type Colour<C> = Rc<RefCell<dyn FnMut(&mut C, String)>>;
 /// Preset swatches, hue/saturation/lightness sliders and a hex field.
 pub struct ColorPicker<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     value: String,
     swatches: Vec<String>,
@@ -745,6 +814,7 @@ pub struct ColorPicker<C> {
 }
 pub fn color_picker<C>(hex: impl Into<String>) -> ColorPicker<C> {
     ColorPicker {
+        spacing: RootSpacing::default(),
         key: None,
         value: hex.into(),
         swatches: [
@@ -758,6 +828,7 @@ pub fn color_picker<C>(hex: impl Into<String>) -> ColorPicker<C> {
     }
 }
 impl<C> ColorPicker<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -812,13 +883,14 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
                     .into()
             })
             .collect();
+        let padded = p.spacing.padding.iter().any(Option::is_some);
         let channel = |name: &'static str,
                        value: f32,
                        range: std::ops::RangeInclusive<f32>,
                        set: fn(Hsl, f32) -> Hsl|
          -> Element<C> {
             let pick = change.clone();
-            hstack![
+            let row = hstack![
                 text(name)
                     .font_size(12.)
                     .color(ColorToken::Muted)
@@ -837,11 +909,17 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
             .key(format!("{key}-{name}-row"))
             .width(300.)
             .gap(8., Axis::Horizontal)
-            .align(Align::Center)
-            .into()
+            .align(Align::Center);
+            // Default measurements remain unchanged. Explicit root padding
+            // reduces the available channel width rather than overflowing it.
+            if padded {
+                row.fill_width().into()
+            } else {
+                row.into()
+            }
         };
         let typed = change.clone();
-        vstack![
+        let card = vstack![
             hstack![
                 vstack![]
                     .key(format!("{key}-preview"))
@@ -881,8 +959,8 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
         ]
         .key(key)
         .width(300.)
-        .gap(12., Axis::Vertical)
-        .into()
+        .gap(12., Axis::Vertical);
+        p.spacing.apply(card.into())
     }
 }
 
@@ -891,6 +969,7 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
 type Code<C> = Rc<RefCell<dyn FnMut(&mut C, String)>>;
 /// A fixed number of digit boxes backed by one field, as for sign-in codes.
 pub struct OtpInput<C> {
+    digit_gap: f32,
     key: Option<String>,
     value: String,
     length: usize,
@@ -899,6 +978,7 @@ pub struct OtpInput<C> {
 }
 pub fn otp_input<C>(value: impl Into<String>, length: usize) -> OtpInput<C> {
     OtpInput {
+        digit_gap: 8.,
         key: None,
         value: value.into(),
         length,
@@ -907,6 +987,12 @@ pub fn otp_input<C>(value: impl Into<String>, length: usize) -> OtpInput<C> {
     }
 }
 impl<C> OtpInput<C> {
+    /// Logical spacing between digit boxes (default 8). The real input stays
+    /// aligned with the complete row; zero joins the boxes without overlap.
+    pub fn digit_gap(mut self, value: f32) -> Self {
+        self.digit_gap = value;
+        self
+    }
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -932,6 +1018,9 @@ impl<C: 'static> From<OtpInput<C>> for Element<C> {
         };
         if !(2..=12).contains(&o.length) {
             return invalid("otp_input length must be 2..=12");
+        }
+        if !o.digit_gap.is_finite() || !(0. ..=512.).contains(&o.digit_gap) {
+            return invalid("otp_input digit_gap must be finite and in 0..512");
         }
         let digits: Vec<char> = o
             .value
@@ -961,13 +1050,13 @@ impl<C: 'static> From<OtpInput<C>> for Element<C> {
             })
             .collect();
         let (length, complete) = (o.length, o.on_complete);
-        let row_width = o.length as f32 * 50. - 8.;
+        let row_width = o.length as f32 * 42. + (o.length - 1) as f32 * o.digit_gap;
         // The real field sits on top, transparent, so clicks focus it and
         // typing, paste and backspace all work; the boxes show its digits.
         zstack![
             hstack(boxes)
                 .key(format!("{key}-boxes"))
-                .gap(8., Axis::Horizontal),
+                .gap(o.digit_gap, Axis::Horizontal),
             text_field(digits.iter().collect::<String>())
                 .key(format!("{key}-field"))
                 .accessible_label(format!("{length}-digit code"))
@@ -1003,6 +1092,7 @@ impl<C: 'static> From<OtpInput<C>> for Element<C> {
 type Stars<C> = Rc<RefCell<dyn FnMut(&mut C, u8)>>;
 /// A row of stars; clicking the current rating again clears it.
 pub struct Rating<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     value: u8,
     max: u8,
@@ -1011,6 +1101,7 @@ pub struct Rating<C> {
 }
 pub fn rating<C>(value: u8) -> Rating<C> {
     Rating {
+        spacing: RootSpacing::default(),
         key: None,
         value,
         max: 5,
@@ -1019,6 +1110,7 @@ pub fn rating<C>(value: u8) -> Rating<C> {
     }
 }
 impl<C> Rating<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -1087,7 +1179,7 @@ impl<C: 'static> From<Rating<C>> for Element<C> {
             .collect();
         let mut row = hstack(stars).key(key).gap(2., Axis::Horizontal);
         row.0.node.accessible_label = Some(format!("Rated {} of {}", r.value, r.max));
-        row.into()
+        r.spacing.apply(row.into())
     }
 }
 
@@ -1095,6 +1187,7 @@ impl<C: 'static> From<Rating<C>> for Element<C> {
 
 /// A labelled control with optional description and error message.
 pub struct FormField<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     label: String,
     control: Element<C>,
@@ -1104,6 +1197,7 @@ pub struct FormField<C> {
 }
 pub fn form_field<C>(label: impl Into<String>, control: impl Into<Element<C>>) -> FormField<C> {
     FormField {
+        spacing: RootSpacing::default(),
         key: None,
         label: label.into(),
         control: control.into(),
@@ -1113,6 +1207,7 @@ pub fn form_field<C>(label: impl Into<String>, control: impl Into<Element<C>>) -
     }
 }
 impl<C> FormField<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -1177,7 +1272,8 @@ impl<C: 'static> From<FormField<C>> for Element<C> {
             ),
             (None, None) => {}
         }
-        vstack(parts).key(key).gap(6., Axis::Vertical).into()
+        f.spacing
+            .apply(vstack(parts).key(key).gap(6., Axis::Vertical).into())
     }
 }
 // ── Drop zone ───────────────────────────────────────────────────────────
@@ -1186,6 +1282,7 @@ type Paths<C> = Rc<RefCell<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>>;
 /// A dashed target that accepts files dragged in from the system, with an
 /// optional browse button for a file dialog the app opens itself.
 pub struct DropZone<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     title: String,
     description: Option<String>,
@@ -1197,6 +1294,7 @@ pub struct DropZone<C> {
 }
 pub fn drop_zone<C>() -> DropZone<C> {
     DropZone {
+        spacing: RootSpacing::default(),
         key: None,
         title: "Drop files here".into(),
         description: None,
@@ -1208,6 +1306,7 @@ pub fn drop_zone<C>() -> DropZone<C> {
     }
 }
 impl<C> DropZone<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -1327,7 +1426,7 @@ impl<C: 'static> From<DropZone<C>> for Element<C> {
             }
         })));
         zone.0.node.accessible_label = Some("File drop zone".into());
-        zone.into()
+        d.spacing.apply(zone.into())
     }
 }
 #[cfg(test)]

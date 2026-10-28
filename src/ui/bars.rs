@@ -22,10 +22,12 @@ pub fn toolbar<C>(children: impl IntoIterator<Item = Element<C>>) -> Toolbar<C> 
 /// 1px seam through which the surface behind shows, so the segments read as
 /// one divided control. (A group background would fill the full row width
 /// when a column stretches the group.)
+/// Divide children into one control. The 1px seam is only a default: a gap
+/// the caller set with `.gap(...)` is kept.
 fn join<C>(e: &mut Element<C>) {
-    e.node.gap = 1.;
-    e.node.gap_horizontal = None;
-    e.node.responsive.gap = [None, None];
+    if e.node.responsive.gap[0].is_none() && e.node.gap_horizontal.is_none() {
+        e.node.gap = 1.;
+    }
     let radius = e.node.style.radius.unwrap_or(Rounding::Radius(6.));
     let corners = e.node.style.corners.unwrap_or([radius; 4]);
     let last = e.children.len().saturating_sub(1);
@@ -124,7 +126,7 @@ struct SelectionOptions<C, T> {
 }
 pub fn tab_bar<C, T>(items: impl IntoIterator<Item = TabItem<T>>) -> SelectionControl<C, T> {
     let mut e = Element::new(Kind::Row);
-    e.node.gap = 4.;
+    e.node.gap = 2.;
     e.node.selection_group = true;
     e.node.access_role = Some(AccessRole::TabList);
     SelectionControl(
@@ -217,7 +219,11 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<SelectionControl<C, T>> fo
         if !segmented {
             style_strip(&mut bar.0, bar.1.variant);
         }
-        for item in bar.1.items {
+        // A keyed control gives its options stable ids ("{key}-{index}"), so
+        // their hover, press and fade state never jumps to another element
+        // when siblings before the control come and go.
+        let parent = (!bar.0.auto_id).then(|| bar.0.node.id.clone());
+        for (index, item) in bar.1.items.into_iter().enumerate() {
             let active = item.value == selected;
             let value = item.value;
             let handler = callback.clone();
@@ -246,8 +252,10 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<SelectionControl<C, T>> fo
                 } else {
                     AccessRole::Tab
                 });
-            if let Some(key) = item.key {
-                child = child.key(key);
+            match (item.key, &parent) {
+                (Some(key), _) => child = child.key(key),
+                (None, Some(parent)) => child = child.key(format!("{parent}-{index}")),
+                (None, None) => {}
             }
             bar.0.children.push(child.into());
         }
@@ -354,6 +362,7 @@ struct TabsOptions<C, T> {
     callback: Option<Select<C, T>>,
     placement: TabPlacement,
     variant: TabVariant,
+    strip_spacing: RootSpacing,
 }
 pub fn tabs<C, T>(items: impl IntoIterator<Item = Tab<C, T>>) -> Tabs<C, T> {
     let mut e = Element::new(Kind::Column);
@@ -366,12 +375,28 @@ pub fn tabs<C, T>(items: impl IntoIterator<Item = Tab<C, T>>) -> Tabs<C, T> {
             callback: None,
             placement: TabPlacement::Top,
             variant: TabVariant::Line,
+            strip_spacing: RootSpacing::default(),
         },
     )
 }
 impl<C, T> Tabs<C, T> {
     pub fn selected(mut self, value: T) -> Self {
         self.1.selected = Some(value);
+        self
+    }
+    /// Gap between tab-strip buttons (default 2), not strip-to-content gap.
+    /// `.gap(..)` on Tabs continues to control the outer content stack.
+    pub fn tab_gap(mut self, value: impl Into<Responsive<f32>>) -> Self {
+        self.1.strip_spacing.gap(value, Axis::Horizontal);
+        self
+    }
+    /// Inner tab-strip padding, including directional/responsive rules.
+    pub fn tab_padding(
+        mut self,
+        value: impl Into<Responsive<f32>>,
+        edges: impl Into<Edges>,
+    ) -> Self {
+        self.1.strip_spacing.padding(value, edges);
         self
     }
     pub fn placement(mut self, value: TabPlacement) -> Self {
@@ -412,6 +437,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Tabs<C, T>> for Element<C>
         }
         let variant = tabs.1.variant;
         let mut bar = tab_bar(items).selected(selected).variant(variant);
+        bar.0 = tabs.1.strip_spacing.apply(bar.0);
         bar.1.callback = tabs.1.callback;
         let mut strip: Element<C> = bar.into();
         if variant == TabVariant::Line && strip.node.ext.fraction[0].is_none() {
@@ -543,7 +569,15 @@ mod tests {
             .gap(20., Axis::Both)
             .into();
         let zero = Rounding::Radius(0.);
-        assert_eq!(e.node.gap, 1., "a 1px seam between joined segments");
+        let seam: Element<()> = buttons().joined(true).into();
+        assert_eq!(
+            seam.node.gap, 1.,
+            "a 1px seam between joined segments by default"
+        );
+        assert!(
+            e.node.responsive.gap.iter().all(Option::is_some),
+            "a gap the caller chose is kept"
+        );
         assert_eq!(
             e.children[0].node.style.corners,
             Some([Rounding::Full, zero, zero, Rounding::Full])

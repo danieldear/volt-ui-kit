@@ -2,6 +2,234 @@
 
 ## Unreleased
 
+- Reject malformed multi-separator light/dark color pairs in either theme mode,
+  before choosing a half. Valid hex/token/opacity pairs retain their behavior.
+
+- Extract `volt-ui-kit-mobile`: reusable Rust application/events/semantics and
+  a target-gated iOS UIKit/Metal host. Field Notes and the new
+  `cargo volt new --platform ios` template share one canonical host: no per-app
+  Swift application source or XcodeGen requirement. Include generated Rust and
+  Simulator workflow tests, strict ABI/event validation, app-owned themes and
+  SF font fallback. The common layer considers future Android integration;
+  Android has no native host/template yet. Desktop defaults remain unchanged.
+
+- Add an opt-in iOS Field Notes prototype: Rust-owned list/detail navigation,
+  touch scrolling and editable profile forms, with a thin UIKit scene/keyboard
+  and Metal surface host. Simulator UI tests and an unsigned device build are
+  separate from physical-device GPU acceptance; see `docs/ios-prototype.md`.
+- Expose shared `rendering` / `rendering-gpu` adapters and an experimental
+  `mobile::MobileView` without desktop window/clipboard dependencies. Existing
+  `native` re-exports and the empty default feature set are preserved.
+- Negotiate the advertised inter-stage shader limit and reject adapters lacking
+  Vello compute/indirect support before drawing. The prototype explicitly opts
+  into a capability-reported software-drawing/Metal-presentation fallback for
+  restricted Simulator adapters; desktop GPU defaults are unchanged.
+
+
+- Code views report what the pointer rests on when asked:
+  `report_hover(true)` sends `CodeInput::Hover { at, point }` as the
+  position changes and `at: None` when it leaves. Hosts call
+  `Runtime::code_pointer_hover`; the native window does.
+- A right-click over code outside the selection moves the caret there
+  first (`Runtime::code_context_press`), so a context menu's actions apply
+  to what was clicked; inside a selection it keeps it.
+- `ContextMenu::fill()` lets a flexible target, such as a code view, fill
+  the wrapper; without it the target keeps its size and empty wrapper space
+  opens no menu.
+- A submenu row's label lines up with the other rows instead of always
+  leaving room for a glyph.
+- `scroll_to` after a wheel scroll lands on its key: it measured from the
+  container's stale offset and could leave the view where it was. Tests:
+  `tests/code_view.rs`, `runtime.rs` foundation tests.
+- Arrow keys and Page Up/Down that no control takes scroll the view you
+  last pressed in, or the one under the pointer: a line, or the view's
+  height less a line. `Runtime::key_scroll_steps` gives both. Tests:
+  `tests/focus_scroll_polish.rs`.
+- Menus follow one design: every row's label starts on one edge (past a
+  glyph column only when some row has a check or an icon), rows are 12.5
+  regular, hover and keyboard focus fill with the accent at low strength
+  instead of a ring, and the card always casts a shadow.
+- Tooltips cast a shadow, so they read as floating over content.
+- Add `on_drag(|app, [dx, dy]|)` for containers: `[0, 0]` at the press,
+  then the offset from it as the pointer moves, until release. For
+  resize grips. Tests: `tests/form_components.rs`.
+- The document budget is 16,384 nodes (was 4,096), depth 48 unchanged, so
+  long documents and transcripts render whole.
+- The code view's scrollbar can be held and dragged, and pressing its track
+  brings the thumb under the pointer. The held thumb widens and darkens,
+  the pointer shows the arrow over the scrollbar, and no caret press reaches
+  the application. Tests: `tests/code_view.rs`.
+- Add `text_scale(f)`: multiplies every font size beneath, explicit ones
+  included, for an interface text-size setting.
+- `combobox` takes `.max_results(n)` (up to 128, scrolling past nine rows),
+  `.surface(..)`, `.height(..)` and `.font_size(..)`, so it can replace a
+  select you type into.
+- Hover, pressed, focus and disabled styles, and shadows, accept tokens and
+  `"light|dark"` pairs like static styles instead of failing validation.
+- Add `code_view(line_count)`, a controlled, virtualized code surface for
+  editors (built for Volt Editor). The application keeps the document and
+  supplies only the lines around the visible window (`.lines(first, ..)`)
+  with coloured byte spans (`.palette(..)`), plus every selection.
+  - **Drawing:** the view draws the gutter and line numbers, the
+    current-line band, selections, several carets, input-method
+    composition at the caret, and a thin scrollbar. Only visible lines are
+    shaped, so per-frame work doesn't grow with the file.
+  - **Input:** every key (with its modifiers), typed or committed text,
+    paste, press (with click count), drag, Copy and Cut reaches one
+    `on_input` handler as a `CodeInput`. Copy and Cut return the selected
+    text for the clipboard. Read-only views select, scroll and copy.
+  - **Scrolling:** wheel and trackpad scrolling, drag auto-scroll,
+    `.reveal(request)` (keep the primary caret on screen) and
+    `.scroll_to(line, request)`. `CodeInput::Visible` asks for lines only
+    when the view leaves the supplied window or its height changes.
+  - **Focus and theming:** `.focus_when(..)` takes focus as it turns on.
+    Palette entries may be `"light|dark"` pairs, picked by the theme in
+    effect. Presses and scrolling pass through transparent layers above
+    the view, such as the row holding a find bar.
+  - **Additive:** new files `runtime/code_view.rs`, `ui/code_view.rs` and
+    `native/window/code_input.rs`, plus small hooks in focus, scrolling,
+    painting, IME and the native key and pointer routing. Existing
+    components are unchanged. Tests: `tests/code_view.rs`.
+- Add `.caret_band(height)` to `code_view`. The view reports
+  `CodeInput::CaretBand(Some([x, width]))` (whole window points) while the
+  primary caret is on screen within its bottom `height` points, and `None`
+  once it leaves. Reports are sent only when that changes, so a surface
+  floating over the bottom of an editor can keep clear of the caret.
+  Additive; covered in `tests/code_view.rs`.
+- Add `.on_hover(|state, inside|)` to containers. The container learns when
+  the pointer enters or leaves its bounds, with descendants counting as
+  inside, so a floating panel can stay open while it's in use. Hosts call
+  the new `Runtime::dispatch_hover_regions(pointer, ..)` after pointer
+  motion; the native window does this on cursor moves and when the cursor
+  leaves the window. Additive: new file `runtime/hover.rs`, plus one field on
+  elements, nodes and layout boxes. Tests: `tests/hover_regions.rs`.
+- Add `.on_focus_within(|state, inside|)` and `.on_escape(|state|)` to
+  containers, for non-modal floating surfaces:
+  - **Focus within:** the container learns when keyboard focus moves onto
+    it or a descendant, and when focus leaves, so it can stay open while
+    it's used from the keyboard. The native window reports this after each
+    event through `Runtime::dispatch_focus_regions`.
+  - **Escape:** an Escape that no editor, menu or dialog used goes to the
+    last `on_escape` container in the document, through
+    `Runtime::dispatch_escape`.
+  - Additive, in `runtime/hover.rs`. Tests: `tests/hover_regions.rs`.
+- Add `.decorations(..)` to `code_view`: marked ranges as `CodeDecoration`s,
+  each with a `CodeMark` and a colour (a token, hex or `"light|dark"`).
+  - **Marks:** `Fill` tints behind the text and under selections (search
+    matches); `Underline` (diagnostics) and `Outline` (the current match)
+    draw above the text; `Lines` tints whole lines across the view with a
+    bar at the gutter's edge (changed lines), and an empty `Lines` range
+    marks the boundary where lines were removed.
+  - **Bounded:** like lines, decorations are supplied near the visible
+    window, at most 10,000 per view; only those touching drawn lines
+    are resolved and painted.
+  - Additive: one field and builder; selections share the new range
+    geometry and look the same. Tests: `tests/code_view.rs`.
+- Add `code_view` looks for editors that follow a design closely:
+  `.italic_palette(..)` draws chosen palette entries in italic (comments),
+  `.indent_guides(unit)` draws a guide at each indentation level (a blank
+  line takes the depth of the code after it), and `.scroll_marks(..)`
+  marks lines along the scrollbar's track (search matches, changes).
+  The overlay scrollbar is now a 7pt rounded thumb in a track inset 6pt.
+  Additive apart from that look. Tests: `tests/code_view.rs`.
+- Element style colours (text, background, border, accent) may be
+  `"light|dark"` pairs of hex values or tokens, as `code_view` palettes
+  already could. `UiTheme::resolve` picks the half for the theme in
+  effect (light text means a dark theme), so System appearance needs no
+  recomposition. Additive: one shared check in style and canvas validation.
+  Tests: `tests/theme_pairs.rs`.
+- Add finite damped-spring timing, configurable `Spring`, additive stagger delays
+  and stable-key `transition_revision` replay, without adding Easing variants or
+  dependencies. Add polished, action-driven Catalog motion workflows and guides.
+- Fix delay-aware animation scheduling, early pruning of overshooting curves,
+  bounded opacity/color interpolation, reverse offset animation to zero, and
+  paint-only sliding exits. Resolve themed colors consistently across offset
+  and final paint passes to prevent continuous animation restarts, and present
+  completed endpoints before sleeping through a stagger gap.
+  Reduced motion settles everything immediately;
+  the macOS native host also samples the system preference at startup.
+
+- Add optional typed `NavigationHistory`, validated serializable checkpoints,
+  `navigation_link` and `navigation_stack`. Existing navigation controls and
+  public accessibility enums/structs retain their shapes and behavior.
+- Add standalone themed `link` controls with keyboard/accessibility activation,
+  conservative HTTP(S) targets and explicit public-API macOS browser dispatch
+  (`native-desktop`); unsupported builds report capability/errors. No new
+  dependencies or automatic browser/network activity.
+- Add interactive navigation/link Catalog workflows, responsive preview coverage,
+  lifecycle/security regression tests and matching component/service guides.
+
+- Add opt-in content padding/gap to forms and disclosure composites, dialogs,
+  popovers and tooltips. Defaults remain unchanged. Add OTP `digit_gap` and
+  combobox `option_gap` where generic container gaps would not affect the
+  intended inner layout.
+- Add `Tabs::tab_gap` and `tab_padding`, independent of strip-to-page spacing;
+  preserve the current 2px tab-bar default and explicit joined-bar gaps.
+- Make menu popup padding, item gap/height and height cap configurable; retain
+  the current 6/2/34/480 defaults and `surface`, with `popup_background` alias.
+- Add table row/header height and horizontal cell padding, tree row height and
+  indentation, and fixed panel padding/gap without changing existing defaults.
+  Regression coverage includes explicit zero, responsive overrides, both DPI
+  scales, input callbacks and content-card versus overlay spacing.
+
+- Add `canvas_frames(frames, frame_ms, revision)`: a canvas tween computed
+  while composing and played at paint time (no recomposition or layout per
+  frame). It restarts only when `revision` changes for that element and
+  shows the last frame under reduced motion.
+- `sunburst_chart(..).animate_from(previous, revision)`: arcs tween to new
+  data (d3's cubic in-out over ~360 ms; new arcs grow from their start) and
+  labels cross-fade. A different root draws without a tween.
+- Menus and context menus take `.surface(color)` for the popup card (default
+  `Base200`); a caller-set surface also floats on a soft shadow, for apps whose
+  panels are translucent. The popup's height cap rises from 360 to 480 so a
+  dozen-row context menu isn't cut off.
+- Add `Application::appearance_from_state(..)`: an in-app Light / Dark /
+  System choice. The window (and so its native material) and the mode passed
+  to `theme_with` follow it after each update; `System` follows the OS again.
+  Not covered by headless tests (it drives the native window).
+- A keyed segmented control or tab bar gives its options stable ids
+  (`{key}-{index}`, unless an item has its own key), so their hover, press
+  and fade state can't move to another element when siblings before the
+  control come and go.
+- Add `sunburst_chart`, a zoomable sunburst after d3's (rings around a root,
+  a rainbow hue per top-level branch, a centre that can go back up), with
+  `sunburst_layout` and d3's `rainbow` palette. Arcs are sector-clipped
+  buttons sharing the hierarchy charts' ids, labels, selection, review
+  markers, dashed context targets, hover links, menus and keyboard roving.
+- Add `.on_height(...)`, the height counterpart of `.on_width(...)`, reported
+  through the same `dispatch_widths` pass, and `selectable_list(..)
+  .flexible_height()` so a list can take a column's remaining height and
+  scroll inside it.
+- Joined segmented controls and tab bars keep a caller-set `.gap(...)`
+  instead of always forcing the 1px seam (still the default).
+- Keyboard-opened context menus (Shift-F10 / Context Menu) fall back to the
+  focused item's nearest menu owner when the item's box centre lies outside
+  a clipped, non-rectangular target such as a ring segment.
+
+- Add opt-in paint-only `.hover_link(key)` peers and hierarchy
+  `.hover_linked(true)`: matching mounted components share hover styling without
+  callbacks, recomposition, selection, focus, scrolling or peer tooltips. Legacy
+  chart behavior and public input event variants remain unchanged.
+
+- Add opt-in hierarchy multi-selection, passive review markers, custom node
+  palettes, hidden icicle root bands, distinct context targets and per-node
+  context callbacks. Keyboard navigation uses one roving Tab stop, arrow keys,
+  and native Shift-F10 / Context Menu requests. Existing chart defaults, public
+  input event variants and the feature-free Volt core remain unchanged.
+
+- Add opt-in macOS `native::file_dialog::move_to_trash` for one caller-confirmed
+  item, with unsupported-platform reporting and no permanent-delete fallback.
+  Confirmation, path protection and revalidation remain application policy.
+
+- Add Rust-native `icicle_chart` and squarified `treemap_chart`, inclusive
+  hierarchy weights, bounded layout helpers, accessible tile labels, tooltips
+  and typed mouse/keyboard selection. Demonstrate both on the Catalog Charts page.
+- Add macOS `native::file_dialog::reveal_file` for a toolkit-owned Finder reveal
+  request without opening or executing file contents.
+- Add opt-in `Application::window_visibility_from_state` for tray-resident
+  applications; hide/show keeps existing workers alive and restores focus only
+  on a visibility transition. Existing window-close behavior is unchanged.
+
 ## 0.5.0 (2026-10-17; not published to crates.io)
 
 - Add `./scripts/run_catalog.sh`: one-command, fully featured GPU Catalog,

@@ -44,22 +44,33 @@ fn word_at(text: &str, at: usize) -> (usize, usize) {
 
 impl Runtime {
     fn selectable_at(&self, x: f32, y: f32) -> Option<&LayoutBox> {
-        self.boxes.iter().rev().find(|b| {
-            selectable(b)
+        self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
+            (selectable(b)
                 && contains(b.bounds.bounds(), x, y)
-                && contains(b.clip.bounds(), x, y)
+                && b.clip.contains(x, y)
+                && b.clip_regions.iter().all(|r| r.contains(x, y))
+                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
                 && self.scope_allows_id(&b.id)
+                && !self.portal_passthrough(&b.id)
+                && !self.input_occluded(index, x, y))
+            .then_some(b)
         })
     }
-
     /// Whether the last press left nothing captured (no control, link,
     /// editor, scrollbar, divider or slider), so it may select text.
     pub fn press_was_free(&self) -> bool {
+        self.link_capture.is_none() && self.press_allows_text_selection()
+    }
+
+    /// A read-only text press may also begin on a link. Keep its pending
+    /// click until selection actually expands, so clicking still follows
+    /// the link while dragging copies its label instead.
+    pub fn press_allows_text_selection(&self) -> bool {
         self.capture.is_none()
-            && self.link_capture.is_none()
             && self.scrollbar_capture.is_none()
             && self.split_capture.is_none()
             && self.slider_capture.is_none()
+            && self.drag_capture.is_none()
             && !self.editors.borrow().values().any(|e| e.dragging())
     }
 
@@ -127,6 +138,9 @@ impl Runtime {
         }
         s.dragging = true;
         self.refresh_text_selection(m);
+        if self.selected_text().is_some() {
+            self.link_capture = None;
+        }
         true
     }
 
@@ -172,6 +186,9 @@ impl Runtime {
         self.text_selection.anchor = Some(anchor);
         self.text_selection.focus = Some(focus);
         self.refresh_text_selection(m);
+        if self.selected_text().is_some() {
+            self.link_capture = None;
+        }
         true
     }
 

@@ -1814,3 +1814,323 @@ fn notification_setup_help_explains_feature_and_bundle_requirements() {
         assert!(help.contains("Request alert permission"));
     }
 }
+
+#[test]
+fn navigation_history_and_link_demos_recompose_without_opening_a_browser() {
+    use navigation_links::Route;
+    let mut app = App::new();
+    app.page = Page::Navigation;
+    let rebuild = |app: &App| {
+        let (doc, h) = view(app).build().unwrap().into_parts();
+        let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+        let viewport = Viewport::new(1440., 1800., 1.).unwrap();
+        r.layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+        (r, h)
+    };
+    let (mut r, mut h) = rebuild(&app);
+    assert!(
+        !r.accessibility_activate("route-back", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(
+        r.accessibility_activate("route-activity", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.routes.history.current(), &Route::Activity);
+    let (mut r, mut h) = rebuild(&app);
+    assert!(
+        r.accessibility_activate("route-back", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.routes.history.current(), &Route::Workspace);
+    let (mut r, mut h) = rebuild(&app);
+    assert!(
+        r.accessibility_activate("route-forward", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.routes.history.current(), &Route::Activity);
+    assert!(
+        r.accessibility_activate("link-repository", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(app.routes.message.contains("no browser was opened"));
+    assert_eq!(
+        app.routes.captured.as_ref().unwrap().as_str(),
+        "https://github.com/danieldear/volt-ui-kit"
+    );
+    assert!(
+        !r.accessibility_activate("link-disabled", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+}
+
+#[test]
+fn navigation_cards_fit_compact_and_regular_previews_in_both_modes_and_scales() {
+    use volt_ui_kit::ui::prelude::*;
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 2.] {
+            for width in [300., 600., 900.] {
+                let mut app = App::new();
+                app.mode = mode;
+                for section in [
+                    navigation_links::history_section(&app),
+                    navigation_links::links_section(&app),
+                ] {
+                    let ui: Element<App> = vstack![section.demo]
+                        .key("preview")
+                        .align(Align::Stretch)
+                        .into();
+                    let (doc, h) = ui.build().unwrap().into_parts();
+                    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                    let viewport = Viewport::new(width * scale, 1000. * scale, scale).unwrap();
+                    r.layout(
+                        viewport,
+                        &Bindings::default(),
+                        &mut RasterPainter::new(viewport),
+                    )
+                    .unwrap();
+                    for b in r.boxes() {
+                        let [x, _, w, _] = b.bounds.bounds();
+                        assert!(
+                            x >= -0.1 && x + w <= width * scale + 0.1,
+                            "{} at width {width} scale {scale}: {x}+{w}",
+                            b.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires a real GPU; uses blocking readback, not native frame timing"]
+fn navigation_cards_render_on_gpu_without_fallback() {
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().expect("real GPU required");
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 2.] {
+            for width in [300., 700.] {
+                let mut app = App::new();
+                app.mode = mode;
+                let ui_theme = theme(&app, mode);
+                for section in [
+                    navigation_links::history_section(&app),
+                    navigation_links::links_section(&app),
+                ] {
+                    let (doc, h) = section.demo.build().unwrap().into_parts();
+                    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                    let viewport = Viewport::new(width * scale, 700. * scale, scale).unwrap();
+                    let mut p = RasterPainter::new(viewport);
+                    r.layout(viewport, &Bindings::default(), &mut p).unwrap();
+                    let batches = r.paint_ui(&mut p, &ui_theme);
+                    gpu.render(&mut p, &batches, ui_theme.palette.base[0])
+                        .unwrap();
+                    assert_eq!(
+                        gpu.last_over_budget(),
+                        None,
+                        "{} {mode:?} {scale}x {width}",
+                        section.id
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn motion_controls_keep_state_callbacks_and_replay_keys_stable() {
+    use motion_lab::Curve;
+    let mut app = App::new();
+    app.page = Page::Effects;
+    let rebuild = |app: &App| {
+        let (doc, h) = view(app).build().unwrap().into_parts();
+        let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+        let viewport = Viewport::new(1440., 2400., 1.).unwrap();
+        r.layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+        r.settle_animations();
+        (r, h)
+    };
+    let (mut r, mut h) = rebuild(&app);
+    assert!(
+        r.accessibility_activate("motion-move", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(app.motion.moved);
+    assert!(
+        r.accessibility_activate("motion-replay", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.motion.revision, 1);
+    assert!(
+        r.accessibility_activate("motion-feedback", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.motion.actions, 1);
+    let before: Vec<_> = r
+        .accessibility_nodes()
+        .into_iter()
+        .filter(|n| n.id.starts_with("motion-step"))
+        .map(|n| n.id)
+        .collect();
+    let (mut r, mut h) = rebuild(&app);
+    assert_eq!(
+        before,
+        r.accessibility_nodes()
+            .into_iter()
+            .filter(|n| n.id.starts_with("motion-step"))
+            .map(|n| n.id)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        r.accessibility_activate("motion-move", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(!app.motion.moved);
+    // Selection group retains its normal typed handler and semantic roles.
+    assert!(
+        r.accessibility_activate("motion-curve-1", &mut h, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.motion.curve, Curve::Spring);
+}
+#[test]
+fn motion_cards_fit_both_modes_and_dpi_scales_and_settle_without_callbacks() {
+    use motion_lab::Curve;
+    use std::time::Duration;
+    use volt_ui_kit::ui::prelude::*;
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 2.] {
+            for width in [300., 700.] {
+                for curve in [Curve::Smooth, Curve::Spring, Curve::Instant] {
+                    let mut app = App::new();
+                    app.mode = mode;
+                    app.motion.curve = curve;
+                    for section in [
+                        motion_lab::workspace(&app),
+                        motion_lab::sequence(&app),
+                        motion_lab::feedback(&app),
+                    ] {
+                        let ui: Element<App> = vstack![section.demo]
+                            .key("preview")
+                            .align(Align::Stretch)
+                            .into();
+                        let (doc, h) = ui.build().unwrap().into_parts();
+                        let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                        let viewport = Viewport::new(width * scale, 1000. * scale, scale).unwrap();
+                        let mut p = RasterPainter::new(viewport);
+                        r.layout(viewport, &Bindings::default(), &mut p).unwrap();
+                        for b in r.boxes() {
+                            let [x, _, w, _] = b.bounds.bounds();
+                            assert!(
+                                x >= -0.1 && x + w <= width * scale + 0.1,
+                                "{} {:?} {}: {}+{}",
+                                section.id,
+                                curve,
+                                b.id,
+                                x,
+                                w
+                            );
+                        }
+                        for time in [0, 50, 150, 350, 700] {
+                            r.advance_animations(Duration::from_millis(time));
+                            r.paint_ui(&mut p, &theme(&app, mode));
+                        }
+                        assert!(!r.is_animating(), "{} {curve:?}", section.id);
+                        assert_eq!(app.motion.actions, 0);
+                    }
+                }
+            }
+        }
+    }
+}
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires a real GPU; includes blocking readback, not native frame timing"]
+fn motion_cards_render_inflight_and_reduced_on_gpu_without_fallback() {
+    use std::time::Duration;
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().expect("real GPU required");
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 2.] {
+            let mut app = App::new();
+            app.mode = mode;
+            app.motion.curve = motion_lab::Curve::Spring;
+            for section in [
+                motion_lab::sequence(&app),
+                motion_lab::workspace(&app),
+                motion_lab::feedback(&app),
+            ] {
+                let id = section.id;
+                let ui = section.demo;
+                let (doc, h) = ui.build().unwrap().into_parts();
+                let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                let viewport = Viewport::new(700. * scale, 700. * scale, scale).unwrap();
+                let mut p = RasterPainter::new(viewport);
+                r.layout(viewport, &Bindings::default(), &mut p).unwrap();
+                let palette = theme(&app, mode);
+                // Resolve the initial targets, then exercise real state changes.
+                r.paint_ui(&mut p, &palette);
+                if id == "fx-motion-workspace" {
+                    app.motion.moved = true;
+                    let (next, handlers) = motion_lab::workspace(&app)
+                        .demo
+                        .build()
+                        .unwrap()
+                        .into_parts();
+                    r.replace_document(next, &handlers, &Bindings::default())
+                        .unwrap();
+                    r.layout(viewport, &Bindings::default(), &mut p).unwrap();
+                }
+                if id == "fx-motion-feedback" {
+                    let [x, y, w, h] = r
+                        .boxes()
+                        .iter()
+                        .find(|b| b.id == "motion-feedback")
+                        .unwrap()
+                        .bounds
+                        .bounds();
+                    r.pointer_move(x + w / 2., y + h / 2.);
+                }
+                // Dense, display-like sampling catches animations that restart
+                // in paint; sparse samples can jump past the restarted duration.
+                for time in (0..=720).step_by(16) {
+                    r.advance_animations(Duration::from_millis(time));
+                    let batches = r.paint_ui(&mut p, &palette);
+                    gpu.render(&mut p, &batches, palette.palette.base[0])
+                        .unwrap();
+                    assert_eq!(gpu.last_over_budget(), None, "{} {time}", id);
+                }
+                assert_eq!(r.animation_wait(), None, "{id} must stop after settling");
+                r.set_reduced_motion(true);
+                let batches = r.paint_ui(&mut p, &palette);
+                gpu.render(&mut p, &batches, palette.palette.base[0])
+                    .unwrap();
+                assert_eq!(gpu.last_over_budget(), None, "{id} reduced motion");
+                assert!(!r.is_animating());
+            }
+        }
+    }
+}

@@ -251,7 +251,7 @@ impl Page {
             SplitPane => "Two panes divided by a draggable handle.",
             Canvas => "Retained vector paths: fills, strokes and transforms.",
             Image => "Image backgrounds with fit, position, opacity and clipping.",
-            Effects => "Shadows, glows, state styles, keyed animation and transitions.",
+            Effects => "Finite spring motion, staggered entrances, interaction feedback, shadows and glows.",
             BackgroundTasks => "Worker threads report progress through a bounded message queue.",
             ApplicationLifecycle => "State-aware commands and guarded closing for unsaved work.",
             Documents => "Native file panels and asynchronous document saving.",
@@ -259,7 +259,7 @@ impl Page {
             SignIn => "Inputs, validation and actions composed into a form.",
             Settings => "Grouped preferences with switches, selects and sliders.",
             Navigation => {
-                "Destination lists in sidebar, rail or bottom placement, and the app shell around them."
+                "Typed routes, Back/Forward history, accessible links and adaptable application navigation."
             }
             Utilities => "Grid, wrapping, justify, typography, gradients, borders and motion.",
             Icons => "A built-in, theme-aware vector icon set.",
@@ -2562,6 +2562,9 @@ fn effects_doc(app: &App) -> Doc {
     .gap(12., Axis::Vertical);
     Doc {
         sections: vec![
+            super::motion_lab::workspace(app),
+            super::motion_lab::sequence(app),
+            super::motion_lab::feedback(app),
             section(
                 "fx-shadow",
                 "Elevation",
@@ -2589,6 +2592,18 @@ fn effects_doc(app: &App) -> Doc {
             ),
         ],
         api: vec![
+            (
+                "Animation::spring() / spring_with(Spring)",
+                "Finite damped response; positional overshoot, bounded colors/opacity",
+            ),
+            (
+                ".stagger(index, interval_ms)",
+                "Adds per-item delay; overflow is rejected during build",
+            ),
+            (
+                ".transition_revision(revision)",
+                "Replay an entrance without remounting or changing keys",
+            ),
             (
                 ".shadow(Shadow) / .glow(Glow) / .opacity(o)",
                 "Paint-only effects.",
@@ -2954,7 +2969,7 @@ fn navigation_doc(app: &App) -> Doc {
         .border_color(ColorToken::Border)
         .border_width(1.);
     Doc {
-        sections: vec![Section {
+        sections: vec![super::navigation_links::history_section(app), super::navigation_links::links_section(app), Section {
             id:"navigation-layouts", title:"Navigation, your layout", note:"All three previews share controlled app state. These are independent components, not a mandatory application shell.",
             demo: vstack![
                 hstack![make("nav-sidebar",NavigationPlacement::Sidebar).width(190.),
@@ -2989,6 +3004,6 @@ fn navigation_doc(app: &App) -> Doc {
 .drawer_open(app.nav_open)
 .on_drawer_change(|app: &mut App, open| app.nav_open = open)"#,
         )],
-        api: vec![("navigation(items)","Controlled, typed destinations"),(".placement(Sidebar | Rail | Bottom)","Vertical or horizontal destination layout"),(".selected(value).on_select(callback)","Application owns routing and state"),(".selected(None)","Highlight nothing, e.g. while a filter hides the current page"),("navigation_item(..).section(title).badge(label)","Sidebar headings for consecutive items; a trailing badge such as \"New\""),(".key(...)","Stable group and item identities are required"),("navigation_split_view(|place| sidebar, detail)","The app shell: sidebar beside a detail with a toolbar; build the sidebar's keys with place.key(..)"),(".drawer_open(..).on_drawer_change(..)","Below Lg (or .collapse_below) the sidebar moves into a drawer"),(".on_sidebar_resize(..) / .material(true)","A draggable divider; a frosted sidebar with a floating sheet")],
+        api: vec![("navigation_link(label, route).on_navigate(f)","Focusable typed destination; application decides how to navigate"),("NavigationHistory / navigation_stack", "Bounded Back/Forward history; mount only the current route"),("link(label, url).on_open(f)","Validated HTTP(S) links; no automatic I/O"),("native::links::open_url(&url)","Explicit macOS browser dispatch with native-desktop; Unsupported elsewhere"),("navigation(items)","Controlled, typed destinations"),(".placement(Sidebar | Rail | Bottom)","Vertical or horizontal destination layout"),(".selected(value).on_select(callback)","Application owns routing and state"),(".selected(None)","Highlight nothing, e.g. while a filter hides the current page"),("navigation_item(..).section(title).badge(label)","Sidebar headings for consecutive items; a trailing badge such as \"New\""),(".key(...)","Stable group and item identities are required"),("navigation_split_view(|place| sidebar, detail)","The app shell: sidebar beside a detail with a toolbar; build the sidebar's keys with place.key(..)"),(".drawer_open(..).on_drawer_change(..)","Below Lg (or .collapse_below) the sidebar moves into a drawer"),(".on_sidebar_resize(..) / .material(true)","A draggable divider; a frosted sidebar with a floating sheet")],
     }
 }

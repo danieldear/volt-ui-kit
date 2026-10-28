@@ -1,6 +1,10 @@
 //! Optional validated JSON documents, typed Rust callbacks and shared layout/input.
 //! This module owns no filesystem, window, GPU device or event loop.
 use std::collections::BTreeMap;
+#[cfg(feature = "rust-ui")]
+mod input;
+#[cfg(feature = "rust-ui")]
+pub use input::{InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation};
 
 /// Event signatures accepted by the initial component contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,11 +110,15 @@ type Callback<'a, C> = Box<dyn FnMut(&mut C, Event) + 'a>;
 /// Registration rejects duplicates. Rebuild the registry for deliberate replacement.
 pub struct Handlers<'a, C> {
     entries: BTreeMap<String, (EventKind, Callback<'a, C>)>,
+    #[cfg(feature = "rust-ui")]
+    input_entries: BTreeMap<String, input::InputCallback<'a, C>>,
 }
 impl<C> Default for Handlers<'_, C> {
     fn default() -> Self {
         Self {
             entries: BTreeMap::new(),
+            #[cfg(feature = "rust-ui")]
+            input_entries: BTreeMap::new(),
         }
     }
 }
@@ -127,6 +135,10 @@ impl<'a, C> Handlers<'a, C> {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
         {
             return Err(HandlerError::InvalidName);
+        }
+        #[cfg(feature = "rust-ui")]
+        if self.input_entries.contains_key(name) {
+            return Err(HandlerError::Duplicate(name.into()));
         }
         if self.entries.contains_key(name) {
             return Err(HandlerError::Duplicate(name.into()));
@@ -411,7 +423,9 @@ pub use extras::{
     BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
 };
 mod responsive;
-pub use effects::{Ambient, Animation, Easing, Glow, Interaction, Shadow, Transition, VisualStyle};
+pub use effects::{
+    Ambient, Animation, Easing, Glow, Interaction, Shadow, Spring, Transition, VisualStyle,
+};
 mod motion;
 mod runtime;
 pub use document::{
@@ -426,6 +440,12 @@ pub use runtime::{
 
 #[cfg(feature = "rust-ui")]
 pub use runtime::accessibility::{AccessNode, AccessRole, AccessTableInfo, AccessValue};
+#[cfg(feature = "rust-ui")]
+pub(crate) use runtime::code_view::CodeViewProps;
+#[cfg(feature = "rust-ui")]
+pub use runtime::code_view::{
+    CodeDecoration, CodeInput, CodeKey, CodeLine, CodeMark, CodePosition, CodeSelection,
+};
 #[cfg(feature = "rust-ui")]
 pub use runtime::editing::EditKey;
 #[cfg(feature = "rust-ui")]

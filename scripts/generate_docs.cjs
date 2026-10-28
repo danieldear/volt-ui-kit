@@ -24,6 +24,7 @@ const guideDefs = [
  ['app-services','Application services','Background work, commands, files, menus, notifications and packaging.'],
  ['json-ui','Optional JSON frontend','Data-only declarations with behavior owned by your Rust application.'],
  ['architecture','Architecture','The frame pipeline, ownership, accessibility and resource boundaries.'],
+ ['ios-prototype','Experimental iOS','Rust-owned navigation, scrolling and forms with a thin UIKit host. Prototype limits and tests.'],
 ];
 const files = [];
 function write(name, content) {

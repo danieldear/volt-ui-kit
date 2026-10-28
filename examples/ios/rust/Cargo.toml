@@ -1,0 +1,15 @@
+[package]
+name = "volt-ios-prototype"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+volt-ui-kit = { path = "../../..", features = ["mobile"] }
+volt-ui-kit-mobile = { path = "../../../crates/volt-ui-kit-mobile" }
+
+[profile.release]
+opt-level = 2

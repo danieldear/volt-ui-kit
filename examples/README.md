@@ -55,6 +55,16 @@ tools for bundling), and exists only in the repository, not the published crate.
 | `showcase` | Volt Atelier: welcome, workspace and component-studio screens. |
 | `desk` | A three-pane conversation workbench with an editable composer. |
 
+## Experimental iOS app
+
+[`ios/VoltIOS.xcodeproj`](ios/VoltIOS.xcodeproj) runs **Field Notes**, a Rust-owned
+notes/list/detail/profile prototype with a UIKit keyboard and Metal host. It
+uses a separate unpublished static-library crate, not `cargo run --example`.
+The example uses the reusable mobile host. For your own Rust-only app source,
+use `cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`.
+See the [iOS guide](../docs/ios-prototype.md) for setup, tests, Android direction
+and limitations; no per-app Swift implementation is required.
+
 ## JSON frontend
 
 `complete_app` and `components` load their interface from `examples/ui/*.json`.

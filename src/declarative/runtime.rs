@@ -6,6 +6,8 @@ use super::{
 use super::{
     Align, Bindings, Document, DocumentError, Event, Handlers, Kind, Node, Rounding, Tone, Value,
 };
+#[cfg(feature = "rust-ui")]
+use super::{InputKeyEvent, InputModifiers, InputSource, PointerActivation};
 use crate::graphics::{BackgroundImage, Canvas, Clip, ClipRegion, VectorPath};
 use crate::{Button, ButtonColors, Painter, Panel, Rect, SurfaceStyle, Theme, UiTheme, Viewport};
 use std::{
@@ -17,9 +19,13 @@ use std::{
 #[cfg(feature = "rust-ui")]
 pub(super) mod accessibility;
 #[cfg(feature = "rust-ui")]
+pub(super) mod code_view;
+#[cfg(feature = "rust-ui")]
 mod drops;
 #[cfg(feature = "rust-ui")]
 pub(super) mod editing;
+#[cfg(feature = "rust-ui")]
+mod hover;
 #[cfg(feature = "rust-ui")]
 mod overlays;
 #[cfg(feature = "rust-ui")]
@@ -242,6 +248,9 @@ pub struct LayoutBox {
     style: ResolvedStyle,
     pub(crate) text: String,
     pub(crate) action: Option<String>,
+    pub(crate) tab_stop: bool,
+    pub(crate) roving: Option<super::document::RovingNavigation>,
+    hover_link: Option<String>,
     pub(crate) editor: Option<super::document::EditorOptions>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_text_changed: Option<String>,
@@ -254,7 +263,23 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) on_key: Option<String>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) on_activate_input: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_input_key: Option<String>,
+    #[cfg(feature = "rust-ui")]
     pub(crate) on_width: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_height: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag_start: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_hover: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_focus_within: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_escape: Option<String>,
     pub(crate) slider: Option<super::document::SliderProps>,
     pub(crate) tone: Tone,
     pub(crate) primary: bool,
@@ -287,6 +312,7 @@ pub struct LayoutBox {
     content_clip: Option<ClipRegion>,
     image: Option<BackgroundImage>,
     canvas: Canvas,
+    pub(crate) frames: Option<crate::graphics::CanvasFrames>,
     pub scroll_max: [f32; 2],
     pub scroll_offset: [f32; 2],
     pub scroll: Option<super::Scroll>,
@@ -301,6 +327,7 @@ pub struct LayoutBox {
     pub(crate) progress: Option<super::document::ProgressProps>,
     pub(crate) detached_visual: Option<Visual>,
     pub(crate) detached_mount: f32,
+    pub(crate) detached_offset: [f32; 2],
     pub(crate) departing: bool,
     pub(crate) detached_state: Option<ButtonState>,
     /// Paint-only extras: cursor, translation, border sides/style, gradient.
@@ -325,6 +352,9 @@ pub(crate) struct BoxExtras {
     /// rectangles relative to the box origin (span index, [x, y, w, h]).
     pub on_link: Option<String>,
     pub links: Vec<(usize, [f32; 4])>,
+    /// Code views: what to draw and how to report input.
+    #[cfg(feature = "rust-ui")]
+    pub code: Option<std::sync::Arc<code_view::CodeViewProps>>,
 }
 #[derive(Clone)]
 struct ScrollbarCapture {
@@ -374,6 +404,14 @@ fn scrollbar_geometry(b: &LayoutBox, s: f32, axis: usize) -> Option<ScrollbarGeo
         travel,
     })
 }
+#[cfg(feature = "rust-ui")]
+#[derive(Clone)]
+struct DragCapture {
+    id: String,
+    kind: Kind,
+    action: String,
+    origin: [f32; 2],
+}
 /// Shared document layout and event state; owns no window or background tasks.
 pub struct Runtime {
     document: Document,
@@ -382,8 +420,18 @@ pub struct Runtime {
     /// The last width reported to each `on_width` element, by id.
     #[cfg(feature = "rust-ui")]
     reported_widths: std::collections::HashMap<String, f32>,
+    /// The last height reported to each `on_height` element, by id.
+    #[cfg(feature = "rust-ui")]
+    reported_heights: std::collections::HashMap<String, f32>,
+    /// `on_hover` regions the pointer was last reported inside, by id.
+    #[cfg(feature = "rust-ui")]
+    hover_regions: BTreeSet<String>,
+    /// `on_focus_within` regions focus was last reported inside, by id.
+    #[cfg(feature = "rust-ui")]
+    focus_regions: BTreeSet<String>,
     scrollbar_capture: Option<ScrollbarCapture>,
     focused: Option<String>,
+    roving_focus: BTreeMap<String, String>,
     /// Focus arrived by keyboard (Tab, arrows, shortcuts), not a click.
     focus_visible: bool,
     hovered: Option<String>,
@@ -392,12 +440,21 @@ pub struct Runtime {
     hovered_link: Option<(String, usize)>,
     link_capture: Option<(String, usize)>,
     visual_hover: BTreeSet<String>,
+    /// Layout-cached paint peers. Pointer moves never compose application state.
+    hover_peers: BTreeMap<String, Vec<String>>,
     capture: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    capture_modifiers: InputModifiers,
+    #[cfg(feature = "rust-ui")]
+    pending_input_focus: Option<String>,
     keyboard: Option<String>,
     scale: f32,
     cache: Option<([f32; 3], Bindings)>,
     last_viewport: Option<[f32; 3]>,
     motion: RefCell<Motion>,
+    /// The last painted palette also governs input occlusion. Layout stores
+    /// token/pair specifications, not their active theme's resolved colours.
+    input_theme: RefCell<UiTheme>,
     scroll_offsets: BTreeMap<String, [f32; 2]>,
     /// Variable-height lists: measured row heights per list key.
     lazy_heights: BTreeMap<String, LazyHeights>,
@@ -420,6 +477,9 @@ pub struct Runtime {
     ime_cancelled: bool,
     #[cfg(feature = "rust-ui")]
     slider_capture: Option<String>,
+    /// Keyed drag owner; callback names can change after every render.
+    #[cfg(feature = "rust-ui")]
+    drag_capture: Option<DragCapture>,
     #[cfg(feature = "rust-ui")]
     slider_values: BTreeMap<String, f32>,
     /// Range slider whose lower thumb is active (pointer or keys).
@@ -438,6 +498,9 @@ pub struct Runtime {
     overlays: overlays::OverlayState,
     #[cfg(feature = "rust-ui")]
     text_selection: selection::TextSelectionState,
+    /// Code views: scroll offsets, input-method text and drags, by id.
+    #[cfg(feature = "rust-ui")]
+    code_views: RefCell<BTreeMap<String, code_view::CodeViewState>>,
 }
 impl Runtime {
     /// Native application shortcuts must not bypass modal/menu scope or IME.
@@ -451,25 +514,40 @@ impl Runtime {
         values: &Bindings,
     ) -> Result<Self, DocumentError> {
         document.validate_connections(handlers, values)?;
+        #[cfg(feature = "rust-ui")]
+        let pending_input_focus = Self::input_focus_request(None, document.root());
         let runtime = Self {
             document,
             boxes: vec![],
             layout_boxes: vec![],
             #[cfg(feature = "rust-ui")]
             reported_widths: std::collections::HashMap::new(),
+            #[cfg(feature = "rust-ui")]
+            reported_heights: std::collections::HashMap::new(),
+            #[cfg(feature = "rust-ui")]
+            hover_regions: BTreeSet::new(),
+            #[cfg(feature = "rust-ui")]
+            focus_regions: BTreeSet::new(),
             scrollbar_capture: None,
             focused: None,
+            roving_focus: BTreeMap::new(),
             focus_visible: false,
             hovered: None,
             hovered_link: None,
             link_capture: None,
             visual_hover: BTreeSet::new(),
+            hover_peers: BTreeMap::new(),
             capture: None,
+            #[cfg(feature = "rust-ui")]
+            capture_modifiers: InputModifiers::default(),
+            #[cfg(feature = "rust-ui")]
+            pending_input_focus,
             keyboard: None,
             scale: 1.,
             cache: None,
             last_viewport: None,
             motion: RefCell::new(Motion::default()),
+            input_theme: RefCell::new(UiTheme::light()),
             scroll_offsets: BTreeMap::new(),
             lazy_heights: BTreeMap::new(),
             scroll_ends: BTreeMap::new(),
@@ -484,6 +562,8 @@ impl Runtime {
             ime_cancelled: false,
             #[cfg(feature = "rust-ui")]
             slider_capture: None,
+            #[cfg(feature = "rust-ui")]
+            drag_capture: None,
             #[cfg(feature = "rust-ui")]
             slider_values: BTreeMap::new(),
             #[cfg(feature = "rust-ui")]
@@ -500,6 +580,8 @@ impl Runtime {
             overlays: overlays::OverlayState::default(),
             #[cfg(feature = "rust-ui")]
             text_selection: Default::default(),
+            #[cfg(feature = "rust-ui")]
+            code_views: RefCell::new(BTreeMap::new()),
         };
         #[cfg(feature = "rust-ui")]
         let mut runtime = runtime;
@@ -531,6 +613,19 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         let active = self.progress_active() || active;
         active
+    }
+    /// Next useful motion update: None when idle, zero for frame-paced motion,
+    /// or a positive wait when every finite animation is still in its delay.
+    /// Custom hosts can sleep until then rather than redraw an unchanged frame.
+    pub fn animation_wait(&self) -> Option<Duration> {
+        #[cfg(feature = "rust-ui")]
+        if self.progress_active() {
+            return Some(Duration::ZERO);
+        }
+        if self.ambient_active() {
+            return Some(Duration::ZERO);
+        }
+        self.motion.borrow().animation_wait()
     }
     pub fn set_reduced_motion(&mut self, reduced: bool) {
         #[cfg(feature = "rust-ui")]
@@ -624,9 +719,35 @@ impl Runtime {
         self.replace_document(Document::parse(source)?, handlers, values)
     }
     /// Validate before replacing the tree. Rejected candidates leave all runtime
-    /// state untouched. Successful installs cancel transient input; focus survives
+    /// state untouched. Valid keyed drags survive; other transient input is
+    /// cancelled. Focus survives
     /// only if its key still names the same enabled interactive component kind.
     /// The host must install the matching handlers immediately on success.
+    #[cfg(feature = "rust-ui")]
+    fn input_focus_request(old: Option<&Node>, next: &Node) -> Option<String> {
+        fn collect(n: &Node, ids: &mut std::collections::HashMap<String, (bool, u64)>) {
+            if n.input_focus || n.input_focus_epoch != 0 {
+                ids.insert(n.id.clone(), (n.input_focus, n.input_focus_epoch));
+            }
+            for child in &n.children {
+                collect(child, ids);
+            }
+        }
+        fn find(n: &Node, ids: &std::collections::HashMap<String, (bool, u64)>) -> Option<String> {
+            let (was_requested, epoch) = ids.get(&n.id).copied().unwrap_or_default();
+            let requested = (n.input_focus && !was_requested)
+                || (n.input_focus_epoch != 0 && n.input_focus_epoch != epoch);
+            if requested && n.enabled && interactive_node(n) {
+                return Some(n.id.clone());
+            }
+            n.children.iter().find_map(|child| find(child, ids))
+        }
+        let mut ids = std::collections::HashMap::new();
+        if let Some(old) = old {
+            collect(old, &mut ids);
+        }
+        find(next, &ids)
+    }
     pub fn replace_document<C>(
         &mut self,
         next: Document,
@@ -634,12 +755,48 @@ impl Runtime {
         values: &Bindings,
     ) -> Result<(), DocumentError> {
         next.validate_connections(handlers, values)?;
+        // An application root is a context boundary (e.g. another chat).
+        // Virtualized rows may disappear inside the SAME root without
+        // discarding copy text, but a new root must not inherit it.
+        #[cfg(feature = "rust-ui")]
+        if self.document.root().id() != next.root().id() {
+            self.cancel_text_selection_scope();
+        }
         fn find<'a>(node: &'a Node, id: &str) -> Option<&'a Node> {
             if node.id() == id {
                 return Some(node);
             }
             node.children().iter().find_map(|child| find(child, id))
         }
+        // A roving chart retains focus by application identity even when its
+        // legacy index-based tile IDs change after a sorted/updated snapshot.
+        let roving = self
+            .focused
+            .as_deref()
+            .and_then(|id| find(self.document.root(), id))
+            .and_then(|node| node.roving.as_ref());
+        fn find_member<'a>(
+            node: &'a Node,
+            group: &str,
+            member: &str,
+            values: &Bindings,
+        ) -> Option<&'a Node> {
+            if node
+                .roving
+                .as_ref()
+                .is_some_and(|r| r.group == group && r.member == member)
+                && interactive_node(node)
+                && enabled(node, values)
+            {
+                return Some(node);
+            }
+            node.children
+                .iter()
+                .find_map(|child| find_member(child, group, member, values))
+        }
+        let roving_focus = roving.map(|r| {
+            find_member(next.root(), &r.group, &r.member, values).map(|node| node.id.clone())
+        });
         let keep_focus = self.focused.as_deref().is_some_and(|id| {
             match (find(self.document.root(), id), find(next.root(), id)) {
                 (Some(old), Some(new)) => {
@@ -648,7 +805,9 @@ impl Runtime {
                 _ => false,
             }
         });
-        if !keep_focus {
+        if let Some(focus) = roving_focus {
+            self.focused = focus;
+        } else if !keep_focus {
             self.focused = None;
         }
         fn keys(n: &Node, ids: &mut BTreeSet<String>) {
@@ -669,10 +828,20 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         let split_capture = self.split_capture.clone();
         #[cfg(feature = "rust-ui")]
+        let drag_capture = self
+            .drag_capture
+            .clone()
+            .filter(|_| self.document.root().id() == next.root().id());
+        #[cfg(feature = "rust-ui")]
         let composition = self.editor_composition_snapshot(&next);
         let scrollbar_capture = self.scrollbar_capture.clone();
         #[cfg(feature = "rust-ui")]
         let autofocus = Self::autofocus_target(Some(self.document.root()), next.root());
+        #[cfg(feature = "rust-ui")]
+        {
+            self.pending_input_focus =
+                Self::input_focus_request(Some(self.document.root()), next.root());
+        }
         let mut old = std::mem::replace(&mut self.document, next);
         self.reuse.prepare(
             &mut old,
@@ -727,6 +896,37 @@ impl Runtime {
                 self.split_capture = Some(capture);
             }
         }
+        #[cfg(feature = "rust-ui")]
+        if let Some(mut capture) = drag_capture {
+            fn target<'a>(
+                n: &'a Node,
+                id: &str,
+                values: &Bindings,
+                width: f32,
+            ) -> Option<&'a Node> {
+                if !enabled(n, values) || n.ext.visible.as_ref().is_some_and(|v| !*v.resolve(width))
+                {
+                    return None;
+                }
+                if n.id() == id {
+                    return Some(n);
+                }
+                n.children()
+                    .iter()
+                    .find_map(|c| target(c, id, values, width))
+            }
+            let width = self.last_viewport.map_or(0., |v| v[0] / v[2]);
+            if let Some(node) = target(self.document.root(), &capture.id, values, width)
+                .filter(|n| n.kind == capture.kind && self.scope_allows_id(&capture.id))
+            {
+                if let Some(action) = &node.on_drag {
+                    // Rebind by node identity, never by the old numeric callback
+                    // name (streaming content can insert handlers before a grip).
+                    capture.action = action.clone();
+                    self.drag_capture = Some(capture);
+                }
+            }
+        }
         Ok(())
     }
     pub fn invalidate_layout(&mut self) {
@@ -761,6 +961,7 @@ impl Runtime {
         }
         self.last_viewport = Some(key);
         self.scale = viewport.scale;
+        self.motion.get_mut().scale = self.scale;
         #[cfg(feature = "rust-ui")]
         self.prepare_overlay_layout(viewport);
         let anchored = self.follow_scroll_ends();
@@ -864,6 +1065,14 @@ impl Runtime {
             b.ext.links = links;
         }
         self.layout_boxes = boxes;
+        self.roving_focus.retain(|group, member| {
+            self.layout_boxes.iter().any(|b| {
+                b.enabled
+                    && b.roving
+                        .as_ref()
+                        .is_some_and(|r| r.group == *group && r.member == *member)
+            })
+        });
         self.boxes = self
             .layout_boxes
             .iter()
@@ -901,8 +1110,28 @@ impl Runtime {
             self.layout(viewport, values, metrics)?;
             return Ok(true);
         }
+        self.hover_peers.clear();
+        for b in &self.boxes {
+            if b.enabled {
+                if let Some(key) = &b.hover_link {
+                    self.hover_peers
+                        .entry(key.clone())
+                        .or_default()
+                        .push(b.id.clone());
+                }
+            }
+        }
         self.cache = Some((key, values.clone()));
-        if self.apply_scroll_requests() {
+        #[cfg(feature = "rust-ui")]
+        let input_focus_scrolled = if let Some(id) = self.pending_input_focus.take() {
+            self.accessibility_focus(&id);
+            self.cache.is_none()
+        } else {
+            false
+        };
+        #[cfg(not(feature = "rust-ui"))]
+        let input_focus_scrolled = false;
+        if self.apply_scroll_requests() || input_focus_scrolled {
             self.cache = None;
             self.layout(viewport, values, metrics)?;
         }
@@ -938,7 +1167,14 @@ impl Runtime {
                 continue;
             };
             let s = self.scale;
-            let mut offset = container.scroll_offset;
+            // A wheel scroll shifts boxes in place: the container's own
+            // offset can lag the one in effect, which the target reflects.
+            let current = self
+                .scroll_offsets
+                .get(&view)
+                .copied()
+                .unwrap_or(container.scroll_offset);
+            let mut offset = current;
             let top = container.bounds.bounds()[1] + container.style.layout.padding[0];
             let left = container.bounds.bounds()[0] + container.style.layout.padding[3];
             let [tx, ty, _, _] = target.bounds.bounds();
@@ -949,7 +1185,7 @@ impl Runtime {
             if axes[0] {
                 offset[0] = (offset[0] + (tx - left) / s).clamp(0., container.scroll_max[0]);
             }
-            if offset != container.scroll_offset {
+            if offset != current {
                 self.scroll_offsets.insert(view, offset);
                 moved = true;
             }
@@ -1143,6 +1379,26 @@ impl Runtime {
     pub fn scroll_offset(&self, id: &str) -> [f32; 2] {
         self.scroll_offsets.get(id).copied().unwrap_or([0.; 2])
     }
+    /// What the keys scroll at a point (physical pixels), in logical pixels:
+    /// a line, and a page (the innermost scroll view's height less a line).
+    /// Native hosts send arrows and Page Up/Down that no control took here.
+    pub fn key_scroll_steps(&self, x: f32, y: f32) -> [f32; 2] {
+        const LINE: f32 = 40.;
+        let page = self
+            .boxes
+            .iter()
+            .rev()
+            .find(|b| {
+                b.scroll.is_some()
+                    && self.scope_allows_id(&b.id)
+                    && b.clip.contains(x, y)
+                    && b.bounds.contains(x, y)
+            })
+            .map_or(LINE * 10., |b| {
+                (b.bounds.bounds()[3] / self.scale - LINE).max(LINE)
+            });
+        [LINE, page]
+    }
     /// Pointer is physical pixels; delta is logical pixels, positive toward end.
     /// Unconsumed deltas bubble from the topmost scroll view to its ancestors.
     pub fn scroll_at(&mut self, x: f32, y: f32, mut delta: [f32; 2]) -> bool {
@@ -1151,6 +1407,10 @@ impl Runtime {
         }
         #[cfg(feature = "rust-ui")]
         let mut changed = self.editor_scroll_at(x, y, &mut delta);
+        #[cfg(feature = "rust-ui")]
+        {
+            changed |= self.code_view_scroll_at(x, y, &mut delta);
+        }
         #[cfg(not(feature = "rust-ui"))]
         let mut changed = false;
         let Some(mut index) = self.boxes.iter().rposition(|b| {
@@ -1278,6 +1538,10 @@ impl Runtime {
                 Cursor::ResizeRow
             };
         }
+        #[cfg(feature = "rust-ui")]
+        if self.code_scrollbar_at(x, y) {
+            return Cursor::Default;
+        }
         // Start from the control that would receive the press (as hover
         // does), so full-window passthrough layers such as toast stacks do
         // not hide the cursor of what lies beneath them.
@@ -1333,21 +1597,74 @@ impl Runtime {
         }
         fallback.unwrap_or(Cursor::Default)
     }
-    fn hit(&self, x: f32, y: f32) -> Option<String> {
-        self.boxes
+    /// The same colour syntax the painter accepts must also block input.
+    /// A transparent positioning wrapper is not a surface; an enabled or
+    /// disabled control still owns its rectangle even with no painted fill.
+    fn input_surface(&self, b: &LayoutBox) -> bool {
+        if interactive_box(b) {
+            return true;
+        }
+        #[cfg(feature = "rust-ui")]
+        if b.on_drag.is_some() {
+            return true;
+        }
+        let theme = self.input_theme.borrow();
+        let visible = |index: usize| {
+            b.style.color_specs[index]
+                .as_deref()
+                .and_then(|spec| theme.resolve(spec))
+                .is_some_and(|color| color[3] > 0.)
+        };
+        (b.style.background_opacity > 0. && visible(1))
+            || (b.style.border_width.is_some_and(|w| w > 0.) && visible(2))
+    }
+    /// A grip owns its declared rectangle, not just its rounded decoration.
+    /// Ancestor clips still constrain it in the callers, as for other input.
+    fn input_contains(&self, b: &LayoutBox, x: f32, y: f32) -> bool {
+        #[cfg(feature = "rust-ui")]
+        if b.on_drag.is_some() {
+            return b.bounds.contains(x, y);
+        }
+        b.bounds.contains_corners(b.radii(self.scale), x, y)
+    }
+    /// Layout boxes are in paint/preorder. Only a later *separate* subtree
+    /// can cover a target: a button's own painted children must not block it.
+    fn input_occluded(&self, index: usize, x: f32, y: f32) -> bool {
+        let depth = self.boxes[index].depth;
+        self.boxes[index + 1..]
             .iter()
-            .rev()
-            .find(|b| {
+            .skip_while(|b| b.depth > depth)
+            .any(|b| {
                 self.scope_allows_id(&b.id)
-                    && interactive_box(b)
-                    && b.enabled
-                    && (!self.portal_passthrough(&b.id))
+                    && !self.portal_passthrough(&b.id)
                     && b.clip.contains(x, y)
                     && b.clip_regions.iter().all(|r| r.contains(x, y))
                     && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                    && self.input_contains(b, x, y)
+                    && self.input_surface(b)
             })
-            .map(|b| b.id.clone())
+    }
+    fn hit(&self, x: f32, y: f32) -> Option<String> {
+        let index = self.boxes.iter().rposition(|b| {
+            self.scope_allows_id(&b.id)
+                && interactive_box(b)
+                && b.enabled
+                && !self.portal_passthrough(&b.id)
+                && b.clip.contains(x, y)
+                && b.clip_regions.iter().all(|r| r.contains(x, y))
+                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+        })?;
+        let target = &self.boxes[index];
+        // Decorated buttons intentionally place passive painted glyphs over
+        // their hit rectangle. Do not change that established composite
+        // control contract. Text/code surfaces, unlike buttons, must not
+        // acquire focus or capture a selection through a floating surface.
+        #[cfg(feature = "rust-ui")]
+        let text_surface = target.editor.is_some() || target.ext.code.is_some();
+        #[cfg(not(feature = "rust-ui"))]
+        let text_surface = target.editor.is_some();
+        (!text_surface || !self.input_occluded(index, x, y)).then(|| target.id.clone())
     }
     /// The rich text link under the point, when the topmost box there is a
     /// text with a link run at that position: (text box id, span index).
@@ -1416,6 +1733,36 @@ impl Runtime {
             };
             index = parent;
         }
+        // Rich linked content may be a descendant of its activation target
+        // (e.g. a selectable row) or cover a passive review diamond. Find the
+        // top painted leaf independently; do not change legacy hover ancestry.
+        if !self.hover_peers.is_empty() {
+            let mut leaf = self.boxes.iter().rposition(|b| {
+                self.scope_allows_id(&b.id)
+                    && !self.portal_passthrough(&b.id)
+                    && !b.effects.scroll_passthrough
+                    && b.clip.contains(x, y)
+                    && b.clip_regions.iter().all(|r| r.contains(x, y))
+                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+            });
+            while let Some(index) = leaf {
+                let b = &self.boxes[index];
+                if let Some(peers) = b
+                    .hover_link
+                    .as_ref()
+                    .filter(|_| b.enabled && self.scope_allows_id(&b.id))
+                    .and_then(|key| self.hover_peers.get(key))
+                {
+                    result.extend(peers.iter().filter(|id| self.scope_allows_id(id)).cloned());
+                    break;
+                }
+                leaf = b
+                    .depth
+                    .checked_sub(1)
+                    .and_then(|depth| self.boxes[..index].iter().rposition(|p| p.depth == depth));
+            }
+        }
         result
     }
     /// Full input adapter for controls which dispatch continuously (sliders).
@@ -1431,6 +1778,37 @@ impl Runtime {
             let changed = self.scrollbar_pointer_move(x, y);
             let activated = self.dispatch_virtual_windows(handlers, context)?;
             return Ok(InputOutcome { changed, activated });
+        }
+        if let Some(capture) = self.drag_capture.clone() {
+            let offset = [
+                (x - capture.origin[0]) / self.scale,
+                (y - capture.origin[1]) / self.scale,
+            ];
+            let valid = self.scope_allows_id(&capture.id)
+                && self.boxes.iter().any(|b| {
+                    b.id == capture.id && b.enabled && b.on_drag.as_ref() == Some(&capture.action)
+                });
+            if !valid || !offset.iter().all(|v| v.is_finite()) {
+                self.drag_capture = None;
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: false,
+                });
+            }
+            handlers
+                .dispatch(
+                    &capture.action,
+                    Event::ContextRequested {
+                        x_bits: offset[0].to_bits(),
+                        y_bits: offset[1].to_bits(),
+                    },
+                    context,
+                )
+                .map_err(|e| DocumentError(e.to_string()))?;
+            return Ok(InputOutcome {
+                changed: true,
+                activated: true,
+            });
         }
         if let Some(outcome) = self.split_pointer_move(x, y, handlers, context)? {
             return Ok(outcome);
@@ -1473,6 +1851,50 @@ impl Runtime {
             self.sync_tooltip_visibility();
             return Ok(outcome);
         }
+        // A drag grip: the topmost container under the press that reports
+        // drags, unless a control inside it takes the press.
+        if self.hit(x, y).is_none() {
+            let grip = self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
+                (b.on_drag.is_some()
+                    && b.enabled
+                    && self.scope_allows_id(&b.id)
+                    && !self.portal_passthrough(&b.id)
+                    && b.clip.contains(x, y)
+                    && b.clip_regions.iter().all(|r| r.contains(x, y))
+                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                    && self.input_contains(b, x, y)
+                    && !self.input_occluded(index, x, y))
+                .then_some(b)
+            });
+            if let Some(b) = grip {
+                let capture = DragCapture {
+                    id: b.id.clone(),
+                    kind: b.kind,
+                    action: b.on_drag.clone().unwrap(),
+                    origin: [x, y],
+                };
+                if let Some(start) = &b.on_drag_start {
+                    handlers
+                        .dispatch(start, Event::Activate, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                }
+                handlers
+                    .dispatch(
+                        &capture.action,
+                        Event::ContextRequested {
+                            x_bits: 0f32.to_bits(),
+                            y_bits: 0f32.to_bits(),
+                        },
+                        context,
+                    )
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                self.drag_capture = Some(capture);
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: true,
+                });
+            }
+        }
         Ok(InputOutcome {
             changed: self.pointer_down(x, y),
             activated: false,
@@ -1505,15 +1927,21 @@ impl Runtime {
         changed
     }
     pub fn pointer_leave(&mut self) -> bool {
+        // Do not short-circuit takes: physical link and linked peer states must
+        // both clear even when an interactive control was hovered.
         let changed = self.hovered.take().is_some()
-            || !self.visual_hover.is_empty()
-            || self.hovered_link.take().is_some();
+            | !self.visual_hover.is_empty()
+            | self.hovered_link.take().is_some();
         self.visual_hover.clear();
         #[cfg(feature = "rust-ui")]
         let changed = self.tooltip_pointer(None) || changed;
         changed
     }
     pub fn pointer_down(&mut self, x: f32, y: f32) -> bool {
+        #[cfg(feature = "rust-ui")]
+        {
+            self.capture_modifiers = InputModifiers::default();
+        }
         if self.scrollbar_pointer_down(x, y) {
             return true;
         }
@@ -1549,6 +1977,32 @@ impl Runtime {
         self.sync_tooltip_visibility();
         changed
     }
+    /// Opt-in pointer adapter. Modifiers are captured on press, not sampled on
+    /// release; legacy pointer adapters retain their default/unmodified behavior.
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_down_with_modifiers(
+        &mut self,
+        x: f32,
+        y: f32,
+        modifiers: InputModifiers,
+    ) -> bool {
+        let changed = self.pointer_down(x, y);
+        self.capture_modifiers = modifiers;
+        changed
+    }
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_down_outcome_with_modifiers<C>(
+        &mut self,
+        x: f32,
+        y: f32,
+        modifiers: InputModifiers,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        let outcome = self.pointer_down_outcome(x, y, handlers, context)?;
+        self.capture_modifiers = modifiers;
+        Ok(outcome)
+    }
     /// Compatibility wrapper: true means a pressed capture was released, even
     /// if release was outside. Use pointer_up_outcome to distinguish activation.
     pub fn pointer_up<C>(
@@ -1569,6 +2023,12 @@ impl Runtime {
     ) -> Result<InputOutcome, DocumentError> {
         #[cfg(feature = "rust-ui")]
         {
+            if self.drag_capture.take().is_some() {
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: false,
+                });
+            }
             if let Some(outcome) = self.overlay_pointer_up(x, y, handlers, context)? {
                 return Ok(outcome);
             }
@@ -1622,7 +2082,22 @@ impl Runtime {
             .as_ref()
             .filter(|id| Some((*id).clone()) == self.hit(x, y))
         {
-            self.activate(id, handlers, context)?
+            #[cfg(feature = "rust-ui")]
+            {
+                self.activate_with_input(
+                    id,
+                    PointerActivation {
+                        modifiers: self.capture_modifiers,
+                        source: InputSource::Pointer,
+                    },
+                    handlers,
+                    context,
+                )?
+            }
+            #[cfg(not(feature = "rust-ui"))]
+            {
+                self.activate(id, handlers, context)?
+            }
         } else {
             false
         };
@@ -1630,6 +2105,54 @@ impl Runtime {
             changed: pressed.is_some(),
             activated,
         })
+    }
+    fn remember_roving_focus(&mut self) {
+        if let Some((group, id)) = self.focused.as_deref().and_then(|id| {
+            self.layout_boxes
+                .iter()
+                .find(|b| b.id == id && b.enabled)
+                .and_then(|b| {
+                    b.roving
+                        .as_ref()
+                        .map(|r| (r.group.clone(), r.member.clone()))
+                })
+        }) {
+            self.roving_focus.insert(group, id);
+        }
+    }
+    fn tab_order(&mut self) -> Vec<String> {
+        self.remember_roving_focus();
+        let reachable = |b: &&LayoutBox| {
+            self.scope_allows_id(&b.id) && interactive_box(b) && b.enabled && !b.departing
+        };
+        let mut entries: BTreeMap<String, (bool, String)> = BTreeMap::new();
+        for b in self.layout_boxes.iter().filter(reachable) {
+            if let Some(roving) = &b.roving {
+                let entry = entries
+                    .entry(roving.group.clone())
+                    .or_insert((b.tab_stop, b.id.clone()));
+                if b.tab_stop && !entry.0 {
+                    *entry = (true, b.id.clone());
+                }
+            }
+        }
+        for b in self.layout_boxes.iter().filter(reachable) {
+            if let Some(roving) = &b.roving {
+                if self.roving_focus.get(&roving.group) == Some(&roving.member) {
+                    entries.insert(roving.group.clone(), (true, b.id.clone()));
+                }
+            }
+        }
+        self.layout_boxes
+            .iter()
+            .filter(reachable)
+            .filter(|b| {
+                b.roving.as_ref().map_or(b.tab_stop, |r| {
+                    entries.get(&r.group).is_some_and(|(_, id)| id == &b.id)
+                })
+            })
+            .map(|b| b.id.clone())
+            .collect()
     }
     pub fn focus_next(&mut self, backwards: bool) -> bool {
         #[cfg(feature = "rust-ui")]
@@ -1646,17 +2169,13 @@ impl Runtime {
             self.editor_pointer_up();
             self.slider_capture = None;
             self.split_capture = None;
+            self.drag_capture = None;
             self.cancel_overlay_capture();
         }
         self.capture = None;
         self.keyboard = None;
         self.scrollbar_capture = None;
-        let ids: Vec<_> = self
-            .layout_boxes
-            .iter()
-            .filter(|b| self.scope_allows_id(&b.id) && interactive_box(b) && b.enabled)
-            .map(|b| b.id.clone())
-            .collect();
+        let ids = self.tab_order();
         if ids.is_empty() {
             return self.focused.take().is_some();
         }
@@ -1683,6 +2202,7 @@ impl Runtime {
         let changed = changed
             | self.slider_capture.take().is_some()
             | self.split_capture.take().is_some()
+            | self.drag_capture.take().is_some()
             | self.editor_pointer_up()
             | self.cancel_overlay_capture();
         changed
@@ -1791,16 +2311,158 @@ impl Runtime {
         self.visual_hover.clear();
         #[cfg(feature = "rust-ui")]
         {
-            let slider_changed =
-                self.slider_capture.take().is_some() | self.split_capture.take().is_some();
+            let continuous_changed = self.slider_capture.take().is_some()
+                | self.split_capture.take().is_some()
+                | self.drag_capture.take().is_some();
             let editing_changed =
                 self.editor_pointer_up() | self.ime_cancel() | self.cancel_overlay_capture();
-            changed || slider_changed || editing_changed
+            changed || continuous_changed || editing_changed
         }
         #[cfg(not(feature = "rust-ui"))]
         changed
     }
+    #[cfg(feature = "rust-ui")]
+    fn roving_target(&self, key: super::InputKey) -> Option<Option<String>> {
+        use super::InputKey;
+        if self.overlay_active() || self.editing_focus() {
+            return None;
+        }
+        let focused = self.focused.as_deref()?;
+        let navigation = self
+            .layout_boxes
+            .iter()
+            .find(|b| {
+                b.id == focused && b.enabled && !b.departing && self.scope_allows_id(focused)
+            })?
+            .roving
+            .as_ref()?;
+        Some(match key {
+            InputKey::ArrowLeft => navigation.left.clone(),
+            InputKey::ArrowRight => navigation.right.clone(),
+            InputKey::ArrowUp => navigation.parent.clone(),
+            InputKey::ArrowDown => navigation.child.clone(),
+            InputKey::Home => navigation.first.clone(),
+            InputKey::End => navigation.last.clone(),
+            _ => return None,
+        })
+    }
+    #[cfg(feature = "native")]
+    pub(crate) fn is_roving_key(&self, key: super::InputKey) -> bool {
+        self.roving_target(key).is_some()
+    }
+    /// Dispatch to an explicitly opted-in focused control only. Editors,
+    /// overlay/menu scopes and unhandled keys keep their existing host routing.
+    /// A true activation means the callback consumed the key and requests recomposition.
+    #[cfg(feature = "rust-ui")]
+    pub fn input_key<C>(
+        &mut self,
+        event: InputKeyEvent,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        if self.overlay_active() || self.editing_focus() {
+            return Ok(InputOutcome::default());
+        }
+        if let Some(target) = self.roving_target(event.key) {
+            let mut changed = self.cancel_pointer_captures() || !self.focus_visible;
+            self.focus_visible = true;
+            if let Some(target) = target.filter(|id| {
+                self.layout_boxes
+                    .iter()
+                    .any(|b| b.id == *id && b.enabled && !b.departing && self.scope_allows_id(id))
+            }) {
+                changed |= self.focused.as_ref() != Some(&target);
+                self.focused = Some(target.clone());
+                changed |= self.reveal_focus(&target);
+                self.remember_roving_focus();
+            }
+            self.sync_tooltip_visibility();
+            return Ok(InputOutcome {
+                changed,
+                activated: false,
+            });
+        }
+        // The focused control's handler, or else the nearest container's
+        // around it: a list hears the arrows its rows don't use.
+        let action = self.focused.as_deref().and_then(|id| {
+            let usable = |b: &LayoutBox| b.enabled && !b.departing && self.scope_allows_id(&b.id);
+            let mut index = self
+                .layout_boxes
+                .iter()
+                .position(|b| b.id == id && usable(b))?;
+            loop {
+                let b = &self.layout_boxes[index];
+                if usable(b) {
+                    if let Some(action) = &b.on_input_key {
+                        return Some(action.clone());
+                    }
+                }
+                if b.depth == 0 {
+                    return None;
+                }
+                let depth = b.depth - 1;
+                index = self.layout_boxes[..index]
+                    .iter()
+                    .rposition(|p| p.depth == depth)?;
+            }
+        });
+        let Some(action) = action else {
+            return Ok(InputOutcome::default());
+        };
+        let activated = handlers
+            .dispatch_input_key(&action, event, context)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        let changed = activated && self.cancel_pointer_captures();
+        Ok(InputOutcome { changed, activated })
+    }
+    #[cfg(feature = "rust-ui")]
+    fn activate_with_input<C>(
+        &self,
+        id: &str,
+        event: PointerActivation,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        if !self.scope_allows_id(id) {
+            return Ok(false);
+        }
+        if let Some(action) = self
+            .layout_boxes
+            .iter()
+            .find(|b| b.id == id && b.enabled && !b.departing)
+            .and_then(|b| b.on_activate_input.as_ref())
+        {
+            handlers
+                .dispatch_activation(action, event, context)
+                .map_err(|e| DocumentError(e.to_string()))?;
+            return Ok(true);
+        }
+        self.activate_legacy(id, handlers, context)
+    }
     fn activate<C>(
+        &self,
+        id: &str,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        #[cfg(feature = "rust-ui")]
+        {
+            self.activate_with_input(
+                id,
+                PointerActivation {
+                    modifiers: InputModifiers::default(),
+                    source: InputSource::Keyboard,
+                },
+                handlers,
+                context,
+            )
+        }
+        #[cfg(not(feature = "rust-ui"))]
+        {
+            self.activate_legacy(id, handlers, context)
+        }
+    }
+    fn activate_legacy<C>(
         &self,
         id: &str,
         handlers: &mut Handlers<'_, C>,
@@ -1859,10 +2521,22 @@ impl Runtime {
         p: &mut P,
         ui: &UiTheme,
     ) -> Vec<PaintBatch<P::Shape, P::Glyph>> {
+        self.input_theme.replace(ui.clone());
         let mut out = Vec::new();
         let mut motion = self.motion.borrow_mut();
         motion.scale = self.scale;
         let mut boxes = motion.paint_boxes(&self.boxes);
+        // Frame sequences show the frame for now; finished ones keep the
+        // final drawing, which layout already holds.
+        if motion.frames_playing() {
+            let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
+            for b in &mut list {
+                if let Some(canvas) = b.frames.as_ref().and_then(|f| motion.frame(&b.id, f)) {
+                    b.canvas = canvas.clone();
+                }
+            }
+            boxes = Some(list);
+        }
         if !motion.reduced
             && boxes
                 .as_deref()
@@ -1877,16 +2551,21 @@ impl Runtime {
         // Offsets (fixed, hover/press lifts, slide-ins) move whole subtrees at
         // paint time; layout and hit targets keep their places.
         let list = boxes.as_deref().unwrap_or(&self.boxes);
-        let moving = list.iter().any(|b| {
-            b.ext.offset != [0.; 2]
-                || b.effects.transition.is_some_and(|t| t.1 != [0.; 2])
-                || std::iter::once(&b.effects.base)
-                    .chain(&b.effects.states)
-                    .any(|s| s.offset.is_some())
-        });
+        let moving = motion.has_offsets()
+            || list.iter().any(|b| {
+                b.ext.offset != [0.; 2]
+                    || b.effects.transition.is_some_and(|t| t.1 != [0.; 2])
+                    || std::iter::once(&b.effects.base)
+                        .chain(&b.effects.states)
+                        .any(|s| s.offset.is_some())
+            });
         if moving {
             let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
             for i in 0..list.len() {
+                // Both paint passes must resolve the same target. Otherwise
+                // token colors alternate with layout fallbacks every frame,
+                // continuously restarting an otherwise finite animation.
+                list[i].style.resolve_colors(ui);
                 let b = &list[i];
                 let state = self.state_for_box(b);
                 let target = visual_target(b, state, ui, self.scale);
@@ -2040,6 +2719,11 @@ impl Runtime {
             #[cfg(feature = "rust-ui")]
             if let Some(highlight) = self.paint_text_selection(p, ui, b) {
                 out.push(highlight);
+            }
+            #[cfg(feature = "rust-ui")]
+            if b.ext.code.is_some() {
+                self.push_code_view(p, ui, b, out);
+                continue;
             }
             let batch = self.paint_one(p, ui, b, treatment.then_some(visual));
             #[cfg(feature = "rust-ui")]
@@ -2197,28 +2881,15 @@ impl Runtime {
                             hovered,
                         );
                     }
-                    let style = &b.text_style;
-                    if style.underline || style.strikethrough {
-                        let size = style.size;
-                        let thickness = (size / 14.).max(self.scale).round().max(1.);
-                        for [x, baseline, width] in p.ui_text_lines(&b.text, r, style) {
-                            for (on, y) in [
-                                (style.underline, baseline + size * 0.14),
-                                (style.strikethrough, baseline - size * 0.3),
-                            ] {
-                                if on && width > 0. {
-                                    let y = y.round() + thickness * 0.5;
-                                    p.card_line(
-                                        &mut shapes,
-                                        [x, y],
-                                        [x + width, y],
-                                        thickness,
-                                        text_color,
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    paint_text_decorations(
+                        p,
+                        &mut shapes,
+                        &b.text,
+                        r,
+                        &b.text_style,
+                        text_color,
+                        self.scale,
+                    );
                 }
             }
             Kind::Button => {
@@ -2325,17 +2996,21 @@ impl Runtime {
                 let along = b
                     .label_flow
                     .map_or(default_along, |flow| flow.fractions()[0]);
-                p.ui_text_styled(
-                    &mut glyphs,
+                let label_bounds = [
+                    r[0] + lead + ((r[2] - lead - inset - chevron - w) * along).max(0.),
+                    r[1] + (r[3] - h) * 0.5,
+                    max_width,
+                    h,
+                ];
+                p.ui_text_styled(&mut glyphs, &b.text, label_bounds, &b.text_style, color);
+                paint_text_decorations(
+                    p,
+                    &mut shapes,
                     &b.text,
-                    [
-                        r[0] + lead + ((r[2] - lead - inset - chevron - w) * along).max(0.),
-                        r[1] + (r[3] - h) * 0.5,
-                        max_width,
-                        h,
-                    ],
+                    label_bounds,
                     &b.text_style,
                     color,
+                    self.scale,
                 );
             }
             Kind::Checkbox | Kind::Toggle => {
@@ -2929,10 +3604,28 @@ fn paint_scrollbars<P: Painter>(
     }
 }
 fn interactive_node(n: &Node) -> bool {
-    interactive(n.kind) || n.editor.is_some() || n.slider.is_some() || n.split_handle.is_some()
+    #[cfg(feature = "rust-ui")]
+    let code = n.ext.code.is_some();
+    #[cfg(not(feature = "rust-ui"))]
+    let code = false;
+    interactive(n.kind)
+        || n.editor.is_some()
+        || n.slider.is_some()
+        || n.split_handle.is_some()
+        || n.on_activate_input.is_some()
+        || n.on_input_key.is_some()
+        || code
 }
 fn interactive_box(b: &LayoutBox) -> bool {
-    interactive(b.kind) || b.editor.is_some() || b.slider.is_some() || b.split_handle.is_some()
+    #[cfg(feature = "rust-ui")]
+    let custom = b.on_activate_input.is_some() || b.on_input_key.is_some() || b.ext.code.is_some();
+    #[cfg(not(feature = "rust-ui"))]
+    let custom = false;
+    interactive(b.kind)
+        || b.editor.is_some()
+        || b.slider.is_some()
+        || b.split_handle.is_some()
+        || custom
 }
 #[cfg(not(feature = "rust-ui"))]
 impl Runtime {
@@ -3066,6 +3759,8 @@ struct InheritedStyle {
     select_handler: Option<String>,
     family: Option<String>,
     size: Option<f32>,
+    /// The product of every `text_scale` above.
+    scale: Option<f32>,
     weight: Option<u16>,
     italic: Option<bool>,
     tracking: Option<f32>,
@@ -3086,6 +3781,9 @@ fn resolve_styles(
         text.family = Some(family.clone());
     }
     text.size = n.style.font_size.or(n.font_size).or(text.size);
+    if let Some(k) = n.style.text_scale {
+        text.scale = Some(text.scale.unwrap_or(1.) * k);
+    }
     text.weight = n.style.font_weight.or(text.weight);
     text.italic = n
         .style
@@ -3123,7 +3821,7 @@ fn resolve_styles(
             layout: ResolvedLayout::new(n, scale, logical_width),
             text: TextStyle {
                 family: text.family.clone().unwrap_or_else(|| "system".into()),
-                size: text.size.unwrap_or(default_size) * scale,
+                size: text.size.unwrap_or(default_size) * text.scale.unwrap_or(1.) * scale,
                 weight: text.weight.unwrap_or(400),
                 italic: text.italic.unwrap_or(false),
                 tracking: text.tracking.unwrap_or(0.),
@@ -3167,6 +3865,34 @@ fn resolve_styles(
     );
     for child in &n.children {
         resolve_styles(child, &text, scale, logical_width, out, depth + 1);
+    }
+}
+/// Text and button/link labels share decoration geometry. Default controls
+/// remain unchanged; adapters without line metrics retain their existing fallback.
+fn paint_text_decorations<P: DocumentPainter>(
+    p: &mut P,
+    shapes: &mut Vec<P::Shape>,
+    text: &str,
+    bounds: [f32; 4],
+    style: &TextStyle,
+    color: [f32; 4],
+    scale: f32,
+) {
+    if !(style.underline || style.strikethrough) {
+        return;
+    }
+    let size = style.size;
+    let thickness = (size / 14.).max(scale).round().max(1.);
+    for [x, baseline, width] in p.ui_text_lines(text, bounds, style) {
+        for (on, y) in [
+            (style.underline, baseline + size * 0.14),
+            (style.strikethrough, baseline - size * 0.3),
+        ] {
+            if on && width > 0. {
+                let y = y.round() + thickness * 0.5;
+                p.card_line(shapes, [x, y], [x + width, y], thickness, color);
+            }
+        }
     }
 }
 /// Rich text: run colours, code backgrounds behind their ranges, glyphs,
@@ -4060,6 +4786,7 @@ fn place(
     }
     out.push(LayoutBox {
         id: n.id.clone(),
+        hover_link: n.hover_link.clone(),
         kind: n.kind,
         bounds,
         clip,
@@ -4083,8 +4810,26 @@ fn place(
         on_selection: n.on_selection.clone(),
         #[cfg(feature = "rust-ui")]
         on_key: n.on_key.clone(),
+        tab_stop: n.tab_stop,
+        roving: n.roving.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_activate_input: n.on_activate_input.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_input_key: n.on_input_key.clone(),
         #[cfg(feature = "rust-ui")]
         on_width: n.on_width.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_height: n.on_height.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_drag: n.on_drag.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_drag_start: n.on_drag_start.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_hover: n.on_hover.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_focus_within: n.on_focus_within.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_escape: n.on_escape.clone(),
         slider: n.slider.clone(),
         action: n
             .on_activate
@@ -4120,6 +4865,7 @@ fn place(
         content_clip: None,
         image: n.surface.image.clone(),
         canvas: n.surface.canvas.clone(),
+        frames: n.surface.frames.clone(),
         scroll_max: [0.; 2],
         scroll_offset: [0.; 2],
         scroll: n.surface.scroll,
@@ -4131,6 +4877,7 @@ fn place(
         progress: n.progress.clone(),
         detached_visual: None,
         detached_mount: 1.,
+        detached_offset: [0.; 2],
         departing: false,
         detached_state: None,
         ext: BoxExtras {
@@ -4145,6 +4892,8 @@ fn place(
             spans: n.ext.spans.clone(),
             on_link: n.ext.on_link.clone(),
             links: Vec::new(),
+            #[cfg(feature = "rust-ui")]
+            code: n.ext.code.clone(),
         },
     });
     let index = out.len() - 1;
@@ -4984,6 +5733,98 @@ mod style_component_tests {
             .bounds();
         [x + w * 0.5, y + h * 0.5]
     }
+    #[cfg(feature = "rust-ui")]
+    #[test]
+    fn padded_children_of_a_wrapping_row_keep_both_insets() {
+        use crate::ui::prelude::*;
+        let chip = |k: &str| -> crate::ui::Element<()> {
+            hstack([text("Hello").key(format!("{k}-label")).into()])
+                .key(k.to_string())
+                .justify(Justify::Center)
+                .align(Align::Center)
+                .height(28.)
+                .min_width(28.)
+                .rounded(6.)
+                .background("#00000010")
+                .accessible_label("Hello")
+                .padding(12., Edge::Left)
+                .padding(12., Edge::Right)
+                .hover_style(|s| s.background("#00000020"))
+                .on_click_with(|_: &mut (), _| {})
+                .into()
+        };
+        let tree: crate::ui::Element<()> = vstack([
+            hstack([chip("a"), chip("b")])
+                .key("plain")
+                .gap(8., Axis::Horizontal)
+                .into(),
+            hstack([chip("c"), chip("d")])
+                .key("wrapping")
+                .gap(8., Axis::Horizontal)
+                .wrap(true)
+                .justify(Justify::Center)
+                .into(),
+        ])
+        .key("root")
+        .into();
+        let (doc, h) = tree.build().unwrap().into_parts();
+        let v = Bindings::default();
+        let mut r = Runtime::new(doc, &h, &v).unwrap();
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder)
+            .unwrap();
+        let b = |id: &str| {
+            r.boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .bounds
+                .bounds()
+        };
+        for k in ["a", "c"] {
+            let (outer, label) = (b(k), b(&format!("{k}-label")));
+            let (left, right) = (
+                label[0] - outer[0],
+                outer[0] + outer[2] - label[0] - label[2],
+            );
+            assert!(
+                (left - 12.).abs() < 0.5 && (right - 12.).abs() < 0.5,
+                "{k}: insets {left} and {right}, outer {outer:?} label {label:?}"
+            );
+        }
+    }
+    #[cfg(feature = "rust-ui")]
+    #[test]
+    fn text_scale_multiplies_explicit_and_inherited_sizes_and_nests() {
+        use crate::ui::prelude::*;
+        let tree: crate::ui::Element<()> = vstack([
+            text("Inherited").key("inherited").into(),
+            text("Explicit").key("explicit").font_size(12.).into(),
+            vstack([text("Nested").key("nested").font_size(10.).into()])
+                .key("inner")
+                .text_scale(2.)
+                .into(),
+        ])
+        .key("root")
+        .font_size(16.)
+        .text_scale(1.25)
+        .into();
+        let (doc, h) = tree.build().unwrap().into_parts();
+        let v = Bindings::default();
+        let mut r = Runtime::new(doc, &h, &v).unwrap();
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder)
+            .unwrap();
+        let size = |id: &str| {
+            r.boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .text_style
+                .size
+        };
+        assert_eq!(size("inherited"), 20.);
+        assert_eq!(size("explicit"), 15.);
+        assert_eq!(size("nested"), 25.);
+    }
     #[test]
     fn typography_inherits_and_local_overrides_take_precedence() {
         let source = r##"{"schema_version":1,"root":{"type":"column","id":"root","style":{"font_family":"serif","font_size":18,"font_weight":600,"font_style":"italic","color":"#aabbcc80","background":"#101820"},"children":[{"type":"text","id":"body","text":"Inherited"},{"type":"text","id":"override","text":"Override","font_size":24,"style":{"font_size":20,"font_style":"normal"}},{"type":"button","id":"button","label":"Apply","on_activate":"apply","style":{"font_weight":700,"color":"#ffffff","radius":12,"background":"#003366","border_color":"#abcdef","border_width":2}},{"type":"panel","id":"panel","height":40}]}}"##;
@@ -5736,6 +6577,33 @@ mod foundation_tests {
         assert_eq!(r.scroll_offset("list")[1], 220.);
     }
     #[test]
+    fn scroll_to_after_a_wheel_scroll_lands_on_the_key_not_off_by_the_scroll() {
+        let make =
+            |request| -> Element<App> {
+                vstack((0..20).map(|i| -> Element<App> {
+                    vstack![].key(format!("item-{i}")).height(40.).into()
+                }))
+                .key("list")
+                .height(200.)
+                .scroll(Scroll::Vertical)
+                .scroll_to("item-0", request)
+                .into()
+            };
+        let (mut r, _) = mount(make(0));
+        // Wheel to the end: boxes shift in place, without a full layout.
+        r.scroll_at(10., 10., [0., 600.]);
+        assert_eq!(r.scroll_offset("list")[1], 600.);
+        let (d, h) = make(1).build().unwrap().into_parts();
+        r.replace_document(d, &h, &Bindings::default()).unwrap();
+        r.layout(
+            Viewport::new(400., 400., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Rec,
+        )
+        .unwrap();
+        assert_eq!(r.scroll_offset("list")[1], 0., "back at the top, as asked");
+    }
+    #[test]
     fn gradients_and_single_side_dashed_borders_paint() {
         let (r, _) = mount(
             vstack![
@@ -5805,5 +6673,222 @@ mod foundation_tests {
         );
         // Without sides the full box is still drawn, top edge included.
         assert!(red_ys(None).iter().any(|y| *y < 3.));
+    }
+}
+
+#[cfg(all(test, feature = "rust-ui"))]
+mod linked_hover_tests {
+    use super::*;
+    use crate::ui::prelude::*;
+    use crate::ui::text;
+    struct Metrics;
+    impl TextMetrics for Metrics {
+        fn measure(&mut self, text: &str, size: f32, width: f32) -> [f32; 2] {
+            [(text.len() as f32 * size * 0.5).min(width), size * 1.2]
+        }
+    }
+    fn mount(ui: Element<usize>, scale: f32) -> (Runtime, Handlers<'static, usize>) {
+        let (doc, handlers) = ui.build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        layout(&mut runtime, scale);
+        (runtime, handlers)
+    }
+    fn layout(runtime: &mut Runtime, scale: f32) {
+        runtime
+            .layout(
+                Viewport::new(600. * scale, 400. * scale, scale).unwrap(),
+                &Bindings::default(),
+                &mut Metrics,
+            )
+            .unwrap();
+    }
+    fn center(runtime: &Runtime, id: &str) -> [f32; 2] {
+        let [x, y, w, h] = runtime
+            .boxes
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap()
+            .bounds
+            .bounds();
+        [x + w / 2., y + h / 2.]
+    }
+    fn hovered(runtime: &Runtime, id: &str) -> bool {
+        let b = runtime.boxes.iter().find(|b| b.id == id).unwrap();
+        runtime.state_for_box(b).hovered
+    }
+    fn peers() -> Element<usize> {
+        vstack![
+            button("Tile")
+                .on_click(|_: &mut usize| {})
+                .key("tile")
+                .hover_link("path")
+                .on_click(|n| *n += 1),
+            hstack![
+                text("Peer"),
+                checkbox("Child", false)
+                    .key("child")
+                    .on_change(|n, _| *n += 10)
+            ]
+            .key("row")
+            .hover_link("path")
+            .height(40.)
+            .hover_style(|s| s.background("#123456")),
+            button("Other")
+                .on_click(|_: &mut usize| {})
+                .key("other")
+                .hover_link("other")
+                .on_click(|n| *n += 100),
+            button("Disabled")
+                .on_click(|_: &mut usize| {})
+                .key("disabled")
+                .hover_link("path")
+                .enabled(false),
+        ]
+        .width(400.)
+        .into()
+    }
+    #[test]
+    fn linked_hover_is_bidirectional_paint_only_and_edge_triggered_at_both_scales() {
+        for scale in [1., 2.] {
+            let (mut runtime, mut handlers) = mount(peers(), scale);
+            let mut app = 0;
+            let focus = runtime.focused.clone();
+            let [x, y] = center(&runtime, "tile");
+            let outcome = runtime
+                .pointer_move_outcome(x, y, &mut handlers, &mut app)
+                .unwrap();
+            assert!(outcome.changed && !outcome.activated);
+            assert!(hovered(&runtime, "tile") && hovered(&runtime, "row"));
+            assert!(!hovered(&runtime, "disabled") && !hovered(&runtime, "other"));
+            assert!(!runtime.pointer_move(x + 1., y));
+            assert_eq!(app, 0);
+            assert_eq!(runtime.focused, focus);
+            assert!(runtime.capture.is_none());
+            let [x, y] = center(&runtime, "child");
+            runtime.pointer_move(x, y);
+            assert!(hovered(&runtime, "tile") && hovered(&runtime, "row"));
+            assert_eq!(app, 0, "hovering a nested checkbox must not toggle it");
+            assert!(runtime.pointer_leave());
+            assert!(!hovered(&runtime, "tile") && !hovered(&runtime, "row"));
+            assert!(!runtime.pointer_leave());
+        }
+    }
+    #[test]
+    fn nearest_nested_group_wins_and_cancel_clears_all_peers() {
+        let (mut r, _) = mount(
+            vstack![
+                vstack![button("inner")
+                    .on_click(|_: &mut usize| {})
+                    .key("inner")
+                    .hover_link("inner")]
+                .key("outer")
+                .hover_link("outer"),
+                text("a").key("a").hover_link("outer"),
+                text("b").key("b").hover_link("inner"),
+            ]
+            .into(),
+            1.,
+        );
+        let [x, y] = center(&r, "inner");
+        r.pointer_move(x, y);
+        assert!(hovered(&r, "b"));
+        assert!(!hovered(&r, "a"));
+        assert!(r.cancel_input());
+        assert!(!hovered(&r, "b"));
+    }
+    #[test]
+    fn disabled_hidden_and_clipped_sources_do_not_link() {
+        let ui = vstack![
+            vstack![button("Cut off")
+                .on_click(|_: &mut usize| {})
+                .key("cut")
+                .hover_link("path")]
+            .height(0.)
+            .clip_contents(true),
+            button("hidden")
+                .on_click(|_: &mut usize| {})
+                .key("hidden")
+                .hover_link("path")
+                .visible(false),
+            button("disabled")
+                .on_click(|_: &mut usize| {})
+                .key("disabled")
+                .hover_link("path")
+                .enabled(false),
+            text("Peer").key("peer").hover_link("path"),
+        ];
+        let (mut r, _) = mount(ui.into(), 1.);
+        assert!(!r.boxes.iter().any(|b| b.id == "hidden"));
+        let [x, y] = center(&r, "disabled");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "peer"));
+        r.pointer_move(550., 350.);
+        assert!(!hovered(&r, "peer"));
+    }
+    #[test]
+    fn replacing_tree_never_retains_old_group_or_disabled_peer() {
+        let (mut r, _) = mount(peers(), 1.);
+        let [x, y] = center(&r, "tile");
+        r.pointer_move(x, y);
+        assert!(hovered(&r, "row"));
+        let next: Element<usize> = vstack![
+            button("new")
+                .on_click(|_: &mut usize| {})
+                .key("tile")
+                .hover_link("new"),
+            text("peer").key("row").hover_link("path")
+        ]
+        .into();
+        let (doc, h) = next.build().unwrap().into_parts();
+        r.replace_document(doc, &h, &Bindings::default()).unwrap();
+        layout(&mut r, 1.);
+        assert!(!hovered(&r, "row"));
+        let [x, y] = center(&r, "tile");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "row"));
+    }
+    #[test]
+    fn popup_scope_blocks_background_hover_peers() {
+        let (mut r, _) = mount(
+            vstack![
+                button("background")
+                    .on_click(|_: &mut usize| {})
+                    .key("background")
+                    .hover_link("path"),
+                context_menu(
+                    button("anchor").on_click(|_: &mut usize| {}).key("anchor"),
+                    [menu_item(1, "Action").key("action")]
+                )
+                .key("menu")
+                .open(true)
+                .position([200., 100.])
+                .on_action(|_: &mut usize, _| {})
+                .on_open_change(|_: &mut usize, _| {})
+                .on_context_open(|_: &mut usize, _| {})
+            ]
+            .into(),
+            1.,
+        );
+        let [x, y] = center(&r, "background");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "background"));
+        let [x, y] = center(&r, "action");
+        r.pointer_move(x, y);
+        assert!(!hovered(&r, "background"));
+    }
+    #[test]
+    fn keys_are_bounded_and_linking_does_not_create_callbacks() {
+        for key in [String::new(), "x".repeat(129)] {
+            let ui: Element<usize> = text("bad").hover_link(key).into();
+            assert!(ui.build().is_err());
+        }
+        let ui: Element<usize> = text("valid").hover_link("folder/Unicode-☀").into();
+        assert!(ui.build().is_ok());
+        let (mut r, mut h) = mount(text("passive").key("passive").hover_link("path").into(), 1.);
+        let [x, y] = center(&r, "passive");
+        let mut app = 0;
+        let outcome = r.pointer_move_outcome(x, y, &mut h, &mut app).unwrap();
+        assert!(!outcome.activated);
+        assert_eq!(app, 0);
     }
 }

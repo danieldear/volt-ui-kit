@@ -121,14 +121,14 @@ fn bounded_semantic_name(text: &str, fallback: &str) -> String {
 }
 pub use crate::declarative::{
     responsive, Align, Ambient, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
-    Responsive, Rounding, Scroll, Scrollbars, Shadow, Tone, Transition, VisualStyle,
+    Responsive, Rounding, Scroll, Scrollbars, Shadow, Spring, Tone, Transition, VisualStyle,
 };
 pub use crate::declarative::{
     BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
 };
 
 pub use crate::graphics::{
-    BackgroundImage, Canvas, Clip, Image, ImageFit, ImagePosition, VectorPath,
+    BackgroundImage, Canvas, CanvasFrames, Clip, Image, ImageFit, ImagePosition, VectorPath,
 };
 pub use crate::{ColorToken, Palette, ThemeMode, UiTheme};
 
@@ -252,6 +252,8 @@ pub enum FontStyle {
 }
 
 type Click<C> = Box<dyn FnMut(&mut C)>;
+type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation)>;
+type InputKeyCallback<C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool>;
 type Change<C> = Box<dyn FnMut(&mut C, bool)>;
 type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
 type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
@@ -260,6 +262,10 @@ type WindowCallback<C> = Box<dyn FnMut(&mut C, std::ops::Range<usize>)>;
 type FilesCallback<C> = Box<dyn FnMut(&mut C, Vec<std::path::PathBuf>)>;
 type SelectionCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::TextSelection)>;
 type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
+type CodeCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::CodeInput) -> Option<String>>;
+type CodeFoldCallback<C> = Box<dyn FnMut(&mut C, usize)>;
+type CodeCaretCallback<C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>)>;
+type DragCallback<C> = Box<dyn FnMut(&mut C, [f32; 2])>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
@@ -280,9 +286,103 @@ enum Callback<C> {
     Window(WindowCallback<C>),
     Files(FilesCallback<C>),
     Link(ChangeText<C>),
+    Code {
+        input: CodeCallback<C>,
+        caret: Option<CodeCaretCallback<C>>,
+        fold: Option<CodeFoldCallback<C>>,
+    },
+}
+// Opt-in spacing for composites whose public builder is not an Element wrapper.
+// Empty overrides leave every constructor default intact.
+#[derive(Clone, Default)]
+struct RootSpacing {
+    padding: [Option<Responsive<f32>>; 4],
+    gap: [Option<Responsive<f32>>; 2],
+}
+impl RootSpacing {
+    fn padding(&mut self, value: impl Into<Responsive<f32>>, edges: impl Into<Edges>) {
+        let value = value.into();
+        let mask = edges.into().0;
+        for i in (0..4).filter(|i| mask & (1 << i) != 0) {
+            self.padding[i] = Some(value.clone());
+        }
+    }
+    fn gap(&mut self, value: impl Into<Responsive<f32>>, axes: impl Into<Axes>) {
+        let value = value.into();
+        let mask = axes.into().0;
+        for i in (0..2).filter(|i| mask & (1 << i) != 0) {
+            self.gap[i] = Some(value.clone());
+        }
+    }
+    fn apply<C>(self, mut element: Element<C>) -> Element<C> {
+        for (dst, rule) in element.node.responsive.padding.iter_mut().zip(self.padding) {
+            if rule.is_some() {
+                *dst = rule;
+            }
+        }
+        for (dst, rule) in element.node.responsive.gap.iter_mut().zip(self.gap) {
+            if rule.is_some() {
+                *dst = rule;
+            }
+        }
+        element
+    }
+}
+macro_rules! wrapper_spacing_methods {
+    ($target:ident $(, [$($generic:ident),*])?) => {
+        impl<C $(, $($generic),*)?> $target<C $(, $($generic),*)?> {
+            /// Content padding, independent of the overlay backdrop.
+            pub fn padding(mut self, value: impl Into<Responsive<f32>>, edges: impl Into<Edges>) -> Self {
+                let mut spacing = RootSpacing::default();
+                spacing.padding(value, edges);
+                self.0 = spacing.apply(self.0); self
+            }
+            /// Space between immediate content children; does not change label/icon insets.
+            pub fn gap(mut self, value: impl Into<Responsive<f32>>, axes: impl Into<Axes>) -> Self {
+                let mut spacing = RootSpacing::default();
+                spacing.gap(value, axes);
+                self.0 = spacing.apply(self.0); self
+            }
+        }
+    };
+}
+macro_rules! root_spacing_methods {
+    () => {
+        /// Override the composite's outer content padding; defaults stay intact
+        /// until explicitly set. The last setter affecting an edge wins.
+        pub fn padding(
+            mut self,
+            value: impl Into<Responsive<f32>>,
+            edges: impl Into<Edges>,
+        ) -> Self {
+            self.spacing.padding(value, edges);
+            self
+        }
+        /// Override spacing between the composite's immediate content children.
+        /// Does not change icon/text insets or logical cell/row geometry.
+        pub fn gap(mut self, value: impl Into<Responsive<f32>>, axes: impl Into<Axes>) -> Self {
+            self.spacing.gap(value, axes);
+            self
+        }
+    };
 }
 mod bars;
 mod charts;
+mod hierarchy;
+mod selection;
+mod sunburst;
+pub use crate::declarative::{
+    InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation,
+};
+pub use hierarchy::{
+    icicle_chart, icicle_layout, treemap_chart, treemap_layout, HierarchyChart, HierarchyNode,
+    HierarchyRect,
+};
+pub use selection::{
+    selectable_list, selectable_row, SelectableList, SelectableRow, SelectionAction,
+    SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
+};
+pub use sunburst::{rainbow, sunburst_chart, sunburst_layout, SunburstArc, SunburstChart};
 mod data;
 mod dates;
 mod dialogs;
@@ -305,10 +405,16 @@ pub use display::{
     line_chart, pagination, skeleton, skeleton_text, sparkline, stat, steps, timeline, Alert,
     Avatar, Breadcrumb, Carousel, Pagination, Presence, Severity, Stat, TimelineItem,
 };
+mod code_view;
 mod icons;
 mod inputs;
 mod menus;
 mod navigation;
+mod routing;
+pub use routing::{
+    link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError, NavigationHistory,
+    NavigationLink, NavigationSnapshot, UrlError,
+};
 mod popovers;
 mod progress;
 mod split;
@@ -329,6 +435,7 @@ pub use bars::{
     button_bar, segmented_control, tab, tab_bar, tab_item, tabs, toolbar, ButtonBar,
     SelectionControl, Tab, TabItem, TabPlacement, TabVariant, Tabs, Toolbar,
 };
+pub use code_view::{code_view, CodeView};
 pub use data::{
     data_item, lazy_list, table, table_column, table_row, tree_node, tree_view, virtual_list,
     DataItem, LazyList, SortDirection, Table, TableColumn, TableRow, TreeNode, TreeView,
@@ -359,9 +466,30 @@ pub struct Element<C> {
     select_text: Option<ChangeText<C>>,
     /// Containers: the laid-out width changed.
     width: Option<ChangeNumber<C>>,
+    /// Containers: the laid-out height changed.
+    height: Option<ChangeNumber<C>>,
+    /// Containers: the pointer entered (true) or left (false) the bounds.
+    hover: Option<Change<C>>,
+    /// Containers: keyboard focus entered (true) or left (false) the subtree.
+    focus_within: Option<Change<C>>,
+    /// Containers: Escape that nothing else used.
+    escape: Option<Click<C>>,
     validation_error: Option<String>,
+    input_activation: Option<ClickWith<C>>,
+    input_key: Option<InputKeyCallback<C>>,
+    /// Containers: a drag began on them; the offset from the press.
+    drag: Option<DragCallback<C>>,
+    drag_start: Option<Click<C>>,
 }
 impl<C> Element<C> {
+    #[cfg(feature = "mobile")]
+    pub(crate) fn host_font(mut self, family: &str) -> Self {
+        self.node
+            .style
+            .font_family
+            .get_or_insert_with(|| family.to_owned());
+        self
+    }
     fn new(kind: Kind) -> Self {
         Self {
             node: {
@@ -376,7 +504,15 @@ impl<C> Element<C> {
             callback: None,
             select_text: None,
             width: None,
+            height: None,
+            hover: None,
+            focus_within: None,
+            escape: None,
             validation_error: None,
+            input_activation: None,
+            input_key: None,
+            drag: None,
+            drag_start: None,
         }
     }
 }
@@ -414,7 +550,15 @@ impl<C: 'static> Element<C> {
                 callback,
                 select_text,
                 width,
+                height,
+                hover,
+                focus_within,
+                escape,
                 validation_error,
+                input_activation,
+                input_key,
+                drag,
+                drag_start,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -435,6 +579,62 @@ impl<C: 'static> Element<C> {
                     .on_value_changed(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_width = Some(name);
+            }
+            if let Some(f) = height {
+                let name = format!("rust-height-{}", *count);
+                handlers
+                    .on_value_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_height = Some(name);
+            }
+            if let Some(f) = drag_start {
+                let name = format!("rust-drag-start-{}", *count);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag_start = Some(name);
+            }
+            if let Some(f) = drag {
+                let name = format!("rust-drag-{}", *count);
+                handlers
+                    .on_context_requested(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag = Some(name);
+            }
+            if let Some(f) = hover {
+                let name = format!("rust-hover-{}", *count);
+                handlers
+                    .on_toggle_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_hover = Some(name);
+            }
+            if let Some(f) = focus_within {
+                let name = format!("rust-focus-within-{}", *count);
+                handlers
+                    .on_toggle_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_focus_within = Some(name);
+            }
+            if let Some(f) = escape {
+                let name = format!("rust-escape-{}", *count);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_escape = Some(name);
+            }
+            if let Some(f) = input_activation {
+                let name = format!("rust-input-{}", *count);
+                handlers
+                    .on_activate_with(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_activate_input = Some(name);
+            }
+            if let Some(f) = input_key {
+                let name = format!("rust-key-input-{}", *count);
+                handlers
+                    .on_input_key(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_input_key = Some(name);
             }
             if let Some(callback) = callback {
                 let name = format!("rust-action-{}", *count);
@@ -543,6 +743,29 @@ impl<C: 'static> Element<C> {
                             .on_link(&name, f)
                             .map_err(|e| DocumentError(e.to_string()))?;
                         node.ext.on_link = Some(name);
+                    }
+                    Callback::Code { input, caret, fold } => {
+                        handlers
+                            .on_code_input(&name, input)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        if let Some(code) = node.ext.code.as_mut() {
+                            let code = std::sync::Arc::make_mut(code);
+                            if let Some(fold) = fold {
+                                let fold_name = format!("{name}-fold");
+                                handlers
+                                    .on_code_fold(&fold_name, fold)
+                                    .map_err(|e| DocumentError(e.to_string()))?;
+                                code.on_fold = Some(fold_name);
+                            }
+                            if let Some(caret) = caret {
+                                let caret_name = format!("{name}-caret");
+                                handlers
+                                    .on_code_caret(&caret_name, caret)
+                                    .map_err(|e| DocumentError(e.to_string()))?;
+                                code.on_caret_rect = Some(caret_name);
+                            }
+                            code.on_input = Some(name);
+                        }
                     }
                     Callback::Dismiss(f) => {
                         handlers
@@ -672,6 +895,10 @@ macro_rules! modifiers {
             pub fn opacity(mut self, value:f32) -> Self { self.$($field)*.effects.base.opacity=Some(value); self }
             pub fn shadow(mut self, value:Shadow) -> Self { self.$($field)*.effects.base.shadow=Some(value); self }
             pub fn glow(mut self, value:Glow) -> Self { self.$($field)*.effects.base.glow=Some(value); self }
+            /// Share paint-only hover with enabled, mounted peers having this key.
+            /// Does not dispatch callbacks, select, focus, scroll or open tooltips
+            /// on peers. Use stable 1..128-byte keys; nearest nested link wins.
+            pub fn hover_link(mut self, key: impl Into<String>) -> Self { self.$($field)*.hover_link=Some(key.into());self }
             pub fn hover_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.states[0]=patch(VisualStyle::default()); self }
             /// Appearance while disabled (`disabled:` variant).
             pub fn disabled_style(mut self, patch:impl FnOnce(VisualStyle)->VisualStyle) -> Self { self.$($field)*.effects.disabled=patch(VisualStyle::default()); self }
@@ -681,10 +908,15 @@ macro_rules! modifiers {
             /// Animate explicit appearance changes for the same key after recomposition.
             pub fn animation(mut self, animation:Animation) -> Self { self.$($field)*.effects.animation=Some(animation); self }
             pub fn transition(mut self, transition:Transition) -> Self { self.$($field)*.effects.transition=Some(transition); self }
+            /// Replay an enter transition without changing keys or page/input state.
+            /// The same revision is stable across ordinary recompositions.
+            pub fn transition_revision(mut self, revision: u64) -> Self { self.$($field)*.effects.transition_revision=revision; self }
             /// Continuous decorative motion; see [`Ambient`].
             pub fn ambient(mut self, ambient:Ambient) -> Self { self.$($field)*.effects.ambient=Some(ambient); self }
             pub fn font_family(mut self, value: impl Into<String>) -> Self { self.$($field)*.style.font_family = Some(value.into()); self }
             pub fn font_size(mut self, value: f32) -> Self { self.$($field)*.style.font_size = Some(value); self }
+            /// Multiplies every font size beneath, explicit ones included (code views keep their own size). Nested scales multiply; clamped to 0.5..=2.
+            pub fn text_scale(mut self, value: f32) -> Self { self.$($field)*.style.text_scale = Some(if value.is_finite() { value.clamp(0.5, 2.) } else { 1. }); self }
             pub fn font_weight(mut self, value: u16) -> Self { self.$($field)*.style.font_weight = Some(value); self }
             /// Horizontal alignment of text lines within the element (inherited).
             pub fn text_align(mut self, value: TextAlign) -> Self { self.$($field)*.style.text_align = Some(value); self }
@@ -732,6 +964,23 @@ modifiers!(Stack, [0.node], [0.auto_id]);
 pub fn canvas<C>(draw: impl FnOnce(&mut Canvas)) -> Element<C> {
     let mut element = Element::new(Kind::Canvas);
     draw(&mut element.node.surface.canvas);
+    element
+}
+/// A canvas that plays `frames` once, `frame_ms` apart, at paint time (a
+/// tween precomputed while composing), then keeps the last frame. It
+/// restarts only when `revision` changes for this element's key, so
+/// unrelated recompositions don't replay it. Reduced motion shows the last
+/// frame at once. Give it a stable `.key(...)`.
+pub fn canvas_frames<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64) -> Element<C> {
+    let mut element = Element::new(Kind::Canvas);
+    element.node.surface.canvas = frames.last().cloned().unwrap_or_default();
+    if frames.len() > 1 {
+        element.node.surface.frames = Some(CanvasFrames {
+            frames: frames.into(),
+            frame_ms: frame_ms.clamp(8, 1000),
+            revision,
+        });
+    }
     element
 }
 pub fn text<C>(value: impl Into<String>) -> Text<C> {
@@ -919,7 +1168,36 @@ impl<C> Button<C> {
         self
     }
     pub fn on_click(mut self, callback: impl FnMut(&mut C) + 'static) -> Self {
+        self.0.input_activation = None;
         self.0.callback = Some(Callback::Click(Box::new(callback)));
+        self
+    }
+}
+impl<C> Button<C> {
+    /// Opt-in activation with press-time modifiers and an honest input source.
+    /// Replaces `.on_click`; calling `.on_click` later replaces this handler.
+    pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+        self.0.callback = None;
+        self.0.input_activation = Some(Box::new(f));
+        self
+    }
+    /// Include this control in ordinary Tab traversal (default true). Pointer
+    /// and accessibility activation stay available when false. Roving composites
+    /// may choose one current member rather than each member's individual value.
+    pub fn tab_stop(mut self, value: bool) -> Self {
+        self.0.node.tab_stop = value;
+        self
+    }
+    /// Focus this control when true first appears or changes from false to
+    /// true for its stable key. Unchanged true never steals focus back from Tab.
+    pub fn focus_when(mut self, value: bool) -> Self {
+        self.0.node.input_focus = value;
+        self
+    }
+    /// Only exact focused-control navigation/action keys reach this callback.
+    /// Return false without mutation to retain the host's normal handling.
+    pub fn on_input_key(mut self, f: impl FnMut(&mut C, InputKeyEvent) -> bool + 'static) -> Self {
+        self.0.input_key = Some(Box::new(f));
         self
     }
 }
@@ -985,6 +1263,24 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// Make a rich container an activation target; descendants that are
+            /// independently interactive take precedence. Supply an accessible label.
+            pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+                self.0.input_activation = Some(Box::new(f));
+                self
+            }
+            /// Rising-edge focus request for a stable keyed interactive row.
+            /// Unchanged true never steals focus back after normal Tab traversal.
+            pub fn focus_when(mut self, value: bool) -> Self {
+                self.0.node.input_focus = value;
+                self
+            }
+            /// Opt-in focused-control key handling, separate from editor keys.
+            /// Return false without mutation to retain legacy/default behavior.
+            pub fn on_input_key(mut self, f: impl FnMut(&mut C, InputKeyEvent) -> bool + 'static) -> Self {
+                self.0.input_key = Some(Box::new(f));
+                self
+            }
             /// Selectable containers: called with the selected text when the
             /// selection changes (empty when it is cleared).
             pub fn on_select_text(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
@@ -997,6 +1293,53 @@ macro_rules! container_modifiers {
             /// fit. The host recomposes once after such a report.
             pub fn on_width(mut self, f: impl FnMut(&mut C, f32) + 'static) -> Self {
                 self.0.width = Some(Box::new(f));
+                self
+            }
+            /// Like [`on_width`](Self::on_width), for the laid-out height: for
+            /// content sized to the room a flexible parent gives it.
+            pub fn on_height(mut self, f: impl FnMut(&mut C, f32) + 'static) -> Self {
+                self.0.height = Some(Box::new(f));
+                self
+            }
+            /// Called with true when the pointer enters the container's bounds
+            /// and false when it leaves them (or the window). Descendants
+            /// count as inside, so a panel and its controls form one region:
+            /// for surfaces that stay open while the pointer is over them.
+            /// Reports follow pointer motion; a region that appears under a
+            /// still pointer reports on the next move.
+            pub fn on_hover(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+                self.0.hover = Some(Box::new(f));
+                self
+            }
+            /// Called once on a grip press, before its first `on_drag` offset.
+            /// Use this to record resize anchors; a later zero offset means
+            /// the pointer returned to the origin, not that a new drag began.
+            pub fn on_drag_start(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+                self.0.drag_start = Some(Box::new(f)); self
+            }
+            /// A drag grip: called with `[0, 0]` when the pointer is pressed on
+            /// this container (not on a control inside it), then with its offset
+            /// from the press, in logical points, as it moves. Use
+            /// `on_drag_start` to record a resize anchor once: returning to
+            /// `[0, 0]` during movement is not a new press. Ends on release.
+            pub fn on_drag(mut self, f: impl FnMut(&mut C, [f32; 2]) + 'static) -> Self {
+                self.0.drag = Some(Box::new(f));
+                self
+            }
+            /// Called with true when keyboard focus moves onto the container
+            /// or one of its descendants, and false when it moves elsewhere:
+            /// for a surface that stays open while it is being used from the
+            /// keyboard.
+            pub fn on_focus_within(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+                self.0.focus_within = Some(Box::new(f));
+                self
+            }
+            /// Called for an Escape that no editor, menu or dialog used, while
+            /// the container is shown. The last such container in the
+            /// document (the topmost) gets it: for dismissing a non-modal
+            /// floating surface.
+            pub fn on_escape(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+                self.0.escape = Some(Box::new(f));
                 self
             }
             /// Logical inner spacing. The last setter affecting an edge wins,
@@ -1112,6 +1455,8 @@ macro_rules! zstack { ($($child:expr),* $(,)?) => { $crate::ui::zstack(vec![$($c
 #[macro_export]
 macro_rules! grid { ($($child:expr),* $(,)?) => { $crate::ui::grid(vec![$($crate::ui::Element::from($child)),*]) }; }
 pub use crate::{grid, hstack, stack, vstack, zstack};
+modifiers!(SelectableList, [T], [0.node], [0.auto_id]);
+container_modifiers!(SelectableList, [T]);
 modifiers!(ButtonBar, [0.node], [0.auto_id]);
 modifiers!(Toolbar, [0.node], [0.auto_id]);
 modifiers!(SelectionControl, [T], [0.node], [0.auto_id]);
@@ -1128,11 +1473,17 @@ modifiers!(VirtualList, [T, F], [0.node], [0.auto_id]);
 modifiers!(LazyList, [F], [0.node], [0.auto_id]);
 modifiers!(Table, [T, K], [0.node], [0.auto_id]);
 modifiers!(TreeView, [T], [0.node], [0.auto_id]);
+modifiers!(CodeView, [0.node], [0.auto_id]);
 modifiers!(Progress, [0.node], [0.auto_id]);
 modifiers!(SplitPane, [0.node], [0.auto_id]);
+wrapper_spacing_methods!(Dialog);
+wrapper_spacing_methods!(Popover);
+wrapper_spacing_methods!(Tooltip);
 container_modifiers!(ButtonBar);
 container_modifiers!(Toolbar);
 modifiers!(Navigation, [T], [0.node], [0.auto_id]);
+modifiers!(Link, [0.node], [0.auto_id]);
+modifiers!(NavigationLink, [T], [0.node], [0.auto_id]);
 modifiers!(NavigationSplitView, [0.node], [0.auto_id]);
 container_modifiers!(Navigation, [T]);
 
@@ -1157,32 +1508,45 @@ pub mod prelude {
     };
     pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
     pub use super::{
-        badge, button, button_bar, canvas, checkbox, column, context_menu, data_item, dialog,
-        divider, grid, hstack, lazy_list, loading, menu, menu_item, menu_separator, menu_submenu,
-        navigation, navigation_item, panel, popover, progress, progress_indeterminate,
-        range_slider, responsive, row, segmented_control, select, select_item, separator, slider,
-        spacer, spinner, split, stack, tab, tab_bar, tab_item, table, table_column, table_row,
-        tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node, tree_view,
-        virtual_list, vstack, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage,
-        BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
-        ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge,
-        Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image, ImageFit,
-        ImagePosition, Interaction, Justify, LazyList, Menu, MenuItem, Navigation, NavigationItem,
-        NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
-        Select, SelectItem, SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle,
-        SplitPane, Tab, TabItem, TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs,
-        TextAlign, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
-        UiTheme, VectorPath, VirtualList, VisualStyle,
+        badge, button, button_bar, canvas, canvas_frames, checkbox, column, context_menu,
+        data_item, dialog, divider, grid, hstack, lazy_list, loading, menu, menu_item,
+        menu_separator, menu_submenu, navigation, navigation_item, panel, popover, progress,
+        progress_indeterminate, range_slider, responsive, row, segmented_control, select,
+        select_item, separator, slider, spacer, spinner, split, stack, tab, tab_bar, tab_item,
+        table, table_column, table_row, tabs, text, text_area, text_field, toggle, toolbar,
+        tooltip, tree_node, tree_view, virtual_list, vstack, zstack, Align, Ambient, Animation,
+        Axes, Axis, BackgroundImage, BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas,
+        Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem,
+        Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient,
+        GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, Menu,
+        MenuItem, Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress,
+        Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
+        Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
+        TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone,
+        Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
+        VisualStyle,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
         DateRange, TimeOfDay,
     };
+    pub use super::{code_view, CodeView};
     pub use super::{
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
         rating, tag_input, ComboboxState, Hsl, TagInputState,
     };
+    pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
+    pub use super::{
+        link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
+        NavigationHistory, NavigationLink, NavigationSnapshot, UrlError,
+    };
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
+    pub use super::{
+        selectable_list, selectable_row, SelectableList, SelectableRow, SelectionAction,
+        SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
+    };
+    pub use super::{sunburst_chart, SunburstChart};
+    pub use super::{InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation};
 }

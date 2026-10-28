@@ -57,6 +57,17 @@ requested only when you click the notification permission button. Use
 `--check` to build/verify without opening it. Requires Cargo, Python 3 and, on
 macOS, the command-line tools. Individual library features remain optional.
 
+## Experimental Rust-first iOS apps
+
+[Field Notes](docs/ios-prototype.md) is an opt-in iOS integration prototype:
+Rust-owned screens, navigation, touch scrolling and editable profile forms,
+with a reusable UIKit keyboard/Metal host. Generate a Rust app with
+`cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`:
+no per-app Swift application code is needed. See the guide for setup, tests
+and limits. Android has a shared Rust foundation, not a native host yet. Simulator software drawing is reported
+explicitly; physical-device GPU acceptance is still pending. Desktop remains
+the primary supported host.
+
 ## Highlights
 
 - **Plain Rust.** Views are functions and callbacks are closures over your own
@@ -75,6 +86,11 @@ macOS, the command-line tools. Individual library features remain optional.
   bundles (macOS first).
 - **Accessible.** Roles, labels, values and actions go to screen readers
   through AccessKit, with full keyboard navigation.
+- **App-owned navigation.** Typed route links, bounded Back/Forward history and
+  standalone keyboard-accessible web links. Browser opening is explicit; see
+  [navigation and links](docs/components.md#typed-navigation-and-web-links).
+- **Deliberate motion.** Finite spring responses, staggered entrances and explicit
+  replay, with reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
 - **A fast dev loop.** `cargo volt dev` rebuilds on save and restarts the app
   with its state and window position intact.
 
@@ -138,6 +154,8 @@ cargo volt dev my-app
 | `native-notifications` | macOS local notifications |
 | `rust-ui` / `declarative` | The builders and runtime without a window, for custom hosts |
 | `dev-tools` | The `cargo volt` command |
+| `rendering` / `rendering-gpu` | Shared drawing adapters without desktop window/clipboard integration |
+| `mobile` | Experimental touch controller for a platform-owned view; see the iOS prototype |
 
 Rust 1.89 or newer.
 
@@ -154,7 +172,7 @@ WebAssembly; a web host is planned. Expect API changes before 1.0.
 
 - [Getting started](docs/getting-started.md)
 - [Building interfaces](docs/building-uis.md)
-- [Components](docs/components.md)
+- [Components](docs/components.md) — including [component spacing overrides](docs/components.md#customizing-component-spacing)
 - [Styling and themes](docs/styling-and-themes.md)
 - [Windows and rendering](docs/windows-and-rendering.md)
 - [Application services](docs/app-services.md)

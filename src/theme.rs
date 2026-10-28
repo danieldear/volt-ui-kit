@@ -163,6 +163,22 @@ pub struct Palette {
     pub border: [f32; 4],
     pub muted: [f32; 4],
 }
+/// A colour value `UiTheme::resolve` accepts: `#RRGGBB[AA]`, a token
+/// (`@primary`, `@primary/30`), or a `"light|dark"` pair of those.
+#[cfg_attr(not(feature = "declarative"), allow(dead_code))]
+pub(crate) fn is_color_value(value: &str) -> bool {
+    let one = |v: &str| {
+        let v = v.trim();
+        let hex = v
+            .strip_prefix('#')
+            .is_some_and(|h| matches!(h.len(), 6 | 8) && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        hex || ColorToken::parse(v).is_some()
+    };
+    match value.split_once('|') {
+        Some((light, dark)) => !dark.contains('|') && one(light) && one(dark),
+        None => one(value),
+    }
+}
 /// `#RRGGBB`, or `#RRGGBBAA` when not opaque.
 pub fn hex(c: [f32; 4]) -> String {
     let b = c.map(|v| (v.clamp(0., 1.) * 255.).round() as u8);
@@ -594,6 +610,17 @@ impl UiTheme {
         c
     }
     pub fn resolve(&self, value: &str) -> Option<[f32; 4]> {
+        if let Some((light, dark)) = value.split_once('|') {
+            // Validate the pair before choosing a half, in both theme modes.
+            if dark.contains('|') {
+                return None;
+            }
+            // Light text means a dark theme.
+            let c = self.palette.content;
+            let night = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] > 0.5;
+            let half = if night { dark } else { light }.trim();
+            return self.resolve(half);
+        }
         if let Some((token, alpha)) = ColorToken::parse_with_alpha(value) {
             let mut color = self.palette.color(token);
             color[3] *= alpha;

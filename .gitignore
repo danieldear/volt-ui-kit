@@ -14,3 +14,11 @@
 *.mobileprovision
 *.provisionprofile
 __pycache__/
+
+# Experimental iOS host local build state.
+/examples/ios/rust/target/
+/examples/ios/.build/
+/examples/ios/**/xcuserdata/
+
+/crates/volt-ui-kit-mobile/target/
+/crates/volt-ui-kit-mobile/apple/.build/

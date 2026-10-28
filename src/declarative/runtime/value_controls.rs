@@ -697,7 +697,8 @@ impl Runtime {
         })
     }
     /// Called after layout by hosts: reports each `on_width` element's width
-    /// in whole logical points when it changed since the last report.
+    /// (and each `on_height` element's height) in whole logical points when
+    /// it changed since the last report.
     /// Returns whether any handler ran (the host then recomposes once).
     #[cfg(feature = "rust-ui")]
     pub fn dispatch_widths<C>(
@@ -715,6 +716,15 @@ impl Runtime {
                 events.push((name.clone(), width));
             }
         }
+        for b in &self.layout_boxes {
+            let Some(name) = &b.on_height else {
+                continue;
+            };
+            let height = (b.bounds.bounds()[3] / self.scale).round();
+            if self.reported_heights.insert(b.id.clone(), height) != Some(height) {
+                events.push((name.clone(), height));
+            }
+        }
         let any = !events.is_empty();
         for (name, width) in events {
             handlers
@@ -727,7 +737,9 @@ impl Runtime {
                 )
                 .map_err(|e| DocumentError(e.to_string()))?;
         }
-        Ok(any)
+        // Code views report their visible lines once they have a size.
+        let windows = self.dispatch_code_windows(handlers, context)?;
+        Ok(any || windows)
     }
     /// Called after layout/scrolling by hosts; proposed windows are always bounded.
     pub fn dispatch_virtual_windows<C>(
@@ -745,6 +757,7 @@ impl Runtime {
         for b in candidates {
             activated |= self.dispatch_virtual_window(&b, handlers, context)?;
         }
+        activated |= self.dispatch_code_windows(handlers, context)?;
         Ok(activated)
     }
     pub(super) fn dispatch_virtual_window<C>(

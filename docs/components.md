@@ -140,6 +140,144 @@ view(&App::default()).build()?;
   window. It is optional: compose your own shell from stacks when you need to.
 - With an option focused, arrow keys and Home/End move the selection.
 
+## Typed navigation and web links
+
+`navigation` still controls destination selection; routing is optional. For
+Back/Forward navigation, keep `NavigationHistory<Route>` in your app state.
+`navigation_link` passes a typed destination to your callback, and
+`navigation_stack` composes only the current route.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+
+#[derive(Clone, PartialEq)]
+enum Route { Home, Activity }
+struct App { history: NavigationHistory<Route> }
+
+fn view(app: &App) -> Element<App> {
+    vstack![
+        navigation_link("Activity", Route::Activity).key("activity")
+            .on_navigate(|app: &mut App, route| { app.history.push(route); }),
+        button("Back").key("back").enabled(app.history.can_go_back())
+            .on_click(|app: &mut App| { app.history.back(); }),
+        navigation_stack(&app.history, |route| match route {
+            Route::Home => text("Home").key("home-page").into(),
+            Route::Activity => text("Activity").key("activity-page").into(),
+        }).key("current-page"),
+    ].into()
+}
+let mut history = NavigationHistory::new(Route::Home);
+history.push(Route::Activity);
+let checkpoint = history.snapshot();
+assert!(history.back());
+history.restore(checkpoint).unwrap();
+assert!(matches!(history.current(), Route::Activity));
+```
+
+History defaults to 128 entries; `with_capacity(root, 1..=1024)` customizes the
+bound. Pushing the current route does nothing, including preserving Forward.
+Pushing after Back discards the forward branch; overflow removes the oldest
+entry. `replace(route)` changes only the current entry; `reset(root)` clears
+history. `NavigationSnapshot` supports Serde; `restore` validates its length and
+index before changing anything. Bound serialized input before deserializing.
+Persistent page models, scroll/focus restoration, route decoding and OS deep-link
+registration are **application responsibilities**, not automatic behavior.
+Use route-specific keys for independent page controls.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+#[derive(Default)]
+struct App { destination: Option<ExternalUrl> }
+let ui: Element<App> = link("Read the guide ↗", "https://example.com/guide")
+    .key("guide")
+    .on_open(|app: &mut App, url| app.destination = Some(url))
+    .into();
+ui.build().unwrap(); // Does not open a browser or perform I/O.
+```
+
+Standalone links require a nonempty label, stable key and callback. They support
+shared style modifiers, theme colors, hover/press/focus feedback, Tab/Shift-Tab
+and Enter activation, plus `.enabled(false)`. Native AccessKit exposes a Link
+role and the external URL. Custom hosts can read `Runtime::accessibility_links()`
+alongside `accessibility_nodes()`; the legacy `AccessNode`/`AccessRole` shapes are
+unchanged. A `None` URL denotes an internal navigation link. Removed, disabled
+or out-of-modal-scope links cannot activate through the runtime.
+
+`ExternalUrl::parse` accepts absolute ASCII HTTP(S) URLs up to 4096 bytes. It
+rejects credentials, malformed ports/escapes, whitespace/control characters and
+executable/local-file/custom schemes. Encode Unicode domains/paths first.
+Validation does not imply that a website is trustworthy. Inline `span(..).link(..)`
+remains a separate rich-text callback API; standalone-link keyboard behavior does
+not make individual inline spans focusable. See [browser dispatch](app-services.md#opening-web-links)
+for explicit native opening. Try both workflows on the Catalog's Navigation page.
+
+## Motion and effects
+
+See [animation and transitions](styling-and-themes.md#animation-and-transitions)
+for finite springs, staggered entrances, replay revisions, interaction feedback
+and reduced-motion behavior. Try the Catalog’s **Effects & motion** page.
+
+## Customizing component spacing
+
+Constructor sizes are defaults, not fixed design requirements. Keep the defaults
+for a consistent starting point, or override the part you actually need. Values
+are logical pixels; explicit `0.` works, edge/axis arrays are supported, and the
+last setter affecting an edge or axis wins. Padding is **inside** a component;
+gap separates its immediate children, not every nested label or icon.
+
+| Component | API / target | Unchanged default |
+|---|---|---|
+| Button bars, toolbars, navigation | `.gap(value, Axis::Horizontal)` / `.padding(value, edges)` | Existing constructor spacing |
+| `tab_bar` | `.gap(value, Axis::Horizontal)` between options | 2; joined controls use a 1px seam unless overridden |
+| `tabs` | `.tab_gap(value)` / `.tab_padding(value, edges)` inside the strip; `.gap(value, axis)` between strip and page | Line/contained strip gap 2; contained padding 3; strip-to-page 12 |
+| Menus / context menus | `.popup_padding(..)`, `.item_gap(..)`, `.item_height(..)`, `.popup_max_height(..)` | 6 / 2 / 34 / 480 |
+| Dialog, popover, tooltip | `.padding(value, edges)` / `.gap(value, axes)` on content card, never backdrop | Existing card defaults |
+| Radio group, number input, tags, color picker, rating, form field, drop zone | `.padding(value, edges)` / `.gap(value, axes)` on composite content | Existing constructor defaults |
+| Collapsible, accordion, drawer, command palette | `.padding(value, edges)` / `.gap(value, axes)` on section/card | Existing constructor defaults |
+| Toaster | `.gap(value, Axis::Vertical)` between toast cards; `.padding(value, edges)` for window inset | 8 between cards / 16 window inset |
+| OTP | `.digit_gap(value)` between code boxes (also resizes backing input) | 8 |
+| Combobox | `.option_gap(value)` between popup results | 2 |
+| Table | `.row_height(..)`, `.header_height(..)`, `.cell_padding(..)` (horizontal); fixed `.padding(..)` / `.gap(..)` on panel | 44 / 40 / 12; existing panel spacing |
+| Tree | `.row_height(..)`, `.indent_width(..)`; fixed `.padding(..)` / `.gap(..)` on panel | 36 / 18; existing panel spacing |
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let picker: Element<()> = tab_bar![tab_item(0, "Space"), tab_item(1, "Duplicates")]
+    .key("picker").selected(0).on_select(|_: &mut (), _| {})
+    .gap(responsive(2.).at(Breakpoint::Md, 8.), Axis::Horizontal)
+    .padding(4., [Edge::Top, Edge::Bottom])
+    .into();
+picker.build()?;
+let pages: Element<()> = tabs![
+    tab(0, "Overview", text("Overview")),
+    tab(1, "Details", text("Details")),
+].key("pages").selected(0).on_select(|_: &mut (), _| {})
+ .tab_gap(6.).tab_padding(4., Edge::Horizontal)
+ .gap(16., Axis::Vertical).into();
+pages.build()?;
+let actions: Element<()> = menu("Actions", [menu_item(0, "Open"), menu_item(1, "Copy path")])
+    .key("actions").open(false)
+    .on_open_change(|_: &mut (), _| {}).on_action(|_: &mut (), _| {})
+    .popup_padding(8.).item_gap(4.).item_height(38.)
+    .popup_max_height(320.).popup_background(ColorToken::Base100).into();
+actions.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+Stack-style spacing and tab strip overrides accept responsive values. Table/tree
+panel spacing and density, popup geometry, OTP and combobox result gaps are fixed
+logical values: use a responsive containing stack for their outer placement.
+Table `.gap(..)` also separates its divider children; use `.row_height(..)` for
+ordinary table density. A drawer/command-palette override targets the card, not
+its modal backdrop. Intrinsic glyph dimensions and hit-target geometry are not
+silently changed by a content gap.
+
+Non-finite, negative and out-of-range values fail `build()`. Popup item height
+must be 24–512, popup maximum height 24–8192, table/header height 24–512, tree row
+height 28–512; the viewport can shrink a popup further, with overflow scrolling.
+Zero spacing does not change callbacks, selection, keyboard behavior or defaults
+of controls which do not opt in.
+
 ## Fields, value controls and dialogs
 
 ```rust
@@ -190,7 +328,10 @@ text or code editor.
 Page and Home/End keys. `range_slider(lo, hi)` has two thumbs that cannot cross.
 
 **Select** shows 1–128 typed options in a popup that flips above its trigger
-near the window edge and scrolls long lists. `combobox` adds type-to-filter.
+near the window edge and scrolls long lists. `combobox` adds type-to-filter;
+with `.max_results(n)` it lists up to 128 matches (scrolling past nine), so it
+can stand in for a select you type into. It takes `.surface(..)`,
+`.height(..)` and `.font_size(..)` like a select.
 
 **Dialogs** are modal inside the window: they trap Tab, restore focus on close,
 and dismiss with Escape or a backdrop click unless you disable either. Place the
@@ -202,7 +343,7 @@ dialog after the content it covers in a root `zstack!`.
 | --- | --- |
 | `radio_group([(value, "Label")])` | `.selected(..)`, `.on_select(..)`, descriptions, horizontal layout |
 | `number_input(v)` | `.range(0., 10.)`, `.step(1.)`, `.decimals(1)`, `.suffix(" kg")` |
-| `combobox(items, &state)` | Type to filter, Enter picks the best match |
+| `combobox(items, &state)` | Type to filter, Enter picks the best match; `.max_results(n)`, `.surface(..)`, `.height(..)`, `.font_size(..)` |
 | `tag_input(&tags, &state)` | Enter adds a tag, × removes one |
 | `color_picker("#3B82F6")` | Swatches, hue/saturation/lightness sliders and a hex field |
 | `otp_input(code, 6)` | One-time codes; `.on_complete(..)` |
@@ -397,6 +538,71 @@ row.build()?;
   reports the ones it could not read; `set.icon("name")` returns an element.
 - The SVG reader handles paths and basic shapes, transforms, fills and strokes.
   It never runs scripts or loads external resources.
+
+## Hierarchy charts
+
+Icicle bands show parent/child depth; squarified treemaps show the root's direct
+children as proportional rectangles. Both use native Volt controls, not a webview.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let nodes = vec![
+    HierarchyNode::new("root", "Projects", 100, None),
+    HierarchyNode::new("rust", "Rust", 60, Some(0)),
+    HierarchyNode::new("build", "Build output", 40, Some(1)),
+    HierarchyNode::new("source", "Source", 20, Some(1)),
+    HierarchyNode::new("web", "Web", 40, Some(0)),
+];
+let explorer: Element<String> = icicle_chart(nodes.clone())
+    .key("folders").size(640., 240.).levels(4)
+    .on_select(|selected: &mut String, key| *selected = key)
+    .into();
+explorer.build()?;
+let alternate: Element<String> = treemap_chart(nodes)
+    .key("space").size(640., 240.)
+    .on_select(|selected: &mut String, key| *selected = key)
+    .into();
+alternate.build()?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+- Values are **inclusive subtree totals**; never add a parent total to its
+  descendants. Direct children's sum must not exceed their parent's value.
+- One root first, parents before children, unique keys, at most 16,384 nodes
+  and depth 64. Zero values do not create tiles. Invalid data rejects the tree.
+- `.value_format(..)` formats exact tooltip/accessibility values. Tab/Enter
+  and pointer activation return the original node key. App-owned drilldown
+  replaces the data with the selected subtree; keep a companion table.
+- `.size(w, h)` uses logical pixels. Use a containing stack's `.on_width(..)`
+  callback for responsive sizes; layouts are not computed every animation frame.
+- Tiny tiles are not inflated into misleading sizes. Unrepresented child bytes
+  leave blank area; provide an explicit Other node when grouping small items.
+- Strata-style interaction is **opt-in**: `.selected_keys(..)` supports multiple
+  selections; `.reviewed_keys(..)` adds passive review diamonds, never checkboxes;
+  `.context_target(key)` shows the menu target with a dashed outline. The legacy
+  `.selected(key)` still replaces the selection with one key.
+- `.node_colors(..)` accepts bounded `(key, color)` overrides; unspecified nodes
+  keep the original palette. Literal custom fills choose a contrasting black or
+  white foreground. `.hide_root(true)` omits the icicle root band and makes
+  `.levels(n)` count visible child bands; treemap geometry is unchanged.
+- `.hover_linked(true)` links tile hover to components with
+  `.hover_link(node_key)` (for example, a file-list row). Links are paint-only:
+  no callbacks, recomposition, selection, focus, scrolling or peer tooltips.
+  Matching enabled, mounted peers use their own `.hover_style(..)`; the nearest
+  nested link wins. Keys are stable, nonempty strings up to 128 bytes. Hidden or
+  unmounted counterparts do not scroll into view. Disable chart links and omit
+  row links while an application-owned menu is open if its target should dominate.
+- `.on_context_open(|app, key, point| ..)` reports an action target **without
+  selecting it**. `point` is window-logical pixels, not chart-local coordinates.
+  Applications own the context menu, permissions, review and filesystem actions.
+- `.keyboard_navigation(true)` opts into roving focus: one Tab entry/exit, sibling
+  Left/Right, parent Up, first visible child Down, sibling Home/End, Enter to
+  activate. Native Shift-F10 / Context Menu opens the focused tile's actions.
+  Disabled/removed targets and modal scopes retain their usual guards. Stable
+  application node keys preserve focus identity when data reorders.
+- `ui::icicle_layout` / `ui::treemap_layout` expose pure geometry for testing or
+  alternate native presentations. Treemap is one level per drilldown, not a
+  claim to display every file at once.
 
 ## Known limits
 

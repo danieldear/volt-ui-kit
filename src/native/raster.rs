@@ -77,7 +77,7 @@ const TEXT_CACHE_ENTRIES: usize = 2048;
 /// Largest window framebuffer either renderer accepts: a 6K display at 2×
 /// is ~20 MP and 8K at 1× ~33 MP. The GPU's own texture-dimension limit and
 /// the runtime's 16,384-pixel side limit are enforced separately.
-pub(super) const MAX_FRAMEBUFFER_PIXELS: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_FRAMEBUFFER_PIXELS: u64 = 64 * 1024 * 1024;
 const MAX_LAYER_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LAYER_DEPTH: usize = 24;
 
@@ -180,8 +180,8 @@ struct EffectMask {
     tint: Option<([u8; 3], Pixmap)>,
 }
 /// One face/size/style run of positioned glyphs for the GPU vector text path.
-#[cfg(feature = "native-gpu")]
-pub(super) struct GpuGlyphRun {
+#[cfg(feature = "rendering-gpu")]
+pub(crate) struct GpuGlyphRun {
     pub font: cosmic_text::fontdb::ID,
     pub size: f32,
     pub fake_italic: bool,
@@ -192,10 +192,10 @@ pub(super) struct GpuGlyphRun {
 }
 #[derive(Clone, PartialEq)]
 pub struct Glyph {
-    pub(super) text: String,
-    pub(super) bounds: [f32; 4],
-    pub(super) style: TextStyle,
-    pub(super) color: [f32; 4],
+    pub(crate) text: String,
+    pub(crate) bounds: [f32; 4],
+    pub(crate) style: TextStyle,
+    pub(crate) color: [f32; 4],
 }
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct TextKey {
@@ -237,13 +237,13 @@ fn line_starts(buffer: &Buffer) -> Vec<usize> {
         .collect()
 }
 /// The colour of the run covering byte `at`, if it sets one.
-pub(super) fn run_color(runs: &[TextRun], at: usize) -> Option<[f32; 4]> {
+pub(crate) fn run_color(runs: &[TextRun], at: usize) -> Option<[f32; 4]> {
     let i = runs.partition_point(|r| r.end <= at);
     runs.get(i).filter(|r| r.start <= at).and_then(|r| r.color)
 }
 /// Per-glyph colour lookup for one shaped text: the text colour, or the run
 /// colour at each glyph's byte offset.
-pub(super) struct GlyphColors<'a> {
+pub(crate) struct GlyphColors<'a> {
     runs: &'a [TextRun],
     starts: Vec<usize>,
     base: [f32; 4],
@@ -262,7 +262,7 @@ impl<'a> GlyphColors<'a> {
             base: glyph.color,
         }
     }
-    pub(super) fn at(&self, line: usize, start: usize) -> [f32; 4] {
+    pub(crate) fn at(&self, line: usize, start: usize) -> [f32; 4] {
         match self.starts.get(line) {
             Some(base) => run_color(self.runs, base + start).unwrap_or(self.base),
             None => self.base,
@@ -311,6 +311,15 @@ pub fn register_font(data: Vec<u8>) -> Result<Vec<String>, String> {
     fonts.push(data);
     Ok(families)
 }
+/// A glyph placed with its origin on a whole device pixel. Quarter-pixel
+/// positions put most vertical stems across two pixel columns, so text read
+/// soft next to CoreText, which draws a line's glyphs on the pixel grid. No
+/// glyph moves by more than half a pixel, which spacing hides; layout,
+/// carets and hit-testing keep the exact positions.
+fn on_pixel(shaped: &cosmic_text::LayoutGlyph) -> cosmic_text::PhysicalGlyph {
+    let x = shaped.x + shaped.font_size * shaped.x_offset;
+    shaped.physical((x.round() - x, 0.), 1.)
+}
 /// Installed and registered font families, sorted, for font pickers.
 /// Hidden system faces (names starting with `.`) are left out. This scans
 /// the system font folders, so call it when a picker opens, not per frame.
@@ -350,7 +359,7 @@ pub struct RasterPainter {
     swash: SwashCache,
     /// Normalized outline ink boxes, not rasterized glyphs. Bounded independently
     /// so repeated GPU frames need no font-table parsing to decide clipping.
-    #[cfg(feature = "native-gpu")]
+    #[cfg(feature = "rendering-gpu")]
     gpu_ink: BTreeMap<(cosmic_text::fontdb::ID, u16), Option<[f32; 4]>>,
     /// Hashed, not ordered: ordering compares whole paragraphs on every lookup.
     text: crate::fasthash::FxHashMap<TextKey, (Buffer, u64)>,
@@ -456,7 +465,7 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
     })
 }
 
-pub(super) fn stroke_extent(width: f32) -> f32 {
+pub(crate) fn stroke_extent(width: f32) -> f32 {
     width * Stroke::default().miter_limit * 0.5 + 1.
 }
 fn union(a: Option<[f32; 4]>, b: [f32; 4]) -> Option<[f32; 4]> {
@@ -541,14 +550,14 @@ fn frame_damage(
     Damage::Rect([x0, y0, x1, y1])
 }
 impl RasterPainter {
-    #[cfg(feature = "native-gpu")]
-    pub(super) fn gpu_viewport(&self) -> Viewport {
+    #[cfg(feature = "rendering-gpu")]
+    pub(crate) fn gpu_viewport(&self) -> Viewport {
         self.viewport
     }
     /// Positions come from the same shaped buffers as CPU drawing and editor
     /// hit testing. Only glyph cache misses rasterize small glyph resources.
-    #[cfg(feature = "native-gpu")]
-    pub(super) fn gpu_glyphs(
+    #[cfg(feature = "rendering-gpu")]
+    pub(crate) fn gpu_glyphs(
         &mut self,
         glyph: &Glyph,
     ) -> Vec<(cosmic_text::CacheKey, [f64; 2], [f32; 4])> {
@@ -565,7 +574,7 @@ impl RasterPainter {
                 if shaped.x >= gw || shaped.x + shaped.w < 0. {
                     continue;
                 }
-                let p = shaped.physical((0., 0.), 1.);
+                let p = on_pixel(shaped);
                 out.push((
                     p.cache_key,
                     [
@@ -582,8 +591,8 @@ impl RasterPainter {
     /// physical pixels: the bitmap path's integer origin plus its subpixel bin,
     /// so vector text lands where bitmap text and editor carets do. The flag
     /// reports text that crosses its box and therefore still needs a clip.
-    #[cfg(feature = "native-gpu")]
-    pub(super) fn gpu_glyph_runs(&mut self, glyph: &Glyph) -> (Vec<GpuGlyphRun>, bool) {
+    #[cfg(feature = "rendering-gpu")]
+    pub(crate) fn gpu_glyph_runs(&mut self, glyph: &Glyph) -> (Vec<GpuGlyphRun>, bool) {
         let key = self.draw_key(&glyph.text, &glyph.style, glyph.bounds[2]);
         let [gx, gy, gw, gh] = glyph.bounds;
         let (ox, oy) = (gx.round(), gy.round());
@@ -604,7 +613,7 @@ impl RasterPainter {
                     continue;
                 }
                 overflow |= shaped.x < 0. || shaped.x + shaped.w > gw;
-                let p = shaped.physical((0., 0.), 1.);
+                let p = on_pixel(shaped);
                 let k = p.cache_key;
                 let size = f32::from_bits(k.font_size_bits);
                 let fake_italic = k.flags.contains(cosmic_text::CacheKeyFlags::FAKE_ITALIC);
@@ -687,16 +696,16 @@ impl RasterPainter {
         (runs, overflow)
     }
     /// The loaded face (shared, memory-mapped data) and its collection index.
-    #[cfg(feature = "native-gpu")]
-    pub(super) fn gpu_font(
+    #[cfg(feature = "rendering-gpu")]
+    pub(crate) fn gpu_font(
         &mut self,
         id: cosmic_text::fontdb::ID,
     ) -> Option<(std::sync::Arc<cosmic_text::Font>, u32)> {
         let index = self.fonts.db().face(id)?.index;
         Some((self.fonts.get_font(id)?, index))
     }
-    #[cfg(feature = "native-gpu")]
-    pub(super) fn gpu_glyph_image(
+    #[cfg(feature = "rendering-gpu")]
+    pub(crate) fn gpu_glyph_image(
         &mut self,
         key: cosmic_text::CacheKey,
     ) -> Option<&cosmic_text::SwashImage> {
@@ -805,7 +814,7 @@ impl RasterPainter {
             emoji_family,
             installed,
             swash: SwashCache::new(),
-            #[cfg(feature = "native-gpu")]
+            #[cfg(feature = "rendering-gpu")]
             gpu_ink: BTreeMap::new(),
             text: Default::default(),
             natural: Default::default(),
@@ -1984,7 +1993,7 @@ impl RasterPainter {
                             continue;
                         }
                         let c = colors.at(run.line_i, shaped.start);
-                        let physical = shaped.physical((0., 0.), 1.);
+                        let physical = on_pixel(shaped);
                         if self.glyph_bytes > 16 * 1024 * 1024
                             || self.swash.image_cache.len() > 4096
                         {
@@ -2904,7 +2913,7 @@ fn fill_mask_px(mask: &mut Mask, [l, t, r, b]: [usize; 4], value: u8) {
         data[row * w + l..row * w + r].fill(value);
     }
 }
-pub(super) fn native_path(path: &VectorPath) -> Option<tiny_skia::Path> {
+pub(crate) fn native_path(path: &VectorPath) -> Option<tiny_skia::Path> {
     if path.commands.is_empty() || path.commands.len() > 1024 {
         return None;
     }
@@ -3038,7 +3047,7 @@ fn rounded([x, y, w, h]: [f32; 4], r: f32) -> Option<tiny_skia::Path> {
     p.finish()
 }
 
-pub(super) fn rounded_corners([x, y, w, h]: [f32; 4], radii: [f32; 4]) -> Option<tiny_skia::Path> {
+pub(crate) fn rounded_corners([x, y, w, h]: [f32; 4], radii: [f32; 4]) -> Option<tiny_skia::Path> {
     if ![x, y, w, h, x + w, y + h].into_iter().all(f32::is_finite)
         || w <= 0.
         || h <= 0.
@@ -3083,7 +3092,7 @@ pub(super) fn rounded_corners([x, y, w, h]: [f32; 4], radii: [f32; 4]) -> Option
     p.finish()
 }
 
-pub(super) fn outline(bounds: [f32; 4], radii: [f32; 4], width: f32) -> Option<tiny_skia::Path> {
+pub(crate) fn outline(bounds: [f32; 4], radii: [f32; 4], width: f32) -> Option<tiny_skia::Path> {
     let outer = rounded_corners(bounds, radii)?;
     if width * 2. >= bounds[2].min(bounds[3]) {
         return Some(outer);

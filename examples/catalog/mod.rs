@@ -8,6 +8,8 @@ pub mod export;
 mod kit;
 mod landing;
 pub mod lifecycle;
+pub mod motion_lab;
+pub mod navigation_links;
 mod pages;
 mod shell;
 #[cfg(test)]
@@ -90,6 +92,8 @@ pub struct App {
     pub airplane: bool,
     pub segment: u8,
     pub navigation: u8,
+    pub routes: navigation_links::State,
+    pub motion: motion_lab::State,
     pub tab: u8,
     pub name: String,
     pub email: String,
@@ -184,6 +188,8 @@ impl App {
             airplane: false,
             segment: 1,
             navigation: 0,
+            routes: navigation_links::State::default(),
+            motion: motion_lab::State::default(),
             tab: 0,
             name: "Ada Lovelace".into(),
             email: String::new(),

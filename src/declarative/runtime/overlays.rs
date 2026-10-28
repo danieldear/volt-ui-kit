@@ -396,6 +396,80 @@ impl Runtime {
     pub(super) fn portal_hit_passthrough(&self, id: &str) -> bool {
         self.overlays.tooltip_ids.contains(id)
     }
+    /// Keyboard context-menu request for the focused mounted control. The menu
+    /// anchor is its center in window-logical coordinates, identical to a pointer
+    /// request there. Existing modal/menu scope takes precedence; no activation
+    /// or selection callback is invoked by opening the context menu.
+    pub fn context_menu_focused<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        if self.overlay_active() {
+            return Ok(InputOutcome::default());
+        }
+        let Some((index, [x, y, w, h])) = self.focused.as_deref().and_then(|id| {
+            self.boxes
+                .iter()
+                .position(|b| b.id == id && b.enabled && !b.departing && self.scope_allows_id(id))
+                .map(|i| (i, self.boxes[i].bounds.bounds()))
+        }) else {
+            return Ok(InputOutcome::default());
+        };
+        let (x, y) = (x + w / 2., y + h / 2.);
+        let outcome = self.context_menu_at(x, y, handlers, context)?;
+        if outcome.activated {
+            return Ok(outcome);
+        }
+        // A clipped, non-rectangular target (a ring segment) can have its box
+        // centre outside itself: then follow focus to the nearest menu owner
+        // whose target (its first composed child) contains the focused item.
+        let mut child: Option<String> = None;
+        let mut index = index;
+        let action = loop {
+            let b = &self.boxes[index];
+            if !self.scope_allows_id(&b.id) {
+                break None;
+            }
+            if let Some(node) = find_node(self.document.root(), &b.id) {
+                let inside =
+                    child.is_some_and(|c| node.children.first().is_some_and(|t| t.id == c));
+                if let (true, true, Some(action)) = (node.enabled, inside, &node.on_context) {
+                    break Some(action.clone());
+                }
+            }
+            if b.depth == 0 {
+                break None;
+            }
+            let Some(parent) = self.boxes[..index]
+                .iter()
+                .rposition(|p| p.depth + 1 == b.depth)
+            else {
+                break None;
+            };
+            child = Some(b.id.clone());
+            index = parent;
+        };
+        let Some(action) = action else {
+            return Ok(outcome);
+        };
+        self.cancel_input();
+        let [x, y] = [x / self.scale, y / self.scale];
+        handlers
+            .dispatch(
+                &action,
+                Event::ContextRequested {
+                    x_bits: x.to_bits(),
+                    y_bits: y.to_bits(),
+                },
+                context,
+            )
+            .map_err(|e| DocumentError(e.to_string()))?;
+        Ok(InputOutcome {
+            changed: true,
+            activated: true,
+        })
+    }
     /// Request a context menu on right-button press without activating the target.
     /// The callback receives logical pixels; opening/closing remains app-owned.
     pub fn context_menu_at<C>(

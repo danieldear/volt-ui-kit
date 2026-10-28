@@ -1,5 +1,4 @@
 //! Typed, opt-in appearance and time-based motion. Values use logical pixels.
-use super::document::parse_color;
 use super::DocumentError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,11 +45,54 @@ fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     }
     curve((lo + hi) * 0.5, y1, y2)
 }
+/// A normalized damped-spring timing curve. Duration controls settling time;
+/// damping ratio controls bounce (0.4..=2, default 0.8). Retargeting preserves
+/// the current painted position, not physical velocity. No background task.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spring {
+    damping_ratio: f32,
+}
+impl Default for Spring {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Spring {
+    pub fn new() -> Self {
+        Self { damping_ratio: 0.8 }
+    }
+    pub fn damping_ratio(mut self, ratio: f32) -> Self {
+        self.damping_ratio = ratio;
+        self
+    }
+    fn valid(self) -> bool {
+        self.damping_ratio.is_finite() && (0.4..=2.).contains(&self.damping_ratio)
+    }
+    fn sample(self, t: f32) -> f32 {
+        let z = self.damping_ratio;
+        if (z - 1.).abs() < 0.001 {
+            return 1. - (1. + 10. * t) * (-10. * t).exp();
+        }
+        if z < 1. {
+            let w = 10. / z;
+            let d = (1. - z * z).sqrt();
+            let angle = w * d * t;
+            1. - (-10. * t).exp() * (angle.cos() + z / d * angle.sin())
+        } else {
+            let d = (z * z - 1.).sqrt();
+            let a = z - d;
+            let b = z + d;
+            let w = 10. / a;
+            1. - (b * (-a * w * t).exp() - a * (-b * w * t).exp()) / (b - a)
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Animation {
     pub(crate) duration: u64,
     pub(crate) easing: Easing,
     pub(crate) delay: u64,
+    spring: Option<Spring>,
 }
 impl Animation {
     pub fn linear() -> Self {
@@ -58,6 +100,19 @@ impl Animation {
             duration: 150,
             easing: Easing::Linear,
             delay: 0,
+            spring: None,
+        }
+    }
+    /// A subtle, finite damped spring. Only positional offsets overshoot;
+    /// opacity, colors and border widths stay within their legal ranges.
+    pub fn spring() -> Self {
+        Self::spring_with(Spring::new())
+    }
+    pub fn spring_with(spring: Spring) -> Self {
+        Self {
+            duration: 420,
+            spring: Some(spring),
+            ..Self::linear()
         }
     }
     pub fn ease_in() -> Self {
@@ -69,11 +124,20 @@ impl Animation {
     /// Any curve, e.g. `Easing::CubicBezier(0.16, 1., 0.3, 1.)`.
     pub fn easing(mut self, easing: Easing) -> Self {
         self.easing = easing;
+        self.spring = None;
         self
     }
     /// Wait before starting; stagger list items by giving each a larger delay.
     pub fn delay_ms(mut self, milliseconds: u64) -> Self {
         self.delay = milliseconds;
+        self
+    }
+    /// Add `index * interval` to the configured delay. Overflow is retained as
+    /// an invalid value and rejected at build, never wrapped into a short delay.
+    pub fn stagger(mut self, index: usize, interval_ms: u64) -> Self {
+        self.delay = self
+            .delay
+            .saturating_add((index as u64).saturating_mul(interval_ms));
         self
     }
     pub fn ease_out() -> Self {
@@ -92,7 +156,21 @@ impl Animation {
         self.duration = milliseconds;
         self
     }
+    pub(crate) fn wait(self, elapsed: std::time::Duration) -> Option<std::time::Duration> {
+        let end = std::time::Duration::from_millis(self.delay.saturating_add(self.duration));
+        if elapsed >= end {
+            None
+        } else {
+            Some(std::time::Duration::from_millis(self.delay).saturating_sub(elapsed))
+        }
+    }
+    pub(crate) fn finished(self, elapsed: f32) -> bool {
+        elapsed >= self.delay.saturating_add(self.duration) as f32
+    }
     pub(crate) fn progress(self, elapsed: f32) -> f32 {
+        if self.finished(elapsed) {
+            return 1.;
+        }
         let elapsed = elapsed - self.delay as f32;
         let t = if self.duration == 0 {
             if elapsed >= 0. {
@@ -103,6 +181,15 @@ impl Animation {
         } else {
             (elapsed / self.duration as f32).clamp(0., 1.)
         };
+        if t <= 0. {
+            return 0.;
+        }
+        if t >= 1. {
+            return 1.;
+        }
+        if let Some(spring) = self.spring {
+            return spring.sample(t);
+        }
         match self.easing {
             Easing::Linear => t,
             Easing::EaseIn => t * t * t,
@@ -114,6 +201,7 @@ impl Animation {
     pub(crate) fn valid(&self) -> bool {
         self.duration <= 60_000
             && self.delay <= 60_000
+            && self.spring.is_none_or(Spring::valid)
             && match self.easing {
                 Easing::CubicBezier(a, b, c, d) => [a, b, c, d].iter().all(|v| v.is_finite()),
                 _ => true,
@@ -138,7 +226,16 @@ impl Transition {
         self
     }
     pub fn easing(mut self, easing: Easing) -> Self {
-        self.0.easing = easing;
+        self.0 = self.0.easing(easing);
+        self
+    }
+    /// Use the same timing configuration as state animations, including springs.
+    pub fn animation(mut self, animation: Animation) -> Self {
+        self.0 = animation;
+        self
+    }
+    pub fn stagger(mut self, index: usize, interval_ms: u64) -> Self {
+        self.0 = self.0.stagger(index, interval_ms);
         self
     }
     pub fn delay_ms(mut self, milliseconds: u64) -> Self {
@@ -331,6 +428,7 @@ pub(crate) struct Effects {
     pub animations: [Option<Animation>; 3],
     pub animation: Option<Animation>,
     pub transition: Option<Transition>,
+    pub transition_revision: u64,
     pub ambient: Option<Ambient>,
     pub drag_region: bool,
 }
@@ -348,7 +446,8 @@ impl Effects {
                 .into_iter()
                 .flatten()
             {
-                if parse_color(color).is_none() && crate::ColorToken::parse(color).is_none() {
+                // Hex, a token, or a "light|dark" pair, as static styles take.
+                if !crate::theme::is_color_value(color) {
                     return Err(invalid());
                 }
             }
@@ -362,8 +461,7 @@ impl Effects {
                 return Err(invalid());
             }
             for shadow in style.shadow.iter().chain(style.glow.iter().map(|v| &v.0)) {
-                if (parse_color(&shadow.color).is_none()
-                    && crate::ColorToken::parse(&shadow.color).is_none())
+                if !crate::theme::is_color_value(&shadow.color)
                     || !shadow.blur.is_finite()
                     || !(0. ..=64.).contains(&shadow.blur)
                     || !shadow.spread.is_finite()
@@ -399,5 +497,58 @@ impl Effects {
             return Err(invalid());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+    #[test]
+    fn spring_response_is_bounded_finite_and_finishes_exactly() {
+        let animation = Animation::spring().duration_ms(500).delay_ms(80);
+        assert_eq!(animation.progress(0.), 0.);
+        assert_eq!(animation.progress(80.), 0.);
+        assert_eq!(animation.progress(580.), 1.);
+        assert_eq!(animation.progress(1000.), 1.);
+        assert!(!animation.finished(579.));
+        assert!(animation.finished(580.));
+        let values: Vec<_> = (0..=500)
+            .map(|t| animation.progress(t as f32 + 80.))
+            .collect();
+        assert!(values.iter().all(|v| v.is_finite() && *v >= 0. && *v < 1.4));
+        assert!(values.iter().any(|v| *v > 1.));
+        assert!(
+            (animation.progress(200.)
+                - Animation::spring_with(Spring::new().damping_ratio(1.))
+                    .duration_ms(500)
+                    .delay_ms(80)
+                    .progress(200.))
+            .abs()
+                > 0.01
+        );
+        assert_eq!(animation.easing(Easing::Linear).progress(330.), 0.5);
+    }
+    #[test]
+    fn stagger_preserves_base_delay_and_overflow_is_invalid() {
+        let a = Animation::linear()
+            .duration_ms(100)
+            .delay_ms(20)
+            .stagger(3, 40);
+        assert_eq!(a.delay, 140);
+        assert_eq!(a.progress(140.), 0.);
+        assert!(!a.finished(239.));
+        assert!(a.finished(240.));
+        assert!(!Animation::linear().stagger(usize::MAX, u64::MAX).valid());
+        assert_eq!(
+            Transition::slide(0., 12.)
+                .delay_ms(20)
+                .stagger(3, 40)
+                .0
+                .delay,
+            140
+        );
+        for damping in [f32::NAN, f32::INFINITY, 0., -1., 3.] {
+            assert!(!Animation::spring_with(Spring::new().damping_ratio(damping)).valid());
+        }
     }
 }

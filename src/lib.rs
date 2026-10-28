@@ -70,6 +70,14 @@ pub mod declarative;
 #[cfg(feature = "rust-ui")]
 pub mod ui;
 
+/// Host-independent shaping, retained drawing and optional GPU presentation.
+#[cfg(feature = "rendering")]
+pub mod rendering;
+
+/// Experimental touch host for embedding Volt in a platform-owned view.
+#[cfg(feature = "mobile")]
+pub mod mobile;
+
 /// Optional standalone software-rendered desktop host. Never used by legacy consumers.
 #[cfg(feature = "native")]
 pub mod native;
@@ -94,4 +102,7 @@ pub mod guide {
     pub mod json_ui {}
     #[doc = include_str!("../docs/architecture.md")]
     pub mod architecture {}
+    #[cfg(feature = "mobile")]
+    #[doc = include_str!("../docs/ios-prototype.md")]
+    pub mod ios_prototype {}
 }

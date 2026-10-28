@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="A practical overview of the Rust component builders."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Component recipes — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.5 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html" aria-current="page">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html" aria-current="page">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Component recipes</div><div class="reference-title"><p>Guide</p><h1>Component recipes</h1><div class="reference-description">A practical overview of the Rust component builders.</div></div><article class="guide-article"><p>Every component is a Rust builder that returns an element. Components are
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="A practical overview of the Rust component builders."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Component recipes — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.5 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html" aria-current="page">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html" aria-current="page">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Component recipes</div><div class="reference-title"><p>Guide</p><h1>Component recipes</h1><div class="reference-description">A practical overview of the Rust component builders.</div></div><article class="guide-article"><p>Every component is a Rust builder that returns an element. Components are
 <strong>controlled</strong>: they show values from your state and report changes through
 typed callbacks, so the state stays in one place. Each one has a live page in
 the Catalog (<code>--page &lt;name&gt;</code>), with its source and API table.</p>
@@ -122,6 +122,105 @@ button and drawer; <code>.material(true)</code> floats the detail over a translu
 window. It is optional: compose your own shell from stacks when you need to.</li>
 <li>With an option focused, arrow keys and Home/End move the selection.</li>
 </ul>
+<h2 id="typed-navigation-and-web-links">Typed navigation and web links</h2>
+<p><code>navigation</code> still controls destination selection; routing is optional. For
+Back/Forward navigation, keep <code>NavigationHistory&lt;Route&gt;</code> in your app state.
+<code>navigation_link</code> passes a typed destination to your callback, and
+<code>navigation_stack</code> composes only the current route.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+
+#[derive(Clone, PartialEq)]
+enum Route { Home, Activity }
+struct App { history: NavigationHistory&lt;Route&gt; }
+
+fn view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    vstack![
+        navigation_link(&quot;Activity&quot;, Route::Activity).key(&quot;activity&quot;)
+            .on_navigate(|app: &amp;mut App, route| { app.history.push(route); }),
+        button(&quot;Back&quot;).key(&quot;back&quot;).enabled(app.history.can_go_back())
+            .on_click(|app: &amp;mut App| { app.history.back(); }),
+        navigation_stack(&amp;app.history, |route| match route {
+            Route::Home =&gt; text(&quot;Home&quot;).key(&quot;home-page&quot;).into(),
+            Route::Activity =&gt; text(&quot;Activity&quot;).key(&quot;activity-page&quot;).into(),
+        }).key(&quot;current-page&quot;),
+    ].into()
+}
+let mut history = NavigationHistory::new(Route::Home);
+history.push(Route::Activity);
+let checkpoint = history.snapshot();
+assert!(history.back());
+history.restore(checkpoint).unwrap();
+assert!(matches!(history.current(), Route::Activity));</code></pre></div><p>History defaults to 128 entries; <code>with_capacity(root, 1..=1024)</code> customizes the
+bound. Pushing the current route does nothing, including preserving Forward.
+Pushing after Back discards the forward branch; overflow removes the oldest
+entry. <code>replace(route)</code> changes only the current entry; <code>reset(root)</code> clears
+history. <code>NavigationSnapshot</code> supports Serde; <code>restore</code> validates its length and
+index before changing anything. Bound serialized input before deserializing.
+Persistent page models, scroll/focus restoration, route decoding and OS deep-link
+registration are <strong>application responsibilities</strong>, not automatic behavior.
+Use route-specific keys for independent page controls.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+#[derive(Default)]
+struct App { destination: Option&lt;ExternalUrl&gt; }
+let ui: Element&lt;App&gt; = link(&quot;Read the guide ↗&quot;, &quot;https://example.com/guide&quot;)
+    .key(&quot;guide&quot;)
+    .on_open(|app: &amp;mut App, url| app.destination = Some(url))
+    .into();
+ui.build().unwrap(); // Does not open a browser or perform I/O.</code></pre></div><p>Standalone links require a nonempty label, stable key and callback. They support
+shared style modifiers, theme colors, hover/press/focus feedback, Tab/Shift-Tab
+and Enter activation, plus <code>.enabled(false)</code>. Native AccessKit exposes a Link
+role and the external URL. Custom hosts can read <code>Runtime::accessibility_links()</code>
+alongside <code>accessibility_nodes()</code>; the legacy <code>AccessNode</code>/<code>AccessRole</code> shapes are
+unchanged. A <code>None</code> URL denotes an internal navigation link. Removed, disabled
+or out-of-modal-scope links cannot activate through the runtime.</p>
+<p><code>ExternalUrl::parse</code> accepts absolute ASCII HTTP(S) URLs up to 4096 bytes. It
+rejects credentials, malformed ports/escapes, whitespace/control characters and
+executable/local-file/custom schemes. Encode Unicode domains/paths first.
+Validation does not imply that a website is trustworthy. Inline <code>span(..).link(..)</code>
+remains a separate rich-text callback API; standalone-link keyboard behavior does
+not make individual inline spans focusable. See <a href="../guides/app-services.html#opening-web-links">browser dispatch</a>
+for explicit native opening. Try both workflows on the Catalog&#39;s Navigation page.</p>
+<h2 id="motion-and-effects">Motion and effects</h2>
+<p>See <a href="../guides/styling-and-themes.html#animation-and-transitions">animation and transitions</a>
+for finite springs, staggered entrances, replay revisions, interaction feedback
+and reduced-motion behavior. Try the Catalog’s <strong>Effects &amp; motion</strong> page.</p>
+<h2 id="customizing-component-spacing">Customizing component spacing</h2>
+<p>Constructor sizes are defaults, not fixed design requirements. Keep the defaults
+for a consistent starting point, or override the part you actually need. Values
+are logical pixels; explicit <code>0.</code> works, edge/axis arrays are supported, and the
+last setter affecting an edge or axis wins. Padding is <strong>inside</strong> a component;
+gap separates its immediate children, not every nested label or icon.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Component</th><th scope="col">API / target</th><th scope="col">Unchanged default</th></tr></thead><tbody><tr><td>Button bars, toolbars, navigation</td><td><code>.gap(value, Axis::Horizontal)</code> / <code>.padding(value, edges)</code></td><td>Existing constructor spacing</td></tr><tr><td><code>tab_bar</code></td><td><code>.gap(value, Axis::Horizontal)</code> between options</td><td>2; joined controls use a 1px seam unless overridden</td></tr><tr><td><code>tabs</code></td><td><code>.tab_gap(value)</code> / <code>.tab_padding(value, edges)</code> inside the strip; <code>.gap(value, axis)</code> between strip and page</td><td>Line/contained strip gap 2; contained padding 3; strip-to-page 12</td></tr><tr><td>Menus / context menus</td><td><code>.popup_padding(..)</code>, <code>.item_gap(..)</code>, <code>.item_height(..)</code>, <code>.popup_max_height(..)</code></td><td>6 / 2 / 34 / 480</td></tr><tr><td>Dialog, popover, tooltip</td><td><code>.padding(value, edges)</code> / <code>.gap(value, axes)</code> on content card, never backdrop</td><td>Existing card defaults</td></tr><tr><td>Radio group, number input, tags, color picker, rating, form field, drop zone</td><td><code>.padding(value, edges)</code> / <code>.gap(value, axes)</code> on composite content</td><td>Existing constructor defaults</td></tr><tr><td>Collapsible, accordion, drawer, command palette</td><td><code>.padding(value, edges)</code> / <code>.gap(value, axes)</code> on section/card</td><td>Existing constructor defaults</td></tr><tr><td>Toaster</td><td><code>.gap(value, Axis::Vertical)</code> between toast cards; <code>.padding(value, edges)</code> for window inset</td><td>8 between cards / 16 window inset</td></tr><tr><td>OTP</td><td><code>.digit_gap(value)</code> between code boxes (also resizes backing input)</td><td>8</td></tr><tr><td>Combobox</td><td><code>.option_gap(value)</code> between popup results</td><td>2</td></tr><tr><td>Table</td><td><code>.row_height(..)</code>, <code>.header_height(..)</code>, <code>.cell_padding(..)</code> (horizontal); fixed <code>.padding(..)</code> / <code>.gap(..)</code> on panel</td><td>44 / 40 / 12; existing panel spacing</td></tr><tr><td>Tree</td><td><code>.row_height(..)</code>, <code>.indent_width(..)</code>; fixed <code>.padding(..)</code> / <code>.gap(..)</code> on panel</td><td>36 / 18; existing panel spacing</td></tr></tbody></table></div><div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let picker: Element&lt;()&gt; = tab_bar![tab_item(0, &quot;Space&quot;), tab_item(1, &quot;Duplicates&quot;)]
+    .key(&quot;picker&quot;).selected(0).on_select(|_: &amp;mut (), _| {})
+    .gap(responsive(2.).at(Breakpoint::Md, 8.), Axis::Horizontal)
+    .padding(4., [Edge::Top, Edge::Bottom])
+    .into();
+picker.build()?;
+let pages: Element&lt;()&gt; = tabs![
+    tab(0, &quot;Overview&quot;, text(&quot;Overview&quot;)),
+    tab(1, &quot;Details&quot;, text(&quot;Details&quot;)),
+].key(&quot;pages&quot;).selected(0).on_select(|_: &amp;mut (), _| {})
+ .tab_gap(6.).tab_padding(4., Edge::Horizontal)
+ .gap(16., Axis::Vertical).into();
+pages.build()?;
+let actions: Element&lt;()&gt; = menu(&quot;Actions&quot;, [menu_item(0, &quot;Open&quot;), menu_item(1, &quot;Copy path&quot;)])
+    .key(&quot;actions&quot;).open(false)
+    .on_open_change(|_: &amp;mut (), _| {}).on_action(|_: &amp;mut (), _| {})
+    .popup_padding(8.).item_gap(4.).item_height(38.)
+    .popup_max_height(320.).popup_background(ColorToken::Base100).into();
+actions.build()?;</code></pre></div><p>Stack-style spacing and tab strip overrides accept responsive values. Table/tree
+panel spacing and density, popup geometry, OTP and combobox result gaps are fixed
+logical values: use a responsive containing stack for their outer placement.
+Table <code>.gap(..)</code> also separates its divider children; use <code>.row_height(..)</code> for
+ordinary table density. A drawer/command-palette override targets the card, not
+its modal backdrop. Intrinsic glyph dimensions and hit-target geometry are not
+silently changed by a content gap.</p>
+<p>Non-finite, negative and out-of-range values fail <code>build()</code>. Popup item height
+must be 24–512, popup maximum height 24–8192, table/header height 24–512, tree row
+height 28–512; the viewport can shrink a popup further, with overflow scrolling.
+Zero spacing does not change callbacks, selection, keyboard behavior or defaults
+of controls which do not opt in.</p>
 <h2 id="fields-value-controls-and-dialogs">Fields, value controls and dialogs</h2>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -164,12 +263,15 @@ text or code editor.</p>
 <p><strong>Sliders</strong> take a finite range and step and respond to dragging and the arrow,
 Page and Home/End keys. <code>range_slider(lo, hi)</code> has two thumbs that cannot cross.</p>
 <p><strong>Select</strong> shows 1–128 typed options in a popup that flips above its trigger
-near the window edge and scrolls long lists. <code>combobox</code> adds type-to-filter.</p>
+near the window edge and scrolls long lists. <code>combobox</code> adds type-to-filter;
+with <code>.max_results(n)</code> it lists up to 128 matches (scrolling past nine), so it
+can stand in for a select you type into. It takes <code>.surface(..)</code>,
+<code>.height(..)</code> and <code>.font_size(..)</code> like a select.</p>
 <p><strong>Dialogs</strong> are modal inside the window: they trap Tab, restore focus on close,
 and dismiss with Escape or a backdrop click unless you disable either. Place the
 dialog after the content it covers in a root <code>zstack!</code>.</p>
 <h2 id="forms">Forms</h2>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Builder</th><th scope="col">Notes</th></tr></thead><tbody><tr><td><code>radio_group([(value, &quot;Label&quot;)])</code></td><td><code>.selected(..)</code>, <code>.on_select(..)</code>, descriptions, horizontal layout</td></tr><tr><td><code>number_input(v)</code></td><td><code>.range(0., 10.)</code>, <code>.step(1.)</code>, <code>.decimals(1)</code>, <code>.suffix(&quot; kg&quot;)</code></td></tr><tr><td><code>combobox(items, &amp;state)</code></td><td>Type to filter, Enter picks the best match</td></tr><tr><td><code>tag_input(&amp;tags, &amp;state)</code></td><td>Enter adds a tag, × removes one</td></tr><tr><td><code>color_picker(&quot;#3B82F6&quot;)</code></td><td>Swatches, hue/saturation/lightness sliders and a hex field</td></tr><tr><td><code>otp_input(code, 6)</code></td><td>One-time codes; <code>.on_complete(..)</code></td></tr><tr><td><code>rating(n)</code></td><td><code>.max(5)</code>; read-only without <code>on_change</code></td></tr><tr><td><code>form_field(&quot;Email&quot;, control)</code></td><td>Label, <code>.description(..)</code>, <code>.error(..)</code>, <code>.required(true)</code></td></tr><tr><td><code>drop_zone()</code></td><td>Native file drag and drop; <code>.accept([&quot;png&quot;])</code>, <code>.on_drop(..)</code></td></tr></tbody></table></div><p>Dates use <code>CalendarDate</code> (no date crate needed): <code>calendar</code>, <code>date_picker</code>,
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Builder</th><th scope="col">Notes</th></tr></thead><tbody><tr><td><code>radio_group([(value, &quot;Label&quot;)])</code></td><td><code>.selected(..)</code>, <code>.on_select(..)</code>, descriptions, horizontal layout</td></tr><tr><td><code>number_input(v)</code></td><td><code>.range(0., 10.)</code>, <code>.step(1.)</code>, <code>.decimals(1)</code>, <code>.suffix(&quot; kg&quot;)</code></td></tr><tr><td><code>combobox(items, &amp;state)</code></td><td>Type to filter, Enter picks the best match; <code>.max_results(n)</code>, <code>.surface(..)</code>, <code>.height(..)</code>, <code>.font_size(..)</code></td></tr><tr><td><code>tag_input(&amp;tags, &amp;state)</code></td><td>Enter adds a tag, × removes one</td></tr><tr><td><code>color_picker(&quot;#3B82F6&quot;)</code></td><td>Swatches, hue/saturation/lightness sliders and a hex field</td></tr><tr><td><code>otp_input(code, 6)</code></td><td>One-time codes; <code>.on_complete(..)</code></td></tr><tr><td><code>rating(n)</code></td><td><code>.max(5)</code>; read-only without <code>on_change</code></td></tr><tr><td><code>form_field(&quot;Email&quot;, control)</code></td><td>Label, <code>.description(..)</code>, <code>.error(..)</code>, <code>.required(true)</code></td></tr><tr><td><code>drop_zone()</code></td><td>Native file drag and drop; <code>.accept([&quot;png&quot;])</code>, <code>.on_drop(..)</code></td></tr></tbody></table></div><p>Dates use <code>CalendarDate</code> (no date crate needed): <code>calendar</code>, <code>date_picker</code>,
 <code>date_range_picker</code> and <code>time_picker</code>.</p>
 <h2 id="menus-and-overlays">Menus and overlays</h2>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
@@ -318,6 +420,65 @@ reports the ones it could not read; <code>set.icon(&quot;name&quot;)</code> retu
 <li>The SVG reader handles paths and basic shapes, transforms, fills and strokes.
 It never runs scripts or loads external resources.</li>
 </ul>
+<h2 id="hierarchy-charts">Hierarchy charts</h2>
+<p>Icicle bands show parent/child depth; squarified treemaps show the root&#39;s direct
+children as proportional rectangles. Both use native Volt controls, not a webview.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let nodes = vec![
+    HierarchyNode::new(&quot;root&quot;, &quot;Projects&quot;, 100, None),
+    HierarchyNode::new(&quot;rust&quot;, &quot;Rust&quot;, 60, Some(0)),
+    HierarchyNode::new(&quot;build&quot;, &quot;Build output&quot;, 40, Some(1)),
+    HierarchyNode::new(&quot;source&quot;, &quot;Source&quot;, 20, Some(1)),
+    HierarchyNode::new(&quot;web&quot;, &quot;Web&quot;, 40, Some(0)),
+];
+let explorer: Element&lt;String&gt; = icicle_chart(nodes.clone())
+    .key(&quot;folders&quot;).size(640., 240.).levels(4)
+    .on_select(|selected: &amp;mut String, key| *selected = key)
+    .into();
+explorer.build()?;
+let alternate: Element&lt;String&gt; = treemap_chart(nodes)
+    .key(&quot;space&quot;).size(640., 240.)
+    .on_select(|selected: &amp;mut String, key| *selected = key)
+    .into();
+alternate.build()?;</code></pre></div><ul>
+<li>Values are <strong>inclusive subtree totals</strong>; never add a parent total to its
+descendants. Direct children&#39;s sum must not exceed their parent&#39;s value.</li>
+<li>One root first, parents before children, unique keys, at most 16,384 nodes
+and depth 64. Zero values do not create tiles. Invalid data rejects the tree.</li>
+<li><code>.value_format(..)</code> formats exact tooltip/accessibility values. Tab/Enter
+and pointer activation return the original node key. App-owned drilldown
+replaces the data with the selected subtree; keep a companion table.</li>
+<li><code>.size(w, h)</code> uses logical pixels. Use a containing stack&#39;s <code>.on_width(..)</code>
+callback for responsive sizes; layouts are not computed every animation frame.</li>
+<li>Tiny tiles are not inflated into misleading sizes. Unrepresented child bytes
+leave blank area; provide an explicit Other node when grouping small items.</li>
+<li>Strata-style interaction is <strong>opt-in</strong>: <code>.selected_keys(..)</code> supports multiple
+selections; <code>.reviewed_keys(..)</code> adds passive review diamonds, never checkboxes;
+<code>.context_target(key)</code> shows the menu target with a dashed outline. The legacy
+<code>.selected(key)</code> still replaces the selection with one key.</li>
+<li><code>.node_colors(..)</code> accepts bounded <code>(key, color)</code> overrides; unspecified nodes
+keep the original palette. Literal custom fills choose a contrasting black or
+white foreground. <code>.hide_root(true)</code> omits the icicle root band and makes
+<code>.levels(n)</code> count visible child bands; treemap geometry is unchanged.</li>
+<li><code>.hover_linked(true)</code> links tile hover to components with
+<code>.hover_link(node_key)</code> (for example, a file-list row). Links are paint-only:
+no callbacks, recomposition, selection, focus, scrolling or peer tooltips.
+Matching enabled, mounted peers use their own <code>.hover_style(..)</code>; the nearest
+nested link wins. Keys are stable, nonempty strings up to 128 bytes. Hidden or
+unmounted counterparts do not scroll into view. Disable chart links and omit
+row links while an application-owned menu is open if its target should dominate.</li>
+<li><code>.on_context_open(|app, key, point| ..)</code> reports an action target <strong>without
+selecting it</strong>. <code>point</code> is window-logical pixels, not chart-local coordinates.
+Applications own the context menu, permissions, review and filesystem actions.</li>
+<li><code>.keyboard_navigation(true)</code> opts into roving focus: one Tab entry/exit, sibling
+Left/Right, parent Up, first visible child Down, sibling Home/End, Enter to
+activate. Native Shift-F10 / Context Menu opens the focused tile&#39;s actions.
+Disabled/removed targets and modal scopes retain their usual guards. Stable
+application node keys preserve focus identity when data reorders.</li>
+<li><code>ui::icicle_layout</code> / <code>ui::treemap_layout</code> expose pure geometry for testing or
+alternate native presentations. Treemap is one level per drilldown, not a
+claim to display every file at once.</li>
+</ul>
 <h2 id="known-limits">Known limits</h2>
 <ul>
 <li>Range sliders expose one accessibility value; arrow keys move the last thumb
@@ -328,4 +489,4 @@ Up/Down navigation through results yet.</li>
 <li><code>.offset(..)</code> and slide/ambient motion move pixels only; layout and hit
 targets stay where they were.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#buttons-and-actions">Buttons and actions</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#known-limits">Known limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#buttons-and-actions">Buttons and actions</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#typed-navigation-and-web-links">Typed navigation and web links</a><a href="#motion-and-effects">Motion and effects</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

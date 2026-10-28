@@ -1,0 +1,65 @@
+# Maintainer source only. cargo-volt ships the generated project; XcodeGen is
+# not required by developers creating an application.
+name: VoltApp
+options:
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CODE_SIGNING_ALLOWED: NO
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: "0.1.0"
+    ONLY_ACTIVE_ARCH: YES
+targets:
+  VoltApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: ../../../../crates/volt-ui-kit-mobile/apple/VoltUIHost.swift
+      - path: App
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: __APP_NAME__
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: __BUNDLE_ID__
+        SWIFT_OBJC_BRIDGING_HEADER: ../../../../crates/volt-ui-kit-mobile/apple/VoltBridge.h
+        TARGETED_DEVICE_FAMILY: "1,2"
+        LIBRARY_SEARCH_PATHS: ["$(inherited)", "$(BUILT_PRODUCTS_DIR)"]
+        OTHER_LDFLAGS: ["$(inherited)", "-lvolt_app", "-lc++", "-framework", Metal, "-framework", QuartzCore, "-framework", CoreText, "-framework", Security, "-framework", SystemConfiguration]
+    preBuildScripts:
+      - script: /bin/sh "$SRCROOT/build-rust.sh"
+        name: Build Rust Volt UI
+        basedOnDependencyAnalysis: false
+  VoltAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: VoltApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: __BUNDLE_ID__.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  VoltApp:
+    build:
+      targets:
+        VoltApp: all
+        VoltAppUITests: [test]
+    test:
+      targets: [VoltAppUITests]

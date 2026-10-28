@@ -29,6 +29,38 @@ impl<T> DataItem<T> {
         self
     }
 }
+// These eager composites compute internal row widths while lowering. Fixed
+// spacing setters therefore update the scalar sides used by that calculation;
+// responsive layouts belong to their containing stack instead.
+macro_rules! fixed_panel_spacing {
+    ($target:ident, [$($generic:ident),*]) => {
+        impl<C, $($generic),*> $target<C, $($generic),*> {
+            /// Fixed logical content padding; last write to an edge wins.
+            pub fn padding(mut self, value: f32, edges: impl Into<Edges>) -> Self {
+                let mask = edges.into().0;
+                for i in (0..4).filter(|i| mask & (1 << i) != 0) {
+                    let side = match i { 0=>&mut self.0.node.padding_top, 1=>&mut self.0.node.padding_right, 2=>&mut self.0.node.padding_bottom, _=>&mut self.0.node.padding_left };
+                    *side = Some(value);
+                    self.0.node.responsive.padding[i] = None;
+                }
+                self
+            }
+            /// Fixed spacing between immediate panel children. Table separators
+            /// are children too; use row_height for ordinary table density.
+            pub fn gap(mut self, value: f32, axes: impl Into<Axes>) -> Self {
+                let mask = axes.into().0;
+                for i in (0..2).filter(|i| mask & (1 << i) != 0) {
+                    if i == 0 { self.0.node.gap_horizontal = Some(value); }
+                    else { self.0.node.gap_vertical = Some(value); }
+                    self.0.node.responsive.gap[i] = None;
+                }
+                self
+            }
+        }
+    };
+}
+fixed_panel_spacing!(Table, [T, K]);
+fixed_panel_spacing!(TreeView, [T]);
 /// Only the requested fixed-height window calls the row factory. It may borrow
 /// view-local data; selected IDs outside this window are intentionally allowed.
 pub struct VirtualList<C, T, F>(pub(super) Element<C>, VirtualOptions<C, T, F>);
@@ -436,6 +468,9 @@ type SortFn<C, K> = Rc<RefCell<dyn FnMut(&mut C, K, SortDirection)>>;
 type Compare<T, K> = Box<dyn Fn(&K, &T, &T) -> Ordering>;
 pub struct Table<C, T, K>(pub(super) Element<C>, TableOptions<C, T, K>);
 struct TableOptions<C, T, K> {
+    row_height: f32,
+    header_height: f32,
+    cell_padding: f32,
     columns: Vec<TableColumn<K>>,
     rows: Vec<TableRow<T>>,
     sort: Option<(K, SortDirection)>,
@@ -462,6 +497,9 @@ pub fn table<C, T, K>(
     Table(
         e,
         TableOptions {
+            row_height: 44.,
+            header_height: 40.,
+            cell_padding: 12.,
             columns: columns.into_iter().take(9).collect(),
             rows: rows.into_iter().take(97).collect(),
             sort: None,
@@ -474,6 +512,22 @@ pub fn table<C, T, K>(
     )
 }
 impl<C, T, K> Table<C, T, K> {
+    /// Body row height in logical pixels (default 44, minimum 24).
+    pub fn row_height(mut self, value: f32) -> Self {
+        self.1.row_height = value;
+        self
+    }
+    /// Header height in logical pixels (default 40, minimum 24).
+    pub fn header_height(mut self, value: f32) -> Self {
+        self.1.header_height = value;
+        self
+    }
+    /// Horizontal inset of header/body cell labels (default 12).
+    pub fn cell_padding(mut self, value: f32) -> Self {
+        self.1.cell_padding = value;
+        self
+    }
+
     pub fn sort(mut self, column: K, direction: SortDirection) -> Self {
         self.1.sort = Some((column, direction));
         self
@@ -552,6 +606,17 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             table.0.validation_error = Some(error.into());
             return table.0;
         }
+        if !table.1.row_height.is_finite()
+            || !(24. ..=512.).contains(&table.1.row_height)
+            || !table.1.header_height.is_finite()
+            || !(24. ..=512.).contains(&table.1.header_height)
+            || !table.1.cell_padding.is_finite()
+            || !(0. ..=256.).contains(&table.1.cell_padding)
+        {
+            table.0.validation_error =
+                Some("table row/header height must be 24..512 and cell padding 0..256".into());
+            return table.0;
+        }
         let minimum = columns.iter().map(|c| c.width).sum::<f32>();
         let [top, right, bottom, left] = table.0.node.padding_sides();
         let width =
@@ -595,7 +660,11 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             .corners
             .unwrap_or([table.0.node.style.radius.unwrap_or(Rounding::Radius(12.)); 4]);
         table.0.node.style.corners = Some(outer);
-        let natural_height = top + bottom + 40. + table.1.rows.len() as f32 * 45.;
+        let natural_height = top
+            + bottom
+            + table.1.header_height
+            + table.1.rows.len() as f32 * (table.1.row_height + 1.)
+            + table.1.rows.len() as f32 * 2. * table.0.node.main_gap(1);
         let outer_limit = table
             .0
             .node
@@ -628,7 +697,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             header_corners[3] = inner[3];
         }
         let mut header = Element::new(Kind::Row);
-        header.node.height = Some(40.);
+        header.node.height = Some(table.1.header_height);
         header.node.width = Some(width);
         header.node.style.background = Some(ColorToken::Base200.into());
         header.node.style.corners = Some(header_corners);
@@ -685,11 +754,11 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
                 },
             ]);
             cell.node.width = Some(column.width);
-            cell.node.height = Some(40.);
+            cell.node.height = Some(table.1.header_height);
             let mut contents = Element::new(Kind::Row);
             contents.node.width = Some(column.width);
-            contents.node.height = Some(40.);
-            contents.node.padding = 12.;
+            contents.node.height = Some(table.1.header_height);
+            contents.node.padding = table.1.cell_padding;
             contents.node.padding_top = Some(0.);
             contents.node.padding_bottom = Some(0.);
             contents.node.align = Align::Center;
@@ -739,7 +808,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
                     ButtonVariant::Ghost
                 })
                 .width(width)
-                .height(44.)
+                .height(table.1.row_height)
                 .rounded(0.)
                 .enabled(enabled)
                 .opacity(if enabled { 1. } else { 0.45 })
@@ -765,7 +834,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
             ]);
             let mut contents = Element::new(Kind::Row);
             contents.node.width = Some(width);
-            contents.node.height = Some(44.);
+            contents.node.height = Some(table.1.row_height);
             contents.node.align = Align::Center;
             hit.node.access_role = Some(AccessRole::Row);
             hit.node.access_selected = Some(active);
@@ -777,8 +846,8 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
                 let column = &columns[i];
                 let mut cell = Element::new(Kind::Row);
                 cell.node.width = Some(column.width);
-                cell.node.height = Some(44.);
-                cell.node.padding = 12.;
+                cell.node.height = Some(table.1.row_height);
+                cell.node.padding = table.1.cell_padding;
                 cell.node.padding_top = Some(0.);
                 cell.node.padding_bottom = Some(0.);
                 cell.node.flow = Some(cell_flow(column.align));
@@ -832,6 +901,8 @@ impl<T> TreeNode<T> {
 type ExpandFn<C, T> = Rc<RefCell<dyn FnMut(&mut C, T, bool)>>;
 pub struct TreeView<C, T>(pub(super) Element<C>, TreeOptions<C, T>);
 struct TreeOptions<C, T> {
+    row_height: f32,
+    indent_width: f32,
     roots: Vec<TreeNode<T>>,
     expanded: Vec<T>,
     selected: Option<T>,
@@ -855,6 +926,8 @@ pub fn tree_view<C, T>(roots: impl IntoIterator<Item = TreeNode<T>>) -> TreeView
     TreeView(
         e,
         TreeOptions {
+            row_height: 36.,
+            indent_width: 18.,
             roots: roots.into_iter().take(129).collect(),
             expanded: vec![],
             selected: None,
@@ -865,6 +938,17 @@ pub fn tree_view<C, T>(roots: impl IntoIterator<Item = TreeNode<T>>) -> TreeView
     )
 }
 impl<C, T> TreeView<C, T> {
+    /// Row height (default 36, minimum 28 to contain disclosure controls).
+    pub fn row_height(mut self, value: f32) -> Self {
+        self.1.row_height = value;
+        self
+    }
+    /// Indentation per nesting level (default 18 logical pixels).
+    pub fn indent_width(mut self, value: f32) -> Self {
+        self.1.indent_width = value;
+        self
+    }
+
     pub fn expanded(mut self, values: impl IntoIterator<Item = T>) -> Self {
         self.1.expanded = values.into_iter().take(129).collect();
         self
@@ -929,12 +1013,23 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             tree.0.validation_error = Some(error.into());
             return tree.0;
         }
+        if !tree.1.row_height.is_finite()
+            || !(28. ..=512.).contains(&tree.1.row_height)
+            || !tree.1.indent_width.is_finite()
+            || !(0. ..=256.).contains(&tree.1.indent_width)
+        {
+            tree.0.validation_error =
+                Some("tree row height must be 28..512 and indent width 0..256".into());
+            return tree.0;
+        }
         let on_select = tree.1.on_select.unwrap();
         let on_expand = tree.1.on_expand.unwrap();
         let [_, right, _, left] = tree.0.node.padding_sides();
         let width = (tree.0.node.width.unwrap_or(360.) - left - right).max(0.);
         tree.0.node.access_set_size = Some(tree.1.roots.len());
         struct TreeContext<'a, C, T> {
+            row_height: f32,
+            indent_width: f32,
             expanded: &'a [T],
             selected: Option<&'a T>,
             enabled: bool,
@@ -969,8 +1064,12 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                     } else {
                         ButtonVariant::Ghost
                     })
-                    .width(context.width.max(depth as f32 * 18. + 104.))
-                    .height(36.)
+                    .width(
+                        context
+                            .width
+                            .max(depth as f32 * context.indent_width + 104.),
+                    )
+                    .height(context.row_height)
                     .rounded(4.)
                     .enabled(enabled)
                     .opacity(if enabled { 1. } else { 0.45 })
@@ -982,7 +1081,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                     .into();
                 let mut contents = Element::new(Kind::Row);
                 contents.node.width = row.node.width;
-                contents.node.height = Some(36.);
+                contents.node.height = Some(context.row_height);
                 contents.node.align = Align::Center;
                 row.node.access_role = Some(AccessRole::TreeItem);
                 row.node.access_selected = Some(active);
@@ -993,8 +1092,8 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                 row.node.access_parent = parent.map(str::to_owned);
                 contents.children.push(
                     spacer()
-                        .width(depth as f32 * 18.)
-                        .height(36.)
+                        .width(depth as f32 * context.indent_width)
+                        .height(context.row_height)
                         .flex(0.)
                         .into(),
                 );
@@ -1035,7 +1134,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                     label = label.color(ColorToken::Primary).font_weight(500);
                 }
                 let mut content = Element::new(Kind::Row);
-                content.node.height = Some(36.);
+                content.node.height = Some(context.row_height);
                 content.node.flex = 1.;
                 content.node.align = Align::Center;
                 content.node.padding = 6.;
@@ -1052,6 +1151,8 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             true
         }
         let context = TreeContext {
+            row_height: tree.1.row_height,
+            indent_width: tree.1.indent_width,
             expanded: &tree.1.expanded,
             selected: tree.1.selected.as_ref(),
             enabled: tree.1.enabled,

@@ -337,6 +337,27 @@ pub struct DrawPath {
 pub struct Canvas {
     pub paths: Vec<DrawPath>,
 }
+/// A short drawing sequence played at paint time (see `ui::canvas_frames`):
+/// no recomposition or layout per frame. It restarts only when `revision`
+/// changes for the same element id.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasFrames {
+    pub frames: std::sync::Arc<[Canvas]>,
+    pub frame_ms: u32,
+    pub revision: u64,
+}
+impl CanvasFrames {
+    /// How long the sequence plays.
+    pub fn duration(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(u64::from(self.frame_ms) * self.frames.len() as u64)
+    }
+    /// The frame to show `elapsed` after it started; the last one after.
+    pub fn at(&self, elapsed: std::time::Duration) -> Option<&Canvas> {
+        let ms = elapsed.as_millis() as u64;
+        let i = (ms / u64::from(self.frame_ms.max(1))) as usize;
+        self.frames.get(i.min(self.frames.len().saturating_sub(1)))
+    }
+}
 impl Canvas {
     pub fn fill(&mut self, path: VectorPath, color: impl Into<String>) {
         self.paths.push(DrawPath {

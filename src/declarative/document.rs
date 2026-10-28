@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_DOCUMENT_BYTES: usize = 262_144;
 /// Per-document limits. Large collections should use virtual lists, which mount
 /// only their visible window of rows.
-pub(crate) const MAX_NODES: usize = 4096;
+pub(crate) const MAX_NODES: usize = 16384;
 pub(crate) const MAX_DEPTH: usize = 48;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -125,6 +125,10 @@ pub(crate) struct NodeStyle {
     pub corners: Option<[Rounding; 4]>,
     pub font_family: Option<String>,
     pub font_size: Option<f32>,
+    /// Rust-only: multiplies every font size beneath, including explicit
+    /// ones, so one setting can enlarge an interface; schema 1 unchanged.
+    #[serde(skip)]
+    pub text_scale: Option<f32>,
     pub font_weight: Option<u16>,
     pub font_style: Option<FontSlant>,
     /// Rust-only tracking in em (fraction of the font size); schema 1 unchanged.
@@ -159,6 +163,19 @@ pub(crate) fn parse_color(value: &str) -> Option<[f32; 4]> {
         *channel = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()? as f32 / 255.;
     }
     Some(color)
+}
+/// Opt-in logical neighbors for one roving-focus control. Private and
+/// serde-skipped: schema-v1 and public event enums remain unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RovingNavigation {
+    pub group: String,
+    pub member: String,
+    pub left: Option<String>,
+    pub right: Option<String>,
+    pub parent: Option<String>,
+    pub child: Option<String>,
+    pub first: Option<String>,
+    pub last: Option<String>,
 }
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -283,8 +300,45 @@ pub struct Node {
     /// Reports the laid-out width when it changes.
     #[serde(skip)]
     pub(crate) on_width: Option<String>,
+    /// Reports the laid-out height when it changes.
+    #[serde(skip)]
+    pub(crate) on_height: Option<String>,
+    /// Reports a drag that began on this container: the offset from the press.
+    #[serde(skip)]
+    pub(crate) on_drag: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_drag_start: Option<String>,
+    /// Reports the pointer entering (true) or leaving (false) the bounds.
+    #[serde(skip)]
+    pub(crate) on_hover: Option<String>,
+    /// Reports keyboard focus entering (true) or leaving (false) the subtree.
+    #[serde(skip)]
+    pub(crate) on_focus_within: Option<String>,
+    /// Takes an Escape nothing else used.
+    #[serde(skip)]
+    pub(crate) on_escape: Option<String>,
     #[serde(skip)]
     pub(crate) on_key: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_activate_input: Option<String>,
+    #[serde(skip)]
+    pub(crate) on_input_key: Option<String>,
+    #[serde(skip)]
+    pub(crate) input_focus: bool,
+    #[serde(skip)]
+    pub(crate) input_focus_epoch: u64,
+    #[serde(skip, default = "yes")]
+    pub(crate) tab_stop: bool,
+    #[serde(skip)]
+    pub(crate) roving: Option<RovingNavigation>,
+    /// Rust-only paint linkage; no callback, selection or accessibility semantics.
+    #[serde(skip)]
+    pub(crate) hover_link: Option<String>,
+    #[serde(skip)]
+    pub(crate) access_multiselectable: bool,
+    /// Link semantics, separate from the public AccessRole enum for compatibility.
+    #[serde(skip)]
+    pub(crate) access_link: Option<String>,
     #[serde(skip)]
     pub(crate) slider: Option<SliderProps>,
     #[serde(skip)]
@@ -454,6 +508,8 @@ pub(crate) struct ProgressProps {
 pub(crate) struct SurfaceContent {
     pub image: Option<crate::graphics::BackgroundImage>,
     pub canvas: crate::graphics::Canvas,
+    /// Optional frames played over `canvas` (which holds the final frame).
+    pub frames: Option<crate::graphics::CanvasFrames>,
     pub clip: Option<crate::graphics::Clip>,
     pub scroll: Option<Scroll>,
     pub scrollbars: Scrollbars,
@@ -552,7 +608,22 @@ impl Node {
             on_selection: None,
             on_select_text: None,
             on_width: None,
+            on_height: None,
+            on_drag: None,
+            on_drag_start: None,
+            on_hover: None,
+            on_focus_within: None,
+            on_escape: None,
             on_key: None,
+            on_activate_input: None,
+            on_input_key: None,
+            input_focus: false,
+            input_focus_epoch: 0,
+            tab_stop: true,
+            roving: None,
+            hover_link: None,
+            access_multiselectable: false,
+            access_link: None,
             slider: None,
             overlay: None,
             on_context: None,
@@ -784,6 +855,12 @@ impl Document {
                 (&n.on_selection, EventKind::SelectionChanged),
                 (&n.on_select_text, EventKind::TextChanged),
                 (&n.on_width, EventKind::ValueChanged),
+                (&n.on_height, EventKind::ValueChanged),
+                (&n.on_drag, EventKind::ContextRequested),
+                (&n.on_drag_start, EventKind::Activate),
+                (&n.on_hover, EventKind::ToggleChanged),
+                (&n.on_focus_within, EventKind::ToggleChanged),
+                (&n.on_escape, EventKind::Activate),
                 (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
@@ -791,6 +868,14 @@ impl Document {
                 if let Some(name) = name {
                     handlers
                         .validate(name, kind)
+                        .map_err(|e| error(&n.id, &e.to_string()))?;
+                }
+            }
+            #[cfg(feature = "rust-ui")]
+            for (name, key) in [(&n.on_activate_input, false), (&n.on_input_key, true)] {
+                if let Some(name) = name {
+                    handlers
+                        .validate_input(name, key)
                         .map_err(|e| error(&n.id, &e.to_string()))?;
                 }
             }
@@ -1008,7 +1093,7 @@ fn check_style(style: &NodeStyle, path: &str) -> Result<(), DocumentError> {
     ] {
         if value
             .as_ref()
-            .is_some_and(|v| parse_color(v).is_none() && crate::ColorToken::parse(v).is_none())
+            .is_some_and(|v| !crate::theme::is_color_value(v))
         {
             return Err(error(&format!("{path}.{name}"), "invalid style value"));
         }
@@ -1053,6 +1138,12 @@ fn check_node(
     ids: &mut BTreeSet<String>,
 ) -> Result<(), DocumentError> {
     n.effects.validate(path)?;
+    if n.hover_link
+        .as_ref()
+        .is_some_and(|key| key.is_empty() || key.len() > 128)
+    {
+        return Err(error(path, "hover link requires 1..128 bytes"));
+    }
     if !n.ext.valid() {
         return Err(error(path, "invalid layout or style extension value"));
     }
@@ -1104,7 +1195,7 @@ fn check_node(
     if n.surface.canvas.paths.len() > crate::graphics::MAX_CANVAS_PATHS
         || n.surface.canvas.paths.iter().any(|p| {
             !p.path.is_valid()
-                || (parse_color(&p.color).is_none() && crate::ColorToken::parse(&p.color).is_none())
+                || !crate::theme::is_color_value(&p.color)
                 || p.stroke
                     .is_some_and(|w| !w.is_finite() || !(0. ..=256.).contains(&w))
         })
@@ -1156,7 +1247,9 @@ fn check_node(
             "Text/Badge requires exactly one of text or bind_text",
         ));
     }
-    if n.kind == Kind::Button && (n.label.is_none() || n.on_activate.is_none()) {
+    if n.kind == Kind::Button
+        && (n.label.is_none() || (n.on_activate.is_none() && n.on_activate_input.is_none()))
+    {
         return Err(error(path, "Button requires label and on_activate"));
     }
     if matches!(n.kind, Kind::Checkbox | Kind::Toggle)
@@ -1328,7 +1421,15 @@ fn check_node(
         &n.on_selection,
         &n.on_select_text,
         &n.on_width,
+        &n.on_height,
+        &n.on_drag,
+        &n.on_drag_start,
+        &n.on_hover,
+        &n.on_focus_within,
+        &n.on_escape,
         &n.on_key,
+        &n.on_activate_input,
+        &n.on_input_key,
         &n.on_context,
         &n.on_files_dropped,
     ]
