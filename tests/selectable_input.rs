@@ -445,3 +445,23 @@ fn a_container_hears_the_keys_its_focused_rows_do_not_use() {
     assert!(!r.input_key(key(InputKey::Escape), &mut h, &mut app).unwrap().activated, "declined: the host keeps it");
     assert_eq!(app.legacy, 0, "no row was activated by the arrow");
 }
+
+#[test]
+fn code_focus_requests_are_repeatable_without_stealing_focus_on_unchanged_tokens() {
+    let ui = |epoch, focus| -> Element<App> {
+        vstack([
+            code_view(1).key("code").height(120.).focus_when(focus).focus_request(epoch)
+                .on_input(|_: &mut App, _| None).into(),
+            button("Other").key("other").on_click(|_: &mut App| {}).into(),
+        ]).into()
+    };
+    let (mut r,_)=mount(ui(1,false));assert!(r.code_view_focused());
+    for epoch in [1,2,3] {
+        let [x,y]=point(&r,"other");r.pointer_down(x,y);assert_eq!(r.focused(),Some("other"));
+        let (doc,handlers)=ui(epoch,false).build().unwrap().into_parts();r.replace_document(doc,&handlers,&Bindings::default()).unwrap();layout(&mut r);
+        if epoch==1 {assert_eq!(r.focused(),Some("other"),"unchanged token is inert");}else{assert!(r.code_view_focused(),"new token restores the same code view");}
+    }
+    let [x,y]=point(&r,"other");r.pointer_down(x,y);
+    let (doc,handlers)=ui(3,true).build().unwrap().into_parts();r.replace_document(doc,&handlers,&Bindings::default()).unwrap();layout(&mut r);
+    assert!(r.code_view_focused(),"focus_when still has independent rising edges");
+}

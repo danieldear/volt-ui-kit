@@ -725,24 +725,21 @@ impl Runtime {
     /// The host must install the matching handlers immediately on success.
     #[cfg(feature = "rust-ui")]
     fn input_focus_request(old: Option<&Node>, next: &Node) -> Option<String> {
-        fn collect(n: &Node, ids: &mut BTreeSet<String>) {
-            if n.input_focus {
-                ids.insert(n.id.clone());
+        fn collect(n: &Node, ids: &mut std::collections::HashMap<String, (bool, u64)>) {
+            if n.input_focus || n.input_focus_epoch != 0 {
+                ids.insert(n.id.clone(), (n.input_focus, n.input_focus_epoch));
             }
-            for child in &n.children {
-                collect(child, ids);
-            }
+            for child in &n.children { collect(child, ids); }
         }
-        fn find(n: &Node, ids: &BTreeSet<String>) -> Option<String> {
-            if n.input_focus && !ids.contains(&n.id) && n.enabled && interactive_node(n) {
-                return Some(n.id.clone());
-            }
+        fn find(n: &Node, ids: &std::collections::HashMap<String, (bool, u64)>) -> Option<String> {
+            let (was_requested, epoch) = ids.get(&n.id).copied().unwrap_or_default();
+            let requested = (n.input_focus && !was_requested)
+                || (n.input_focus_epoch != 0 && n.input_focus_epoch != epoch);
+            if requested && n.enabled && interactive_node(n) { return Some(n.id.clone()); }
             n.children.iter().find_map(|child| find(child, ids))
         }
-        let mut ids = BTreeSet::new();
-        if let Some(old) = old {
-            collect(old, &mut ids);
-        }
+        let mut ids = std::collections::HashMap::new();
+        if let Some(old) = old { collect(old, &mut ids); }
         find(next, &ids)
     }
     pub fn replace_document<C>(

@@ -180,6 +180,14 @@ impl<C> CodeView<C> {
         self.0.node.input_focus = value;
         self
     }
+    /// Request focus for a new nonzero token without recreating the code view.
+    /// An unchanged token never steals focus. Zero disables this request path;
+    /// `focus_when` retains its separate rising-edge behavior.
+    pub fn focus_request(mut self, epoch: u64) -> Self {
+        self.0.node.input_focus_epoch = epoch;
+        self
+    }
+
     /// Every edit, movement, click and clipboard request. Return the
     /// selected text for `CodeInput::Copy` and `CodeInput::Cut`.
     pub fn on_input(

@@ -325,6 +325,8 @@ pub struct Node {
     pub(crate) on_input_key: Option<String>,
     #[serde(skip)]
     pub(crate) input_focus: bool,
+    #[serde(skip)]
+    pub(crate) input_focus_epoch: u64,
     #[serde(skip, default = "yes")]
     pub(crate) tab_stop: bool,
     #[serde(skip)]
@@ -616,6 +618,7 @@ impl Node {
             on_activate_input: None,
             on_input_key: None,
             input_focus: false,
+            input_focus_epoch: 0,
             tab_stop: true,
             roving: None,
             hover_link: None,
