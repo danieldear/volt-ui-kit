@@ -202,7 +202,7 @@ mod tests {
         scaffold(&dest, Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
         let project =
             fs::read_to_string(dest.join("ios/VoltApp.xcodeproj/project.pbxproj")).unwrap();
-        assert!(project.contains("crates/volt-ui-kit-mobile/apple"));
+        assert!(project.contains("volt-ui-kit-mobile/apple"));
         assert!(!project.contains("__VOLT_HOST"));
         assert!(fs::read_to_string(dest.join("Cargo.toml"))
             .unwrap()
