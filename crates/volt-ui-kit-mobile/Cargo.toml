@@ -1,0 +1,13 @@
+[package]
+name = "volt-ui-kit-mobile"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+license = "MIT"
+description = "Experimental shared Rust application host and reusable iOS adapter for Volt UI Kit"
+
+[dependencies]
+volt-ui-kit = { path = "../..", features = ["mobile"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

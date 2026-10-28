@@ -23,9 +23,9 @@ pub(super) mod code_view;
 #[cfg(feature = "rust-ui")]
 mod drops;
 #[cfg(feature = "rust-ui")]
-mod hover;
-#[cfg(feature = "rust-ui")]
 pub(super) mod editing;
+#[cfg(feature = "rust-ui")]
+mod hover;
 #[cfg(feature = "rust-ui")]
 mod overlays;
 #[cfg(feature = "rust-ui")]
@@ -729,17 +729,23 @@ impl Runtime {
             if n.input_focus || n.input_focus_epoch != 0 {
                 ids.insert(n.id.clone(), (n.input_focus, n.input_focus_epoch));
             }
-            for child in &n.children { collect(child, ids); }
+            for child in &n.children {
+                collect(child, ids);
+            }
         }
         fn find(n: &Node, ids: &std::collections::HashMap<String, (bool, u64)>) -> Option<String> {
             let (was_requested, epoch) = ids.get(&n.id).copied().unwrap_or_default();
             let requested = (n.input_focus && !was_requested)
                 || (n.input_focus_epoch != 0 && n.input_focus_epoch != epoch);
-            if requested && n.enabled && interactive_node(n) { return Some(n.id.clone()); }
+            if requested && n.enabled && interactive_node(n) {
+                return Some(n.id.clone());
+            }
             n.children.iter().find_map(|child| find(child, ids))
         }
         let mut ids = std::collections::HashMap::new();
-        if let Some(old) = old { collect(old, &mut ids); }
+        if let Some(old) = old {
+            collect(old, &mut ids);
+        }
         find(next, &ids)
     }
     pub fn replace_document<C>(
@@ -1163,7 +1169,11 @@ impl Runtime {
             let s = self.scale;
             // A wheel scroll shifts boxes in place: the container's own
             // offset can lag the one in effect, which the target reflects.
-            let current = self.scroll_offsets.get(&view).copied().unwrap_or(container.scroll_offset);
+            let current = self
+                .scroll_offsets
+                .get(&view)
+                .copied()
+                .unwrap_or(container.scroll_offset);
             let mut offset = current;
             let top = container.bounds.bounds()[1] + container.style.layout.padding[0];
             let left = container.bounds.bounds()[0] + container.style.layout.padding[3];
@@ -1384,7 +1394,9 @@ impl Runtime {
                     && b.clip.contains(x, y)
                     && b.bounds.contains(x, y)
             })
-            .map_or(LINE * 10., |b| (b.bounds.bounds()[3] / self.scale - LINE).max(LINE));
+            .map_or(LINE * 10., |b| {
+                (b.bounds.bounds()[3] / self.scale - LINE).max(LINE)
+            });
         [LINE, page]
     }
     /// Pointer is physical pixels; delta is logical pixels, positive toward end.
@@ -1861,8 +1873,10 @@ impl Runtime {
                     action: b.on_drag.clone().unwrap(),
                     origin: [x, y],
                 };
-                if let Some(start)=&b.on_drag_start {
-                    handlers.dispatch(start,Event::Activate,context).map_err(|e|DocumentError(e.to_string()))?;
+                if let Some(start) = &b.on_drag_start {
+                    handlers
+                        .dispatch(start, Event::Activate, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
                 }
                 handlers
                     .dispatch(
@@ -2010,7 +2024,10 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             if self.drag_capture.take().is_some() {
-                return Ok(InputOutcome { changed: true, activated: false });
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: false,
+                });
             }
             if let Some(outcome) = self.overlay_pointer_up(x, y, handlers, context)? {
                 return Ok(outcome);
@@ -2369,7 +2386,10 @@ impl Runtime {
         // around it: a list hears the arrows its rows don't use.
         let action = self.focused.as_deref().and_then(|id| {
             let usable = |b: &LayoutBox| b.enabled && !b.departing && self.scope_allows_id(&b.id);
-            let mut index = self.layout_boxes.iter().position(|b| b.id == id && usable(b))?;
+            let mut index = self
+                .layout_boxes
+                .iter()
+                .position(|b| b.id == id && usable(b))?;
             loop {
                 let b = &self.layout_boxes[index];
                 if usable(b) {
@@ -2381,7 +2401,9 @@ impl Runtime {
                     return None;
                 }
                 let depth = b.depth - 1;
-                index = self.layout_boxes[..index].iter().rposition(|p| p.depth == depth)?;
+                index = self.layout_boxes[..index]
+                    .iter()
+                    .rposition(|p| p.depth == depth)?;
             }
         });
         let Some(action) = action else {
@@ -5732,20 +5754,42 @@ mod style_component_tests {
                 .into()
         };
         let tree: crate::ui::Element<()> = vstack([
-            hstack([chip("a"), chip("b")]).key("plain").gap(8., Axis::Horizontal).into(),
-            hstack([chip("c"), chip("d")]).key("wrapping").gap(8., Axis::Horizontal).wrap(true).justify(Justify::Center).into(),
+            hstack([chip("a"), chip("b")])
+                .key("plain")
+                .gap(8., Axis::Horizontal)
+                .into(),
+            hstack([chip("c"), chip("d")])
+                .key("wrapping")
+                .gap(8., Axis::Horizontal)
+                .wrap(true)
+                .justify(Justify::Center)
+                .into(),
         ])
         .key("root")
         .into();
         let (doc, h) = tree.build().unwrap().into_parts();
         let v = Bindings::default();
         let mut r = Runtime::new(doc, &h, &v).unwrap();
-        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder).unwrap();
-        let b = |id: &str| r.boxes().iter().find(|b| b.id == id).unwrap().bounds.bounds();
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder)
+            .unwrap();
+        let b = |id: &str| {
+            r.boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .bounds
+                .bounds()
+        };
         for k in ["a", "c"] {
             let (outer, label) = (b(k), b(&format!("{k}-label")));
-            let (left, right) = (label[0] - outer[0], outer[0] + outer[2] - label[0] - label[2]);
-            assert!((left - 12.).abs() < 0.5 && (right - 12.).abs() < 0.5, "{k}: insets {left} and {right}, outer {outer:?} label {label:?}");
+            let (left, right) = (
+                label[0] - outer[0],
+                outer[0] + outer[2] - label[0] - label[2],
+            );
+            assert!(
+                (left - 12.).abs() < 0.5 && (right - 12.).abs() < 0.5,
+                "{k}: insets {left} and {right}, outer {outer:?} label {label:?}"
+            );
         }
     }
     #[cfg(feature = "rust-ui")]
@@ -5755,7 +5799,10 @@ mod style_component_tests {
         let tree: crate::ui::Element<()> = vstack([
             text("Inherited").key("inherited").into(),
             text("Explicit").key("explicit").font_size(12.).into(),
-            vstack([text("Nested").key("nested").font_size(10.).into()]).key("inner").text_scale(2.).into(),
+            vstack([text("Nested").key("nested").font_size(10.).into()])
+                .key("inner")
+                .text_scale(2.)
+                .into(),
         ])
         .key("root")
         .font_size(16.)
@@ -5764,8 +5811,16 @@ mod style_component_tests {
         let (doc, h) = tree.build().unwrap().into_parts();
         let v = Bindings::default();
         let mut r = Runtime::new(doc, &h, &v).unwrap();
-        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder).unwrap();
-        let size = |id: &str| r.boxes().iter().find(|b| b.id == id).unwrap().text_style.size;
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder)
+            .unwrap();
+        let size = |id: &str| {
+            r.boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .text_style
+                .size
+        };
         assert_eq!(size("inherited"), 20.);
         assert_eq!(size("explicit"), 15.);
         assert_eq!(size("nested"), 25.);
@@ -6523,21 +6578,29 @@ mod foundation_tests {
     }
     #[test]
     fn scroll_to_after_a_wheel_scroll_lands_on_the_key_not_off_by_the_scroll() {
-        let make = |request| -> Element<App> {
-            vstack((0..20).map(|i| -> Element<App> { vstack![].key(format!("item-{i}")).height(40.).into() }))
+        let make =
+            |request| -> Element<App> {
+                vstack((0..20).map(|i| -> Element<App> {
+                    vstack![].key(format!("item-{i}")).height(40.).into()
+                }))
                 .key("list")
                 .height(200.)
                 .scroll(Scroll::Vertical)
                 .scroll_to("item-0", request)
                 .into()
-        };
+            };
         let (mut r, _) = mount(make(0));
         // Wheel to the end: boxes shift in place, without a full layout.
         r.scroll_at(10., 10., [0., 600.]);
         assert_eq!(r.scroll_offset("list")[1], 600.);
         let (d, h) = make(1).build().unwrap().into_parts();
         r.replace_document(d, &h, &Bindings::default()).unwrap();
-        r.layout(Viewport::new(400., 400., 1.).unwrap(), &Bindings::default(), &mut Rec).unwrap();
+        r.layout(
+            Viewport::new(400., 400., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Rec,
+        )
+        .unwrap();
         assert_eq!(r.scroll_offset("list")[1], 0., "back at the top, as asked");
     }
     #[test]

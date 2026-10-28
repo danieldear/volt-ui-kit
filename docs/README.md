@@ -22,6 +22,8 @@ Installation instructions remain Git/path based until publication is verified.
 7. [JSON interfaces](json-ui.md): the optional file-based frontend with live reload.
 8. [Architecture](architecture.md): layers, the frame pipeline, accessibility, security limits and dependencies.
 
+Experimental platform work: [reusable iOS host and Rust-first project template](ios-prototype.md), including Android direction and explicit Simulator/device limits.
+
 Also see the [examples](../examples/README.md), [contributing](../CONTRIBUTING.md),
 the [roadmap](../ROADMAP.md) and the [changelog](../CHANGELOG.md).
 

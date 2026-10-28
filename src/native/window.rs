@@ -2122,7 +2122,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.update_cursor(position.x as f32, position.y as f32);
                     if let Some(outcome) = self
                         .runtime
-                        .code_pointer_hover(Some([position.x as f32, position.y as f32]), &mut self.handlers, &mut self.context)
+                        .code_pointer_hover(
+                            Some([position.x as f32, position.y as f32]),
+                            &mut self.handlers,
+                            &mut self.context,
+                        )
                         .map_err(|e| e.to_string())?
                     {
                         if outcome.activated || outcome.changed {
@@ -2181,7 +2185,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.redraw();
                     }
                     self.hover_regions(None)?;
-                    if let Some(outcome) = self.runtime.code_pointer_hover(None, &mut self.handlers, &mut self.context).map_err(|e| e.to_string())? {
+                    if let Some(outcome) = self
+                        .runtime
+                        .code_pointer_hover(None, &mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?
+                    {
                         if outcome.activated || outcome.changed {
                             self.after_input(outcome)?;
                         }
@@ -2438,7 +2446,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     };
                                     let outcome = self
                                         .runtime
-                                        .scroll_outcome(x, y, [0., dy], &mut self.handlers, &mut self.context)
+                                        .scroll_outcome(
+                                            x,
+                                            y,
+                                            [0., dy],
+                                            &mut self.handlers,
+                                            &mut self.context,
+                                        )
                                         .map_err(|e| e.to_string())?;
                                     if outcome.changed || outcome.activated {
                                         self.after_input(outcome)?;

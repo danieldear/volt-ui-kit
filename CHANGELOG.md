@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Extract `volt-ui-kit-mobile`: reusable Rust application/events/semantics and
+  a target-gated iOS UIKit/Metal host. Field Notes and the new
+  `cargo volt new --platform ios` template share one canonical host: no per-app
+  Swift application source or XcodeGen requirement. Include generated Rust and
+  Simulator workflow tests, strict ABI/event validation, app-owned themes and
+  SF font fallback. The common layer considers future Android integration;
+  Android has no native host/template yet. Desktop defaults remain unchanged.
+
+- Add an opt-in iOS Field Notes prototype: Rust-owned list/detail navigation,
+  touch scrolling and editable profile forms, with a thin UIKit scene/keyboard
+  and Metal surface host. Simulator UI tests and an unsigned device build are
+  separate from physical-device GPU acceptance; see `docs/ios-prototype.md`.
+- Expose shared `rendering` / `rendering-gpu` adapters and an experimental
+  `mobile::MobileView` without desktop window/clipboard dependencies. Existing
+  `native` re-exports and the empty default feature set are preserved.
+- Negotiate the advertised inter-stage shader limit and reject adapters lacking
+  Vello compute/indirect support before drawing. The prototype explicitly opts
+  into a capability-reported software-drawing/Metal-presentation fallback for
+  restricted Simulator adapters; desktop GPU defaults are unchanged.
+
+
 - Code views report what the pointer rests on when asked:
   `report_hover(true)` sends `CodeInput::Hover { at, point }` as the
   position changes and `at: None` when it leaves. Hosts call

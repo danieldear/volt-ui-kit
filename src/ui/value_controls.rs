@@ -291,7 +291,13 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
         items.node.access_set_size = Some(select.1.items.len());
         items.node.padding = 6.;
         items.node.style.radius = Some(Rounding::Radius(10.));
-        items.node.style.background = Some(select.1.surface.take().unwrap_or_else(|| ColorToken::Base200.into()));
+        items.node.style.background = Some(
+            select
+                .1
+                .surface
+                .take()
+                .unwrap_or_else(|| ColorToken::Base200.into()),
+        );
         items.node.style.border_color = Some(ColorToken::Border.into());
         items.node.style.border_width = Some(1.);
         items.node.effects.base.shadow = Some(super::tokens::shadow::lg());

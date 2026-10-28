@@ -429,6 +429,11 @@ fn state_colours_take_light_dark_pairs_and_tokens_like_static_styles() {
         .shadow(Shadow::new().color("#00000022|#00000066"))
         .into();
     assert!(good.build().is_ok());
-    let bad: Element<()> = text("X").hover_style(|s| s.background("#000|#FFF|#123")).into();
-    assert!(bad.build().is_err(), "still only one light and one dark half");
+    let bad: Element<()> = text("X")
+        .hover_style(|s| s.background("#000|#FFF|#123"))
+        .into();
+    assert!(
+        bad.build().is_err(),
+        "still only one light and one dark half"
+    );
 }

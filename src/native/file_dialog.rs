@@ -30,7 +30,8 @@ impl FileDialogOptions {
         if self.title.trim().is_empty()
             || self.directory.as_ref().is_some_and(|p| {
                 !p.is_absolute()
-                    || p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+                    || p.components()
+                        .any(|c| matches!(c, std::path::Component::ParentDir))
                     || p.as_os_str().as_encoded_bytes().contains(&0)
             })
             || self.title.len() > 256
@@ -480,7 +481,10 @@ mod tests {
         assert_eq!(options.directory.as_ref(), Some(&absolute));
         assert!(options.validate().is_ok());
         for invalid in [PathBuf::from("relative"), absolute.join("../escape")] {
-            assert!(FileDialogOptions::new("Save").directory(invalid).validate().is_err());
+            assert!(FileDialogOptions::new("Save")
+                .directory(invalid)
+                .validate()
+                .is_err());
         }
     }
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]

@@ -5,6 +5,8 @@ mod bundle;
 #[cfg(test)]
 #[path = "volt/bundle_tests.rs"]
 mod bundle_tests;
+#[path = "volt/ios.rs"]
+mod ios;
 #[path = "volt/release.rs"]
 mod release;
 // Releases are macOS-only; the tests compare macOS paths.
@@ -182,6 +184,10 @@ fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
     }
 }
 fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Result<()> {
+    if kind == "ios" {
+        ios::resolve(kind, None, desktop)?;
+        return ios::scaffold(destination, kit);
+    }
     let source = template(kind)?;
     let source = if desktop {
         desktop_template(source, kind)
@@ -424,15 +430,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     match args.first().map(String::as_str) {
         Some("new") if args.len()>=2 => {
-            let mut kind="minimal"; let mut kit=None; let mut desktop=false; let mut i=2;
+            let mut kind="minimal"; let mut kit=None; let mut desktop=false; let mut platform=None; let mut i=2;
             while i<args.len() {match args[i].as_str() {
                 "--desktop" => {desktop=true;i+=1;},
+                "--platform" if i+1<args.len()=>{platform=Some(args[i+1].as_str());i+=2;},
                 "--template" if i+1<args.len()=>{kind=&args[i+1];i+=2;},
                 "--kit-path" if i+1<args.len()=>{kit=Some(Path::new(&args[i+1]));i+=2;},
                 _=>return Err(error("unknown/missing scaffold option").into()),
             }}
+            let kind=ios::resolve(kind,platform,desktop)?;
             scaffold(Path::new(&args[1]),kind,kit.ok_or_else(||error("--kit-path required until published"))?, desktop)?;
-            println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);
+            if kind=="ios" {println!("Created {}. Open {}/ios/VoltApp.xcodeproj; edit src/lib.rs (no Swift glue required).",args[1],args[1]);}
+            else {println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);}
         }
         Some("bundle" | "release") if args.get(1).is_some_and(|s| s == "--help") && args.len()==2 => {
             println!("{}\n\nManual bundling from a prebuilt binary:\n{}", release::HELP, bundle::HELP)
@@ -442,7 +451,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("bundle") => release::main(&args[1..], false)?,
         Some("release") => release::main(&args[1..], true)?,
         Some("dev") if args.len()<=2=>dev(Path::new(args.get(1).map_or(".",String::as_str)))?,
-        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--template minimal|navigation|mail|settings|agent] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
+        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--platform desktop|ios] [--template minimal|navigation|mail|settings|agent|ios] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
     }
     Ok(())
 }

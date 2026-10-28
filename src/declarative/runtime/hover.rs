@@ -82,7 +82,8 @@ impl Runtime {
                     break;
                 }
                 let depth = b.depth - 1;
-                let Some(parent) = self.boxes[..index].iter().rposition(|p| p.depth == depth) else {
+                let Some(parent) = self.boxes[..index].iter().rposition(|p| p.depth == depth)
+                else {
                     break;
                 };
                 index = parent;

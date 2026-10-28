@@ -949,11 +949,24 @@ fn the_caret_can_be_a_line_a_block_or_an_underline() {
         m.painter.rects.borrow_mut().clear();
         m.paint();
         let rects = m.painter.rects.take();
-        rects.into_iter().map(|(r, _)| r).filter(|r| (r[0] - edge).abs() < 1.5 && r[1] >= top && r[1] < top + 20.).collect::<Vec<_>>()
+        rects
+            .into_iter()
+            .map(|(r, _)| r)
+            .filter(|r| (r[0] - edge).abs() < 1.5 && r[1] >= top && r[1] < top + 20.)
+            .collect::<Vec<_>>()
     };
-    assert!(caret(&mut doc, 0).contains(&[edge - 1., top + 2., 2., 16.]), "a 2pt line before the character");
-    assert!(caret(&mut doc, 1).contains(&[edge, top + 2., 6.5, 16.]), "a block one character wide");
-    assert!(caret(&mut doc, 2).contains(&[edge, top + 16., 6.5, 2.]), "an underline beneath it");
+    assert!(
+        caret(&mut doc, 0).contains(&[edge - 1., top + 2., 2., 16.]),
+        "a 2pt line before the character"
+    );
+    assert!(
+        caret(&mut doc, 1).contains(&[edge, top + 2., 6.5, 16.]),
+        "a block one character wide"
+    );
+    assert!(
+        caret(&mut doc, 2).contains(&[edge, top + 16., 6.5, 2.]),
+        "an underline beneath it"
+    );
 }
 
 #[test]
@@ -970,14 +983,21 @@ fn the_scrollbar_thumb_drags_and_the_track_jumps_without_moving_the_caret() {
         .code_pointer_down(strip, y + 10., 1, none, &mut m.handlers, &mut doc)
         .unwrap();
     assert!(held.is_some(), "the scrollbar takes the press");
-    let pressed = |d: &Doc| d.inputs.iter().any(|i| matches!(i, CodeInput::Press { .. } | CodeInput::Drag { .. }));
+    let pressed = |d: &Doc| {
+        d.inputs
+            .iter()
+            .any(|i| matches!(i, CodeInput::Press { .. } | CodeInput::Drag { .. }))
+    };
     assert!(!pressed(&doc), "no caret press reaches the application");
     m.runtime
         .code_pointer_drag(strip, y + h / 2., &mut m.handlers, &mut doc)
         .unwrap();
     let mid = m.runtime.code_view_offset("code").unwrap()[1];
     let max = 999. * 20.;
-    assert!(mid > max * 0.35 && mid < max * 0.65, "halfway down the track is halfway through: {mid}");
+    assert!(
+        mid > max * 0.35 && mid < max * 0.65,
+        "halfway down the track is halfway through: {mid}"
+    );
     assert!(m.runtime.code_pointer_up());
     // Pressing the track brings the thumb there.
     m.runtime
@@ -985,7 +1005,10 @@ fn the_scrollbar_thumb_drags_and_the_track_jumps_without_moving_the_caret() {
         .unwrap();
     m.runtime.code_pointer_up();
     let end = m.runtime.code_view_offset("code").unwrap()[1];
-    assert!(end > max * 0.95, "the bottom of the track is the end: {end}");
+    assert!(
+        end > max * 0.95,
+        "the bottom of the track is the end: {end}"
+    );
     assert!(!pressed(&doc));
 }
 
@@ -1048,38 +1071,81 @@ fn hover_reports_the_position_under_the_pointer_when_it_changes_and_when_it_leav
     let [x, y, _, _] = m.bounds();
     m.paint();
     let at = |line: f32, col: f32| [x + 64. + 12. + 6.5 * col, y + 20. * line + 10.];
-    let hovers = |d: &Doc| d.inputs.iter().filter_map(|i| match i { CodeInput::Hover { at, .. } => Some(*at), _ => None }).collect::<Vec<_>>();
-    m.runtime.code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut doc).unwrap();
-    m.runtime.code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut doc).unwrap();
-    m.runtime.code_pointer_hover(Some(at(4., 8.)), &mut m.handlers, &mut doc).unwrap();
-    m.runtime.code_pointer_hover(None, &mut m.handlers, &mut doc).unwrap();
+    let hovers = |d: &Doc| {
+        d.inputs
+            .iter()
+            .filter_map(|i| match i {
+                CodeInput::Hover { at, .. } => Some(*at),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    m.runtime
+        .code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut doc)
+        .unwrap();
+    m.runtime
+        .code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut doc)
+        .unwrap();
+    m.runtime
+        .code_pointer_hover(Some(at(4., 8.)), &mut m.handlers, &mut doc)
+        .unwrap();
+    m.runtime
+        .code_pointer_hover(None, &mut m.handlers, &mut doc)
+        .unwrap();
     assert_eq!(
         hovers(&doc),
-        [Some(CodePosition::new(3, 5)), Some(CodePosition::new(4, 8)), None],
+        [
+            Some(CodePosition::new(3, 5)),
+            Some(CodePosition::new(4, 8)),
+            None
+        ],
         "each change once, then leaving"
     );
     // A view that didn't ask hears nothing.
     let mut quiet = Doc::new(100);
     let mut m = Mounted::new(&mut quiet);
     m.paint();
-    m.runtime.code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut quiet).unwrap();
+    m.runtime
+        .code_pointer_hover(Some(at(3., 5.)), &mut m.handlers, &mut quiet)
+        .unwrap();
     assert!(hovers(&quiet).is_empty());
 }
 
 #[test]
 fn a_right_click_outside_the_selection_moves_the_caret_and_inside_keeps_it() {
     let mut doc = Doc::new(100);
-    doc.selection = Some(CodeSelection { anchor: CodePosition::new(3, 2), head: CodePosition::new(3, 9) });
+    doc.selection = Some(CodeSelection {
+        anchor: CodePosition::new(3, 2),
+        head: CodePosition::new(3, 9),
+    });
     let mut m = Mounted::new(&mut doc);
     let [x, y, _, _] = m.bounds();
     m.paint();
     let at = |line: f32, col: f32| [x + 64. + 12. + 6.5 * col, y + 20. * line + 10.];
-    let presses = |d: &Doc| d.inputs.iter().filter(|i| matches!(i, CodeInput::Press { .. })).count();
+    let presses = |d: &Doc| {
+        d.inputs
+            .iter()
+            .filter(|i| matches!(i, CodeInput::Press { .. }))
+            .count()
+    };
     let [px, py] = at(3., 5.);
-    assert!(m.runtime.code_context_press(px, py, &mut m.handlers, &mut doc).unwrap().is_some());
+    assert!(m
+        .runtime
+        .code_context_press(px, py, &mut m.handlers, &mut doc)
+        .unwrap()
+        .is_some());
     assert_eq!(presses(&doc), 0, "inside the selection: it stays");
     let [px, py] = at(6., 1.);
-    m.runtime.code_context_press(px, py, &mut m.handlers, &mut doc).unwrap();
-    assert_eq!(doc.inputs.last(), Some(&CodeInput::Press { at: CodePosition::new(6, 1), clicks: 1, modifiers: InputModifiers::default() }));
+    m.runtime
+        .code_context_press(px, py, &mut m.handlers, &mut doc)
+        .unwrap();
+    assert_eq!(
+        doc.inputs.last(),
+        Some(&CodeInput::Press {
+            at: CodePosition::new(6, 1),
+            clicks: 1,
+            modifiers: InputModifiers::default()
+        })
+    );
     assert!(m.runtime.code_view_focused());
 }

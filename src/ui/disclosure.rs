@@ -791,7 +791,11 @@ impl<C: 'static, T: Clone + 'static> From<CommandPalette<C, T>> for Element<C> {
             .gap(8., Axis::Vertical)
             .padding(10., Edge::All)
             .rounded(14.)
-            .background(p.surface.clone().unwrap_or_else(|| ColorToken::Base200.into()))
+            .background(
+                p.surface
+                    .clone()
+                    .unwrap_or_else(|| ColorToken::Base200.into()),
+            )
             .border_color(ColorToken::Border)
             .border_width(1.)
             .shadow(tokens::shadow::xl2())

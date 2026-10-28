@@ -56,7 +56,7 @@ without changes to its glyphs (see [third-party notices](third-party.md)).
 
 - `docs/reference/`: every native Catalog page, with section previews, the
   Catalog's Rust usage excerpts, API notes and commands to run the native demo.
-- `docs/guides/`: HTML versions of the eight main Markdown guides. Edit the
+- `docs/guides/`: HTML versions of the main Markdown guides and the experimental iOS guide. Edit the
   Markdown, not the generated HTML.
 - `docs/images/components/`: settled, light/Violet **software-rendered** snapshots
   from the actual Rust builder trees. They are not HTML recreations, GPU

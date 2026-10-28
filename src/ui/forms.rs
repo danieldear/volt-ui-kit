@@ -542,13 +542,12 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
                     option = option.font_size(size);
                 }
                 hstack![
-                    option
-                        .on_click(move |app: &mut C| {
-                            (pick.borrow_mut())(app, value.clone());
-                            let s = close(app);
-                            s.open = false;
-                            s.query.clear();
-                        }),
+                    option.on_click(move |app: &mut C| {
+                        (pick.borrow_mut())(app, value.clone());
+                        let s = close(app);
+                        s.open = false;
+                        s.query.clear();
+                    }),
                     if chosen {
                         Element::from(icon(Icon::Check).size(14.).color(ColorToken::Primary))
                     } else {
@@ -584,12 +583,11 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Combobox<C, T>> for Elemen
         if let Some(surface) = c.surface {
             pop = pop.background(surface);
         }
-        let pop = pop
-            .on_dismiss(move |app: &mut C| {
-                let s = close(app);
-                s.open = false;
-                s.query.clear();
-            });
+        let pop = pop.on_dismiss(move |app: &mut C| {
+            let s = close(app);
+            s.open = false;
+            s.query.clear();
+        });
         vstack![field, pop].key(key).into()
     }
 }

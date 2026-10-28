@@ -15,6 +15,7 @@ use std::{
     },
 };
 use vello::{peniko::ImageData, wgpu};
+#[cfg(feature = "native")]
 use winit::window::Window;
 
 pub(super) fn alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::CompositeAlphaMode> {
@@ -416,15 +417,16 @@ fn present_pipeline(
         cache: None,
     })
 }
-pub(super) enum PresentStatus {
+pub enum PresentStatus {
     Presented,
     Retry,
     /// The device was lost or hit an uncaptured error; recreate the presenter.
     Lost,
 }
-pub(super) struct GpuPresenter {
+pub struct GpuPresenter {
     instance: wgpu::Instance,
-    window: Arc<Window>,
+    #[cfg(feature = "native")]
+    window: Option<Arc<Window>>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -435,7 +437,8 @@ pub(super) struct GpuPresenter {
     bind_group: Option<wgpu::BindGroup>,
     /// Reusable strip target for frames rendered in horizontal bands.
     strip: Option<(wgpu::Texture, [u32; 2])>,
-    renderer: vello::Renderer,
+    renderer: Option<vello::Renderer>,
+    allow_software: bool,
     encoder: GpuSceneEncoder,
     textures: TextureImages,
     lost: Arc<AtomicBool>,
@@ -444,13 +447,94 @@ pub(super) struct GpuPresenter {
     backend: wgpu::Backend,
     pub adapter_name: String,
 }
+// iOS Metal can advertise 15 inter-stage variables rather than WebGPU's
+// default 16. Our present shader needs only one; never request an unsupported
+// varying limit. Other desktop/compute limits retain their existing defaults.
+fn supports_gpu_drawing(flags: wgpu::DownlevelFlags) -> bool {
+    flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS | wgpu::DownlevelFlags::INDIRECT_EXECUTION)
+}
+fn surface_limits(available: wgpu::Limits) -> wgpu::Limits {
+    let mut requested = wgpu::Limits::default().using_resolution(available.clone());
+    requested.max_inter_stage_shader_variables = requested
+        .max_inter_stage_shader_variables
+        .min(available.max_inter_stage_shader_variables);
+    requested
+}
+#[cfg(test)]
+mod platform_limits_tests {
+    #[test]
+    fn simulator_without_indirect_execution_cannot_claim_gpu_drawing() {
+        use super::*;
+        assert!(!supports_gpu_drawing(wgpu::DownlevelFlags::COMPUTE_SHADERS));
+        assert!(supports_gpu_drawing(
+            wgpu::DownlevelFlags::COMPUTE_SHADERS | wgpu::DownlevelFlags::INDIRECT_EXECUTION
+        ));
+    }
+    #[test]
+    fn ios_varying_limit_does_not_change_desktop_compute_limits() {
+        let caps = super::wgpu::Limits {
+            max_inter_stage_shader_variables: 15,
+            ..Default::default()
+        };
+        let got = super::surface_limits(caps);
+        assert_eq!(got.max_inter_stage_shader_variables, 15);
+        assert_eq!(
+            got.max_compute_invocations_per_workgroup,
+            super::wgpu::Limits::default().max_compute_invocations_per_workgroup
+        );
+        assert_eq!(
+            super::surface_limits(super::wgpu::Limits::default()),
+            super::wgpu::Limits::default()
+        );
+    }
+}
 impl GpuPresenter {
+    /// Present to a platform-owned surface. The surface owner must outlive this
+    /// renderer; safe wgpu surface creation carries that ownership automatically.
+    pub fn from_surface(
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+        transparent: bool,
+    ) -> Result<Self, String> {
+        Self::on_surface(
+            #[cfg(feature = "native")]
+            None,
+            transparent,
+            false,
+            instance,
+            surface,
+        )
+    }
+
+    /// Explicit prototype fallback for adapters such as the iOS Simulator that
+    /// lack indirect compute execution. Draws in software and uploads the frame;
+    /// presentation still uses the supplied GPU surface. Never imply GPU drawing.
+    pub fn from_surface_with_software_fallback(
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+        transparent: bool,
+    ) -> Result<Self, String> {
+        Self::on_surface(
+            #[cfg(feature = "native")]
+            None,
+            transparent,
+            true,
+            instance,
+            surface,
+        )
+    }
+    /// Whether scene rasterization uses Vello compute, not just GPU presentation.
+    pub fn uses_gpu_drawing(&self) -> bool {
+        self.renderer.is_some()
+    }
+
+    #[cfg(feature = "native")]
     pub fn new(window: Arc<Window>, transparent: bool) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window.clone())
             .map_err(|e| e.to_string())?;
-        Self::on_surface(window, transparent, instance, surface)
+        Self::on_surface(Some(window), transparent, false, instance, surface)
     }
     /// A fresh device and renderer drawing to this presenter's surface, after
     /// the device was lost. On macOS every new surface adds a Metal layer to
@@ -459,15 +543,25 @@ impl GpuPresenter {
     pub fn recreate(self, transparent: bool) -> Result<Self, String> {
         let Self {
             instance,
+            #[cfg(feature = "native")]
             window,
             surface,
+            allow_software,
             ..
         } = self;
-        Self::on_surface(window, transparent, instance, surface)
+        Self::on_surface(
+            #[cfg(feature = "native")]
+            window,
+            transparent,
+            allow_software,
+            instance,
+            surface,
+        )
     }
     fn on_surface(
-        window: Arc<Window>,
+        #[cfg(feature = "native")] window: Option<Arc<Window>>,
         transparent: bool,
+        allow_software: bool,
         instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
     ) -> Result<Self, String> {
@@ -476,6 +570,10 @@ impl GpuPresenter {
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;
+        let gpu_drawing = supports_gpu_drawing(adapter.get_downlevel_capabilities().flags);
+        if !gpu_drawing && !allow_software {
+            return Err("GPU drawing requires compute shaders and indirect execution; this adapter does not advertise both".into());
+        }
         let caps = surface.get_capabilities(&adapter);
         let alpha = if transparent {
             alpha_mode(&caps.alpha_modes)
@@ -498,7 +596,7 @@ impl GpuPresenter {
             .ok_or("compositor does not advertise an 8-bit non-sRGB surface")?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Volt UI Vello GPU renderer"),
-            required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
+            required_limits: surface_limits(adapter.limits()),
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;
@@ -530,17 +628,25 @@ impl GpuPresenter {
             }],
         });
         let pipeline = present_pipeline(&device, &layout, format, info.backend, alpha);
-        let renderer = vello::Renderer::new(
-            &device,
-            vello::RendererOptions {
-                use_cpu: false,
-                antialiasing_support: vello::AaSupport::area_only(),
-                ..Default::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
+        let renderer = if gpu_drawing {
+            Some(
+                vello::Renderer::new(
+                    &device,
+                    vello::RendererOptions {
+                        use_cpu: false,
+                        antialiasing_support: vello::AaSupport::area_only(),
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| e.to_string())?,
+            )
+        } else {
+            eprintln!("Volt UI: adapter lacks Vello compute/indirect support; explicit software drawing + Metal presentation fallback active");
+            None
+        };
         Ok(Self {
             instance,
+            #[cfg(feature = "native")]
             window,
             surface,
             device,
@@ -552,6 +658,7 @@ impl GpuPresenter {
             bind_group: None,
             strip: None,
             renderer,
+            allow_software,
             encoder: GpuSceneEncoder::default(),
             textures: TextureImages::default(),
             lost,
@@ -592,12 +699,15 @@ impl GpuPresenter {
         batches: &[PaintBatch<Shape, Glyph>],
         painter: &mut RasterPainter,
     ) -> Result<(), String> {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Ok(());
+        };
         encode_frame(
             &mut self.encoder,
             &mut self.textures,
             &self.device,
             &self.queue,
-            &mut self.renderer,
+            renderer,
             batches,
             painter,
         )
@@ -652,36 +762,45 @@ impl GpuPresenter {
             self.texture = Some(texture);
         }
         let texture = self.texture.as_ref().unwrap();
-        let framebuffer_upload_bytes = if let Some(reason) = self.encoder.stats().over_budget {
-            report_fallback_once(reason);
-            let pixmap = painter.rasterize(batches, background)?;
-            self.queue.write_texture(
-                texture.as_image_copy(),
-                &straight_rgba(&pixmap),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(w * 4),
-                    rows_per_image: Some(h),
-                },
-                wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-            );
-            w as usize * h as usize * 4
-        } else {
-            render_frame(
-                &self.device,
-                &self.queue,
-                &mut self.renderer,
-                &self.encoder,
-                texture,
-                [w, h],
-                background,
-                &mut self.strip,
-            )?;
-            0
+        let framebuffer_upload_bytes = match self
+            .renderer
+            .as_mut()
+            .filter(|_| self.encoder.stats().over_budget.is_none())
+        {
+            None => {
+                if let Some(reason) = self.encoder.stats().over_budget {
+                    report_fallback_once(reason);
+                }
+                let pixmap = painter.rasterize(batches, background)?;
+                self.queue.write_texture(
+                    texture.as_image_copy(),
+                    &straight_rgba(&pixmap),
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w * 4),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                w as usize * h as usize * 4
+            }
+            Some(renderer) => {
+                render_frame(
+                    &self.device,
+                    &self.queue,
+                    renderer,
+                    &self.encoder,
+                    texture,
+                    [w, h],
+                    background,
+                    &mut self.strip,
+                )?;
+                0
+            }
         };
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
@@ -693,10 +812,15 @@ impl GpuPresenter {
             wgpu::CurrentSurfaceTexture::Lost => {
                 // Only a lost surface is replaced (it leaves its layer behind
                 // on macOS; see `recreate`).
-                self.surface = self
-                    .instance
-                    .create_surface(self.window.clone())
-                    .map_err(|e| e.to_string())?;
+                #[cfg(feature = "native")]
+                if let Some(window) = &self.window {
+                    self.surface = self
+                        .instance
+                        .create_surface(window.clone())
+                        .map_err(|e| e.to_string())?;
+                }
+                // Embedded UIKit surfaces keep their layer; reconfigure in place.
+
                 self.surface.configure(&self.device, &self.config);
                 return Ok(PresentStatus::Retry);
             }
@@ -731,14 +855,17 @@ impl GpuPresenter {
             pass.draw(0..3, 0..1);
         }
         self.queue.submit([encoder.finish()]);
-        self.window.pre_present_notify();
+        #[cfg(feature = "native")]
+        if let Some(window) = &self.window {
+            window.pre_present_notify();
+        }
         self.queue.present(frame);
         if self.lost.load(Ordering::Relaxed) {
             return Ok(PresentStatus::Lost);
         }
         if std::env::var_os("VOLT_UI_TRACE").is_some() {
             let stats = self.encoder.stats();
-            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} bands={} lines_est={} segments_est={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.bands,stats.lines_estimate,stats.segments_estimate,stats.over_budget,stats.resource_bytes,framebuffer_upload_bytes);
+            eprintln!("VOLT_UI_GPU backend=vello adapter={} shapes={} glyphs={} layers={} spill_slots={} bands={} lines_est={} segments_est={} software_frame={:?} resource_bytes={} framebuffer_upload_bytes={}",self.adapter_name,stats.shapes,stats.glyphs,stats.layers,stats.spill_slots,stats.bands,stats.lines_estimate,stats.segments_estimate,stats.over_budget.or(if self.renderer.is_none() { Some("adapter capabilities") } else { None }),stats.resource_bytes,framebuffer_upload_bytes);
         }
         Ok(PresentStatus::Presented)
     }
@@ -760,7 +887,7 @@ pub struct GpuOffscreenRenderer {
 }
 impl GpuOffscreenRenderer {
     #[cfg(test)]
-    pub(super) fn resident_image_bytes(&self) -> usize {
+    pub(crate) fn resident_image_bytes(&self) -> usize {
         self.textures.bytes
     }
     pub fn new() -> Result<Self, String> {
@@ -771,7 +898,7 @@ impl GpuOffscreenRenderer {
         let info = adapter.get_info();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Volt UI offscreen GPU"),
-            required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
+            required_limits: surface_limits(adapter.limits()),
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;

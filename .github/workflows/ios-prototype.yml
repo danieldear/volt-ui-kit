@@ -1,0 +1,59 @@
+name: Experimental iOS prototype
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'examples/ios/**'
+      - 'crates/volt-ui-kit-mobile/**'
+      - '.github/workflows/ios-prototype.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ios-prototype-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  rust-host:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+          components: clippy, rustfmt
+      - name: Shared host and scaffolding regression tests
+        run: |
+          cargo fmt --manifest-path crates/volt-ui-kit-mobile/Cargo.toml -- --check
+          cargo fmt --manifest-path examples/ios/rust/Cargo.toml -- --check
+          cargo test --locked --manifest-path crates/volt-ui-kit-mobile/Cargo.toml --target-dir target/ios-prototype
+          cargo test --locked --features dev-tools --bin cargo-volt
+      - name: Rust prototype behavior
+        run: cargo test --locked --manifest-path examples/ios/rust/Cargo.toml --target-dir target/ios-prototype
+      - name: Compile both iOS targets without desktop services
+        run: |
+          cargo check --locked --lib --no-default-features --features mobile --target aarch64-apple-ios
+          cargo check --locked --lib --no-default-features --features mobile --target aarch64-apple-ios-sim
+      - name: Check the shared iOS C boundary and example
+        run: |
+          cargo clippy --locked --manifest-path crates/volt-ui-kit-mobile/Cargo.toml --target-dir target/ios-prototype --target aarch64-apple-ios-sim -- -D warnings
+          cargo clippy --locked --manifest-path examples/ios/rust/Cargo.toml --target-dir target/ios-prototype --target aarch64-apple-ios-sim -- -D warnings
+      - name: Generate and compile a Rust-first project (paths with spaces)
+        shell: bash
+        run: |
+          cargo build --locked --features dev-tools --bin cargo-volt
+          qa="$RUNNER_TEMP/Volt iOS Template"
+          mkdir -p "$qa"
+          target/debug/cargo-volt new "$qa/rust-notebook" --platform ios --kit-path "$PWD"
+          export CARGO_TARGET_DIR="$PWD/target/ios-prototype"
+          cargo test --manifest-path "$qa/rust-notebook/Cargo.toml"
+          xcodebuild -project "$qa/rust-notebook/ios/VoltApp.xcodeproj" -scheme VoltApp \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath "$RUNNER_TEMP/VoltIOSDerivedData" build
+      # Simulator UI workflows and hardware GPU/energy acceptance are distinct
+      # from this compilation job; see docs/ios-prototype.md for local tests.

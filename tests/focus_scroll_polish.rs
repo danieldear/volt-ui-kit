@@ -325,7 +325,11 @@ fn end_anchored_scroll_follows_growth_until_the_reader_scrolls_away() {
 #[test]
 fn keys_scroll_a_line_or_a_page_of_the_view_at_the_point() {
     for scale in [1., 2.] {
-        let ui: Element<App> = vstack![spacer().height(1000.).flex(0.)].key("page").height(140.).scroll(Scroll::Vertical).into();
+        let ui: Element<App> = vstack![spacer().height(1000.).flex(0.)]
+            .key("page")
+            .height(140.)
+            .scroll(Scroll::Vertical)
+            .into();
         let (r, _) = mount(ui, scale);
         // A line, and the view's height less a line.
         assert_eq!(r.key_scroll_steps(20. * scale, 20. * scale), [40., 100.]);

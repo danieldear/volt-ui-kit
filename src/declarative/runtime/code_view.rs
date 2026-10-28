@@ -369,7 +369,12 @@ impl Runtime {
     }
     /// The overlay scrollbar, physical: `[x, track top, track length,
     /// thumb length, thumb top]`, or `None` when everything fits.
-    fn code_scrollbar(&self, b: &LayoutBox, props: &CodeViewProps, offset_y: f32) -> Option<[f32; 5]> {
+    fn code_scrollbar(
+        &self,
+        b: &LayoutBox,
+        props: &CodeViewProps,
+        offset_y: f32,
+    ) -> Option<[f32; 5]> {
         let s = self.scale;
         let [bx, by, bw, bh] = b.bounds.bounds();
         let lh = props.line_height * s;
@@ -380,9 +385,19 @@ impl Runtime {
         let track = bh - 12. * s;
         let length = (track * bh / content).clamp(24. * s, track);
         let max = (props.line_count.saturating_sub(1)) as f32 * props.line_height;
-        let t = if max > 0. { (offset_y / max).clamp(0., 1.) } else { 0. };
+        let t = if max > 0. {
+            (offset_y / max).clamp(0., 1.)
+        } else {
+            0.
+        };
         let top = by + 6. * s;
-        Some([bx + bw - SCROLLBAR_HIT * s, top, track, length, top + (track - length) * t])
+        Some([
+            bx + bw - SCROLLBAR_HIT * s,
+            top,
+            track,
+            length,
+            top + (track - length) * t,
+        ])
     }
     /// Moves a held thumb so the pointer keeps its hold at physical `y`.
     fn code_drag_thumb(&self, b: &LayoutBox, props: &CodeViewProps, y: f32, grab: f32) -> bool {
@@ -459,10 +474,19 @@ impl Runtime {
     /// Whether physical `x`, `y` is over a code view's scrollbar, which takes
     /// presses for itself (and shows the arrow, not the I-beam).
     pub(super) fn code_scrollbar_at(&self, x: f32, y: f32) -> bool {
-        let held = self.code_views.borrow().values().any(|st| st.thumb.is_some());
+        let held = self
+            .code_views
+            .borrow()
+            .values()
+            .any(|st| st.thumb.is_some());
         held || self.code_box_at(x, y).is_some_and(|b| {
-            let offset = self.code_views.borrow().get(&b.id).map_or(0., |st| st.offset[1]);
-            self.code_scrollbar(b, b.ext.code.as_deref().unwrap(), offset).is_some_and(|[left, ..]| x >= left)
+            let offset = self
+                .code_views
+                .borrow()
+                .get(&b.id)
+                .map_or(0., |st| st.offset[1]);
+            self.code_scrollbar(b, b.ext.code.as_deref().unwrap(), offset)
+                .is_some_and(|[left, ..]| x >= left)
         })
     }
     /// Whether a press at physical `x`, `y` lands on a code view.
@@ -591,13 +615,28 @@ impl Runtime {
         // The scrollbar strip: hold the thumb and drag it, or press the
         // track to bring the thumb under the pointer and keep dragging.
         let props = b.ext.code.as_deref().unwrap();
-        let offset = self.code_views.borrow().get(&b.id).map_or(0., |st| st.offset[1]);
+        let offset = self
+            .code_views
+            .borrow()
+            .get(&b.id)
+            .map_or(0., |st| st.offset[1]);
         if let Some([left, _, _, length, thumb]) = self.code_scrollbar(&b, props, offset) {
             if x >= left {
-                let grab = if (thumb..thumb + length).contains(&y) { y - thumb } else { length / 2. };
-                self.code_views.borrow_mut().entry(b.id.clone()).or_default().thumb = Some(grab);
+                let grab = if (thumb..thumb + length).contains(&y) {
+                    y - thumb
+                } else {
+                    length / 2.
+                };
+                self.code_views
+                    .borrow_mut()
+                    .entry(b.id.clone())
+                    .or_default()
+                    .thumb = Some(grab);
                 let changed = self.code_drag_thumb(&b, props, y, grab);
-                return Ok(Some(InputOutcome { changed: true, activated: changed }));
+                return Ok(Some(InputOutcome {
+                    changed: true,
+                    activated: changed,
+                }));
             }
         }
         self.ime_cancel();
@@ -643,16 +682,32 @@ impl Runtime {
         let at = self.code_position_at(&b, x, y);
         let props = b.ext.code.as_deref().unwrap();
         let inside = props.selections.iter().any(|s| {
-            let (start, end) = if s.anchor <= s.head { (s.anchor, s.head) } else { (s.head, s.anchor) };
+            let (start, end) = if s.anchor <= s.head {
+                (s.anchor, s.head)
+            } else {
+                (s.head, s.anchor)
+            };
             start != end && start <= at && at <= end
         });
         self.focused = Some(b.id.clone());
         self.focus_visible = false;
         if inside {
-            return Ok(Some(InputOutcome { changed: true, activated: false }));
+            return Ok(Some(InputOutcome {
+                changed: true,
+                activated: false,
+            }));
         }
         self.ime_cancel();
-        let (outcome, _) = self.dispatch_code(&b.id, CodeInput::Press { at, clicks: 1, modifiers: InputModifiers::default() }, handlers, ctx)?;
+        let (outcome, _) = self.dispatch_code(
+            &b.id,
+            CodeInput::Press {
+                at,
+                clicks: 1,
+                modifiers: InputModifiers::default(),
+            },
+            handlers,
+            ctx,
+        )?;
         Ok(Some(outcome))
     }
     /// The pointer rests at physical `x`, `y` (`None`: it left the window).
@@ -667,7 +722,8 @@ impl Runtime {
         let here = point.and_then(|[x, y]| {
             let b = self.code_box_at(x, y)?;
             let props = b.ext.code.as_deref()?;
-            (props.report_hover && !self.code_scrollbar_at(x, y)).then(|| (b.id.clone(), self.code_position_at(b, x, y)))
+            (props.report_hover && !self.code_scrollbar_at(x, y))
+                .then(|| (b.id.clone(), self.code_position_at(b, x, y)))
         });
         let mut reports: Vec<(String, Option<CodePosition>)> = Vec::new();
         {
@@ -687,13 +743,27 @@ impl Runtime {
             }
         }
         let mut result: Option<InputOutcome> = None;
-        let point = point.map_or([0, 0], |[x, y]| [(x / self.scale).round() as i32, (y / self.scale).round() as i32]);
+        let point = point.map_or([0, 0], |[x, y]| {
+            [
+                (x / self.scale).round() as i32,
+                (y / self.scale).round() as i32,
+            ]
+        });
         for (id, at) in reports {
-            self.code_views.borrow_mut().entry(id.clone()).or_default().hovered = at;
-            if !self.boxes.iter().any(|b| b.id == id && b.ext.code.is_some()) {
+            self.code_views
+                .borrow_mut()
+                .entry(id.clone())
+                .or_default()
+                .hovered = at;
+            if !self
+                .boxes
+                .iter()
+                .any(|b| b.id == id && b.ext.code.is_some())
+            {
                 continue;
             }
-            let (outcome, _) = self.dispatch_code(&id, CodeInput::Hover { at, point }, handlers, ctx)?;
+            let (outcome, _) =
+                self.dispatch_code(&id, CodeInput::Hover { at, point }, handlers, ctx)?;
             let r = result.get_or_insert(InputOutcome::default());
             r.changed |= outcome.changed;
             r.activated |= outcome.activated;
@@ -715,11 +785,19 @@ impl Runtime {
             .iter()
             .find_map(|(id, st)| st.thumb.map(|grab| (id.clone(), grab)));
         if let Some((id, grab)) = held {
-            let Some(b) = self.boxes.iter().find(|b| b.id == id && b.ext.code.is_some()).cloned() else {
+            let Some(b) = self
+                .boxes
+                .iter()
+                .find(|b| b.id == id && b.ext.code.is_some())
+                .cloned()
+            else {
                 return Ok(None);
             };
             let changed = self.code_drag_thumb(&b, b.ext.code.as_deref().unwrap(), y, grab);
-            return Ok(Some(InputOutcome { changed, activated: changed }));
+            return Ok(Some(InputOutcome {
+                changed,
+                activated: changed,
+            }));
         }
         let Some(b) = self.focused_code().cloned() else {
             return Ok(None);
@@ -1427,9 +1505,23 @@ impl Runtime {
                 let top = y_of(head.line);
                 // A block is translucent so the character under it stays legible.
                 let (rect, color) = match props.caret_shape {
-                    1 => (Rect::new(x, top + 2. * s, f.advance, lh - 4. * s), [caret_color[0], caret_color[1], caret_color[2], caret_color[3] * 0.45]),
-                    2 => (Rect::new(x, top + lh - 2. * s - width, f.advance, width), caret_color),
-                    _ => (Rect::new(x - width / 2., top + 2. * s, width, lh - 4. * s), caret_color),
+                    1 => (
+                        Rect::new(x, top + 2. * s, f.advance, lh - 4. * s),
+                        [
+                            caret_color[0],
+                            caret_color[1],
+                            caret_color[2],
+                            caret_color[3] * 0.45,
+                        ],
+                    ),
+                    2 => (
+                        Rect::new(x, top + lh - 2. * s - width, f.advance, width),
+                        caret_color,
+                    ),
+                    _ => (
+                        Rect::new(x - width / 2., top + 2. * s, width, lh - 4. * s),
+                        caret_color,
+                    ),
                 };
                 if let Some(r) = rect.and_then(|r| intersection(r, text_clip)) {
                     let [x, y, w, h] = r.bounds();
@@ -1493,7 +1585,11 @@ impl Runtime {
                 };
                 let top = by + 6. * s + (track - length) * t;
                 // Held, it widens and darkens so it reads as grabbed.
-                let (w, a) = if st.thumb.is_some() { (9., 0.3) } else { (7., 0.14) };
+                let (w, a) = if st.thumb.is_some() {
+                    (9., 0.3)
+                } else {
+                    (7., 0.14)
+                };
                 p.card_round(
                     &mut shapes,
                     [bx + bw - (4. + w) * s, top, w * s, length],

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Rust-owned navigation, scrolling and forms with a thin UIKit host. Prototype limits and tests."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Experimental iOS — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.5 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/ios-prototype.html" aria-current="page">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/ios-prototype.html" aria-current="page">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Experimental iOS</div><div class="reference-title"><p>Guide</p><h1>Experimental iOS</h1><div class="reference-description">Rust-owned navigation, scrolling and forms with a thin UIKit host. Prototype limits and tests.</div></div><article class="guide-article"><p><strong>An integration prototype, not production mobile support.</strong> Build screens,
+state and callbacks in Rust with Volt UI Kit. The toolkit supplies the reusable
+UIKit/Metal host, native single-line editor and Xcode build integration. No
+per-app Swift application code, SwiftUI, WebView or second widget framework is
+needed. Android has a shared Rust foundation, <strong>not a working Android host</strong>.</p>
+<h2 id="create-a-rust-ios-project">Create a Rust iOS project</h2>
+<p>Requires macOS, full Xcode with an installed iPhone Simulator, Python 3 and
+Cargo/Rust 1.89+. From a current toolkit checkout:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo install --locked --path . --features dev-tools --bin cargo-volt
+rustup target add aarch64-apple-ios-sim aarch64-apple-ios
+cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit
+cd my-ios-app
+open ios/VoltApp.xcodeproj</code></pre></div><p>Select <strong>VoltApp</strong>, choose an installed iPhone Simulator, then Run. Xcode builds
+and links the Rust static library automatically. Intel Macs need
+<code>x86_64-apple-ios</code> instead of <code>aarch64-apple-ios-sim</code>. Deployment target is iOS 17;
+that does not establish runtime coverage of all iOS 17 devices.</p>
+<p>The template includes navigation, a scrollable list, an editable name form,
+validation and a Rust callback counter. Edit <strong><code>src/lib.rs</code></strong>. Session state is
+not persisted. No permission, network, telemetry or cleanup action is requested.
+<code>--template ios</code> is an alternative to <code>--platform ios</code>; minimal/navigation with
+<code>--platform ios</code> select the same starter. Desktop templates/defaults are unchanged.</p>
+<div class="reference-code"><div>text<span>Source</span></div><pre tabindex="0" role="region" aria-label="text"><code>my-ios-app/
+  Cargo.toml               staticlib/rlib + reusable host dependency
+  src/lib.rs               your Rust state, views, callbacks, factory
+  ios/
+    VoltApp.xcodeproj/      ready to open; shared host source references
+    App/Info.plist         bundle/scene configuration
+    build-rust.sh          metadata launcher for the canonical build helper
+    Tests/SmokeTests.swift generated native workflow test (not screen code)</code></pre></div><p>The Xcode project <strong>references</strong>, rather than copies, the canonical Swift host
+and C header in the local <code>volt-ui-kit-mobile</code> dependency. No XcodeGen, Swift
+package manager, per-app Swift entry point or extra UI dependency is needed to
+use a generated project. Maintain the local toolkit checkout; if it moves,
+update both Cargo and Xcode references or regenerate into a fresh directory.
+Paths with spaces work; toolkit paths with <code>$</code> or control characters are
+rejected because Xcode expands build-setting variables. Existing destinations
+are never overwritten. The host crate is experimental/local and not published.</p>
+<p>The first Xcode build resolves <code>Cargo.lock</code>; commit it. Subsequent builds use
+<code>--locked</code>. A normal <code>cargo build</code> produces a library, not a desktop executable;
+<code>cargo volt dev</code> is currently desktop-only.</p>
+<h2 id="rust-application-contract">Rust application contract</h2>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit_mobile::{Application, HostContext};
+use volt_ui_kit_mobile::ui_kit::ui::prelude::*;
+
+pub struct App { count: usize }
+fn view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    vstack![
+        text(format!(&quot;Count: {}&quot;, app.count)).font_size(28.),
+        button(&quot;Add&quot;).key(&quot;add&quot;)
+            .on_click(|app: &amp;mut App| app.count += 1),
+    ].padding(20., Edge::All).into()
+}
+pub fn application(host: HostContext) -&gt; Result&lt;Application&lt;App&gt;, String&gt; {
+    Application::new(host, App { count: 0 }, view)
+}
+volt_ui_kit_mobile::export_ios_app!(application);</code></pre></div><p>Export one factory per static-library application. The macro supplies the
+registration symbol; developers need no raw pointers or handwritten UIKit glue.
+The root toolkit retains <code>forbid(unsafe_code)</code>. The separate host crate contains
+the narrow, documented unsafe iOS surface/FFI boundary. Installed system SF is
+read locally, not bundled; an explicit app root font overrides the host fallback.</p>
+<p><code>Application::theme_with</code> supplies an app-owned <code>UiTheme</code> function;
+<code>on_appearance</code> optionally updates app state for literal light/dark styles.
+The default is Zinc light/dark. Native editor/background colors come from the
+Rust theme, not app-specific hardcoded Swift colors or field IDs.</p>
+<div class="reference-code"><div>text<span>Source</span></div><pre tabindex="0" role="region" aria-label="text"><code>Your Rust app: state + view + typed callbacks
+                        |
+                        v
+volt-ui-kit-mobile: Application + PlatformEvent + semantic snapshot
+                        |
+                        v
+volt-ui-kit: MobileView -&gt; existing Runtime -&gt; layout / text / drawing
+                        |
+          +-------------+-------------------+
+          |                                 |
+          v                                 v
+  iOS adapter (implemented)          Android adapter (future)
+  UIKit lifecycle/safe area         Activity + native window lifecycle
+  native keyboard / AX proxies     native keyboard / TalkBack / back
+  CAMetalLayer + Metal surface     Vulkan surface + Gradle/NDK packaging</code></pre></div><p>The typed platform event layer handles touch, focus/text, scroll, appearance,
+resize and suspension without UIKit/JNI types. The iOS wire decoder bounds
+messages, rejects unknown fields/operations and invalid geometry. The header
+and Rust host check ABI version 1 before creating a surface. This is an
+<strong>experimental internal host ABI</strong>, not a stable third-party ABI guarantee.
+UIKit owns the Metal layer; all host calls and destruction stay on its main
+thread. Checked numeric handles replace exported object pointers. The surface
+is dropped before UIKit releases its layer. Host failures stay visible.</p>
+<h2 id="run-the-original-field-notes-example">Run the original Field Notes example</h2>
+<p>The existing three-screen prototype now uses this <strong>same reusable host</strong>:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>open examples/ios/VoltIOS.xcodeproj
+cargo test --locked --manifest-path examples/ios/rust/Cargo.toml \
+  --target-dir target/ios-prototype
+cargo test --locked --manifest-path crates/volt-ui-kit-mobile/Cargo.toml \
+  --target-dir target/ios-prototype</code></pre></div><p>Choose <strong>VoltIOS</strong> and an installed iPhone Simulator. Maintainers need XcodeGen
+only when regenerating the checked-in example project after editing
+<code>examples/ios/project.yml</code>; developers using the template do not need it.</p>
+<ul>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/examples/ios/rust/src/lib.rs">Field Notes screens/state</a></li>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/src/mobile.rs">Safe mobile view</a></li>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/crates/volt-ui-kit-mobile/src/application.rs">Reusable application and semantics</a></li>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/crates/volt-ui-kit-mobile/src/protocol.rs">Bounded platform events</a></li>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/crates/volt-ui-kit-mobile/src/ios.rs">iOS surface/FFI adapter</a></li>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/crates/volt-ui-kit-mobile/apple/VoltUIHost.swift">Shared UIKit host</a></li>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/src/bin/volt/ios.rs">Project generator</a></li>
+<li><a href="https://github.com/danieldear/volt-ui-kit/blob/main/examples/ios/Tests/PrototypeTests.swift">Field Notes UI tests</a></li>
+</ul>
+<h2 id="test-a-generated-project">Test a generated project</h2>
+<p>From the generated app directory, after initial dependency resolution:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo test --locked
+xcodebuild -project ios/VoltApp.xcodeproj -scheme VoltApp \
+  -destination &#39;platform=iOS Simulator,name=iPhone 18 Pro&#39; test</code></pre></div><p>Use an installed Simulator name. The generated UI test checks the Rust counter,
+navigation, native text editing, Save and scrolling to the last row. Shared
+headless tests cover callbacks, Unicode values, suspension, font recomposition,
+app-controlled theming, invalid resize atomicity, clipped semantics and secret
+withholding. Field Notes additionally checks Cancel, validation, rotation,
+keyboard layout, background/resume and idle redraw stability.</p>
+<p>The generated app disables code signing. For a physical device, enable Code
+Signing Allowed, select your Development Team and a unique bundle ID in Xcode.
+Unsigned device compilation/linking is <strong>not</strong> physical-device acceptance.
+Signing, provisioning and App Store distribution remain developer-owned.</p>
+<h2 id="gpu-drawing-versus-presentation">GPU drawing versus presentation</h2>
+<p><strong>A Metal surface does not prove GPU rasterization.</strong> The host queries Vello&#39;s
+compute and indirect-execution requirements. Compatible adapters draw on the
+GPU. The tested Simulator lacks indirect execution, so the starter explicitly
+calls <code>.allow_software_fallback(true)</code>: software drawing with Metal presentation.
+<code>Application</code> defaults to GPU-only; fallback is an app choice, not a silent
+change to desktop GPU defaults. Inspect the <code>render-proof</code> diagnostic for the
+actual backend, drawing mode and presented-frame count. <code>VOLT_UI_TRACE=1</code> adds
+renderer diagnostics. Rendering is event-driven, with at most three surface
+retries and no perpetual display link. Mobile animations are currently settled.</p>
+<p>See Apple&#39;s <a href="https://developer.apple.com/documentation/metal/developing-metal-apps-that-run-in-simulator">Simulator Metal restrictions</a>.
+Physical iPhone/iPad GPU, memory/energy and frame-time acceptance are pending.</p>
+<h2 id="android-direction-and-compatibility">Android direction and compatibility</h2>
+<p>Android was considered in the extraction, not bolted onto UIKit. The common
+Rust application/event/snapshot layer has no Apple-specific public types. The
+iOS adapter is target-gated; wgpu selects Vulkan on Android. Cross-compiling
+this Rust layer does <strong>not</strong> provide an Activity, working keyboard or APK.
+<code>cargo volt new --platform android</code> currently returns an explicit unsupported
+message rather than generating a misleading empty project.</p>
+<p>A future Android vertical slice needs:</p>
+<ol>
+<li>Activity and native-window lifecycle, surface loss/recreation and insets.</li>
+<li>Vulkan adapter/device validation, pause/resume and Android back behavior.</li>
+<li>Native IME/composition/selection and accessibility (TalkBack), not key-event
+simulation as a substitute for editable forms.</li>
+<li>Gradle/NDK/JNI packaging, signing and a reusable Rust-first template.</li>
+<li>Emulator <strong>and physical-device</strong> interaction, GPU/energy and compatibility QA.</li>
+</ol>
+<p>The Android <a href="https://developer.android.com/games/agdk/game-activity/use-text-input">GameActivity text-input guide</a>
+and <a href="https://developer.android.com/ndk/reference/group/a-native-window">native-window API</a>
+are reference points, not a committed dependency choice. No new Android OS
+library, Kotlin UI framework or runtime dependency was added here.</p>
+<ul>
+<li>Default dependencies and legacy Painter/Viewport APIs remain unchanged.</li>
+<li><code>native</code> / <code>native-gpu</code> desktop re-exports retain their paths and types.</li>
+<li><code>rendering</code> shares drawing without a desktop host; <code>rendering-gpu</code> adds GPU.</li>
+<li><code>mobile</code> opts into the safe touch view. Use it alone on iOS, not desktop
+services or <code>--all-features</code> for an iOS target.</li>
+<li>The reusable host is a separate crate, not a new dependency of desktop apps.</li>
+<li>Volt&#39;s live vendored snapshot is not modified; compatibility uses a copy.</li>
+</ul>
+<h2 id="remaining-mobile-limits">Remaining mobile limits</h2>
+<p>This is not yet a production iOS SDK. Pending: physical-device GPU/energy QA;
+kinetic scrolling/bounce, gesture arbitration/multitouch and native back swipe;
+full IME/dictation/font fallback and multiline input; Dynamic Type, VoiceOver
+and Switch Control acceptance; persistence/restoration/multi-window and mobile
+services; signing/release coverage and distributable SDK packaging. Secure
+fields deliberately remain read-only in the native adapter because secret
+values are withheld from snapshots; existing values cannot be cleared by a
+blank editor. The active plain single-line field alone uses a native editor.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/ios-prototype.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#create-a-rust-ios-project">Create a Rust iOS project</a><a href="#rust-application-contract">Rust application contract</a><a href="#run-the-original-field-notes-example">Run the original Field Notes example</a><a href="#test-a-generated-project">Test a generated project</a><a href="#gpu-drawing-versus-presentation">GPU drawing versus presentation</a><a href="#android-direction-and-compatibility">Android direction and compatibility</a><a href="#remaining-mobile-limits">Remaining mobile limits</a><div class="toc-note">These are static docs. Run the native Catalog to try input, focus and animation.</div></aside></div></body></html>

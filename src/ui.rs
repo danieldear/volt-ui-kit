@@ -264,6 +264,7 @@ type SelectionCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::TextSelect
 type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
 type CodeCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::CodeInput) -> Option<String>>;
 type CodeCaretCallback<C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>)>;
+type DragCallback<C> = Box<dyn FnMut(&mut C, [f32; 2])>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
@@ -475,10 +476,18 @@ pub struct Element<C> {
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
     /// Containers: a drag began on them; the offset from the press.
-    drag: Option<Box<dyn FnMut(&mut C, [f32; 2])>>,
+    drag: Option<DragCallback<C>>,
     drag_start: Option<Click<C>>,
 }
 impl<C> Element<C> {
+    #[cfg(feature = "mobile")]
+    pub(crate) fn host_font(mut self, family: &str) -> Self {
+        self.node
+            .style
+            .font_family
+            .get_or_insert_with(|| family.to_owned());
+        self
+    }
     fn new(kind: Kind) -> Self {
         Self {
             node: {
@@ -578,8 +587,10 @@ impl<C: 'static> Element<C> {
             }
             if let Some(f) = drag_start {
                 let name = format!("rust-drag-start-{}", *count);
-                handlers.on_activate(&name, f).map_err(|e|DocumentError(e.to_string()))?;
-                node.on_drag_start=Some(name);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag_start = Some(name);
             }
             if let Some(f) = drag {
                 let name = format!("rust-drag-{}", *count);

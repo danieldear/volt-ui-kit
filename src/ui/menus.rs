@@ -364,8 +364,14 @@ fn take_submenu<T>(items: &mut [MenuItem<T>], key: &str) -> Option<Vec<MenuItem<
 }
 /// A menu card of `items`, and where the row of the open submenu `open`
 /// starts (logical points from the card's top).
-fn menu_card<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, key: &str, open: Option<&str>, cx: &CardContext<C, T>) -> (Element<C>, Option<f32>) {
-    let (width, action, change, on_submenu, layout) = (cx.width, cx.action, cx.change, cx.on_submenu, cx.layout);
+fn menu_card<C: 'static, T: Clone + 'static>(
+    items: Vec<MenuItem<T>>,
+    key: &str,
+    open: Option<&str>,
+    cx: &CardContext<C, T>,
+) -> (Element<C>, Option<f32>) {
+    let (width, action, change, on_submenu, layout) =
+        (cx.width, cx.action, cx.change, cx.on_submenu, cx.layout);
     let row_height = layout.item_height;
     let mut card = Element::new(Kind::Panel);
     card.node.id = format!("{key}-content");
@@ -375,7 +381,11 @@ fn menu_card<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, key: &str,
     card.node.gap = layout.gap;
     card.node.surface.scroll = Some(Scroll::Vertical);
     card.node.style.radius = Some(Rounding::Radius(10.));
-    card.node.style.background = Some(cx.surface.clone().unwrap_or_else(|| ColorToken::Base200.into()));
+    card.node.style.background = Some(
+        cx.surface
+            .clone()
+            .unwrap_or_else(|| ColorToken::Base200.into()),
+    );
     // A menu floats: it always casts a shadow.
     card.node.effects.base.shadow = Some(
         crate::declarative::effects::Shadow::new()
@@ -388,7 +398,15 @@ fn menu_card<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, key: &str,
     let inner = (width - 2. * layout.padding).max(0.);
     // Rows share one label edge: past a glyph column when any row has a
     // check or an icon, otherwise just inside the row.
-    let glyphs = items.iter().any(|i| matches!(i.kind, ItemKind::Action { checked: Some(_), .. } | ItemKind::Action { icon: Some(_), .. }));
+    let glyphs = items.iter().any(|i| {
+        matches!(
+            i.kind,
+            ItemKind::Action {
+                checked: Some(_),
+                ..
+            } | ItemKind::Action { icon: Some(_), .. }
+        )
+    });
     let label_inset = if glyphs { 34. } else { 10. };
     let row_button = |label: String, inset: f32| {
         button(label)
@@ -425,7 +443,8 @@ fn menu_card<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, key: &str,
                 let click = on_submenu.clone().unwrap();
                 let hover = on_submenu.clone().unwrap();
                 let (k_click, k_hover) = (k.clone(), k.clone());
-                let mut b = row_button(label, label_inset).on_click(move |app: &mut C| (click.borrow_mut())(app, Some(k_click.clone())));
+                let mut b = row_button(label, label_inset)
+                    .on_click(move |app: &mut C| (click.borrow_mut())(app, Some(k_click.clone())));
                 if is_open {
                     b = b.background(ColorToken::Primary.alpha(14));
                 }
@@ -558,7 +577,14 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
         surface,
         layout,
     } = p;
-    let cx = CardContext { width, action: &action, change: &change, on_submenu: &on_submenu, surface, layout: &layout };
+    let cx = CardContext {
+        width,
+        action: &action,
+        change: &change,
+        on_submenu: &on_submenu,
+        surface,
+        layout: &layout,
+    };
     // An open submenu shows beside the menu, level with its row: one popup,
     // so both lists take the pointer and the keys.
     let mut items = items;
@@ -567,11 +593,16 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
     let content: Element<C> = match (side, top) {
         (Some(sub), Some(top)) => {
             let (list, _) = menu_card(sub, &format!("{key}-sub"), None, &cx);
-            hstack([card, vstack([spacer().height(top.max(0.)).flex(0.).into(), list]).key(format!("{key}-sub-column")).into()])
-                .key(format!("{key}-cascade"))
-                .gap(2., Axis::Horizontal)
-                .align(Align::Start)
-                .into()
+            hstack([
+                card,
+                vstack([spacer().height(top.max(0.)).flex(0.).into(), list])
+                    .key(format!("{key}-sub-column"))
+                    .into(),
+            ])
+            .key(format!("{key}-cascade"))
+            .gap(2., Axis::Horizontal)
+            .align(Align::Start)
+            .into()
         }
         _ => card,
     };

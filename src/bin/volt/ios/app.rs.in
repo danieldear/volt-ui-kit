@@ -1,0 +1,141 @@
+//! Edit this Rust file. The iOS window, keyboard and Metal glue live in Volt.
+use volt_ui_kit_mobile::ui_kit::ui::prelude::*;
+use volt_ui_kit_mobile::{Application, HostContext};
+#[derive(Default)]
+pub struct App {
+    count: usize,
+    settings: bool,
+    name: String,
+    message: String,
+}
+fn view(app: &App) -> Element<App> {
+    let body: Element<App> = if app.settings {
+        vstack![
+            text("Make it yours").font_size(30.).font_weight(700),
+            text("Display name").font_size(14.).color(ColorToken::Muted),
+            text_field(&app.name)
+                .key("name")
+                .accessible_label("Display name")
+                .height(52.)
+                .on_change(|a: &mut App, value| a.name = value),
+            button("Save")
+                .key("save")
+                .height(52.)
+                .rounded(12.)
+                .on_click(|a: &mut App| {
+                    if a.name.trim().is_empty() {
+                        a.message = "Please enter a name.".into();
+                    } else {
+                        a.settings = false;
+                        a.message = "Saved for this session.".into();
+                    }
+                }),
+            text(&app.message).key("status").color(ColorToken::Muted),
+        ]
+        .gap(16., Axis::Vertical)
+        .into()
+    } else {
+        vstack![
+            text(format!("Hello, {}", app.name))
+                .key("greeting")
+                .font_size(30.)
+                .font_weight(700),
+            text("Native UI. Your state. Rust callbacks.").color(ColorToken::Muted),
+            button(format!("Count: {}", app.count))
+                .key("increment")
+                .height(52.)
+                .rounded(12.)
+                .on_click(|a: &mut App| a.count += 1),
+            text(&app.message).key("status").color(ColorToken::Muted),
+            vstack(
+                (1..=30)
+                    .map(|i| text(format!("Item {i:02}"))
+                        .key(format!("item-{i}"))
+                        .height(48.)
+                        .background(ColorToken::Base200)
+                        .rounded(10.)
+                        .into())
+                    .collect::<Vec<_>>()
+            )
+            .gap(8., Axis::Vertical),
+        ]
+        .gap(16., Axis::Vertical)
+        .into()
+    };
+    vstack![
+        hstack![
+            text("__APP_NAME__").font_weight(700),
+            spacer(),
+            button(if app.settings { "Back" } else { "Settings" })
+                .key("navigation")
+                .height(44.)
+                .variant(ButtonVariant::Ghost)
+                .on_click(|a: &mut App| a.settings = !a.settings)
+        ]
+        .align(Align::Center),
+        vstack![body]
+            .key("content")
+            .flex(1.)
+            .scroll(Scroll::Vertical),
+    ]
+    .padding(20., Edge::All)
+    .gap(20., Axis::Vertical)
+    .background(ColorToken::Base100)
+    .color(ColorToken::BaseContent)
+    .into()
+}
+pub fn application(host: HostContext) -> Result<Application<App>, String> {
+    Ok(Application::new(
+        host,
+        App {
+            name: "Developer".into(),
+            ..App::default()
+        },
+        view,
+    )?
+    // Simulator lacks Vello indirect execution. Diagnostics report fallback;
+    // compatible devices still select GPU drawing. Physical testing required.
+    .allow_software_fallback(true))
+}
+volt_ui_kit_mobile::export_ios_app!(application);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use volt_ui_kit_mobile::PlatformEvent;
+    #[test]
+    fn rust_navigation_editing_validation_and_callbacks() {
+        let mut app = application(HostContext {
+            font_family: "sans-serif".into(),
+        })
+        .unwrap();
+        app.handle(PlatformEvent::Activate {
+            id: "increment".into(),
+        })
+        .unwrap();
+        assert_eq!(app.state().count, 1);
+        app.handle(PlatformEvent::Activate {
+            id: "navigation".into(),
+        })
+        .unwrap();
+        assert!(app.state().settings);
+        app.handle(PlatformEvent::Text {
+            id: "name".into(),
+            text: "".into(),
+        })
+        .unwrap();
+        app.handle(PlatformEvent::Activate { id: "save".into() })
+            .unwrap();
+        assert!(app.state().settings);
+        assert_eq!(app.state().message, "Please enter a name.");
+        app.handle(PlatformEvent::Text {
+            id: "name".into(),
+            text: "Zoë 東京".into(),
+        })
+        .unwrap();
+        app.handle(PlatformEvent::Activate { id: "save".into() })
+            .unwrap();
+        assert!(!app.state().settings);
+        assert_eq!(app.state().name, "Zoë 東京");
+    }
+}

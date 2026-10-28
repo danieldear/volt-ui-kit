@@ -419,17 +419,28 @@ fn copy_popups_keep_the_authorized_selection_including_inside_a_dialog() {
 #[test]
 fn a_new_root_context_clears_selection_even_when_descendant_keys_are_reused() {
     let build = |root: &str, words: &str| -> Element<App> {
-        vstack![text(words).key("same-message")].key(root).selectable(true).into()
+        vstack![text(words).key("same-message")]
+            .key(root)
+            .selectable(true)
+            .into()
     };
-    let (d, h) = build("session-one", "First answer").build().unwrap().into_parts();
+    let (d, h) = build("session-one", "First answer")
+        .build()
+        .unwrap()
+        .into_parts();
     let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
     let viewport = Viewport::new(400., 200., 1.).unwrap();
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     r.select_all_text(&mut Metrics);
     assert_eq!(r.selected_text(), Some("First answer"));
-    let (d, next) = build("session-two", "Other answer").build().unwrap().into_parts();
+    let (d, next) = build("session-two", "Other answer")
+        .build()
+        .unwrap()
+        .into_parts();
     r.replace_document(d, &next, &Bindings::default()).unwrap();
-    r.layout(viewport, &Bindings::default(), &mut Metrics).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
     assert_eq!(r.selected_text(), None);
 }
 
@@ -446,7 +457,11 @@ fn a_floating_surface_blocks_selection_of_read_only_text_behind_its_blank_space(
             .width(120.)
             .height(80.)
             .background("#FFFFFF|#202020")
-            .into()]).align(Align::Start).width(300.).height(160.).into(),
+            .into()])
+        .align(Align::Start)
+        .width(300.)
+        .height(160.)
+        .into(),
     ])
     .align(Align::Start)
     .width(300.)
@@ -461,7 +476,11 @@ fn a_floating_surface_blocks_selection_of_read_only_text_behind_its_blank_space(
     )
     .unwrap();
     let a = bounds(&r, "under");
-    assert!(!r.text_select_press(a[0] + 5., a[1] + 5., 3, false, &mut Metrics),"text={a:?}, floating={:?}",bounds(&r,"floating"));
+    assert!(
+        !r.text_select_press(a[0] + 5., a[1] + 5., 3, false, &mut Metrics),
+        "text={a:?}, floating={:?}",
+        bounds(&r, "floating")
+    );
     assert!(
         r.selected_text().is_none(),
         "blank popup must not select hidden document text"

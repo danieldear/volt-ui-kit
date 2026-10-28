@@ -13,6 +13,10 @@ def sources():
     files = [ROOT / n for n in ("Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md", "ROADMAP.md")]
     files += [p for d in ("src", "examples", "tests", "docs") for p in (ROOT / d).rglob("*")
               if p.is_file() and "images" not in p.relative_to(ROOT).parts]  # README screenshots
+    # Include the optional mobile host sources, never its build cache.
+    host = ROOT / "crates/volt-ui-kit-mobile"
+    files += [p for p in host.rglob("*") if p.is_file()
+              and not {"target", ".build", "xcuserdata"}.intersection(p.relative_to(host).parts)]
     return {str(p.relative_to(ROOT)): p for p in sorted(files)}
 
 def main():

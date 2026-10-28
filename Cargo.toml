@@ -20,11 +20,14 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = []
 declarative = ["dep:serde", "dep:serde_json"]
 rust-ui = ["declarative", "dep:unicode-segmentation"]
-native = ["rust-ui", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:cosmic-text", "dep:image", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+rendering = ["rust-ui", "dep:tiny-skia", "dep:cosmic-text", "dep:image"]
+rendering-gpu = ["rendering", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
+mobile = ["rendering-gpu"]
+native = ["rendering", "dep:winit", "dep:softbuffer", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 native-desktop = ["native", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL", "objc2-foundation?/NSFileManager", "objc2-foundation?/NSError", "objc2-foundation?/NSPathUtilities", "dep:rustix"]
 native-notifications = ["native", "dep:objc2-user-notifications", "dep:block2", "objc2-foundation?/NSBundle", "objc2-foundation?/NSURL"]
 dev-tools = ["dep:serde_json"]
-native-gpu = ["native", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
+native-gpu = ["native", "rendering-gpu"]
 
 [dependencies]
 unicode-width = "0.2"
@@ -49,7 +52,9 @@ pollster = { version = "0.4", optional = true }
 guillotiere = { version = "=0.7.0", optional = true }
 cosmic-text = { version = "0.14.2", optional = true }
 
-# One native compute backend per platform; no unused GLES/WebGPU backend.
+# One native compute backend per platform; iOS opts in through `mobile`.
+[target.'cfg(target_os = "ios")'.dependencies]
+wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "metal"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 # Safe local-volume metadata queries for opt-in checked Trash; already locked transitively.
 rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs"], optional = true }
@@ -64,7 +69,7 @@ tray-icon = { version = "=0.24.2", default-features = false, optional = true }
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "metal"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "dx12"] }
-[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
+[target.'cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))'.dependencies]
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "vulkan"] }
 
 # CPU rasterization/shaping must be usable under the documented `cargo run`.
