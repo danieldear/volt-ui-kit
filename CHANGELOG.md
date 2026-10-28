@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reject malformed multi-separator light/dark color pairs in either theme mode,
+  before choosing a half. Valid hex/token/opacity pairs retain their behavior.
+
 - Extract `volt-ui-kit-mobile`: reusable Rust application/events/semantics and
   a target-gated iOS UIKit/Metal host. Field Notes and the new
   `cargo volt new --platform ios` template share one canonical host: no per-app

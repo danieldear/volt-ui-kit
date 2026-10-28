@@ -76,3 +76,17 @@ fn a_select_list_can_be_given_an_opaque_surface() {
         "the list is painted with it"
     );
 }
+
+#[test]
+fn multiple_pair_separators_are_rejected_before_choosing_either_theme_half() {
+    for theme in [UiTheme::light(), UiTheme::dark()] {
+        for bad in [
+            "#111111|#222222|#333333",
+            "@primary|@base-100|@success",
+            "#111111||#333333",
+            "#111111|#222222|",
+        ] {
+            assert_eq!(theme.resolve(bad), None, "malformed pair {bad}");
+        }
+    }
+}

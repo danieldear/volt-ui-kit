@@ -611,15 +611,15 @@ impl UiTheme {
     }
     pub fn resolve(&self, value: &str) -> Option<[f32; 4]> {
         if let Some((light, dark)) = value.split_once('|') {
+            // Validate the pair before choosing a half, in both theme modes.
+            if dark.contains('|') {
+                return None;
+            }
             // Light text means a dark theme.
             let c = self.palette.content;
             let night = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] > 0.5;
             let half = if night { dark } else { light }.trim();
-            return if half.contains('|') {
-                None
-            } else {
-                self.resolve(half)
-            };
+            return self.resolve(half);
         }
         if let Some((token, alpha)) = ColorToken::parse_with_alpha(value) {
             let mut color = self.palette.color(token);
