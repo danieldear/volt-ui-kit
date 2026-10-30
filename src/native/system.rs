@@ -199,6 +199,8 @@ pub(super) mod macos {
         item: MenuItem,
         declared_enabled: bool,
         current_enabled: Cell<bool>,
+        current_shortcut: Cell<Option<crate::native::Shortcut>>,
+        shows_shortcut: bool,
     }
     impl Drop for DesktopHost {
         fn drop(&mut self) {
@@ -224,11 +226,11 @@ pub(super) mod macos {
                 command.enabled,
                 None,
             );
-            if let Some(shortcut) = commands
+            let shortcut = commands
                 .iter()
                 .find(|c| c.id == command.id)
-                .and_then(|c| c.shortcut)
-            {
+                .and_then(|c| c.shortcut);
+            if let Some(shortcut) = shortcut {
                 item.set_key_accelerator(Some(shortcut.menu_accelerator()))
                     .map_err(|e| e.to_string())?;
             }
@@ -238,6 +240,8 @@ pub(super) mod macos {
                 item,
                 declared_enabled: command.enabled,
                 current_enabled: Cell::new(command.enabled),
+                current_shortcut: Cell::new(shortcut),
+                shows_shortcut: true,
             });
         }
         Ok(())
@@ -322,6 +326,8 @@ pub(super) mod macos {
                         item,
                         declared_enabled: command.enabled,
                         current_enabled: Cell::new(command.enabled),
+                        current_shortcut: Cell::new(None),
+                        shows_shortcut: false,
                     });
                 }
                 let icon = tray_icon::Icon::from_rgba(tray.rgba.clone(), tray.width, tray.height)
@@ -357,15 +363,27 @@ pub(super) mod macos {
         }
         pub fn sync_commands(&self, commands: &[crate::native::CommandInfo<'_>], allowed: bool) {
             for item in &self.command_items {
-                let enabled = allowed
-                    && item.declared_enabled
-                    && commands
-                        .iter()
-                        .find(|c| c.id == item.id)
-                        .is_none_or(|c| c.enabled);
+                let command = commands.iter().find(|c| c.id == item.id);
+                let enabled = allowed && item.declared_enabled && command.is_none_or(|c| c.enabled);
                 // No repeated AppKit writes for ordinary unchanged input/scroll.
                 if item.current_enabled.replace(enabled) != enabled {
                     item.item.set_enabled(enabled);
+                }
+                let shortcut = command.and_then(|c| c.shortcut);
+                if item.shows_shortcut && item.current_shortcut.get() != shortcut {
+                    // Keep menu hints/native accelerators in step with a live
+                    // remap. Tray duplicates never register keyboard chords.
+                    match item
+                        .item
+                        .set_key_accelerator(shortcut.map(|s| s.menu_accelerator()))
+                    {
+                        Ok(()) => item.current_shortcut.set(shortcut),
+                        Err(error) => {
+                            let _ = item.item.set_key_accelerator(None);
+                            item.current_shortcut.set(None);
+                            eprintln!("Unable to update menu shortcut: {error}");
+                        }
+                    }
                 }
             }
         }

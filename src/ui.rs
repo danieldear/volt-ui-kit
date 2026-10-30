@@ -252,7 +252,7 @@ pub enum FontStyle {
 }
 
 type Click<C> = Box<dyn FnMut(&mut C)>;
-type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation)>;
+type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation, u8)>;
 type InputKeyCallback<C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool>;
 type Change<C> = Box<dyn FnMut(&mut C, bool)>;
 type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
@@ -265,6 +265,7 @@ type KeyCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::EditKey)>;
 type CodeCallback<C> = Box<dyn FnMut(&mut C, crate::declarative::CodeInput) -> Option<String>>;
 type CodeFoldCallback<C> = Box<dyn FnMut(&mut C, usize)>;
 type CodeCaretCallback<C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>)>;
+type DragCallback<C> = Box<dyn FnMut(&mut C, [f32; 2])>;
 enum Callback<C> {
     Click(Click<C>),
     Change(Change<C>),
@@ -477,7 +478,7 @@ pub struct Element<C> {
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
     /// Containers: a drag began on them; the offset from the press.
-    drag: Option<Box<dyn FnMut(&mut C, [f32; 2])>>,
+    drag: Option<DragCallback<C>>,
     drag_start: Option<Click<C>>,
 }
 impl<C> Element<C> {
@@ -580,8 +581,10 @@ impl<C: 'static> Element<C> {
             }
             if let Some(f) = drag_start {
                 let name = format!("rust-drag-start-{}", *count);
-                handlers.on_activate(&name, f).map_err(|e|DocumentError(e.to_string()))?;
-                node.on_drag_start=Some(name);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag_start = Some(name);
             }
             if let Some(f) = drag {
                 let name = format!("rust-drag-{}", *count);
@@ -614,7 +617,7 @@ impl<C: 'static> Element<C> {
             if let Some(f) = input_activation {
                 let name = format!("rust-input-{}", *count);
                 handlers
-                    .on_activate_with(&name, f)
+                    .on_activate_counted(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_activate_input = Some(name);
             }
@@ -741,7 +744,9 @@ impl<C: 'static> Element<C> {
                             let code = std::sync::Arc::make_mut(code);
                             if let Some(fold) = fold {
                                 let fold_name = format!("{name}-fold");
-                                handlers.on_code_fold(&fold_name, fold).map_err(|e| DocumentError(e.to_string()))?;
+                                handlers
+                                    .on_code_fold(&fold_name, fold)
+                                    .map_err(|e| DocumentError(e.to_string()))?;
                                 code.on_fold = Some(fold_name);
                             }
                             if let Some(caret) = caret {
@@ -1163,7 +1168,17 @@ impl<C> Button<C> {
 impl<C> Button<C> {
     /// Opt-in activation with press-time modifiers and an honest input source.
     /// Replaces `.on_click`; calling `.on_click` later replaces this handler.
-    pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+    pub fn on_click_with(mut self, mut f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+        self.0.callback = None;
+        self.0.input_activation = Some(Box::new(move |c, event, _| f(c, event)));
+        self
+    }
+    /// Pointer activation with the host's click count: one, two, or three.
+    /// Other activation sources report zero. Replaces on_click/on_click_with.
+    pub fn on_click_counted(
+        mut self,
+        f: impl FnMut(&mut C, PointerActivation, u8) + 'static,
+    ) -> Self {
         self.0.callback = None;
         self.0.input_activation = Some(Box::new(f));
         self
@@ -1252,8 +1267,8 @@ macro_rules! container_modifiers {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
             /// Make a rich container an activation target; descendants that are
             /// independently interactive take precedence. Supply an accessible label.
-            pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
-                self.0.input_activation = Some(Box::new(f));
+            pub fn on_click_with(mut self, mut f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+                self.0.input_activation = Some(Box::new(move |c, event, _| f(c, event)));
                 self
             }
             /// Rising-edge focus request for a stable keyed interactive row.

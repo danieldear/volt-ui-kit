@@ -23,9 +23,9 @@ pub(super) mod code_view;
 #[cfg(feature = "rust-ui")]
 mod drops;
 #[cfg(feature = "rust-ui")]
-mod hover;
-#[cfg(feature = "rust-ui")]
 pub(super) mod editing;
+#[cfg(feature = "rust-ui")]
+mod hover;
 #[cfg(feature = "rust-ui")]
 mod overlays;
 #[cfg(feature = "rust-ui")]
@@ -446,6 +446,10 @@ pub struct Runtime {
     #[cfg(feature = "rust-ui")]
     capture_modifiers: InputModifiers,
     #[cfg(feature = "rust-ui")]
+    capture_clicks: u8,
+    #[cfg(feature = "rust-ui")]
+    last_pointer_activation: Option<(String, Kind, InputModifiers)>,
+    #[cfg(feature = "rust-ui")]
     pending_input_focus: Option<String>,
     keyboard: Option<String>,
     scale: f32,
@@ -540,6 +544,10 @@ impl Runtime {
             capture: None,
             #[cfg(feature = "rust-ui")]
             capture_modifiers: InputModifiers::default(),
+            #[cfg(feature = "rust-ui")]
+            capture_clicks: 1,
+            #[cfg(feature = "rust-ui")]
+            last_pointer_activation: None,
             #[cfg(feature = "rust-ui")]
             pending_input_focus,
             keyboard: None,
@@ -729,17 +737,23 @@ impl Runtime {
             if n.input_focus || n.input_focus_epoch != 0 {
                 ids.insert(n.id.clone(), (n.input_focus, n.input_focus_epoch));
             }
-            for child in &n.children { collect(child, ids); }
+            for child in &n.children {
+                collect(child, ids);
+            }
         }
         fn find(n: &Node, ids: &std::collections::HashMap<String, (bool, u64)>) -> Option<String> {
             let (was_requested, epoch) = ids.get(&n.id).copied().unwrap_or_default();
             let requested = (n.input_focus && !was_requested)
                 || (n.input_focus_epoch != 0 && n.input_focus_epoch != epoch);
-            if requested && n.enabled && interactive_node(n) { return Some(n.id.clone()); }
+            if requested && n.enabled && interactive_node(n) {
+                return Some(n.id.clone());
+            }
             n.children.iter().find_map(|child| find(child, ids))
         }
         let mut ids = std::collections::HashMap::new();
-        if let Some(old) = old { collect(old, &mut ids); }
+        if let Some(old) = old {
+            collect(old, &mut ids);
+        }
         find(next, &ids)
     }
     pub fn replace_document<C>(
@@ -802,7 +816,41 @@ impl Runtime {
         if let Some(focus) = roving_focus {
             self.focused = focus;
         } else if !keep_focus {
-            self.focused = None;
+            #[cfg(feature = "rust-ui")]
+            {
+                self.focused = self.focused.as_deref().and_then(|id| {
+                    // Only removal (virtualization), not disabling/replacing a
+                    // control, can transfer focus to its keyboard owner.
+                    if find(next.root(), id).is_some() {
+                        return None;
+                    }
+                    fn path<'a>(n: &'a Node, id: &str, out: &mut Vec<&'a Node>) -> bool {
+                        out.push(n);
+                        if n.id == id || n.children.iter().any(|c| path(c, id, out)) {
+                            return true;
+                        }
+                        out.pop();
+                        false
+                    }
+                    let mut ancestors = Vec::new();
+                    path(self.document.root(), id, &mut ancestors);
+                    ancestors.iter().rev().skip(1).find_map(|old| {
+                        old.on_input_key.as_ref()?;
+                        let mut surviving = Vec::new();
+                        if !path(next.root(), &old.id, &mut surviving)
+                            || !surviving.iter().all(|n| enabled(n, values))
+                        {
+                            return None;
+                        }
+                        let new = surviving.last()?;
+                        (old.kind == new.kind && new.on_input_key.is_some()).then(|| new.id.clone())
+                    })
+                });
+            }
+            #[cfg(not(feature = "rust-ui"))]
+            {
+                self.focused = None;
+            }
         }
         fn keys(n: &Node, ids: &mut BTreeSet<String>) {
             ids.insert(n.id.clone());
@@ -836,6 +884,8 @@ impl Runtime {
             self.pending_input_focus =
                 Self::input_focus_request(Some(self.document.root()), next.root());
         }
+        #[cfg(feature = "rust-ui")]
+        let last_pointer_activation = self.last_pointer_activation.clone();
         let mut old = std::mem::replace(&mut self.document, next);
         self.reuse.prepare(
             &mut old,
@@ -854,6 +904,21 @@ impl Runtime {
         self.boxes.clear();
         self.layout_boxes.clear();
         self.cancel_input();
+        #[cfg(feature = "rust-ui")]
+        {
+            self.last_pointer_activation = last_pointer_activation.filter(|(id, kind, _)| {
+                find(self.document.root(), id)
+                    .is_some_and(|n| n.kind == *kind && enabled(n, values))
+                    && self.scope_allows_id(id)
+            });
+        }
+        if self
+            .focused
+            .as_deref()
+            .is_some_and(|id| !self.scope_allows_id(id))
+        {
+            self.focused = None;
+        }
         #[cfg(feature = "rust-ui")]
         if let Some(id) = autofocus.filter(|id| self.scope_allows_id(id)) {
             self.focused = Some(id);
@@ -1163,7 +1228,11 @@ impl Runtime {
             let s = self.scale;
             // A wheel scroll shifts boxes in place: the container's own
             // offset can lag the one in effect, which the target reflects.
-            let current = self.scroll_offsets.get(&view).copied().unwrap_or(container.scroll_offset);
+            let current = self
+                .scroll_offsets
+                .get(&view)
+                .copied()
+                .unwrap_or(container.scroll_offset);
             let mut offset = current;
             let top = container.bounds.bounds()[1] + container.style.layout.padding[0];
             let left = container.bounds.bounds()[0] + container.style.layout.padding[3];
@@ -1254,16 +1323,10 @@ impl Runtime {
                 // The 8px interaction lane surrounds the visible 3px thumb.
                 let [tx, ty, tw, th] = geometry.track;
                 if x >= tx && y >= ty && x <= tx + tw && y <= ty + th {
-                    let subtree_end = self.boxes[index + 1..]
-                        .iter()
-                        .position(|next| next.depth <= b.depth)
-                        .map_or(self.boxes.len(), |i| index + 1 + i);
-                    if self.boxes[subtree_end..].iter().any(|next| {
-                        !self.portal_passthrough(&next.id)
-                            && next.clip.contains(x, y)
-                            && next.bounds.contains(x, y)
-                            && next.clip_regions.iter().all(|r| r.contains(x, y))
-                    }) {
+                    // A transparent full-window layout wrapper is not a
+                    // painted/input surface. Use the same occlusion contract
+                    // as text and code selection, including real overlays.
+                    if self.input_occluded(index, x, y) {
                         return None;
                     }
                     let position = if axis == 0 { x } else { y };
@@ -1384,7 +1447,9 @@ impl Runtime {
                     && b.clip.contains(x, y)
                     && b.bounds.contains(x, y)
             })
-            .map_or(LINE * 10., |b| (b.bounds.bounds()[3] / self.scale - LINE).max(LINE));
+            .map_or(LINE * 10., |b| {
+                (b.bounds.bounds()[3] / self.scale - LINE).max(LINE)
+            });
         [LINE, page]
     }
     /// Pointer is physical pixels; delta is logical pixels, positive toward end.
@@ -1632,6 +1697,10 @@ impl Runtime {
                     && self.input_surface(b)
             })
     }
+    #[cfg(feature = "native")]
+    pub(crate) fn pointer_click_target(&self, x: f32, y: f32) -> Option<String> {
+        self.hit(x, y)
+    }
     fn hit(&self, x: f32, y: f32) -> Option<String> {
         let index = self.boxes.iter().rposition(|b| {
             self.scope_allows_id(&b.id)
@@ -1861,8 +1930,10 @@ impl Runtime {
                     action: b.on_drag.clone().unwrap(),
                     origin: [x, y],
                 };
-                if let Some(start)=&b.on_drag_start {
-                    handlers.dispatch(start,Event::Activate,context).map_err(|e|DocumentError(e.to_string()))?;
+                if let Some(start) = &b.on_drag_start {
+                    handlers
+                        .dispatch(start, Event::Activate, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
                 }
                 handlers
                     .dispatch(
@@ -1927,6 +1998,7 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             self.capture_modifiers = InputModifiers::default();
+            self.capture_clicks = 1;
         }
         if self.scrollbar_pointer_down(x, y) {
             return true;
@@ -1989,6 +2061,23 @@ impl Runtime {
         self.capture_modifiers = modifiers;
         Ok(outcome)
     }
+    /// Host-supplied click count; old pointer adapters remain single-click.
+    /// Runtime additionally requires the same keyed target/kind/press modifiers.
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_down_outcome_with_clicks<C>(
+        &mut self,
+        x: f32,
+        y: f32,
+        modifiers: InputModifiers,
+        clicks: u8,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        let outcome =
+            self.pointer_down_outcome_with_modifiers(x, y, modifiers, handlers, context)?;
+        self.capture_clicks = clicks.clamp(1, 3);
+        Ok(outcome)
+    }
     /// Compatibility wrapper: true means a pressed capture was released, even
     /// if release was outside. Use pointer_up_outcome to distinguish activation.
     pub fn pointer_up<C>(
@@ -2010,7 +2099,10 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             if self.drag_capture.take().is_some() {
-                return Ok(InputOutcome { changed: true, activated: false });
+                return Ok(InputOutcome {
+                    changed: true,
+                    activated: false,
+                });
             }
             if let Some(outcome) = self.overlay_pointer_up(x, y, handlers, context)? {
                 return Ok(outcome);
@@ -2067,15 +2159,29 @@ impl Runtime {
         {
             #[cfg(feature = "rust-ui")]
             {
-                self.activate_with_input(
+                let kind = self
+                    .layout_boxes
+                    .iter()
+                    .find(|b| b.id == *id)
+                    .map(|b| b.kind);
+                let identity = kind.map(|kind| (id.clone(), kind, self.capture_modifiers));
+                let clicks = if identity.is_some() && self.last_pointer_activation == identity {
+                    self.capture_clicks
+                } else {
+                    1
+                };
+                let activated = self.activate_with_click_count(
                     id,
                     PointerActivation {
                         modifiers: self.capture_modifiers,
                         source: InputSource::Pointer,
                     },
+                    clicks,
                     handlers,
                     context,
-                )?
+                )?;
+                self.last_pointer_activation = if activated { identity } else { None };
+                activated
             }
             #[cfg(not(feature = "rust-ui"))]
             {
@@ -2084,6 +2190,10 @@ impl Runtime {
         } else {
             false
         };
+        #[cfg(feature = "rust-ui")]
+        if !activated {
+            self.last_pointer_activation = None;
+        }
         Ok(InputOutcome {
             changed: pressed.is_some(),
             activated,
@@ -2283,6 +2393,11 @@ impl Runtime {
         })
     }
     pub fn cancel_input(&mut self) -> bool {
+        #[cfg(feature = "rust-ui")]
+        {
+            self.last_pointer_activation = None;
+            self.capture_clicks = 1;
+        }
         let changed = self.scrollbar_capture.take().is_some()
             || self.capture.is_some()
             || self.keyboard.is_some()
@@ -2369,7 +2484,10 @@ impl Runtime {
         // around it: a list hears the arrows its rows don't use.
         let action = self.focused.as_deref().and_then(|id| {
             let usable = |b: &LayoutBox| b.enabled && !b.departing && self.scope_allows_id(&b.id);
-            let mut index = self.layout_boxes.iter().position(|b| b.id == id && usable(b))?;
+            let mut index = self
+                .layout_boxes
+                .iter()
+                .position(|b| b.id == id && usable(b))?;
             loop {
                 let b = &self.layout_boxes[index];
                 if usable(b) {
@@ -2381,7 +2499,9 @@ impl Runtime {
                     return None;
                 }
                 let depth = b.depth - 1;
-                index = self.layout_boxes[..index].iter().rposition(|p| p.depth == depth)?;
+                index = self.layout_boxes[..index]
+                    .iter()
+                    .rposition(|p| p.depth == depth)?;
             }
         });
         let Some(action) = action else {
@@ -2401,6 +2521,22 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<bool, DocumentError> {
+        let clicks = if event.source == InputSource::Pointer {
+            1
+        } else {
+            0
+        };
+        self.activate_with_click_count(id, event, clicks, handlers, context)
+    }
+    #[cfg(feature = "rust-ui")]
+    fn activate_with_click_count<C>(
+        &self,
+        id: &str,
+        event: PointerActivation,
+        clicks: u8,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
         if !self.scope_allows_id(id) {
             return Ok(false);
         }
@@ -2411,7 +2547,7 @@ impl Runtime {
             .and_then(|b| b.on_activate_input.as_ref())
         {
             handlers
-                .dispatch_activation(action, event, context)
+                .dispatch_activation(action, event, clicks, context)
                 .map_err(|e| DocumentError(e.to_string()))?;
             return Ok(true);
         }
@@ -5018,7 +5154,23 @@ fn place(
                         if request != lz.request {
                             if request != 0 {
                                 let top = lz.top(row, estimates, gap_l);
-                                offsets.insert(n.id.clone(), [0., top]);
+                                let offset = offsets.entry(n.id.clone()).or_insert([0.; 2]);
+                                offset[1] = if list.reveal_index {
+                                    let height = available[1] / s;
+                                    let bottom = top + lz.height(row, estimates);
+                                    if top < offset[1] {
+                                        top
+                                    } else if bottom > offset[1] + height {
+                                        (bottom - height).min(top)
+                                    } else {
+                                        offset[1]
+                                    }
+                                } else {
+                                    top
+                                };
+                                if !list.reveal_index {
+                                    offset[0] = 0.;
+                                }
                             }
                             lz.request = request;
                         }
@@ -5732,20 +5884,42 @@ mod style_component_tests {
                 .into()
         };
         let tree: crate::ui::Element<()> = vstack([
-            hstack([chip("a"), chip("b")]).key("plain").gap(8., Axis::Horizontal).into(),
-            hstack([chip("c"), chip("d")]).key("wrapping").gap(8., Axis::Horizontal).wrap(true).justify(Justify::Center).into(),
+            hstack([chip("a"), chip("b")])
+                .key("plain")
+                .gap(8., Axis::Horizontal)
+                .into(),
+            hstack([chip("c"), chip("d")])
+                .key("wrapping")
+                .gap(8., Axis::Horizontal)
+                .wrap(true)
+                .justify(Justify::Center)
+                .into(),
         ])
         .key("root")
         .into();
         let (doc, h) = tree.build().unwrap().into_parts();
         let v = Bindings::default();
         let mut r = Runtime::new(doc, &h, &v).unwrap();
-        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder).unwrap();
-        let b = |id: &str| r.boxes().iter().find(|b| b.id == id).unwrap().bounds.bounds();
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder)
+            .unwrap();
+        let b = |id: &str| {
+            r.boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .bounds
+                .bounds()
+        };
         for k in ["a", "c"] {
             let (outer, label) = (b(k), b(&format!("{k}-label")));
-            let (left, right) = (label[0] - outer[0], outer[0] + outer[2] - label[0] - label[2]);
-            assert!((left - 12.).abs() < 0.5 && (right - 12.).abs() < 0.5, "{k}: insets {left} and {right}, outer {outer:?} label {label:?}");
+            let (left, right) = (
+                label[0] - outer[0],
+                outer[0] + outer[2] - label[0] - label[2],
+            );
+            assert!(
+                (left - 12.).abs() < 0.5 && (right - 12.).abs() < 0.5,
+                "{k}: insets {left} and {right}, outer {outer:?} label {label:?}"
+            );
         }
     }
     #[cfg(feature = "rust-ui")]
@@ -5755,7 +5929,10 @@ mod style_component_tests {
         let tree: crate::ui::Element<()> = vstack([
             text("Inherited").key("inherited").into(),
             text("Explicit").key("explicit").font_size(12.).into(),
-            vstack([text("Nested").key("nested").font_size(10.).into()]).key("inner").text_scale(2.).into(),
+            vstack([text("Nested").key("nested").font_size(10.).into()])
+                .key("inner")
+                .text_scale(2.)
+                .into(),
         ])
         .key("root")
         .font_size(16.)
@@ -5764,8 +5941,16 @@ mod style_component_tests {
         let (doc, h) = tree.build().unwrap().into_parts();
         let v = Bindings::default();
         let mut r = Runtime::new(doc, &h, &v).unwrap();
-        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder).unwrap();
-        let size = |id: &str| r.boxes().iter().find(|b| b.id == id).unwrap().text_style.size;
+        r.layout(Viewport::new(800., 600., 1.).unwrap(), &v, &mut Recorder)
+            .unwrap();
+        let size = |id: &str| {
+            r.boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .text_style
+                .size
+        };
         assert_eq!(size("inherited"), 20.);
         assert_eq!(size("explicit"), 15.);
         assert_eq!(size("nested"), 25.);
@@ -6523,21 +6708,29 @@ mod foundation_tests {
     }
     #[test]
     fn scroll_to_after_a_wheel_scroll_lands_on_the_key_not_off_by_the_scroll() {
-        let make = |request| -> Element<App> {
-            vstack((0..20).map(|i| -> Element<App> { vstack![].key(format!("item-{i}")).height(40.).into() }))
+        let make =
+            |request| -> Element<App> {
+                vstack((0..20).map(|i| -> Element<App> {
+                    vstack![].key(format!("item-{i}")).height(40.).into()
+                }))
                 .key("list")
                 .height(200.)
                 .scroll(Scroll::Vertical)
                 .scroll_to("item-0", request)
                 .into()
-        };
+            };
         let (mut r, _) = mount(make(0));
         // Wheel to the end: boxes shift in place, without a full layout.
         r.scroll_at(10., 10., [0., 600.]);
         assert_eq!(r.scroll_offset("list")[1], 600.);
         let (d, h) = make(1).build().unwrap().into_parts();
         r.replace_document(d, &h, &Bindings::default()).unwrap();
-        r.layout(Viewport::new(400., 400., 1.).unwrap(), &Bindings::default(), &mut Rec).unwrap();
+        r.layout(
+            Viewport::new(400., 400., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Rec,
+        )
+        .unwrap();
         assert_eq!(r.scroll_offset("list")[1], 0., "back at the top, as asked");
     }
     #[test]

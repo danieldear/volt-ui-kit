@@ -325,11 +325,254 @@ fn end_anchored_scroll_follows_growth_until_the_reader_scrolls_away() {
 #[test]
 fn keys_scroll_a_line_or_a_page_of_the_view_at_the_point() {
     for scale in [1., 2.] {
-        let ui: Element<App> = vstack![spacer().height(1000.).flex(0.)].key("page").height(140.).scroll(Scroll::Vertical).into();
+        let ui: Element<App> = vstack![spacer().height(1000.).flex(0.)]
+            .key("page")
+            .height(140.)
+            .scroll(Scroll::Vertical)
+            .into();
         let (r, _) = mount(ui, scale);
         // A line, and the view's height less a line.
         assert_eq!(r.key_scroll_steps(20. * scale, 20. * scale), [40., 100.]);
         // Outside any scroll view a page is ten lines.
         assert_eq!(r.key_scroll_steps(20. * scale, 150. * scale), [40., 400.]);
+    }
+}
+
+#[test]
+fn transparent_overlay_wrappers_do_not_block_scrollbar_drags_but_painted_surfaces_do() {
+    for scale in [1., 2.] {
+        for blocked in [false, true] {
+            let layer = vstack([spacer().into()])
+                .width(300.)
+                .height(160.)
+                .background(if blocked { "#202020" } else { "#00000000" });
+            let (mut r, mut h) = mount(zstack([scroll(false), layer.into()]).into(), scale);
+            let mut a = App::default();
+            let b = r.boxes().iter().find(|b| b.id == "scroll").unwrap();
+            let [bx, by, bw, bh] = b.bounds.bounds();
+            let track = bh - 12. * scale;
+            let length = (track * bh / (bh + b.scroll_max[1]))
+                .max(16. * scale)
+                .min(track);
+            let (x, y) = (bx + bw - 4. * scale, by + 6. * scale + length / 2.);
+            r.pointer_down_outcome(x, y, &mut h, &mut a).unwrap();
+            r.pointer_move_outcome(x, y + 54. * scale, &mut h, &mut a)
+                .unwrap();
+            assert_eq!(r.scroll_offset("scroll")[1] > 0., !blocked);
+            r.pointer_up_outcome(x, y + 54. * scale, &mut h, &mut a)
+                .unwrap();
+        }
+    }
+}
+fn keyboard_owner(with_row: bool, handler: bool) -> Element<App> {
+    let owner = vstack(if with_row {
+        vec![button("row")
+            .key("row")
+            .height(30.)
+            .on_click(|_: &mut App| {})
+            .into()]
+    } else {
+        vec![]
+    })
+    .key("keyboard-owner")
+    .width(240.)
+    .height(100.);
+    if handler {
+        owner
+            .on_input_key(|a: &mut App, _| {
+                a.clicks += 1;
+                true
+            })
+            .into()
+    } else {
+        owner.into()
+    }
+}
+#[test]
+fn removing_a_virtualized_focused_child_retains_its_surviving_keyboard_owner() {
+    for enabled in [false, true] {
+        let (mut r, mut h) = mount(keyboard_owner(true, true), 1.);
+        let mut a = App::default();
+        r.pointer_down_outcome(20., 15., &mut h, &mut a).unwrap();
+        r.pointer_up_outcome(20., 15., &mut h, &mut a).unwrap();
+        assert_eq!(r.focused(), Some("row"));
+        let (d, next) = keyboard_owner(false, enabled).build().unwrap().into_parts();
+        r.replace_document(d, &next, &Bindings::default()).unwrap();
+        h = next;
+        layout(&mut r, 1.);
+        assert_eq!(r.focused(), enabled.then_some("keyboard-owner"));
+        let outcome = r
+            .input_key(
+                InputKeyEvent {
+                    key: InputKey::ArrowDown,
+                    modifiers: Default::default(),
+                    repeat: true,
+                },
+                &mut h,
+                &mut a,
+            )
+            .unwrap();
+        assert_eq!(outcome.activated, enabled);
+    }
+}
+
+#[test]
+fn explicit_text_field_focus_epochs_do_not_steal_focus_on_ordinary_recomposition() {
+    let fields = |epoch| -> Element<App> {
+        vstack([
+            text_area("draft")
+                .on_change(|_: &mut App, _| {})
+                .key("reply")
+                .height(50.)
+                .focus_request(epoch)
+                .into(),
+            button("Elsewhere")
+                .key("elsewhere")
+                .height(30.)
+                .on_click(|_: &mut App| {})
+                .into(),
+        ])
+        .width(240.)
+        .height(100.)
+        .into()
+    };
+    let (mut r, _) = mount(fields(1), 1.);
+    assert_eq!(r.focused(), Some("reply"));
+    r.focus_next(false);
+    assert_eq!(r.focused(), Some("elsewhere"));
+    let (d, h) = fields(1).build().unwrap().into_parts();
+    r.replace_document(d, &h, &Bindings::default()).unwrap();
+    layout(&mut r, 1.);
+    assert_eq!(r.focused(), Some("elsewhere"));
+    let (d, h) = fields(2).build().unwrap().into_parts();
+    r.replace_document(d, &h, &Bindings::default()).unwrap();
+    layout(&mut r, 1.);
+    assert_eq!(r.focused(), Some("reply"));
+    assert_eq!(r.editor_text("reply").as_deref(), Some("draft"));
+}
+
+fn counted_button(key: &str) -> Element<App> {
+    button("row")
+        .key(key)
+        .width(120.)
+        .height(30.)
+        .on_click_counted(|a: &mut App, event, count| {
+            assert_eq!(event.source, InputSource::Pointer);
+            a.clicks = a.clicks * 10 + usize::from(count);
+        })
+        .into()
+}
+fn counted_click(
+    r: &mut Runtime,
+    h: &mut Handlers<'static, App>,
+    a: &mut App,
+    x: f32,
+    count: u8,
+    mods: InputModifiers,
+) {
+    r.pointer_down_outcome_with_clicks(x, 15., mods, count, h, a)
+        .unwrap();
+    r.pointer_up_outcome(x, 15., h, a).unwrap();
+}
+#[test]
+fn counted_pointer_clicks_survive_recomposition_but_require_same_target_and_modifiers() {
+    let fields = || -> Element<App> {
+        hstack([counted_button("a"), counted_button("b")])
+            .width(240.)
+            .height(30.)
+            .into()
+    };
+    let (mut r, mut h) = mount(fields(), 1.);
+    let mut a = App::default();
+    counted_click(&mut r, &mut h, &mut a, 20., 1, Default::default());
+    let (d, next) = fields().build().unwrap().into_parts();
+    r.replace_document(d, &next, &Bindings::default()).unwrap();
+    h = next;
+    layout(&mut r, 1.);
+    counted_click(&mut r, &mut h, &mut a, 20., 2, Default::default());
+    assert_eq!(a.clicks, 12);
+    a.clicks = 0;
+    counted_click(&mut r, &mut h, &mut a, 160., 2, Default::default());
+    assert_eq!(a.clicks, 1, "different row is not a double click");
+    counted_click(
+        &mut r,
+        &mut h,
+        &mut a,
+        160.,
+        2,
+        InputModifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(a.clicks, 11);
+    r.pointer_down_outcome_with_clicks(160., 15., Default::default(), 1, &mut h, &mut a)
+        .unwrap();
+    r.pointer_up_outcome(400., 150., &mut h, &mut a).unwrap();
+    counted_click(&mut r, &mut h, &mut a, 160., 2, Default::default());
+    assert_eq!(
+        a.clicks, 111,
+        "cancelled release must disarm double activation"
+    );
+}
+fn reveal_list(row: usize, request: u32, minimal: bool) -> Element<App> {
+    let list = lazy_list(100, |i| {
+        button(format!("Row {i}"))
+            .key(format!("reveal-row-{i}"))
+            .width(500.)
+            .height(20.)
+            .on_click(|_: &mut App| {})
+            .into()
+    })
+    .key("reveal-list")
+    .width(500.)
+    .height(100.)
+    .estimate(20.)
+    .gap(0.)
+    .window(0..100)
+    .on_window_change(|_: &mut App, _| {});
+    let list: Element<App> = if minimal {
+        list.reveal_row(row, request).into()
+    } else {
+        list.scroll_to_row(row, request).into()
+    };
+    vstack([list])
+        .key("reveal-horizontal")
+        .width(240.)
+        .height(100.)
+        .scroll(Scroll::Horizontal)
+        .into()
+}
+#[test]
+fn minimal_lazy_row_reveal_keeps_visible_rows_and_horizontal_offset_in_both_scales() {
+    for scale in [1., 2.] {
+        let (mut r, _) = mount(reveal_list(0, 0, true), scale);
+        for (row, request, expected) in [(3, 1, 0.), (5, 2, 20.), (4, 3, 20.), (0, 4, 0.)] {
+            let (d, h) = reveal_list(row, request, true)
+                .build()
+                .unwrap()
+                .into_parts();
+            r.replace_document(d, &h, &Bindings::default()).unwrap();
+            layout(&mut r, scale);
+            assert!((r.scroll_offset("reveal-list")[1] - expected).abs() < 0.1);
+        }
+        assert!(r.scroll_at(100. * scale, 40. * scale, [50., 250.]));
+        layout(&mut r, scale);
+        let before = r.scroll_offset("reveal-list");
+        let horizontal = r.scroll_offset("reveal-horizontal");
+        assert!(horizontal[0] > 0.);
+        let (d, h) = reveal_list(13, 5, true).build().unwrap().into_parts();
+        r.replace_document(d, &h, &Bindings::default()).unwrap();
+        layout(&mut r, scale);
+        assert_eq!(r.scroll_offset("reveal-list"), before);
+        assert_eq!(r.scroll_offset("reveal-horizontal"), horizontal);
+        let (d, h) = reveal_list(13, 6, false).build().unwrap().into_parts();
+        r.replace_document(d, &h, &Bindings::default()).unwrap();
+        layout(&mut r, scale);
+        assert_eq!(
+            r.scroll_offset("reveal-list"),
+            [0., 260.],
+            "legacy explicit top alignment unchanged"
+        );
     }
 }

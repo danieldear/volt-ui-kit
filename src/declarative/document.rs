@@ -475,6 +475,8 @@ pub(crate) struct VirtualListProps {
     pub generation: u64,
     /// Scroll so row `.0` is at the top whenever `.1` changes.
     pub scroll_to_index: Option<(usize, u32)>,
+    /// Minimal reveal rather than top alignment (opt-in).
+    pub reveal_index: bool,
 }
 /// Most rows a variable-height list mounts at once.
 pub(crate) const MAX_LAZY_WINDOW: usize = 256;

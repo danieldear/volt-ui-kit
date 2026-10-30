@@ -211,6 +211,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static, F: FnMut(usize) -> DataItem<T>>
             estimates: None,
             generation: 0,
             scroll_to_index: None,
+            reveal_index: false,
         });
         list.0.callback = Some(Callback::Window(list.1.on_window.take().unwrap()));
         list.0
@@ -247,6 +248,7 @@ struct LazyOptions<C, F> {
     overscan: usize,
     generation: u64,
     scroll_to: Option<(usize, u32)>,
+    reveal_index: bool,
     on_window: Option<WindowCallback<C>>,
 }
 const MAX_LAZY_ROWS: usize = 1_000_000;
@@ -268,6 +270,7 @@ pub fn lazy_list<C, F: FnMut(usize) -> Element<C>>(count: usize, row: F) -> Lazy
             overscan: 3,
             generation: 0,
             scroll_to: None,
+            reveal_index: false,
             on_window: None,
         },
     )
@@ -322,6 +325,14 @@ impl<C, F> LazyList<C, F> {
     /// counter to jump again). Works for rows that are not built yet.
     pub fn scroll_to_row(mut self, row: usize, request: u32) -> Self {
         self.1.scroll_to = Some((row, request));
+        self.1.reveal_index = false;
+        self
+    }
+    /// Reveal only if outside the viewport; retain horizontal scroll and
+    /// positions of rows already visible. Runs once per request change.
+    pub fn reveal_row(mut self, row: usize, request: u32) -> Self {
+        self.1.scroll_to = Some((row, request));
+        self.1.reveal_index = true;
         self
     }
     /// Called with the new range of rows to build as the list scrolls.
@@ -389,6 +400,7 @@ impl<C: 'static, F: FnMut(usize) -> Element<C>> From<LazyList<C, F>> for Element
             estimates: Some(estimates.into()),
             generation: list.1.generation,
             scroll_to_index: list.1.scroll_to.filter(|(row, _)| *row < count),
+            reveal_index: list.1.reveal_index,
         });
         list.0.callback = Some(Callback::Window(list.1.on_window.take().unwrap()));
         list.0

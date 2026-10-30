@@ -25,6 +25,26 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
+type ClickSequence = (Instant, [f32; 2], u8, Option<String>);
+fn pointer_click_count(
+    previous: Option<&ClickSequence>,
+    now: Instant,
+    at: [f32; 2],
+    target: Option<&str>,
+) -> u8 {
+    match previous {
+        Some((when, p, n, old))
+            if old.as_deref() == target
+                && now.duration_since(*when) < Duration::from_millis(450)
+                && (p[0] - at[0]).abs() < 5.
+                && (p[1] - at[1]).abs() < 5. =>
+        {
+            n.saturating_add(1).min(3)
+        }
+        _ => 1,
+    }
+}
+
 /// Renderer choice stays additive without changing public legacy option structs.
 fn gpu_policy(value: Option<&str>, available: bool) -> Result<(bool, bool), String> {
     match value {
@@ -600,7 +620,7 @@ struct App<C> {
     trace: bool,
     pending_release: Option<Instant>,
     /// The last left press: when, where and its click count.
-    last_click: Option<(Instant, [f32; 2], u8)>,
+    last_click: Option<ClickSequence>,
     painter: RasterPainter,
     pointer: Option<[f32; 2]>,
     /// Where the last left press landed: arrow and page keys no control
@@ -1125,16 +1145,9 @@ impl<C: 'static> App<C> {
     /// Count clicks at about the same place in quick succession (1, 2, 3).
     fn count_click(&mut self, at: [f32; 2]) -> u8 {
         let now = Instant::now();
-        let near = |p: [f32; 2]| (p[0] - at[0]).abs() < 5. && (p[1] - at[1]).abs() < 5.;
-        let count = match self.last_click {
-            Some((when, p, n))
-                if now.duration_since(when) < Duration::from_millis(450) && near(p) =>
-            {
-                n.saturating_add(1).min(3)
-            }
-            _ => 1,
-        };
-        self.last_click = Some((now, at, count));
+        let target = self.runtime.pointer_click_target(at[0], at[1]);
+        let count = pointer_click_count(self.last_click.as_ref(), now, at, target.as_deref());
+        self.last_click = Some((now, at, count, target));
         count
     }
     /// Redraw for a changed text selection and tell the application.
@@ -2122,7 +2135,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.update_cursor(position.x as f32, position.y as f32);
                     if let Some(outcome) = self
                         .runtime
-                        .code_pointer_hover(Some([position.x as f32, position.y as f32]), &mut self.handlers, &mut self.context)
+                        .code_pointer_hover(
+                            Some([position.x as f32, position.y as f32]),
+                            &mut self.handlers,
+                            &mut self.context,
+                        )
                         .map_err(|e| e.to_string())?
                     {
                         if outcome.activated || outcome.changed {
@@ -2139,6 +2156,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
+                    self.last_click = None;
                     self.layout()?;
                     if let Some([x, y]) = self.pointer {
                         let scale = self.window.as_ref().map_or(1., |w| w.scale_factor() as f32);
@@ -2176,12 +2194,17 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 }
                 WindowEvent::DroppedFile(path) => self.dropped.push(path),
                 WindowEvent::CursorLeft { .. } => {
+                    self.last_click = None;
                     self.pointer = None;
                     if self.runtime.pointer_leave() {
                         self.redraw();
                     }
                     self.hover_regions(None)?;
-                    if let Some(outcome) = self.runtime.code_pointer_hover(None, &mut self.handlers, &mut self.context).map_err(|e| e.to_string())? {
+                    if let Some(outcome) = self
+                        .runtime
+                        .code_pointer_hover(None, &mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?
+                    {
                         if outcome.activated || outcome.changed {
                             self.after_input(outcome)?;
                         }
@@ -2247,12 +2270,14 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                         self.redraw();
                                         return Ok(());
                                     }
+                                    let clicks = self.count_click([x, y]);
                                     let outcome = self
                                         .runtime
-                                        .pointer_down_outcome_with_modifiers(
+                                        .pointer_down_outcome_with_clicks(
                                             x,
                                             y,
                                             self.input_modifiers(),
+                                            clicks,
                                             &mut self.handlers,
                                             &mut self.context,
                                         )
@@ -2260,7 +2285,6 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     // A press on plain text selects it: one
                                     // click places, two pick a word, three
                                     // the paragraph; Shift extends.
-                                    let clicks = self.count_click([x, y]);
                                     let selected = self.runtime.press_allows_text_selection()
                                         && self.runtime.text_select_press(
                                             x,
@@ -2345,6 +2369,9 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 },
                 WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
                 WindowEvent::KeyboardInput { event, .. } => {
+                    if event.state == ElementState::Pressed {
+                        self.last_click = None;
+                    }
                     if event.state == ElementState::Pressed
                         && self.command_keyboard(event_loop, &event)?
                     {
@@ -2438,7 +2465,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     };
                                     let outcome = self
                                         .runtime
-                                        .scroll_outcome(x, y, [0., dy], &mut self.handlers, &mut self.context)
+                                        .scroll_outcome(
+                                            x,
+                                            y,
+                                            [0., dy],
+                                            &mut self.handlers,
+                                            &mut self.context,
+                                        )
                                         .map_err(|e| e.to_string())?;
                                     if outcome.changed || outcome.activated {
                                         self.after_input(outcome)?;
@@ -3504,5 +3537,65 @@ mod command_scope_tests {
                 assert!(runtime.application_commands_allowed());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod click_sequence_tests {
+    use super::*;
+    #[test]
+    fn code_and_text_click_counts_are_preserved_but_do_not_cross_targets() {
+        let now = Instant::now();
+        let at = [20., 30.];
+        for target in [Some("code-1"), Some("reply"), None] {
+            let previous = (now, at, 1, target.map(str::to_string));
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(100),
+                    at,
+                    target
+                ),
+                2
+            );
+            let previous = (now, at, 2, target.map(str::to_string));
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(100),
+                    at,
+                    target
+                ),
+                3
+            );
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(500),
+                    at,
+                    target
+                ),
+                1
+            );
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(100),
+                    [40., 30.],
+                    target
+                ),
+                1
+            );
+        }
+        let row = (now, at, 1, Some("row-a".to_string()));
+        assert_eq!(
+            pointer_click_count(
+                Some(&row),
+                now + Duration::from_millis(100),
+                at,
+                Some("row-b")
+            ),
+            1
+        );
     }
 }

@@ -56,7 +56,7 @@ pub struct InputKeyEvent {
     pub repeat: bool,
 }
 
-type ActivationCallback<'a, C> = Box<dyn FnMut(&mut C, PointerActivation) + 'a>;
+type ActivationCallback<'a, C> = Box<dyn FnMut(&mut C, PointerActivation, u8) + 'a>;
 type KeyInputCallback<'a, C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool + 'a>;
 type CodeInputCallback<'a, C> = Box<dyn FnMut(&mut C, super::CodeInput) -> Option<String> + 'a>;
 type CodeCaretCallback<'a, C> = Box<dyn FnMut(&mut C, Option<[f32; 4]>) + 'a>;
@@ -93,7 +93,16 @@ impl<'a, C> Handlers<'a, C> {
     pub fn on_activate_with(
         &mut self,
         name: &str,
-        f: impl FnMut(&mut C, PointerActivation) + 'a,
+        mut f: impl FnMut(&mut C, PointerActivation) + 'a,
+    ) -> Result<(), HandlerError> {
+        self.on_activate_counted(name, move |c, event, _| f(c, event))
+    }
+    /// Like on_activate_with, plus host-supplied mouse click count. Keyboard
+    /// and accessibility activations report zero; pointer adapters default to one.
+    pub fn on_activate_counted(
+        &mut self,
+        name: &str,
+        f: impl FnMut(&mut C, PointerActivation, u8) + 'a,
     ) -> Result<(), HandlerError> {
         self.insert_input(name, InputCallback::Activate(Box::new(f)))
     }
@@ -187,11 +196,12 @@ impl<'a, C> Handlers<'a, C> {
         &mut self,
         name: &str,
         event: PointerActivation,
+        clicks: u8,
         context: &mut C,
     ) -> Result<(), HandlerError> {
         self.validate_input(name, false)?;
         if let Some(InputCallback::Activate(f)) = self.input_entries.get_mut(name) {
-            f(context, event);
+            f(context, event, clicks);
         }
         Ok(())
     }
