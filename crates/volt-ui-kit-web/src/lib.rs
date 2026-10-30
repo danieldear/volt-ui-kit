@@ -713,7 +713,7 @@ impl<C: 'static> WebView<C> {
         let pixels = self.painter.rasterize(&batches, theme.palette.base[0])?;
         let mut data = pixels.data().to_vec();
         // tiny-skia is premultiplied; ImageData requires straight RGBA.
-        for pixel in data.chunks_exact_mut(4) {
+        for pixel in data.as_chunks_mut::<4>().0 {
             let a = u16::from(pixel[3]);
             if a > 0 && a < 255 {
                 for c in &mut pixel[..3] {
@@ -1017,6 +1017,6 @@ mod tests {
         let (pixels, w, hh) = h.rgba(&UiTheme::light()).unwrap();
         assert_eq!((w, hh), (320, 400));
         assert_eq!(pixels.len(), 320 * 400 * 4);
-        assert!(pixels.chunks_exact(4).any(|p| p[0] < 240));
+        assert!(pixels.as_chunks::<4>().0.iter().any(|p| p[0] < 240));
     }
 }
