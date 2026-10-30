@@ -4387,6 +4387,18 @@ fn clamp_axis(l: &ResolvedLayout, axis: usize, value: f32, avail: f32) -> f32 {
     }
     v.min(avail).max(0.)
 }
+/// A scroll descendant's natural extent is not bounded by the finite probe
+/// used to measure it. Still honour explicit min/max; fixed containers reset
+/// natural sizing for their own children through `natural_children`.
+fn clamp_measured_axis(
+    l: &ResolvedLayout,
+    axis: usize,
+    value: f32,
+    avail: f32,
+    natural: bool,
+) -> f32 {
+    clamp_axis(l, axis, value, if natural { f32::MAX } else { avail })
+}
 /// The box a node occupies inside the area its parent allocated: explicit
 /// sizes, min/max and aspect. Unset axes fill the area, as before. Fractions
 /// were already resolved against the parent's space when it allocated the
@@ -4609,7 +4621,8 @@ fn intrinsic(
     let resolved = &styles[&node_key(n)];
     let lay = &resolved.layout;
     let limit = [0, 1].map(|a| {
-        let base = fixed_size(lay, a, avail[a]).map_or(avail[a], |v| v.min(avail[a]));
+        let base = fixed_size(lay, a, avail[a])
+            .map_or(avail[a], |v| if natural_axes[a] { v } else { v.min(avail[a]) });
         lay.max[a].map_or(base, |max| base.min(max))
     });
     let [top, right, bottom, left] = lay.padding;
@@ -4728,8 +4741,8 @@ fn intrinsic(
         }
     }
     let result = [
-        clamp_axis(lay, 0, size[0], avail[0]),
-        clamp_axis(lay, 1, size[1], avail[1]),
+        clamp_measured_axis(lay, 0, size[0], avail[0], natural_axes[0]),
+        clamp_measured_axis(lay, 1, size[1], avail[1], natural_axes[1]),
     ];
     memo.insert(key, result);
     result
@@ -4746,14 +4759,19 @@ fn child_sizes(
     natural_axes: [bool; 2],
 ) -> (Vec<[f32; 2]>, f32) {
     let axis = styles[&node_key(n)].layout.axis;
-    let gap = styles[&node_key(n)].layout.gap.min(
-        available[axis]
-            / n.children
-                .iter()
-                .filter(|c| in_flow(c, styles))
-                .count()
-                .max(1) as f32,
-    );
+    let requested_gap = styles[&node_key(n)].layout.gap;
+    let gap = if natural_axes[axis] {
+        requested_gap
+    } else {
+        requested_gap.min(
+            available[axis]
+                / n.children
+                    .iter()
+                    .filter(|c| in_flow(c, styles))
+                    .count()
+                    .max(1) as f32,
+        )
+    };
     let room = (available[axis]
         - gap
             * n.children
@@ -4793,11 +4811,12 @@ fn child_sizes(
         } else if !natural_axes[axis] && total_flex > 0. && room > natural {
             size[axis] += (room - natural) * child.flex / total_flex;
         }
-        size[axis] = clamp_axis(
+        size[axis] = clamp_measured_axis(
             &styles[&node_key(child)].layout,
             axis,
             size[axis],
             available[axis],
+            natural_axes[axis],
         );
         if axis == 0 {
             let measured = intrinsic(
@@ -5056,6 +5075,8 @@ fn place(
     if let Some(mode) = n.surface.scroll {
         let axes = mode.axes();
         let mut measure = available;
+        // Finite measurement hints (especially for horizontal text wrapping),
+        // not an extent ceiling: natural descendants retain their full size.
         for axis in 0..2 {
             if axes[axis] {
                 measure[axis] = 16_384. * s;
@@ -5594,6 +5615,69 @@ mod tests {
                 // down to the panel's 12px bottom padding.
                 let bottom = bounds("bottom");
                 assert!((bottom[1] + bottom[3] + 12. - first[1] - first[3]).abs() < 0.01);
+            }
+        }
+    }
+    #[cfg(feature = "rust-ui")]
+    #[test]
+    fn long_nested_transcripts_keep_the_last_response_reachable() {
+        use crate::ui::prelude::*;
+        for scale in [1., 2.] {
+            for compact in [false, true] {
+                let replies: Vec<Element<()>> = (0..4)
+                    .map(|i| {
+                        vstack([vstack([text("Long response ".repeat(3_000))
+                            .key(format!("reply-{i}"))
+                            .into()])
+                            .align(Align::Stretch)
+                            .into()])
+                            .gap(12., Axis::Vertical)
+                            .align(Align::Stretch)
+                            .into()
+                    })
+                    .collect();
+                let thread: Element<()> = vstack(replies)
+                    .gap(14., Axis::Vertical)
+                    .align(Align::Stretch)
+                    .width_fraction(1.)
+                    .max_width(640.)
+                    .into();
+                let body = if compact {
+                    thread
+                } else {
+                    hstack([spacer().into(), thread, spacer().into()]).into()
+                };
+                let ui: Element<()> = vstack([body])
+                    .key("transcript")
+                    .align(Align::Stretch)
+                    .scroll(Scroll::Auto)
+                    .into();
+                let (doc, callbacks) = ui.build().unwrap().into_parts();
+                let values = Bindings::default();
+                let mut runtime = Runtime::new(doc, &callbacks, &values).unwrap();
+                let viewport = Viewport::new(
+                    if compact { 420. * scale } else { 960. * scale },
+                    600. * scale,
+                    scale,
+                ).unwrap();
+                let mut metrics = Metrics(0);
+                runtime.layout(viewport, &values, &mut metrics).unwrap();
+                let scroll = runtime.boxes().iter().find(|b| b.id == "transcript").unwrap();
+                let last = runtime.boxes().iter().find(|b| b.id == "reply-3").unwrap();
+                let [_, y, _, h] = scroll.bounds.bounds();
+                let [_, last_y, _, last_h] = last.bounds.bounds();
+                assert!(scroll.scroll_max[1] > 16_384.);
+                assert!(last_y + last_h <= y + h + scroll.scroll_max[1] * scale + 0.1);
+                for _ in 0..8 {
+                    runtime.scroll_at(5. * scale, 5. * scale, [0., 16_384.]);
+                }
+                runtime.layout(viewport, &values, &mut metrics).unwrap();
+                let scroll = runtime.boxes().iter().find(|b| b.id == "transcript").unwrap();
+                let last = runtime.boxes().iter().find(|b| b.id == "reply-3").unwrap();
+                let [_, y, _, h] = scroll.bounds.bounds();
+                let [_, last_y, _, last_h] = last.bounds.bounds();
+                assert!(last_y < y + h);
+                assert!((last_y + last_h - y - h).abs() < 0.1);
             }
         }
     }
