@@ -49,6 +49,70 @@ class SiteTests(unittest.TestCase):
         site.feed('<h1 id="x">A</h1><p id="x">B</p>')
         self.assertIn("duplicate HTML id: x", site.errors)
 
+    def test_live_script_exception_is_exact_and_never_allows_inline_code(self):
+        site = Site(live=True)
+        site.feed('<script type="module" src="live.js"></script>')
+        self.assertEqual(site.errors, [])
+        for bad in ('<script type="module" src="other.js"></script>',
+                    '<script type="module" src="live.js">alert(1)</script>',
+                    '<script src="https://evil.example/x.js"></script>'):
+            site = Site(live=True)
+            site.feed(bad)
+            self.assertTrue(site.errors, bad)
+
+    def test_reference_previews_cannot_embed_frames_or_srcdoc(self):
+        for frame in ('<iframe src="../live/index.html?embed=button" title="Live Rust" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>',
+                      '<iframe srcdoc="bad"></iframe>'):
+            site = Site(modules=('../live/catalog-previews.js',))
+            site.feed(frame)
+            self.assertTrue(site.errors)
+
+    def test_direct_catalog_script_exception_is_exact(self):
+        for relative in ('live/catalog-previews.js', '../live/catalog-previews.js'):
+            site = Site(modules=(relative,))
+            site.feed(f'<script type="module" src="{relative}"></script>')
+            self.assertEqual(site.errors, [])
+            for extra in (' onclick="evil()"', ' async', ' integrity="unknown"'):
+                bad = Site(modules=(relative,))
+                bad.feed(f'<script type="module" src="{relative}"{extra}></script>')
+                self.assertTrue(bad.errors)
+        site = Site(modules=('live/catalog-previews.js',))
+        site.feed('<script type="module" src="live/catalog-previews.js">evil()</script>')
+        self.assertTrue(site.errors)
+
+    def test_directory_and_reference_previews_are_source_backed_canvases(self):
+        docs = build_docs_site.ROOT / 'docs'
+        directory = (docs / 'reference/index.html').read_text()
+        self.assertEqual(directory.count('data-volt-mode="directory"'), 49)
+        self.assertNotIn('images/components/', directory)
+        slots = 0
+        for path in (docs / 'reference').glob('*.html'):
+            if path.name == 'index.html':
+                continue
+            html = path.read_text()
+            slots += html.count('data-volt-page=')
+            self.assertNotIn('<iframe', html)
+            self.assertNotIn('images/components/', html)
+        self.assertEqual(slots, 123)
+        self.assertFalse(any(name.startswith('images/components/') for name in build_docs_site.FILES))
+
+    def test_web_staging_publishes_only_expected_runtime_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp) / 'pkg'
+            assets.mkdir()
+            for name in ('volt_web_catalog.js', 'volt_web_catalog_bg.wasm', 'private.txt'):
+                (assets / name).write_bytes(b'test')
+            output = Path(tmp) / 'site'
+            build_docs_site.build(output, assets)
+            self.assertTrue((output / 'live/pkg/volt_web_catalog_bg.wasm').is_file())
+            self.assertFalse((output / 'live/pkg/private.txt').exists())
+            self.assertTrue((output / 'live/volt-host.js').is_file())
+            (assets / 'volt_web_catalog.js').unlink()
+            (assets / 'volt_web_catalog.js').symlink_to(assets / 'private.txt')
+            with self.assertRaises(ValueError):
+                build_docs_site.build(Path(tmp) / 'refused', assets)
+            self.assertFalse((Path(tmp) / 'refused').exists())
+
     def test_redesign_fonts_are_local_licensed_and_staged(self):
         docs = build_docs_site.ROOT / "docs"
         html = (docs / "index.html").read_text()
@@ -72,7 +136,10 @@ class SiteTests(unittest.TestCase):
         for invented in ("Orchid", "Sage", "Graphite", "Soft corners",
                          "Native capture", "Actual native output", "translucent navigation"):
             self.assertNotIn(invented, html)
-        self.assertGreaterEqual(html.count("headless render"), 2)
+        self.assertNotIn("<img", html)
+        self.assertNotIn("<iframe", html)
+        self.assertEqual(html.count('data-volt-page='), 3)
+        self.assertIn('src="live/catalog-previews.js"', html)
         # The counts in the copy come from the Catalog's own metadata.
         catalog = json.loads((docs / "assets/catalog-data.json").read_text())
         components = sum(page["group"] == "Components" for page in catalog)
@@ -133,7 +200,11 @@ class SiteTests(unittest.TestCase):
             self.assertIn('Try it in the native Catalog', html)
             for section in page['sections']:
                 image = f"images/components/{section['image']}"
-                self.assertIn(image, manifest)
+                self.assertNotIn(image, manifest)
+                self.assertNotIn(f'src="../{image}"', html)
+                self.assertIn(f'data-volt-page="{page["slug"]}"', html)
+                self.assertIn(f'data-volt-section="{section["id"]}"', html)
+                self.assertIn('src="../live/catalog-previews.js"', html)
                 data = (docs / image).read_bytes()
                 self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
                 self.assertEqual(int.from_bytes(data[16:20], 'big'), section['width'])
@@ -150,7 +221,7 @@ class SiteTests(unittest.TestCase):
             output = Path(tmp) / "site"
             build_docs_site.build(output)
             files = {p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()}
-            self.assertEqual(files, set(build_docs_site.FILES))
+            self.assertEqual(files, set(build_docs_site.FILES) | {"live/volt-host.js", "live/text-input.js"})
             with self.assertRaises(ValueError):
                 build_docs_site.build(output)
             self.assertTrue((output / "index.html").is_file())

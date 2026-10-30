@@ -22,3 +22,11 @@ __pycache__/
 
 /crates/volt-ui-kit-mobile/target/
 /crates/volt-ui-kit-mobile/apple/.build/
+
+# Browser host build products; source and lockfiles stay tracked.
+/crates/volt-ui-kit-web/target/
+/examples/web/target/
+/docs/live/pkg/
+/docs/live/volt-host.js
+
+/docs/live/text-input.js

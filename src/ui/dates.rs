@@ -129,6 +129,9 @@ impl CalendarDate {
     }
     /// Today's date in UTC, from the system clock.
     pub fn today_utc() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        let secs = (js_sys::Date::now() / 1000.) as i64;
+        #[cfg(not(target_arch = "wasm32"))]
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);

@@ -526,6 +526,16 @@ impl Runtime {
             .and_then(|b| b.ext.code.as_ref())
             .is_some_and(|p| p.read_only)
     }
+    /// Whether a mounted, enabled code surface is read-only. `None` for
+    /// missing targets or views outside the active modal scope. Hosts use this
+    /// flag without mirroring a virtualized document into a platform editor.
+    pub fn code_view_read_only_for(&self, id: &str) -> Option<bool> {
+        self.layout_boxes
+            .iter()
+            .find(|b| b.id == id && b.enabled && !b.departing && self.scope_allows_id(id))
+            .and_then(|b| b.ext.code.as_ref())
+            .map(|p| p.read_only)
+    }
     /// The focused code view has more than one selection.
     pub fn code_view_multiple_selections(&self) -> bool {
         self.focused_code()

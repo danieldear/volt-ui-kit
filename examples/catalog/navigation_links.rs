@@ -175,14 +175,14 @@ pub fn links_section(app: &App) -> Section {
         divider(),
         muted(&app.routes.message).key("link-result"),
         button("Open in browser ↗").key("link-open-browser").variant(ButtonVariant::Outline).height(34.).font_size(12.)
-            .enabled(app.routes.captured.is_some() && volt_ui_kit::native::links::available())
+            .enabled(app.routes.captured.is_some() && platform_links_available())
             .on_click(|app: &mut App| {
-                if let Some(url)=&app.routes.captured { app.routes.message=match volt_ui_kit::native::links::open_url(url) {
+                if let Some(url)=&app.routes.captured { app.routes.message=match platform_open_url(url) {
                     Ok(()) => "The operating system accepted the browser request.".into(),
                     Err(error) => error.to_string(),
                 }; }
             }),
-        muted(if volt_ui_kit::native::links::available() { "Browser dispatch is explicit. No automatic launch, permission prompt or network request on mount." } else { "Browser dispatch is unavailable in this build. Link callbacks and keyboard interaction still work." }).font_size(11.),
+        muted(if platform_links_available() { "Browser dispatch is explicit. No automatic launch, permission prompt or network request on mount." } else { "Browser dispatch is unavailable in this build. Link callbacks and keyboard interaction still work." }).font_size(11.),
     ].width_fraction(1.).max_width(600.)
     .font_family("SF").gap(16.,Axis::Vertical).padding(24.,Edge::All).background(ColorToken::Base100).border_width(1.).border_color(ColorToken::Border).rounded(12.).into();
     Section { id:"navigation-links", title:"External links, without surprises", note:"Theme-aware, keyboard-focusable links with native accessibility semantics. This demo intercepts activation first; browser dispatch is a separate, explicit action.", demo:card,
@@ -196,4 +196,26 @@ pub fn links_section(app: &App) -> Section {
         };
     });
 // HTTP(S) only. No credentials, file URLs or executable schemes."# }
+}
+
+fn platform_links_available() -> bool {
+    #[cfg(feature = "native")]
+    {
+        volt_ui_kit::native::links::available()
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        false
+    }
+}
+fn platform_open_url(url: &ExternalUrl) -> Result<(), String> {
+    #[cfg(feature = "native")]
+    {
+        volt_ui_kit::native::links::open_url(url).map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = url;
+        Err("Native browser dispatch is unavailable in a web preview".into())
+    }
 }

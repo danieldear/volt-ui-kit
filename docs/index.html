@@ -6,7 +6,7 @@
   <meta name="description" content="Volt UI Kit: native desktop interfaces in plain Rust. Declare your interface as a function of your state; Volt lays it out and draws it with Vello on the GPU or in software.">
   <meta name="color-scheme" content="light dark">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Volt UI Kit">
   <meta property="og:url" content="https://danieldear.github.io/volt-ui-kit/">
@@ -20,6 +20,8 @@
   <title>Volt UI Kit: native interfaces, written in Rust</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="live/live.css">
+  <script type="module" src="live/catalog-previews.js"></script>
 </head>
 <body class="landing">
   <a class="skip" href="#main">Skip to content</a>
@@ -44,6 +46,7 @@
       <a class="brand" href="./" aria-label="Volt UI Kit home"><svg class="brand-mark" aria-hidden="true"><use href="#volt-mark"/></svg><span class="brand-name">Volt UI Kit</span><span class="brand-version">0.5</span></a>
       <nav class="topnav" aria-label="Main navigation">
         <a href="reference/index.html">Components</a>
+        <a href="live/index.html">Live demo</a>
         <a href="guides/getting-started.html">Guides</a>
         <a class="topnav-wide" href="https://github.com/danieldear/volt-ui-kit/tree/main/examples">Examples <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
         <a href="https://github.com/danieldear/volt-ui-kit">GitHub <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
@@ -53,6 +56,7 @@
   </header>
 
   <main id="main">
+    <noscript><p class="live-note shell">Live component previews require JavaScript and WebAssembly. Source and API notes are available in the component reference.</p></noscript>
     <section class="hero" aria-labelledby="hero-title">
       <div class="orbit orbit-outer" aria-hidden="true"></div>
       <div class="orbit orbit-inner" aria-hidden="true"></div>
@@ -80,13 +84,9 @@
     </div>
 
     <section class="screen shot shell" aria-labelledby="shot-title">
-      <div class="shot-head"><h2 id="shot-title" class="eyebrow">01 — The Catalog</h2><p>Every component in one native app. A headless render by Volt at 2×.</p></div>
+      <div class="shot-head"><h2 id="shot-title" class="eyebrow">01 — The Catalog</h2><p>The original Rust Catalog dashboard, rendered live. Try its controls.</p></div>
       <figure class="shot-frame">
-        <picture>
-          <source media="(prefers-color-scheme: dark)" type="image/webp" srcset="images/catalog/dashboard-dark-1440.webp 1440w, images/catalog/dashboard-dark.webp 2880w" sizes="(max-width: 1260px) calc(100vw - 40px), 1200px">
-          <source type="image/webp" srcset="images/catalog/dashboard-light-1440.webp 1440w, images/catalog/dashboard-light.webp 2880w" sizes="(max-width: 1260px) calc(100vw - 40px), 1200px">
-          <img src="images/catalog/dashboard-light.webp" alt="The Volt Catalog app on its Dashboard page: a sidebar of every component page, revenue and user figures with sparklines, a candlestick chart and a traffic-source donut" width="2880" height="1800" loading="lazy">
-        </picture>
+        <div class="volt-preview" data-volt-page="dashboard" data-volt-section="dashboard" data-volt-height="680"><div class="volt-root"><canvas aria-hidden="true"></canvas><div class="volt-semantics" aria-label="Live Rust dashboard preview"></div></div><p class="volt-status" role="status">Rust preview loads when visible…</p></div>
         <figcaption>Run it from a checkout of the repository: <code>./scripts/run_catalog.sh</code></figcaption>
       </figure>
     </section>
@@ -94,7 +94,7 @@
     <ul class="numbers shell" aria-label="Volt in numbers">
       <li><strong>37</strong> <span>component pages</span></li>
       <li><strong>7</strong> <span>app patterns</span></li>
-      <li><strong>0</strong> <span>webviews, browsers or JavaScript</span></li>
+      <li><strong>0</strong> <span>webviews in native desktop apps</span></li>
       <li><strong>100%</strong> <span>Rust, with one declarative API</span></li>
     </ul>
 
@@ -141,15 +141,8 @@
     .gap(<span class="syntax-num">12.</span>, Axis::Vertical)
     .into()
 }</code></pre>
-        <div class="code-preview">
-          <picture class="accent-shot is-violet"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-violet-dark.webp"><img src="images/theming/counter-violet-light.webp" alt="The counter drawn by Volt: the text Clicked 0 times above a full-width Click me button" width="1449" height="383" loading="lazy"></picture>
-          <picture class="accent-shot is-zinc"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-zinc-dark.webp"><img src="images/theming/counter-zinc-light.webp" alt="The counter drawn by Volt with the Zinc accent" width="1449" height="383" loading="lazy"></picture>
-          <picture class="accent-shot is-blue"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-blue-dark.webp"><img src="images/theming/counter-blue-light.webp" alt="The counter drawn by Volt with the Blue accent" width="1449" height="383" loading="lazy"></picture>
-          <picture class="accent-shot is-rose"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-rose-dark.webp"><img src="images/theming/counter-rose-light.webp" alt="The counter drawn by Volt with the Rose accent" width="1449" height="383" loading="lazy"></picture>
-          <picture class="accent-shot is-green"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-green-dark.webp"><img src="images/theming/counter-green-light.webp" alt="The counter drawn by Volt with the Green accent" width="1449" height="383" loading="lazy"></picture>
-          <picture class="accent-shot is-orange"><source media="(prefers-color-scheme: dark)" srcset="images/theming/counter-orange-dark.webp"><img src="images/theming/counter-orange-light.webp" alt="The counter drawn by Volt with the Orange accent" width="1449" height="383" loading="lazy"></picture>
-        </div>
-        <figcaption>The Catalog’s own counter, drawn by Volt (headless render at 3×).</figcaption>
+        <div class="code-preview"><div class="volt-preview" data-volt-page="introduction" data-volt-section="counter" data-volt-height="200"><div class="volt-root"><canvas aria-hidden="true"></canvas><div class="volt-semantics" aria-label="Live Rust counter preview"></div></div><p class="volt-status" role="status">Rust preview loads when visible…</p></div></div>
+        <figcaption>Click the real Rust counter. Your state and callbacks run locally in WebAssembly.</figcaption>
       </figure>
     </section>
 
@@ -157,7 +150,7 @@
       <div class="split-copy">
         <p class="eyebrow">04 — Theming</p>
         <h2 id="theming-title"><span class="h-line">One palette</span> <span class="h-line">restyles <span class="h-serif">everything.</span></span></h2>
-        <p class="lede">Components draw with semantic roles, never literal colours. Pick an accent: this page follows, and the card and the counter switch to Volt’s own renders in that preset.</p>
+        <p class="lede">Components draw with semantic roles, never literal colours. Pick an accent: this page follows, and the card and counter are redrawn by Rust in that preset.</p>
         <fieldset class="swatches">
           <legend class="sr-only">Accent preset</legend>
           <label class="swatch swatch-zinc"><input type="radio" name="accent" id="accent-zinc"><span class="swatch-dot"></span><span class="sr-only">Zinc</span></label>
@@ -170,13 +163,8 @@
         <p class="swatch-note">Light or dark follows your system setting. <a class="text-link" href="guides/styling-and-themes.html">Theming guide <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
       </div>
       <figure class="plan">
-        <picture class="accent-shot is-violet"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-violet-dark.webp"><img src="images/theming/card-violet-light.webp" alt="A Pro plan card drawn by Volt with the Violet accent: a price, a usage bar, a checked checkbox and Upgrade and Compare buttons" width="1020" height="1160" loading="lazy"></picture>
-        <picture class="accent-shot is-zinc"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-zinc-dark.webp"><img src="images/theming/card-zinc-light.webp" alt="The same Pro plan card with the Zinc accent" width="1020" height="1160" loading="lazy"></picture>
-        <picture class="accent-shot is-blue"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-blue-dark.webp"><img src="images/theming/card-blue-light.webp" alt="The same Pro plan card with the Blue accent" width="1020" height="1160" loading="lazy"></picture>
-        <picture class="accent-shot is-rose"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-rose-dark.webp"><img src="images/theming/card-rose-light.webp" alt="The same Pro plan card with the Rose accent" width="1020" height="1160" loading="lazy"></picture>
-        <picture class="accent-shot is-green"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-green-dark.webp"><img src="images/theming/card-green-light.webp" alt="The same Pro plan card with the Green accent" width="1020" height="1160" loading="lazy"></picture>
-        <picture class="accent-shot is-orange"><source media="(prefers-color-scheme: dark)" srcset="images/theming/card-orange-dark.webp"><img src="images/theming/card-orange-light.webp" alt="The same Pro plan card with the Orange accent" width="1020" height="1160" loading="lazy"></picture>
-        <figcaption>The Catalog’s plan card in the chosen preset (headless render at 3×).</figcaption>
+        <div class="volt-preview" data-volt-page="introduction" data-volt-section="plan" data-volt-height="500"><div class="volt-root"><canvas aria-hidden="true"></canvas><div class="volt-semantics" aria-label="Live Rust plan preview"></div></div><p class="volt-status" role="status">Rust preview loads when visible…</p></div>
+        <figcaption>The Catalog’s original plan card. Accent changes restyle it live.</figcaption>
       </figure>
     </section>
 
@@ -184,7 +172,7 @@
       <div class="opener">
         <p class="eyebrow">05 — Components</p>
         <h2 id="index-title"><span class="h-line">Every component,</span> <span class="h-line h-serif">documented.</span></h2>
-        <p class="lede">50 reference pages. Each component page has rendered previews, the Rust that produced them and API notes.</p>
+        <p class="lede">50 reference pages. Each component page has live Rust previews, the Rust that produced them and API notes.</p>
       </div>
       <ul class="index-grid">
         <li><a href="reference/button.html"><span class="index-title">Button <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></span><span class="index-summary">Triggers an action. Six variants, three sizes and a disclosure style.</span></a></li>
@@ -207,13 +195,13 @@
       <div class="opener">
         <p class="eyebrow">06 — Status</p>
         <h2 id="status-title"><span class="h-line">Where it runs</span> <span class="h-line h-serif">today.</span></h2>
-        <p class="lede">Volt is pre-1.0 and its APIs can change. macOS is where it is tested.</p>
+        <p class="lede">Volt is pre-1.0 and its APIs can change. Desktop is the foundation; web and mobile hosts are experimental.</p>
       </div>
       <dl class="platforms">
         <div><dt>macOS 11+</dt><dd><span class="state state-primary">Primary</span>Tested on Apple silicon with Metal.</dd></div>
         <div><dt>Windows and Linux</dt><dd><span class="state">Not validated</span>Compiles, with headless CI configured (DX12; Vulkan, X11 and Wayland).</dd></div>
-        <div><dt>WebAssembly</dt><dd><span class="state">Core only</span>The <code>rust-ui</code> core compiles; there is no web host.</dd></div>
-        <div><dt>iOS and Android</dt><dd><span class="state">Not supported</span>There is no mobile host.</dd></div>
+        <div><dt>WebAssembly</dt><dd><span class="state state-primary">Experimental</span>Live Rust components through WebGPU or software canvas. <a href="guides/web-prototype.html">Browser host guide ↗</a></dd></div>
+        <div><dt>iOS and Android</dt><dd><span class="state">Prototype</span>iOS has an experimental Rust host/template. Android host work remains separate; mobile production acceptance is pending.</dd></div>
       </dl>
       <a class="text-link" href="https://github.com/danieldear/volt-ui-kit/blob/main/ROADMAP.md">Read the roadmap <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg></a>
     </section>

@@ -1006,3 +1006,30 @@ fn editors_scroll_to_an_offset_report_their_top_line_and_check_colours() {
         assert!(bad.build().is_err(), "{ranges:?}");
     }
 }
+
+#[test]
+fn host_selection_ranges_are_atomic_utf8_and_read_only_still_selects() {
+    let mut app = App {
+        value: "A🌿é".into(),
+        ..Default::default()
+    };
+    let (mut runtime, mut handlers) = mount(&app, false, false);
+    assert!(runtime.editor_select_range("entry", 1, 5));
+    assert_eq!(runtime.editor_selection("entry"), Some((1, 5)));
+    for (anchor, caret) in [(2, 4), (0, usize::MAX)] {
+        assert!(!runtime.editor_select_range("entry", anchor, caret));
+        assert_eq!(runtime.editor_selection("entry"), Some((1, 5)));
+    }
+    assert!(!runtime.editor_select_range("missing", 0, 0));
+    runtime.text_input("東京", &mut handlers, &mut app).unwrap();
+    assert_eq!(app.value, "A東京é");
+    let (mut readonly, mut handlers) = mount(&app, false, true);
+    assert!(readonly.editor_select_range("entry", 1, 7));
+    assert!(
+        !readonly
+            .text_input("blocked", &mut handlers, &mut app)
+            .unwrap()
+            .changed
+    );
+    assert_eq!(app.value, "A東京é");
+}

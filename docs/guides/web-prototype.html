@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Experimental Rust components in a browser canvas, with WebGPU and software presentation."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>WebAssembly prototype — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.5 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html" aria-current="page">WebAssembly prototype</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html" aria-current="page">WebAssembly prototype</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>WebAssembly prototype</div><div class="reference-title"><p>Guide</p><h1>WebAssembly prototype</h1><div class="reference-description">Experimental Rust components in a browser canvas, with WebGPU and software presentation.</div></div><article class="guide-article"><p><strong>Experimental.</strong> The landing page and component reference now draw the
+<strong>original Catalog Rust builders and callbacks</strong> in browser canvases, instead
+of loading component screenshots. All 123 published sections have a live slot;
+OS-specific lifecycle, document and desktop-service sections show an explicit
+native-only capability card. These notices do not emulate file access,
+notifications or tray icons. This is not a claim of full web/desktop parity.</p>
+<p>The directory draws 49 source-backed canvas thumbnails once; open a component
+page for its interactive examples, usage snippets and API notes. The landing
+page also reuses the original dashboard, counter and plan-card builders.</p>
+<h2 id="architecture">Architecture</h2>
+<div class="reference-code"><div>text<span>Source</span></div><pre tabindex="0" role="region" aria-label="text"><code>HTML prose, source and API notes   remain readable/searchable without WASM
+  |
+  +-- lazy live preview
+       |
+       +-- Rust application state + the existing Volt ui builders/callbacks
+       +-- WebView&lt;C&gt;: existing Runtime + RasterPainter
+       +-- BrowserHost&lt;C&gt;
+            +-- Vello / WebGPU        async initialization, GPU drawing
+            +-- tiny-skia / Canvas2D  explicit CPU drawing fallback
+       +-- small DOM adapter          pointer, wheel, editable input, IME,
+                                      semantic nodes, resize and lifecycle</code></pre></div><p>The separate, unpublished <code>crates/volt-ui-kit-web</code> crate is opt-in. Existing
+<code>native</code>, <code>native-gpu</code>, legacy Painter/Viewport APIs and desktop defaults keep
+their paths and behavior. The browser backend does not initialize winit or
+native desktop services. The shared GPU presenter gained an asynchronous
+constructor; native synchronous constructors retain their existing policy.</p>
+<h2 id="build-and-run-locally">Build and run locally</h2>
+<p>From a checkout, with Rust 1.89 or newer and Python 3:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>rustup target add wasm32-unknown-unknown
+cargo install --locked wasm-bindgen-cli --version 0.2.129
+python3 scripts/build_web.py
+python3 -m http.server 8768 --bind 127.0.0.1 --directory docs</code></pre></div><p>Open <code>http://127.0.0.1:8768/index.html</code> or <code>reference/index.html</code>.
+The standalone <code>/live/</code> starter remains a small host regression fixture. The build helper
+checks the CLI version against the locked WASM dependency; it does not install
+tools, accept SDK licenses, publish anything or start a network server for you.
+<code>WASM_BINDGEN=/path/to/wasm-bindgen</code> can select an existing executable.</p>
+<p>WebGPU needs HTTPS or localhost and a compatible browser/device. The playground
+tries WebGPU, then clearly reports software if initialization is unavailable.
+The Renderer selector also permits explicit software mode. Vello needs compute
+shaders; WebGL2 is <strong>not</strong> a replacement for this Vello path. A runtime GPU loss
+stops the demo with a visible error; reset it or select software to recover.</p>
+<h2 id="rust-application-code">Rust application code</h2>
+<p>Screen declarations are ordinary Volt Rust UI; browser JavaScript contains no
+application component layout or design. The runnable example is
+<a href="https://github.com/danieldear/volt-ui-kit/blob/main/examples/web/src/lib.rs"><code>examples/web/src/lib.rs</code></a>.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+
+fn counter(app: &amp;App) -&gt; Element&lt;App&gt; {
+    vstack![
+        text(format!(&quot;Count: {}&quot;, app.count)),
+        button(&quot;Add one&quot;).key(&quot;add&quot;)
+            .on_click(|app: &amp;mut App| app.count += 1),
+    ].padding(24., Edge::All).into()
+}</code></pre></div><p>Create a <code>WebView::new(state, view)</code> and asynchronously mount it with
+<code>BrowserHost::new(canvas, view, prefer_gpu)</code>. A wasm-bindgen wrapper exposes
+<code>dispatch</code>, <code>snapshot</code> and <code>frame</code> to the canonical <code>attachVolt</code> adapter. The
+example demonstrates that small export wrapper. A reusable <code>cargo volt</code> web
+project template is not part of this first slice.</p>
+<h2 id="fonts-and-lifecycle">Fonts and lifecycle</h2>
+<p>Browsers cannot inspect installed system fonts as desktop apps do. The example
+registers bundled Inter regular/italic and JetBrains Mono font bytes before constructing its painter, under the
+<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/live/OFL.txt">SIL Open Font License</a>. SF/SF Mono are <strong>not redistributed</strong>.
+Applications may register their own appropriately licensed fonts. The bundled
+fonts do not cover every script or emoji: localized applications must register
+fonts for their required glyph coverage before shipping. Unicode input/state
+correctness tests are not proof of complete font coverage.</p>
+<p>The adapter cancels listeners, observers and pending animation frames on dispose.
+It pauses rendering offscreen or while the document is hidden, respects reduced
+motion, and does not poll or redraw indefinitely when idle. All previews in one
+document share one WASM module. The docs pool permits at most eight active
+previews and two WebGPU surfaces; other active previews explicitly use software.
+Offscreen interactive previews release surfaces and paint caches but retain
+Rust application state. Each reference section owns an isolated Rust application state; different
+sections do not share selections or edits. Directory cards release their host after the first
+runtime draw, retaining canvas pixels until an appearance change requires a new
+draw. They are not downloaded PNGs or independent WASM instances.</p>
+<p>Native OS services, unrestricted filesystem access, tray icons and desktop
+behind-window blur are unavailable in the browser. Browser permissions and
+security boundaries are not bypassed.</p>
+<h2 id="editing-and-password-boundaries">Editing and password boundaries</h2>
+<p>Public text editors synchronize DOM selection offsets (UTF-16) to Rust byte
+boundaries, rejecting offsets inside surrogate pairs. Composition updates paint
+through the native Runtime without changing committed application text; blur,
+suspension and target removal cancel drafts. The standalone playground&#39;s
+<strong>Editor</strong> tab demonstrates an actual <code>code_view</code> with application-owned edits,
+paste, copy/cut and undo. It is a small QA document model, not a production IDE.</p>
+<p>Password fields use a write-only <code>type=password</code> sink anchored to the painted
+caret. It never receives an existing Rust password, value or selection from a
+snapshot. Committed input goes into Rust; transient DOM contents are cleared on
+commit, blur and disposal, and copy/cut do not export the secret. This does not
+make a browser a secure enclave: typed characters necessarily enter browser
+memory, JavaScript on the same origin must be trusted, and zeroization,
+password-manager/autofill parity and physical IME acceptance are not claimed.
+Browser adapters must not log input packets or application secrets.</p>
+<h2 id="validation-and-remaining-acceptance">Validation and remaining acceptance</h2>
+<p>Shared host tests cover bounds, decoding, callbacks, disabled/missing targets,
+password non-disclosure, suspension, scaling, scrolling and software pixels.
+The browser smoke suite tests actual pointer routing, keyboard tabs, Unicode
+form edits, composition commit gating, scrolling, themes, compact resize, reset,
+idle-frame stability and preferred rendering. Run with Playwright 1.62.1:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>npm install --prefix target/web-test-tools --no-save playwright@1.62.1
+npx --prefix target/web-test-tools playwright install chromium
+NODE_PATH=&quot;$PWD/target/web-test-tools/node_modules&quot; node scripts/test_web.cjs
+NODE_PATH=&quot;$PWD/target/web-test-tools/node_modules&quot; node scripts/test_catalog_web.cjs
+NODE_PATH=&quot;$PWD/target/web-test-tools/node_modules&quot; node scripts/test_web_input.cjs</code></pre></div><p>Set <code>PLAYWRIGHT_CHANNEL=chrome</code> to use installed Chrome. Set
+<code>VOLT_TEST_WEBKIT=1</code> after installing Playwright WebKit for an additional engine
+run. <code>VOLT_WEB_URL</code> changes the test server address; default is localhost:8768.
+Screenshots are written under <code>target/web-qa/</code>. The Catalog suite renders every
+published section, checks nonblank pixels, and exercises the original landing,
+menu and context-menu callbacks plus resource-pool limits.</p>
+<p><strong>Not yet production acceptance:</strong> comprehensive Safari/Firefox/mobile-browser
+coverage, real-device energy/GPU benchmarks, full assistive-technology behavior,
+physical input-method candidate/keyboard acceptance, font-matched pointer and
+candidate geometry across scales, advanced editor shortcut
+and multi-selection parity, password-manager/autofill integration,
+touch-drag/multitouch/inertial scrolling, web project scaffolding and exhaustive interaction coverage for every Catalog demo.
+The basic DOM semantic bridge is not a claim of complete web accessibility.</p>
+<h2 id="publishing-the-documentation">Publishing the documentation</h2>
+<p>The prose, source and API notes stay readable without JavaScript; component
+canvases require WASM. The landing/reference pages load only the reviewed
+same-origin <code>catalog-previews.js</code> module. Guides remain script-free. Their CSP
+permits WASM compilation (<code>wasm-unsafe-eval</code>), not general JavaScript
+<code>unsafe-eval</code>. There are no inline scripts, component iframes, runtime CDNs or
+general-purpose JS manifests. Historic native PNG exports remain useful for
+regression comparison but are not published as component previews.</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>python3 scripts/build_web.py
+python3 scripts/build_docs_site.py target/pages-with-web --web-assets docs/live/pkg</code></pre></div><p>The stager accepts exactly the two expected wasm-bindgen outputs plus the
+canonical event and editing adapters. Generated WASM/JS are ignored, not committed. The manual
+GitHub Pages workflow builds and stages those assets before publishing.</p>
+<p>GitHub Pages must use <strong>GitHub Actions</strong> as its deployment source. Publishing
+raw <code>/docs</code> from a branch will omit the ignored WASM binary and will not run
+these previews. Merge the source changes, switch <strong>Settings → Pages → Source</strong>
+to <strong>GitHub Actions</strong>, then manually run <strong>Documentation site</strong> on <code>main</code>.
+The browser downloads a compiled module, not Rust source or a compiler.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/web-prototype.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#architecture">Architecture</a><a href="#build-and-run-locally">Build and run locally</a><a href="#rust-application-code">Rust application code</a><a href="#fonts-and-lifecycle">Fonts and lifecycle</a><a href="#editing-and-password-boundaries">Editing and password boundaries</a><a href="#validation-and-remaining-acceptance">Validation and remaining acceptance</a><a href="#publishing-the-documentation">Publishing the documentation</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

@@ -2156,6 +2156,8 @@ fn configure_generic_families(fonts: &mut FontSystem) {
                 "Arial",
                 "Noto Sans",
                 "Open Sans",
+                "Inter",
+                "Inter Variable",
             ][..],
         ),
         (
@@ -2166,6 +2168,7 @@ fn configure_generic_families(fonts: &mut FontSystem) {
                 "DejaVu Sans Mono",
                 "Noto Sans Mono",
                 "Courier New",
+                "JetBrains Mono",
             ][..],
         ),
     ] {

@@ -565,11 +565,47 @@ impl GpuPresenter {
         instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
     ) -> Result<Self, String> {
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))
-        .map_err(|e| e.to_string())?;
+        pollster::block_on(Self::on_surface_async(
+            #[cfg(feature = "native")]
+            window,
+            transparent,
+            allow_software,
+            instance,
+            surface,
+        ))
+    }
+    /// Initialize without blocking the host event loop. Browser hosts must use
+    /// this entry point: adapter/device requests are JavaScript promises.
+    /// Native synchronous constructors retain their existing policy.
+    pub async fn from_surface_async(
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+        transparent: bool,
+    ) -> Result<Self, String> {
+        Self::on_surface_async(
+            #[cfg(feature = "native")]
+            None,
+            transparent,
+            false,
+            instance,
+            surface,
+        )
+        .await
+    }
+    async fn on_surface_async(
+        #[cfg(feature = "native")] window: Option<Arc<Window>>,
+        transparent: bool,
+        allow_software: bool,
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+    ) -> Result<Self, String> {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
         let gpu_drawing = supports_gpu_drawing(adapter.get_downlevel_capabilities().flags);
         if !gpu_drawing && !allow_software {
             return Err("GPU drawing requires compute shaders and indirect execution; this adapter does not advertise both".into());
@@ -594,12 +630,14 @@ impl GpuPresenter {
                 )
             })
             .ok_or("compositor does not advertise an 8-bit non-sRGB surface")?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Volt UI Vello GPU renderer"),
-            required_limits: surface_limits(adapter.limits()),
-            ..Default::default()
-        }))
-        .map_err(|e| e.to_string())?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Volt UI Vello GPU renderer"),
+                required_limits: surface_limits(adapter.limits()),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
         let lost = watch_device(&device);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

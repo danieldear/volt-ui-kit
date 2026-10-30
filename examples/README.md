@@ -97,3 +97,7 @@ such as `theme-editor` or `form-inputs`), `--accent zinc|blue|violet|rose|green|
 
 Snapshots and benchmarks use the same layout and drawing code as the window,
 but they don't exercise real input or the OS compositor.
+
+## WebAssembly live demo
+
+`examples/web` uses the separate Rust browser host for live buttons, tabs, forms and scrolling. See the [web guide](../docs/web-prototype.md) for tool versions, build steps, GPU/software behavior and remaining limitations.

@@ -69,27 +69,37 @@ JSON file is not enforced protection. Never use an admin bypass to hide failed C
 
 ## Publish the documentation
 
-The repository contains a landing page, 50 reference pages and eight HTML guides,
-with local preview images and fonts. Markdown guides remain the editable source;
-the generated HTML is committed with them. No browser JavaScript, CDN fonts or
-trackers are required. Screenshots are toolkit renders, not proof of native
-input, accessibility or desktop blur.
+The repository contains a landing page, 50 component-reference pages and HTML
+guides. The published component previews run the original Rust Catalog in WASM;
+prose and source remain readable without JavaScript. Fonts and runtime assets
+are local; no runtime CDN or tracker is added. Native-only OS services display
+capability notices, not simulated permissions or desktop blur.
 
-The existing Pages configuration uses legacy deployment. To adopt the reviewed,
-allowlisted deployment workflow, make this an explicit maintainer operation:
+**Deployment source must be GitHub Actions**, not “Deploy from a branch /docs”.
+The generated `docs/live/pkg` binaries are deliberately ignored by Git and must
+be compiled before publishing. After merging the browser-host changes:
 
-1. In Settings → Pages, select **GitHub Actions** as the deployment source.
-2. Restrict the `github-pages` environment to `main`.
-3. Dispatch **Documentation site** on `main`. It refuses private repositories
-   and other branches. Only base assets and reviewed paths in
-   `docs/site-manifest.json` are staged, not arbitrary files under `docs/`.
-4. Verify the deployed revision, links and images before announcing the URL.
+1. Open **Settings → Pages → Build and deployment → Source → GitHub Actions**.
+2. Restrict the `github-pages` deployment environment to `main`.
+3. Open **Actions → Documentation site → Run workflow**, selecting `main`.
+4. Wait for both build and deployment to succeed, then verify the deployed
+   revision, links and interactive previews before announcing the URL.
+   Do not count a successful old branch deployment as WASM acceptance.
+
+The reviewed workflow installs the pinned bindgen CLI, compiles the Rust example,
+and stages only approved HTML/CSS/fonts/licenses plus the expected WASM/JS
+outputs and canonical adapters. Publication remains a manual maintainer action.
+
+The workflow refuses private repositories and branches other than `main`. Only
+base assets and reviewed paths in `docs/site-manifest.json` are staged, not
+arbitrary files under `docs/`.
 
 Preview without publishing:
 
 ```sh
 python3 scripts/check_repo.py
 python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/build_web.py  # requires wasm32 target and wasm-bindgen-cli 0.2.129
 python3 -m http.server 8000 --bind 127.0.0.1 --directory docs
 ```
 

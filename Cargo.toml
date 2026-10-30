@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 declarative = ["dep:serde", "dep:serde_json"]
-rust-ui = ["declarative", "dep:unicode-segmentation"]
+rust-ui = ["declarative", "dep:unicode-segmentation", "dep:js-sys"]
 rendering = ["rust-ui", "dep:tiny-skia", "dep:cosmic-text", "dep:image"]
 rendering-gpu = ["rendering", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
 mobile = ["rendering-gpu"]
@@ -69,7 +69,10 @@ tray-icon = { version = "=0.24.2", default-features = false, optional = true }
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "metal"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "dx12"] }
-[target.'cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))'.dependencies]
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { version = "=0.3.106", optional = true }
+wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "webgpu"] }
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "macos", target_os = "windows", target_os = "ios")))'.dependencies]
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "vulkan"] }
 
 # CPU rasterization/shaping must be usable under the documented `cargo run`.

@@ -812,25 +812,7 @@ fn code(app: &App) -> El<App> {
     ]
     .gap(14., Axis::Vertical)
     .width(COLUMN);
-    let count = app.counter;
-    let preview = vstack![
-        text(format!(
-            "Clicked {count} time{}",
-            if count == 1 { "" } else { "s" }
-        ))
-        .font_size(15.),
-        button("Click me")
-            .key("landing-counter")
-            .variant(ButtonVariant::Primary)
-            .on_click(|app: &mut App| app.counter = app.counter.saturating_add(1)),
-    ]
-    .key("counter-preview")
-    .gap(12., Axis::Vertical)
-    .padding(20., Edge::All)
-    .background(ColorToken::Base100)
-    .border_color(ColorToken::Border)
-    .border_width(1.)
-    .rounded(12.);
+    let preview = counter_sample(app);
     let right = vstack![
         hstack![
             icon(Icon::Code, 16., "#A1A1AA"),
@@ -903,53 +885,7 @@ fn theming(app: &App) -> El<App> {
                 ThemeMode::Light
             }
         });
-    let sample = vstack![
-        hstack![
-            text("Pro plan").font_size(18.).font_weight(700).flex(1.),
-            badge("Popular")
-                .rounded(Rounding::Full)
-                .background(ColorToken::Primary.alpha(14))
-                .color(ColorToken::Primary),
-        ]
-        .align(Align::Center),
-        hstack![
-            text("$24")
-                .font_family(DISPLAY)
-                .font_size(48.)
-                .font_weight(500),
-            text("/ month").font_size(14.).color(ColorToken::Muted),
-        ]
-        .gap(6., Axis::Horizontal)
-        .align(Align::End),
-        progress(0.68).key("plan-usage").height(8.),
-        text("68% of build minutes used")
-            .font_size(12.)
-            .color(ColorToken::Muted),
-        checkbox("Email me usage reports", app.checked)
-            .key("plan-reports")
-            .on_change(|app: &mut App, v| app.checked = v),
-        hstack![
-            button("Upgrade")
-                .key("plan-upgrade")
-                .variant(ButtonVariant::Primary)
-                .flex(1.)
-                .on_click(|app: &mut App| app.notify("This is a theming preview")),
-            button("Compare")
-                .key("plan-compare")
-                .variant(ButtonVariant::Outline)
-                .on_click(|app: &mut App| app.go(Page::Theming)),
-        ]
-        .gap(10., Axis::Horizontal),
-    ]
-    .key("theme-sample")
-    .gap(14., Axis::Vertical)
-    .padding(24., Edge::All)
-    .width(360.)
-    .rounded(16.)
-    .background(ColorToken::Base100)
-    .border_color(ColorToken::Border)
-    .border_width(1.)
-    .shadow(Shadow::new().color("#0000001F").blur(28.).offset(0., 12.));
+    let sample = plan_sample(app);
     let left = vstack![
         eyebrow("04 — THEMING"),
         headline("One palette", "restyles", "everything."),
@@ -959,7 +895,7 @@ fn theming(app: &App) -> El<App> {
     ]
     .gap(16., Axis::Vertical)
     .flex(1.);
-    stack([left.into(), sample.into()])
+    stack([left.into(), sample])
         .key("theming")
         .direction(responsive(Direction::Vertical).at(Breakpoint::Xl, Direction::Horizontal))
         .gap(48., Axis::Both)
@@ -1098,5 +1034,80 @@ fn closing() -> El<App> {
     .key("closing")
     .gap(22., Axis::Vertical)
     .padding(24., Edge::Top)
+    .into()
+}
+
+/// Shared by the native landing page and live web documentation.
+pub(super) fn counter_sample(app: &App) -> El<App> {
+    let count = app.counter;
+    vstack![
+        text(format!(
+            "Clicked {count} time{}",
+            if count == 1 { "" } else { "s" }
+        ))
+        .font_size(15.),
+        button("Click me")
+            .key("landing-counter")
+            .variant(ButtonVariant::Primary)
+            .on_click(|app: &mut App| app.counter = app.counter.saturating_add(1)),
+    ]
+    .key("counter-preview")
+    .gap(12., Axis::Vertical)
+    .padding(20., Edge::All)
+    .background(ColorToken::Base100)
+    .border_color(ColorToken::Border)
+    .border_width(1.)
+    .rounded(12.)
+    .into()
+}
+
+pub(super) fn plan_sample(app: &App) -> El<App> {
+    vstack![
+        hstack![
+            text("Pro plan").font_size(18.).font_weight(700).flex(1.),
+            badge("Popular")
+                .rounded(Rounding::Full)
+                .background(ColorToken::Primary.alpha(14))
+                .color(ColorToken::Primary),
+        ]
+        .align(Align::Center),
+        hstack![
+            text("$24")
+                .font_family(DISPLAY)
+                .font_size(48.)
+                .font_weight(500),
+            text("/ month").font_size(14.).color(ColorToken::Muted),
+        ]
+        .gap(6., Axis::Horizontal)
+        .align(Align::End),
+        progress(0.68).key("plan-usage").height(8.),
+        text("68% of build minutes used")
+            .font_size(12.)
+            .color(ColorToken::Muted),
+        checkbox("Email me usage reports", app.checked)
+            .key("plan-reports")
+            .on_change(|app: &mut App, v| app.checked = v),
+        hstack![
+            button("Upgrade")
+                .key("plan-upgrade")
+                .variant(ButtonVariant::Primary)
+                .flex(1.)
+                .on_click(|app: &mut App| app.notify("This is a theming preview")),
+            button("Compare")
+                .key("plan-compare")
+                .variant(ButtonVariant::Outline)
+                .on_click(|app: &mut App| app.go(Page::Theming)),
+        ]
+        .gap(10., Axis::Horizontal),
+    ]
+    .key("theme-sample")
+    .gap(14., Axis::Vertical)
+    .padding(24., Edge::All)
+    .width(360.)
+    .rounded(16.)
+    .background(ColorToken::Base100)
+    .border_color(ColorToken::Border)
+    .border_width(1.)
+    .shadow(Shadow::new().color("#0000001F").blur(28.).offset(0., 12.))
     .into()
 }
