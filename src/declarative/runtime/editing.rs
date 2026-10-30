@@ -632,6 +632,29 @@ impl Runtime {
     pub fn editor_selection(&self, id: &str) -> Option<(usize, usize)> {
         self.editors.borrow().get(id).map(|e| (e.anchor, e.caret))
     }
+    /// Set the focused plain editor's anchor/caret in UTF-8 bytes. Invalid
+    /// boundaries, missing/disabled targets and background modal scopes are
+    /// rejected atomically. Read-only editors may still select text.
+    pub fn editor_select_range(&mut self, id: &str, anchor: usize, caret: usize) -> bool {
+        if self.editable_box().is_none_or(|b| b.id != id) {
+            return false;
+        }
+        let Some(editor) = self.editors.get_mut().get_mut(id) else {
+            return false;
+        };
+        if !editor.text.is_char_boundary(anchor) || !editor.text.is_char_boundary(caret) {
+            return false;
+        }
+        if (editor.anchor, editor.caret) == (anchor, caret) {
+            return false;
+        }
+        editor.anchor = anchor;
+        editor.caret = caret;
+        editor.upstream = false;
+        editor.follow_caret = true;
+        self.invalidate_layout();
+        true
+    }
     pub(super) fn editor_composition_snapshot(&self, next: &Document) -> Option<Composition> {
         let id = self.ime_target.as_deref()?;
         if self.focused.as_deref() != Some(id) {

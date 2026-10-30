@@ -166,7 +166,7 @@ silicon. Windows and Linux have local cross-compilation checks and a configured
 headless CI matrix; their native runtime has not been validated yet. Check
 [Actions](https://github.com/danieldear/volt-ui-kit/actions) for actual remote
 results; configured jobs are not evidence of a passing run. The core compiles to
-WebAssembly; a web host is planned. Expect API changes before 1.0.
+WebAssembly; an [experimental browser host](docs/web-prototype.md) now renders the original Catalog components directly in the documentation, with WebGPU/software rendering. This is not full web parity. Expect API changes before 1.0.
 
 ## Documentation
 
@@ -183,15 +183,16 @@ WebAssembly; a web host is planned. Expect API changes before 1.0.
 ## Preview the documentation site
 
 ```sh
+python3 scripts/build_web.py  # live previews; see web setup below for prerequisites
 python3 -m http.server 8000 --bind 127.0.0.1 --directory docs
 # Open http://127.0.0.1:8000
 ```
 
 The site uses local assets, an OFL-licensed display font, system interface
-fonts and no JavaScript or analytics.
+fonts and no analytics. Prose stays static; opt-in live component previews use a small JavaScript/WASM browser host.
 GitHub Pages publishing is a separate, manual maintainer step; see the
 [public-release checklist](docs/public-release.md). The landing page leads to
-the [component reference](docs/reference/index.html) and eight HTML how-to guides.
+the [component reference](docs/reference/index.html) and HTML how-to guides.
 The reference includes source-backed Rust excerpts, API notes and toolkit-rendered
 previews. See [site maintenance](docs/site-maintenance.md) to regenerate them.
 
@@ -212,3 +213,16 @@ A merged PR, package version or Git tag does not upload a crate. Maintainers:
 follow the [crates.io publication checklist](docs/public-release.md#publish-the-crate)
 for package verification, account prerequisites and the separately approved
 `cargo publish` operation. `cargo push` is not a Cargo command.
+
+### Experimental live web components
+
+Try real Rust components in a browser rather than static images. The separate,
+opt-in web host reuses the original Catalog declarations, including buttons,
+menus, tables, editable forms, scrolling and a small code-editor input fixture, with WebGPU preferred and clearly labeled software fallback. This
+is not full browser/desktop parity. See the [web setup and limitations](docs/web-prototype.md).
+
+```sh
+python3 scripts/build_web.py  # requires wasm32 target and wasm-bindgen-cli 0.2.129
+python3 -m http.server 8768 --bind 127.0.0.1 --directory docs
+# Open http://127.0.0.1:8768/index.html or /reference/index.html
+```

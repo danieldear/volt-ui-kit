@@ -2,26 +2,36 @@
 //! spirit of shadcn/ui and daisyUI docs. Each page shows live previews, the
 //! Rust that produced them, variations and an API reference.
 pub mod art;
+#[cfg(feature = "native")]
 pub mod desktop_services;
+#[cfg(feature = "native")]
 pub mod documents;
+#[cfg(feature = "native")]
 pub mod export;
 mod kit;
 mod landing;
+#[cfg(feature = "native")]
 pub mod lifecycle;
 pub mod motion_lab;
 pub mod navigation_links;
 mod pages;
+#[cfg(feature = "native")]
 mod shell;
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests;
 
 pub use pages::{Page, PAGES};
+#[cfg(not(feature = "native"))]
+pub mod browser;
 
 /// The id of the current page's first example, if it has one.
 pub fn first_section_id(app: &App) -> Option<&'static str> {
     pages::doc(app.page, app).sections.first().map(|s| s.id)
 }
+#[cfg(feature = "native")]
 pub use shell::{view, OPACITY_MIN};
+#[cfg(feature = "native")]
+use std::time::Duration;
 use std::{
     collections::BTreeSet,
     ops::Range,
@@ -29,12 +39,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
-use volt_ui_kit::{
-    native::{UiSendError, UiSender},
-    ui::{Image, Palette, SortDirection, ThemeMode, UiTheme},
-};
+#[cfg(feature = "native")]
+use volt_ui_kit::native::{UiSendError, UiSender};
+use volt_ui_kit::ui::{Image, Palette, SortDirection, ThemeMode, UiTheme};
 
 /// Theme colours, shown as swatches and selectable from the header menu.
 pub const THEMES: [(&str, u32, u32); 6] = [
@@ -46,6 +54,7 @@ pub const THEMES: [(&str, u32, u32); 6] = [
     ("Orange", 0xEA580C, 0xF97316),
 ];
 
+#[cfg(feature = "native")]
 #[derive(Debug)]
 pub enum Message {
     NotificationWake,
@@ -99,12 +108,16 @@ pub struct App {
     pub email: String,
     pub password: String,
     pub bio: String,
+    #[cfg(feature = "native")]
     pub requests: Option<UiSender<volt_ui_kit::native::ApplicationRequest>>,
+    #[cfg(feature = "native")]
     pub documents: documents::State,
+    #[cfg(feature = "native")]
     pub services: desktop_services::State,
     pub command_probe: u64,
     pub document_text: String,
     pub saved_document: String,
+    #[cfg(feature = "native")]
     pub close_prompt: Option<volt_ui_kit::native::CloseReason>,
     /// The Application lifecycle page's command palette.
     pub app_commands: volt_ui_kit::ui::CommandPaletteState,
@@ -142,7 +155,10 @@ pub struct App {
     pub kit: kit::State,
     /// The landing page's live counter demo.
     pub counter: u32,
+    #[cfg(not(feature = "native"))]
+    pub web_section: String,
     // Background task demo.
+    #[cfg(feature = "native")]
     pub sender: Option<UiSender<Message>>,
     pub job_running: bool,
     pub job_progress: u32,
@@ -153,12 +169,16 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "native")]
             requests: None,
+            #[cfg(feature = "native")]
             documents: documents::State::default(),
+            #[cfg(feature = "native")]
             services: desktop_services::State::default(),
             command_probe: 0,
             document_text: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
             saved_document: "A small document, owned by your Rust application.\nEdit it to test Save / Discard / Cancel.".into(),
+            #[cfg(feature = "native")]
             close_prompt: None,
             app_commands: Default::default(),
             log_draft: String::new(),
@@ -222,9 +242,12 @@ impl App {
             show_password: false,
             liked: false,
             last_action: "Nothing yet".into(),
-            image: art::landscape(480, 300),
+            image: art::sample_landscape(),
             kit: kit::State::default(),
             counter: 0,
+            #[cfg(not(feature = "native"))]
+            web_section: String::new(),
+            #[cfg(feature = "native")]
             sender: None,
             job_running: false,
             job_progress: 0,
@@ -266,6 +289,13 @@ impl App {
         self.next_toast = self.next_toast.wrapping_add(1);
         self.toast = Some((self.next_toast, message.into()));
     }
+    #[cfg(not(feature = "native"))]
+    pub fn start_job(&mut self) {
+        self.notify(
+            "Background workers require the native Catalog; this browser does not run OS jobs",
+        );
+    }
+    #[cfg(feature = "native")]
     pub fn start_job(&mut self) {
         let Some(sender) = self.sender.clone() else {
             self.notify("Background workers run in the native window only");
@@ -301,6 +331,7 @@ impl App {
 
 // Intermediate updates may coalesce, but completion must survive backpressure.
 // Retry only on the worker thread; cancellation/closure bound its lifetime.
+#[cfg(feature = "native")]
 fn send_progress(
     cancel: &AtomicBool,
     step: u32,
@@ -326,11 +357,13 @@ impl Drop for App {
 }
 
 /// Worker messages arrive here, on the UI thread, in batches.
+#[cfg(feature = "native")]
 pub fn update(app: &mut App, message: Message) {
     desktop_services::drain(app);
     let (generation, step) = match message {
         Message::NotificationWake => return,
         Message::File { generation, result } => {
+            #[cfg(feature = "native")]
             documents::finish(app, generation, &result);
             return;
         }
@@ -404,6 +437,7 @@ pub fn preset_palette(app: &App, dark: bool) -> Palette {
     }
 }
 
+#[cfg(feature = "native")]
 pub fn window_background(app: &App) -> volt_ui_kit::native::WindowBackground {
     use volt_ui_kit::native::WindowBackground;
     let opacity = app.opacity as f32 / 100.;
@@ -419,6 +453,7 @@ pub fn window_background(app: &App) -> volt_ui_kit::native::WindowBackground {
 }
 
 /// Development restarts (`cargo volt dev`): keep the page and appearance.
+#[cfg(feature = "native")]
 pub fn dev_save(app: &App) -> String {
     format!(
         "page={}\nmode={}\ntheme={}\nsidebar={}\nglass={}\n",
@@ -433,6 +468,7 @@ pub fn dev_save(app: &App) -> String {
         app.glass
     )
 }
+#[cfg(feature = "native")]
 pub fn dev_load(app: &mut App, saved: &str) {
     for line in saved.lines() {
         match line.split_once('=') {

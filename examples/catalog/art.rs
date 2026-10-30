@@ -425,3 +425,9 @@ pub fn orbit(size: f32, radius: f32, sweep: f32, start: f32) -> Element<App> {
     .width(size)
     .height(size)
 }
+
+/// One deterministic shared asset, avoiding an image allocation per live preview.
+pub(super) fn sample_landscape() -> Image {
+    static SAMPLE: std::sync::OnceLock<Image> = std::sync::OnceLock::new();
+    SAMPLE.get_or_init(|| landscape(480, 300)).clone()
+}

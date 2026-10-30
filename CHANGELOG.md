@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Extend the experimental web host with write-only password input, UTF-16/UTF-8
+  caret/selection synchronization, native composition cancellation/commit,
+  code-surface input and trusted-event clipboard routing. Add a small Rust-owned
+  editor fixture, redacted wire errors, and Chrome/WebKit regression coverage.
+  Password values remain absent from semantic snapshots. Physical IME,
+  password-manager and complete desktop editor parity remain acceptance gates.
+
+- Experimental opt-in WASM browser host and live Rust documentation previews: async WebGPU presentation, explicit software canvas fallback, DOM text/IME and basic semantic bridging, bounded event-driven rendering, shared host tests and browser smoke coverage. Desktop constructors and legacy APIs remain unchanged. Replace landing/reference component images with original Catalog Rust canvas mounts, including native-only capability notices, shared-module resource limits, offscreen state retention and direct Catalog browser tests.
+
 - Reject malformed multi-separator light/dark color pairs in either theme mode,
   before choosing a half. Valid hex/token/opacity pairs retain their behavior.
 
@@ -24,7 +33,6 @@
   Vello compute/indirect support before drawing. The prototype explicitly opts
   into a capability-reported software-drawing/Metal-presentation fallback for
   restricted Simulator adapters; desktop GPU defaults are unchanged.
-
 
 - Code views report what the pointer rests on when asked:
   `report_hover(true)` sends `CodeInput::Hover { at, point }` as the
@@ -308,7 +316,6 @@
   (owner-only on Unix), refuse pre-existing paths/symlinks, and remove the
   directory on normal exit after stopping the child. No public API or runtime
   dependency changes.
-
 
 - Harden four reviewed paths without changing public APIs or dependencies:
   metadata-driven bundles reject path-component names and validate inputs
@@ -787,7 +794,6 @@
 - GPU: axis-aligned lines (borders, dividers) are filled as exact rectangles.
   Stroked, a long horizontal border on the surface's top edge filled its whole
   first 16-pixel tile row, hiding a bordered sheet's background there.
-
 
 ## 0.2.0 (unreleased)
 

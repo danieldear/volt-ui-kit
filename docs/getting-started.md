@@ -147,7 +147,7 @@ the launcher script, which intentionally only accepts `--check` and `--help`.
 | Linux | Cross-compilation checked; headless CI configured (Vulkan, X11/Wayland). Native runtime not yet validated. |
 | iOS | [Experimental reusable host/template](ios-prototype.md): Rust screens without per-app Swift glue. Simulator workflows tested; physical-device GPU acceptance pending. |
 | Android | Common Rust application/event layer only; no Activity, IME host, APK or project template yet. |
-| WebAssembly | The core (`rust-ui`) compiles for `wasm32-unknown-unknown`; there is no web host yet. |
+| WebAssembly | [Experimental browser host](web-prototype.md): live Rust buttons, tabs, forms and scrolling with WebGPU/software rendering; not full web parity. |
 
 ## Next
 

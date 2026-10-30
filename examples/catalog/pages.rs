@@ -357,9 +357,18 @@ pub fn doc(page: Page, app: &App) -> Doc {
         Image => image_doc(app),
         Effects => effects_doc(app),
         BackgroundTasks => tasks_doc(app),
+        #[cfg(feature = "native")]
         ApplicationLifecycle => super::lifecycle::doc(app),
+        #[cfg(not(feature = "native"))]
+        ApplicationLifecycle => super::browser::native_doc(page),
+        #[cfg(feature = "native")]
         Documents => super::documents::doc(app),
+        #[cfg(not(feature = "native"))]
+        Documents => super::browser::native_doc(page),
+        #[cfg(feature = "native")]
         DesktopServices => super::desktop_services::doc(app),
+        #[cfg(not(feature = "native"))]
+        DesktopServices => super::browser::native_doc(page),
         SignIn => sign_in(app),
         Settings => settings_doc(app),
         Navigation => navigation_doc(app),
@@ -2089,12 +2098,17 @@ fn invoice_table(app: &App, square: bool) -> El<App> {
 fn table_doc(app: &App) -> Doc {
     let status = || {
         muted(format!(
-            "{} invoices{} · sorting and selection are shared between both previews",
+            "{} invoices{} · {}",
             INVOICES.len(),
             app.row.map_or(String::new(), |i| format!(
                 " · {} selected",
                 INVOICES[i as usize].0
-            ))
+            )),
+            if cfg!(feature = "native") {
+                "sorting and selection are shared between both previews"
+            } else {
+                "each web preview has independent state"
+            }
         ))
         .font_size(12.)
         .height(36.)

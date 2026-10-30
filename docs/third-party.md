@@ -43,3 +43,17 @@ Source: [Google Fonts](https://github.com/google/fonts/tree/94301472b4d809299b47
 revision `94301472b4d809299b4775bc6502592b83dd6934`, retrieved 2026-10-15.
 The upstream TrueType file is 408,496 bytes and the WOFF2 file 204,904 bytes; no
 Apple font binaries are redistributed.
+
+## Live browser demo font
+
+The WASM demonstration embeds unmodified **InterVariable.ttf** and **InterVariable-Italic.ttf** from the
+[Inter project](https://github.com/rsms/inter), (v4.1), retrieved 2026-10-29. Copyright
+2016 The Inter Project Authors; SIL Open Font License 1.1. The full
+[license](live/OFL.txt) is shipped with the live documentation. No Apple fonts
+are included. This font is a demo asset, not a default font imposed on consumers.
+
+The browser Catalog also embeds **JetBrainsMono[wght].ttf** (stored locally as
+`JetBrainsMono.ttf`), from [JetBrains Mono v2.304](https://github.com/JetBrains/JetBrainsMono/tree/v2.304).
+Copyright 2020 The JetBrains Mono Project Authors; SIL Open Font License 1.1,
+provided in `docs/live/JetBrainsMono-OFL.txt`. These fonts are compiled into the
+WASM example; no runtime font CDN or Apple font redistribution is used.

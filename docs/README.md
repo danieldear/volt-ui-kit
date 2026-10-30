@@ -3,7 +3,9 @@
 Start at the [HTML landing page](index.html), browse the
 [component reference](reference/index.html), or read the guides below.
 The HTML site includes every Catalog page and the guides below; Markdown stays
-the editable source for the guides.
+the editable source for the guides. Component previews now render the original
+Rust Catalog builders in browser canvases, not image files. See the
+[web host setup](web-prototype.md) for building the runtime locally.
 
 For the complete native demo, run `./scripts/run_catalog.sh` from the repository
 root. It handles build features and macOS packaging; direct Cargo commands in
@@ -36,3 +38,5 @@ Maintainers: [public-release checklist](public-release.md). Distributors: [third
 Repository maintenance: [low-disk Git identity correction](git-identity.md).
 
 Website maintainers: [regenerate the component previews and guides](site-maintenance.md).
+
+- [WebAssembly browser prototype](web-prototype.md): live Rust component demos, build steps and explicit limitations.
