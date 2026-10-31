@@ -99,6 +99,12 @@ impl<C> CodeView<C> {
         self.props().read_only = value;
         self
     }
+    /// Hand every key press to `on_input` as `CodeInput::Raw` (a terminal),
+    /// except the primary shortcuts, which keep their usual meaning.
+    pub fn raw_keys(mut self, value: bool) -> Self {
+        self.props().raw_keys = value;
+        self
+    }
     /// Shade the lines holding a caret (default on).
     pub fn highlight_line(mut self, value: bool) -> Self {
         self.props().highlight_line = value;
