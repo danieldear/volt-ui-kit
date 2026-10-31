@@ -168,6 +168,22 @@ pub enum CodeInput {
         at: Option<CodePosition>,
         point: [i32; 2],
     },
+    /// With `raw_keys`: a key press as typed, for views that interpret keys
+    /// themselves, such as a terminal. The primary shortcuts (copy, paste,
+    /// select all, the application's commands) keep their usual meaning.
+    Raw(RawKey),
+}
+
+/// A key press for a `raw_keys` view. `key` names a key ("Enter",
+/// "ArrowUp", "F5", "Escape", "Tab", "Backspace", "Space") or is the
+/// character it makes ignoring Shift-free modifiers ("c" for Control-C);
+/// `text` is what the keyboard typed, control characters included.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawKey {
+    pub key: String,
+    pub text: Option<String>,
+    pub modifiers: InputModifiers,
+    pub repeat: bool,
 }
 
 /// Most lines one document may carry; supply a window around the visible one.
@@ -196,6 +212,8 @@ pub(crate) struct CodeViewProps {
     pub line_height: f32,
     pub gutter: bool,
     pub read_only: bool,
+    /// Every key press arrives as `CodeInput::Raw`, not as editing keys.
+    pub raw_keys: bool,
     pub highlight_line: bool,
     pub reveal: u32,
     pub scroll_to: Option<(usize, u32)>,
@@ -240,6 +258,7 @@ impl Default for CodeViewProps {
             line_height: 20.,
             gutter: true,
             read_only: false,
+            raw_keys: false,
             highlight_line: true,
             reveal: 0,
             scroll_to: None,
@@ -519,6 +538,12 @@ impl Runtime {
     /// A code view has keyboard focus: keys, text and input methods go to it.
     pub fn code_view_focused(&self) -> bool {
         self.focused_code().is_some()
+    }
+    /// Whether the focused code view takes every key press itself.
+    pub fn code_view_raw_keys(&self) -> bool {
+        self.focused_code()
+            .and_then(|b| b.ext.code.as_ref())
+            .is_some_and(|p| p.raw_keys)
     }
     /// Whether the focused code view is read-only.
     pub fn code_view_read_only(&self) -> bool {

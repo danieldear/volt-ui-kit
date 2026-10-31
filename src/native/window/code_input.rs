@@ -2,7 +2,7 @@
 //! their modifiers so the application applies its own conventions (Option
 //! moves by word, Command by line on macOS).
 use super::*;
-use crate::declarative::{CodeInput, CodeKey};
+use crate::declarative::{CodeInput, CodeKey, RawKey};
 
 impl<C: 'static> App<C> {
     /// Route a key press to the focused code view. Returns true when consumed.
@@ -19,6 +19,21 @@ impl<C: 'static> App<C> {
         }
         let modifiers = self.input_modifiers();
         let primary = modifiers.primary();
+        // A terminal takes keys as typed. Copy, paste and select all stay
+        // shortcuts (on other desktops with Shift, as terminals do there).
+        let reserved = if cfg!(target_os = "macos") { modifiers.meta } else { modifiers.control && modifiers.shift };
+        if self.runtime.code_view_raw_keys() && !reserved {
+            let key = match &event.logical_key {
+                Key::Named(named) => Some(format!("{named:?}")),
+                Key::Character(c) => Some(c.to_string()),
+                _ => None,
+            };
+            return match key {
+                Some(key) => self.code_send(CodeInput::Raw(RawKey { key, text: event.text.as_ref().map(|t| t.to_string()), modifiers, repeat: event.repeat })),
+                // Dead keys and the like arrive as composed text instead.
+                None => Ok(false),
+            };
+        }
         let key = match &event.logical_key {
             Key::Character(c) if primary && !modifiers.alt => match c.to_lowercase().as_str() {
                 "a" => CodeKey::SelectAll,
