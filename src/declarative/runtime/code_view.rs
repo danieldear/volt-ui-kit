@@ -177,10 +177,13 @@ pub enum CodeInput {
 /// A key press for a `raw_keys` view. `key` names a key ("Enter",
 /// "ArrowUp", "F5", "Escape", "Tab", "Backspace", "Space") or is the
 /// character it makes ignoring Shift-free modifiers ("c" for Control-C);
-/// `text` is what the keyboard typed, control characters included.
+/// `code` is where the key is, as a W3C UI Events code ("KeyC", "Digit2"),
+/// for terminals that encode by position; `text` is what the keyboard
+/// typed, control characters included.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawKey {
     pub key: String,
+    pub code: Option<String>,
     pub text: Option<String>,
     pub modifiers: InputModifiers,
     pub repeat: bool,

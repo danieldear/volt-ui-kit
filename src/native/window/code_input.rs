@@ -29,7 +29,13 @@ impl<C: 'static> App<C> {
                 _ => None,
             };
             return match key {
-                Some(key) => self.code_send(CodeInput::Raw(RawKey { key, text: event.text.as_ref().map(|t| t.to_string()), modifiers, repeat: event.repeat })),
+                Some(key) => {
+                    let code = match event.physical_key {
+                        winit::keyboard::PhysicalKey::Code(code) => Some(format!("{code:?}")),
+                        _ => None,
+                    };
+                    self.code_send(CodeInput::Raw(RawKey { key, code, text: event.text.as_ref().map(|t| t.to_string()), modifiers, repeat: event.repeat }))
+                }
                 // Dead keys and the like arrive as composed text instead.
                 None => Ok(false),
             };
