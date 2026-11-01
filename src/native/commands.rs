@@ -1,6 +1,9 @@
 //! Bounded, state-aware application commands shared by shortcuts and custom UI.
 //! This is an in-process UI dispatcher, not a shell/agent permission boundary.
-use std::{collections::BTreeSet, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::OnceLock,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseReason {
@@ -50,6 +53,39 @@ impl Shortcut {
     pub fn alt(mut self, value: bool) -> Self {
         self.alt = value;
         self
+    }
+    /// Parse a portable primary-modifier chord, e.g. `Primary+Shift+J`.
+    /// Cmd/Command and Ctrl/Control are aliases for the platform's primary key.
+    /// Use the unshifted ASCII key, not a keyboard-layout-dependent symbol.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        if value.len() > 80 {
+            return Err("shortcut is too long".into());
+        }
+        let mut parts = value.split('+').map(str::trim).collect::<Vec<_>>();
+        let key = parts
+            .pop()
+            .filter(|s| s.chars().count() == 1)
+            .and_then(|s| s.chars().next())
+            .ok_or("Use Primary+Shift+J or another single-key chord")?;
+        let (mut primary, mut shift, mut alt) = (false, false, false);
+        for part in parts {
+            let flag = match part.to_ascii_lowercase().as_str() {
+                "primary" | "cmd" | "command" | "ctrl" | "control" => &mut primary,
+                "shift" => &mut shift,
+                "alt" | "option" | "opt" => &mut alt,
+                _ => return Err("Use Primary, Shift and/or Alt modifiers".into()),
+            };
+            if *flag {
+                return Err("duplicate shortcut modifier".into());
+            }
+            *flag = true;
+        }
+        if !primary {
+            return Err("a shortcut must include Primary (Cmd on macOS, Ctrl elsewhere)".into());
+        }
+        let shortcut = Self::primary(key).shift(shift).alt(alt);
+        shortcut.validate()?;
+        Ok(shortcut)
     }
     pub fn label(self) -> String {
         format!(
@@ -111,10 +147,12 @@ impl Shortcut {
 
 type Callback<C> = Box<dyn FnMut(&mut C)>;
 type Enabled<C> = Box<dyn Fn(&C) -> bool>;
+type ShortcutState<C> = Box<dyn Fn(&C) -> Option<Shortcut>>;
 pub struct Command<C> {
     id: String,
     label: String,
     shortcut: Option<Shortcut>,
+    shortcut_state: Option<ShortcutState<C>>,
     enabled: Enabled<C>,
     callback: Callback<C>,
     close: Option<CloseReason>,
@@ -129,6 +167,7 @@ impl<C> Command<C> {
             id: id.into(),
             label: label.into(),
             shortcut: None,
+            shortcut_state: None,
             enabled: Box::new(|_| true),
             callback: Box::new(callback),
             close: None,
@@ -136,6 +175,16 @@ impl<C> Command<C> {
     }
     pub fn shortcut(mut self, shortcut: Shortcut) -> Self {
         self.shortcut = Some(shortcut);
+        self
+    }
+    /// Resolve the current shortcut from application preferences. Menus, help
+    /// entries and native dispatch use the same value without restarting.
+    /// Invalid/conflicting dynamic bindings fail closed; static bindings win.
+    pub fn shortcut_from_state(
+        mut self,
+        resolve: impl Fn(&C) -> Option<Shortcut> + 'static,
+    ) -> Self {
+        self.shortcut_state = Some(Box::new(resolve));
         self
     }
     /// Evaluated again immediately before dispatch, not just when a menu was drawn.
@@ -224,16 +273,48 @@ impl<C> CommandRegistry<C> {
         }
         Ok(())
     }
+    fn shortcuts(&self, context: &C) -> Vec<Option<Shortcut>> {
+        let reserved: BTreeSet<_> = self
+            .commands
+            .iter()
+            .filter(|c| c.shortcut_state.is_none())
+            .filter_map(|c| c.shortcut)
+            .collect();
+        let mut counts = BTreeMap::<Shortcut, usize>::new();
+        let mut keys: Vec<_> = self
+            .commands
+            .iter()
+            .map(|c| {
+                if let Some(resolve) = &c.shortcut_state {
+                    let key =
+                        resolve(context).filter(|s| s.validate().is_ok() && !reserved.contains(s));
+                    if let Some(key) = key {
+                        *counts.entry(key).or_default() += 1;
+                    }
+                    key
+                } else {
+                    c.shortcut
+                }
+            })
+            .collect();
+        for (c, key) in self.commands.iter().zip(&mut keys) {
+            if c.shortcut_state.is_some() && key.is_some_and(|s| counts.get(&s) != Some(&1)) {
+                *key = None;
+            }
+        }
+        keys
+    }
     pub fn entries<'a>(&'a self, context: &C) -> Vec<CommandInfo<'a>> {
         if self.validate().is_err() {
             return vec![];
         }
         self.commands
             .iter()
-            .map(|c| CommandInfo {
+            .zip(self.shortcuts(context))
+            .map(|(c, shortcut)| CommandInfo {
                 id: &c.id,
                 label: &c.label,
-                shortcut: c.shortcut,
+                shortcut,
                 enabled: (c.enabled)(context),
             })
             .collect()
@@ -253,16 +334,20 @@ impl<C> CommandRegistry<C> {
     }
     pub(super) fn shortcut_id(
         &self,
+        context: &C,
         key: char,
         mods: winit::keyboard::ModifiersState,
     ) -> Option<&str> {
+        if self.validate().is_err() {
+            return None;
+        }
         self.commands
             .iter()
-            .find(|c| {
-                c.shortcut
-                    .is_some_and(|s| s.matches(key, mods, cfg!(target_os = "macos")))
+            .zip(self.shortcuts(context))
+            .find(|(_, shortcut)| {
+                shortcut.is_some_and(|s| s.matches(key, mods, cfg!(target_os = "macos")))
             })
-            .map(|c| c.id.as_str())
+            .map(|(c, _)| c.id.as_str())
     }
 }
 #[cfg(test)]
@@ -320,5 +405,58 @@ mod tests {
         assert!(r.validate().is_err());
         assert!(r.entries(&()).is_empty());
         assert_eq!(r.dispatch("bad/id", &mut ()), CommandDispatch::Unknown);
+    }
+    #[test]
+    fn dynamic_shortcuts_share_menu_values_and_fail_closed_on_conflict() {
+        let primary = if cfg!(target_os = "macos") {
+            M::SUPER
+        } else {
+            M::CONTROL
+        };
+        let r = CommandRegistry::new()
+            .command(
+                Command::new("fixed", "Fixed", |_: &mut char| {}).shortcut(Shortcut::primary('s')),
+            )
+            .command(
+                Command::new("dynamic", "Dynamic", |_: &mut char| {})
+                    .shortcut_from_state(|c: &char| Some(Shortcut::primary(*c))),
+            );
+        assert_eq!(r.entries(&'j')[1].shortcut, Some(Shortcut::primary('j')));
+        assert_eq!(r.shortcut_id(&'j', 'j', primary), Some("dynamic"));
+        assert_eq!(r.shortcut_id(&'k', 'j', primary), None);
+        assert_eq!(r.shortcut_id(&'k', 'k', primary), Some("dynamic"));
+        assert_eq!(r.entries(&'s')[1].shortcut, None);
+        assert_eq!(r.shortcut_id(&'s', 's', primary), Some("fixed"));
+        assert_eq!(r.entries(&'q')[1].shortcut, None);
+        let duplicate = r.command(
+            Command::new("other", "Other", |_: &mut char| {})
+                .shortcut_from_state(|c: &char| Some(Shortcut::primary(*c))),
+        );
+        assert!(duplicate.entries(&'j')[1..]
+            .iter()
+            .all(|e| e.shortcut.is_none()));
+    }
+    #[test]
+    fn portable_chords_parse_with_exact_modifiers_and_reject_unsafe_keys() {
+        assert_eq!(
+            Shortcut::parse("Primary+Shift+J").unwrap(),
+            Shortcut::primary('j').shift(true)
+        );
+        assert_eq!(
+            Shortcut::parse("ctrl+option+K").unwrap(),
+            Shortcut::primary('k').alt(true)
+        );
+        for bad in [
+            "J",
+            "Primary+Shift+Shift+J",
+            "Primary+Cmd+J",
+            "Primary+Q",
+            "Primary+C",
+            "Primary+Space",
+            "Primary+F12",
+            "Primary+é",
+        ] {
+            assert!(Shortcut::parse(bad).is_err(), "{bad}");
+        }
     }
 }
