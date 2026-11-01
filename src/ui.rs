@@ -480,6 +480,8 @@ pub struct Element<C> {
     /// Containers: a drag began on them; the offset from the press.
     drag: Option<DragCallback<C>>,
     drag_start: Option<Click<C>>,
+    drag_from: Option<DragCallback<C>>,
+    drag_end: Option<Click<C>>,
 }
 impl<C> Element<C> {
     #[cfg(feature = "mobile")]
@@ -513,6 +515,8 @@ impl<C> Element<C> {
             input_key: None,
             drag: None,
             drag_start: None,
+            drag_from: None,
+            drag_end: None,
         }
     }
 }
@@ -559,6 +563,8 @@ impl<C: 'static> Element<C> {
                 input_key,
                 drag,
                 drag_start,
+                drag_from,
+                drag_end,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -593,6 +599,20 @@ impl<C: 'static> Element<C> {
                     .on_activate(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_drag_start = Some(name);
+            }
+            if let Some(f) = drag_end {
+                let name = format!("rust-drag-end-{}", *count);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag_end = Some(name);
+            }
+            if let Some(f) = drag_from {
+                let name = format!("rust-drag-from-{}", *count);
+                handlers
+                    .on_context_requested(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag_from = Some(name);
             }
             if let Some(f) = drag {
                 let name = format!("rust-drag-{}", *count);
@@ -1316,6 +1336,16 @@ macro_rules! container_modifiers {
             /// the pointer returned to the origin, not that a new drag began.
             pub fn on_drag_start(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
                 self.0.drag_start = Some(Box::new(f)); self
+            }
+            /// Called once on a grip press with where it landed inside this
+            /// container, in logical points, before the first `on_drag`: for
+            /// drawing and placing things where the pointer went down.
+            pub fn on_drag_from(mut self, f: impl FnMut(&mut C, [f32; 2]) + 'static) -> Self {
+                self.0.drag_from = Some(Box::new(f)); self
+            }
+            /// Called once when the drag that began on this container ends.
+            pub fn on_drag_end(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+                self.0.drag_end = Some(Box::new(f)); self
             }
             /// A drag grip: called with `[0, 0]` when the pointer is pressed on
             /// this container (not on a control inside it), then with its offset
