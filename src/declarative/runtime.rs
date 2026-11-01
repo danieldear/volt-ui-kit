@@ -275,6 +275,10 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) on_drag_start: Option<String>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag_from: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag_end: Option<String>,
+    #[cfg(feature = "rust-ui")]
     pub(crate) on_hover: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_focus_within: Option<String>,
@@ -411,6 +415,7 @@ struct DragCapture {
     kind: Kind,
     action: String,
     origin: [f32; 2],
+    end: Option<String>,
 }
 /// Shared document layout and event state; owns no window or background tasks.
 pub struct Runtime {
@@ -1872,10 +1877,24 @@ impl Runtime {
                     kind: b.kind,
                     action: b.on_drag.clone().unwrap(),
                     origin: [x, y],
+                    end: b.on_drag_end.clone(),
                 };
                 if let Some(start) = &b.on_drag_start {
                     handlers
                         .dispatch(start, Event::Activate, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                }
+                if let Some(from) = &b.on_drag_from {
+                    let [bx, by, _, _] = b.bounds.bounds();
+                    handlers
+                        .dispatch(
+                            from,
+                            Event::ContextRequested {
+                                x_bits: ((x - bx) / self.scale).to_bits(),
+                                y_bits: ((y - by) / self.scale).to_bits(),
+                            },
+                            context,
+                        )
                         .map_err(|e| DocumentError(e.to_string()))?;
                 }
                 handlers
@@ -2023,7 +2042,16 @@ impl Runtime {
     ) -> Result<InputOutcome, DocumentError> {
         #[cfg(feature = "rust-ui")]
         {
-            if self.drag_capture.take().is_some() {
+            if let Some(capture) = self.drag_capture.take() {
+                if let Some(end) = capture.end.filter(|_| self.scope_allows_id(&capture.id)) {
+                    handlers
+                        .dispatch(&end, Event::Activate, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                    return Ok(InputOutcome {
+                        changed: true,
+                        activated: true,
+                    });
+                }
                 return Ok(InputOutcome {
                     changed: true,
                     activated: false,
@@ -4824,6 +4852,10 @@ fn place(
         on_drag: n.on_drag.clone(),
         #[cfg(feature = "rust-ui")]
         on_drag_start: n.on_drag_start.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_drag_from: n.on_drag_from.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_drag_end: n.on_drag_end.clone(),
         #[cfg(feature = "rust-ui")]
         on_hover: n.on_hover.clone(),
         #[cfg(feature = "rust-ui")]
