@@ -1290,6 +1290,12 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// Receive native file drops without changing the container layout.
+            /// Drops over descendants route to this nearest registered ancestor.
+            pub fn on_files_dropped(mut self, f: impl FnMut(&mut C, Vec<std::path::PathBuf>) + 'static) -> Self {
+                self.0.callback = Some(Callback::Files(Box::new(f)));
+                self
+            }
             /// Make a rich container an activation target; descendants that are
             /// independently interactive take precedence. Supply an accessible label.
             pub fn on_click_with(mut self, mut f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
