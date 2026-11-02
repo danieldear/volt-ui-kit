@@ -292,7 +292,7 @@ impl CodeViewProps {
                     && self
                         .line_numbers
                         .iter()
-                        .all(|n| *n > 0 && *n <= self.source_line_count)))
+                        .all(|n| *n <= self.source_line_count)))
             && self.fold_controls.len() <= MAX_CODE_LINES
             && self
                 .fold_controls
@@ -1665,12 +1665,16 @@ impl Runtime {
                 let mut number_style = style.clone();
                 number_style.size = (props.font_size - 1.).max(4.) * s;
                 for line in first..last.min(props.line_count) {
-                    let label = props
+                    let number = props
                         .line_numbers
                         .get(line.saturating_sub(props.first))
                         .copied()
-                        .unwrap_or(line + 1)
-                        .to_string();
+                        .unwrap_or(line + 1);
+                    // 0: a row that goes on from the line above.
+                    if number == 0 {
+                        continue;
+                    }
+                    let label = number.to_string();
                     let width = label.len() as f32 * f.advance * (number_style.size / style.size);
                     let color = if caret_lines.contains(&line) {
                         text_color

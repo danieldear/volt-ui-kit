@@ -36,7 +36,8 @@ pub fn code_view<C>(line_count: usize) -> CodeView<C> {
 }
 impl<C> CodeView<C> {
     /// Original source line numbers for the supplied window of projected rows.
-    /// Empty restores the normal sequential gutter. Numbers are one-based.
+    /// Empty restores the normal sequential gutter. Numbers are one-based;
+    /// 0 leaves a row unnumbered, such as a wrapped line's later rows.
     pub fn line_numbers(mut self, numbers: Vec<usize>, source_count: usize) -> Self {
         self.props().line_numbers = numbers;
         self.props().source_line_count = source_count;
