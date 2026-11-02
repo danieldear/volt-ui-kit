@@ -25,6 +25,7 @@ const guideDefs = [
  ['json-ui','Optional JSON frontend','Data-only declarations with behavior owned by your Rust application.'],
  ['architecture','Architecture','The frame pipeline, ownership, accessibility and resource boundaries.'],
  ['web-prototype','WebAssembly prototype','Experimental Rust components in a browser canvas, with WebGPU and software presentation.'],
+ ['android-prototype','Experimental Android','Reusable Android host, Rust-first APK template, native input and explicit device-validation limits.'],
  ['ios-prototype','Experimental iOS','Rust-owned navigation, scrolling and forms with a thin UIKit host. Prototype limits and tests.'],
 ];
 const files = [];

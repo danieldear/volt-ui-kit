@@ -1,4 +1,4 @@
-//! Edit this Rust file. The iOS window, keyboard and Metal glue live in Volt.
+//! Edit this Rust file. Native surfaces, keyboard and lifecycle glue live in Volt.
 use volt_ui_kit_mobile::ui_kit::ui::prelude::*;
 use volt_ui_kit_mobile::{Application, HostContext};
 #[derive(Default)]
@@ -93,11 +93,12 @@ pub fn application(host: HostContext) -> Result<Application<App>, String> {
         },
         view,
     )?
-    // Simulator lacks Vello indirect execution. Diagnostics report fallback;
-    // compatible devices still select GPU drawing. Physical testing required.
-    .allow_software_fallback(true))
+    // Software fallback is explicit for restricted/CPU adapters. Diagnostics
+    // report the real drawing mode; compatible GPUs retain Vello drawing.
+    .allow_software_fallback(true)
+    .back_with(|app| app.settings, |app| app.settings = false))
 }
-volt_ui_kit_mobile::export_ios_app!(application);
+volt_ui_kit_mobile::__VOLT_EXPORT__!(application);
 
 #[cfg(test)]
 mod tests {
