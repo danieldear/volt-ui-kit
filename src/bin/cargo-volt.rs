@@ -1,5 +1,7 @@
 //! Local scaffolding, rebuild/restart and macOS packaging. No shell evaluation.
 #![forbid(unsafe_code)]
+#[path = "volt/android.rs"]
+mod android;
 #[path = "volt/bundle.rs"]
 mod bundle;
 #[cfg(test)]
@@ -184,6 +186,10 @@ fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
     }
 }
 fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Result<()> {
+    if kind == "android" {
+        ios::resolve(kind, None, desktop)?;
+        return android::scaffold(destination, kit);
+    }
     if kind == "ios" {
         ios::resolve(kind, None, desktop)?;
         return ios::scaffold(destination, kit);
@@ -440,7 +446,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }}
             let kind=ios::resolve(kind,platform,desktop)?;
             scaffold(Path::new(&args[1]),kind,kit.ok_or_else(||error("--kit-path required until published"))?, desktop)?;
-            if kind=="ios" {println!("Created {}. Open {}/ios/VoltApp.xcodeproj; edit src/lib.rs (no Swift glue required).",args[1],args[1]);}
+            if kind=="android" {println!("Created {}. Build: cd {}/android && ./gradlew assembleDebug; edit src/lib.rs.",args[1],args[1]);}
+            else if kind=="ios" {println!("Created {}. Open {}/ios/VoltApp.xcodeproj; edit src/lib.rs (no Swift glue required).",args[1],args[1]);}
             else {println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);}
         }
         Some("bundle" | "release") if args.get(1).is_some_and(|s| s == "--help") && args.len()==2 => {
@@ -451,7 +458,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("bundle") => release::main(&args[1..], false)?,
         Some("release") => release::main(&args[1..], true)?,
         Some("dev") if args.len()<=2=>dev(Path::new(args.get(1).map_or(".",String::as_str)))?,
-        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--platform desktop|ios] [--template minimal|navigation|mail|settings|agent|ios] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
+        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--platform desktop|ios|android] [--template minimal|navigation|mail|settings|agent|ios|android] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
     }
     Ok(())
 }

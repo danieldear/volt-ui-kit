@@ -26,6 +26,16 @@ pub(super) fn alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::Com
     .into_iter()
     .find(|m| modes.contains(m))
 }
+fn opaque_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::CompositeAlphaMode> {
+    // Android SurfaceView can advertise only Inherit. Its native opaque pixel
+    // format owns that policy; do not request an unsupported Opaque swapchain.
+    [
+        wgpu::CompositeAlphaMode::Opaque,
+        wgpu::CompositeAlphaMode::Inherit,
+    ]
+    .into_iter()
+    .find(|mode| modes.contains(mode))
+}
 // Separate surface configuration from pixel encoding: wgpu (26 through 30)
 // advertises PostMultiplied for Metal, although Core Animation consumes premultiplied RGB.
 // Keep the advertised/supported SurfaceConfiguration, but compensate in the
@@ -453,6 +463,13 @@ pub struct GpuPresenter {
 fn supports_gpu_drawing(flags: wgpu::DownlevelFlags) -> bool {
     flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS | wgpu::DownlevelFlags::INDIRECT_EXECUTION)
 }
+fn gpu_drawing_for_adapter(
+    flags: wgpu::DownlevelFlags,
+    kind: wgpu::DeviceType,
+    allow_software: bool,
+) -> bool {
+    supports_gpu_drawing(flags) && !(allow_software && kind == wgpu::DeviceType::Cpu)
+}
 fn surface_limits(available: wgpu::Limits) -> wgpu::Limits {
     let mut requested = wgpu::Limits::default().using_resolution(available.clone());
     requested.max_inter_stage_shader_variables = requested
@@ -462,6 +479,35 @@ fn surface_limits(available: wgpu::Limits) -> wgpu::Limits {
 }
 #[cfg(test)]
 mod platform_limits_tests {
+    #[test]
+    fn cpu_adapter_fallback_is_explicit_and_hardware_gpu_policy_is_unchanged() {
+        use super::*;
+        let flags =
+            wgpu::DownlevelFlags::COMPUTE_SHADERS | wgpu::DownlevelFlags::INDIRECT_EXECUTION;
+        assert!(!gpu_drawing_for_adapter(flags, wgpu::DeviceType::Cpu, true));
+        assert!(gpu_drawing_for_adapter(flags, wgpu::DeviceType::Cpu, false));
+        for kind in [
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::DeviceType::DiscreteGpu,
+        ] {
+            assert!(gpu_drawing_for_adapter(flags, kind, true));
+            assert!(gpu_drawing_for_adapter(flags, kind, false));
+        }
+        assert!(!gpu_drawing_for_adapter(
+            wgpu::DownlevelFlags::empty(),
+            wgpu::DeviceType::IntegratedGpu,
+            false
+        ));
+    }
+
+    #[test]
+    fn opaque_desktop_policy_and_inherited_android_surfaces_are_supported() {
+        use super::{opaque_alpha_mode, wgpu::CompositeAlphaMode::*};
+        assert_eq!(opaque_alpha_mode(&[Inherit]), Some(Inherit));
+        assert_eq!(opaque_alpha_mode(&[Inherit, Opaque]), Some(Opaque));
+        assert_eq!(opaque_alpha_mode(&[PreMultiplied]), None);
+        assert_eq!(opaque_alpha_mode(&[]), None);
+    }
     #[test]
     fn simulator_without_indirect_execution_cannot_claim_gpu_drawing() {
         use super::*;
@@ -606,7 +652,14 @@ impl GpuPresenter {
             })
             .await
             .map_err(|e| e.to_string())?;
-        let gpu_drawing = supports_gpu_drawing(adapter.get_downlevel_capabilities().flags);
+        let info = adapter.get_info();
+        // An explicitly permitted fallback should not run compute rasterization
+        // on a software Vulkan CPU adapter. Physical GPU policy stays unchanged.
+        let gpu_drawing = gpu_drawing_for_adapter(
+            adapter.get_downlevel_capabilities().flags,
+            info.device_type,
+            allow_software,
+        );
         if !gpu_drawing && !allow_software {
             return Err("GPU drawing requires compute shaders and indirect execution; this adapter does not advertise both".into());
         }
@@ -615,9 +668,9 @@ impl GpuPresenter {
             alpha_mode(&caps.alpha_modes)
                 .ok_or("compositor does not advertise transparent alpha support")?
         } else {
-            wgpu::CompositeAlphaMode::Opaque
+            opaque_alpha_mode(&caps.alpha_modes)
+                .ok_or("compositor has no opaque/inherited alpha mode")?
         };
-        let info = adapter.get_info();
         let adapter_name = format!("{} / {:?}", info.name, info.backend);
         let format = caps
             .formats
@@ -679,7 +732,7 @@ impl GpuPresenter {
                 .map_err(|e| e.to_string())?,
             )
         } else {
-            eprintln!("Volt UI: adapter lacks Vello compute/indirect support; explicit software drawing + Metal presentation fallback active");
+            eprintln!("Volt UI: adapter uses CPU rendering or lacks Vello compute/indirect support; explicit software drawing + {:?} presentation fallback active", info.backend);
             None
         };
         Ok(Self {
@@ -713,7 +766,8 @@ impl GpuPresenter {
             alpha_mode(&self.alpha_modes)
                 .ok_or("compositor does not advertise transparent alpha support")?
         } else {
-            wgpu::CompositeAlphaMode::Opaque
+            opaque_alpha_mode(&self.alpha_modes)
+                .ok_or("compositor has no opaque/inherited alpha mode")?
         };
         if alpha == self.config.alpha_mode {
             return Ok(());
@@ -750,6 +804,19 @@ impl GpuPresenter {
             painter,
         )
     }
+    fn configure_surface(&self) -> Result<(), String> {
+        // Android surfaces can reject a stale extent while the Java view is
+        // being laid out. Capture that validation before attempting to acquire
+        // a frame from an unconfigured swapchain. Other hosts are unchanged.
+        #[cfg(target_os = "android")]
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        self.surface.configure(&self.device, &self.config);
+        #[cfg(target_os = "android")]
+        if let Some(error) = pollster::block_on(scope.pop()) {
+            return Err(format!("Android surface configuration failed: {error}"));
+        }
+        Ok(())
+    }
     pub fn present(
         &mut self,
         batches: &[PaintBatch<Shape, Glyph>],
@@ -771,7 +838,7 @@ impl GpuPresenter {
         if self.texture.is_none() || self.config.width != w || self.config.height != h {
             self.config.width = w;
             self.config.height = h;
-            self.surface.configure(&self.device, &self.config);
+            self.configure_surface()?;
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -844,7 +911,7 @@ impl GpuPresenter {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.config);
+                self.configure_surface()?;
                 return Ok(PresentStatus::Retry);
             }
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -859,7 +926,7 @@ impl GpuPresenter {
                 }
                 // Embedded UIKit surfaces keep their layer; reconfigure in place.
 
-                self.surface.configure(&self.device, &self.config);
+                self.configure_surface()?;
                 return Ok(PresentStatus::Retry);
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {

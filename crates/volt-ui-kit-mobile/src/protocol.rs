@@ -18,6 +18,7 @@ pub enum PlatformEvent {
     Appearance { dark: bool },
     Suspend { value: bool },
     Draw {},
+    Back {},
 }
 impl PlatformEvent {
     /// Shared bounded wire decoder; native adapters must not invent defaults for
@@ -54,6 +55,7 @@ mod tests {
             r#"{}"#,
             r#"{"op":"activate"}"#,
             r#"{"op":"draw","extra":true}"#,
+            r#"{"op":"back","extra":true}"#,
             r#"{"op":"run_shell","command":"no"}"#,
             r#"{"op":"resize","width":1e99,"height":400,"scale":3}"#,
             r#"{"op":"scroll","id":"list","dy":20000}"#,

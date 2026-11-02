@@ -4,7 +4,8 @@
 state and callbacks in Rust with Volt UI Kit. The toolkit supplies the reusable
 UIKit/Metal host, native single-line editor and Xcode build integration. No
 per-app Swift application code, SwiftUI, WebView or second widget framework is
-needed. Android has a shared Rust foundation, **not a working Android host**.
+needed. The separate [Android prototype](android-prototype.md) now supplies its own
+shared OS adapter and Rust-first template; neither mobile path is production support.
 
 ## Create a Rust iOS project
 
@@ -176,14 +177,15 @@ Physical iPhone/iPad GPU, memory/energy and frame-time acceptance are pending.
 
 ## Android direction and compatibility
 
-Android was considered in the extraction, not bolted onto UIKit. The common
-Rust application/event/snapshot layer has no Apple-specific public types. The
+Android was considered in the extraction, not bolted onto UIKit. Its separate
+[host/template prototype](android-prototype.md) now uses the common layer.
+The Rust application/event/snapshot layer has no Apple-specific public types. The
 iOS adapter is target-gated; wgpu selects Vulkan on Android. Cross-compiling
 this Rust layer does **not** provide an Activity, working keyboard or APK.
-`cargo volt new --platform android` currently returns an explicit unsupported
-message rather than generating a misleading empty project.
+`cargo volt new --platform android` now creates a Rust cdylib project referencing
+the canonical Android OS adapter.
 
-A future Android vertical slice needs:
+The Android prototype and remaining production acceptance cover:
 
 1. Activity and native-window lifecycle, surface loss/recreation and insets.
 2. Vulkan adapter/device validation, pause/resume and Android back behavior.
@@ -194,8 +196,8 @@ A future Android vertical slice needs:
 
 The Android [GameActivity text-input guide](https://developer.android.com/games/agdk/game-activity/use-text-input)
 and [native-window API](https://developer.android.com/ndk/reference/group/a-native-window)
-are reference points, not a committed dependency choice. No new Android OS
-library, Kotlin UI framework or runtime dependency was added here.
+are architectural references. The Android adapter uses target-gated JNI/NDK
+dependencies, not a Kotlin UI framework; these do not enter desktop or iOS builds.
 
 - Default dependencies and legacy Painter/Viewport APIs remain unchanged.
 - `native` / `native-gpu` desktop re-exports retain their paths and types.

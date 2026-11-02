@@ -26,7 +26,7 @@ preview, not a component demo. See [third-party notices](third-party.md).
 
 - `docs/reference/`: every native Catalog page, with section previews, the
   Catalog's Rust usage excerpts, API notes and commands to run the native demo.
-- `docs/guides/`: HTML versions of the main Markdown guides and the experimental iOS/web guides. Edit the
+- `docs/guides/`: HTML versions of the main Markdown guides and the experimental iOS/Android/web guides. Edit the
   Markdown, not the generated HTML.
 - `docs/images/components/`: historic settled native software exports, retained
   for regression comparison but **not included in the published site**. The
@@ -103,8 +103,3 @@ release render resources. One shared module, at most eight active previews and
 two WebGPU surfaces prevent one device/instance per card. Verify every section
 with `scripts/test_catalog_web.cjs`, as well as `scripts/test_web.cjs` for the
 small starter/host-input fixture. Native compatibility is a separate gate.
-
-Pages deployment requires **GitHub Actions**, not raw branch `/docs` publishing:
-compiled WASM/JS build products are ignored by Git. After merging, select Actions
-in **Settings → Pages → Build and deployment**, then manually run the
-**Documentation site** workflow on `main`. See the public-release checklist.

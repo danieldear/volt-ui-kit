@@ -103,6 +103,8 @@ pub mod guide {
     #[doc = include_str!("../docs/architecture.md")]
     pub mod architecture {}
     #[cfg(feature = "mobile")]
+    #[doc = include_str!("../docs/android-prototype.md")]
+    pub mod android_prototype {}
     #[doc = include_str!("../docs/ios-prototype.md")]
     pub mod ios_prototype {}
 }
