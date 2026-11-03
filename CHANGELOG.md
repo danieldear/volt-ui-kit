@@ -9,18 +9,26 @@
   Password values remain absent from semantic snapshots. Physical IME,
   password-manager and complete desktop editor parity remain acceptance gates.
 
+
 - Experimental opt-in WASM browser host and live Rust documentation previews: async WebGPU presentation, explicit software canvas fallback, DOM text/IME and basic semantic bridging, bounded event-driven rendering, shared host tests and browser smoke coverage. Desktop constructors and legacy APIs remain unchanged. Replace landing/reference component images with original Catalog Rust canvas mounts, including native-only capability notices, shared-module resource limits, offscreen state retention and direct Catalog browser tests.
 
 - Reject malformed multi-separator light/dark color pairs in either theme mode,
   before choosing a half. Valid hex/token/opacity pairs retain their behavior.
+
+- Add an experimental reusable Android SurfaceView/JNI host and
+  `cargo volt new --platform android`: Rust-owned views, native single-line
+  editing, lifecycle/surface recovery, opt-in Rust Back callbacks and a pinned
+  Gradle/NDK APK build. Use advertised inherited surface alpha where required;
+  explicitly permitted software fallback also covers CPU Vulkan adapters.
+  Add regression/native smoke coverage and document remaining hardware gates.
 
 - Extract `volt-ui-kit-mobile`: reusable Rust application/events/semantics and
   a target-gated iOS UIKit/Metal host. Field Notes and the new
   `cargo volt new --platform ios` template share one canonical host: no per-app
   Swift application source or XcodeGen requirement. Include generated Rust and
   Simulator workflow tests, strict ABI/event validation, app-owned themes and
-  SF font fallback. The common layer considers future Android integration;
-  Android has no native host/template yet. Desktop defaults remain unchanged.
+  SF font fallback. The common application/event layer is also reused by the
+  separate Android adapter. Desktop defaults remain unchanged.
 
 - Add an opt-in iOS Field Notes prototype: Rust-owned list/detail navigation,
   touch scrolling and editable profile forms, with a thin UIKit scene/keyboard
@@ -33,6 +41,7 @@
   Vello compute/indirect support before drawing. The prototype explicitly opts
   into a capability-reported software-drawing/Metal-presentation fallback for
   restricted Simulator adapters; desktop GPU defaults are unchanged.
+
 
 - Code views report what the pointer rests on when asked:
   `report_hover(true)` sends `CodeInput::Hover { at, point }` as the
@@ -316,6 +325,7 @@
   (owner-only on Unix), refuse pre-existing paths/symlinks, and remove the
   directory on normal exit after stopping the child. No public API or runtime
   dependency changes.
+
 
 - Harden four reviewed paths without changing public APIs or dependencies:
   metadata-driven bundles reject path-component names and validate inputs
@@ -794,6 +804,7 @@
 - GPU: axis-aligned lines (borders, dividers) are filled as exact rectangles.
   Stroked, a long horizontal border on the surface's top edge filled its whole
   first 16-pixel tile row, hiding a bordered sheet's background there.
+
 
 ## 0.2.0 (unreleased)
 

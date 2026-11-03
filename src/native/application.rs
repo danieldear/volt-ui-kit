@@ -93,7 +93,7 @@ impl<C> HostExtensions<C> {
         modifiers: winit::keyboard::ModifiersState,
         repeat: bool,
     ) -> Option<super::CommandDispatch> {
-        let id = self.commands.shortcut_id(key, modifiers)?;
+        let id = self.commands.shortcut_id(context, key, modifiers)?;
         if repeat {
             // A matching repeat is consumed without invoking either callback path.
             return Some(super::CommandDispatch::Disabled);
@@ -602,5 +602,45 @@ mod lifecycle_tests {
             sender.send(ApplicationRequest::Close(CloseReason::Window)),
             Err(super::super::UiSendError::Closed)
         );
+    }
+    #[test]
+    fn remapped_shortcut_uses_current_state_and_consumes_held_repeats() {
+        use crate::native::Shortcut;
+        use winit::keyboard::ModifiersState as M;
+        struct Keys {
+            key: char,
+            calls: usize,
+        }
+        let mut state = Keys { key: 'j', calls: 0 };
+        let mut extensions = HostExtensions::<Keys> {
+            commands: CommandRegistry::new().command(
+                Command::new("chat", "Chat", |s: &mut Keys| s.calls += 1)
+                    .shortcut_from_state(|s: &Keys| Some(Shortcut::primary(s.key).shift(true))),
+            ),
+            ..HostExtensions::default()
+        };
+        let mods = if cfg!(target_os = "macos") {
+            M::SUPER
+        } else {
+            M::CONTROL
+        } | M::SHIFT;
+        assert!(extensions
+            .shortcut_dispatch(&mut state, 'j', mods, false)
+            .is_some());
+        for _ in 0..30 {
+            assert_eq!(
+                extensions.shortcut_dispatch(&mut state, 'j', mods, true),
+                Some(crate::native::CommandDispatch::Disabled)
+            );
+        }
+        assert_eq!(state.calls, 1);
+        state.key = 'k';
+        assert!(extensions
+            .shortcut_dispatch(&mut state, 'j', mods, false)
+            .is_none());
+        assert!(extensions
+            .shortcut_dispatch(&mut state, 'k', mods, false)
+            .is_some());
+        assert_eq!(state.calls, 2);
     }
 }

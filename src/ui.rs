@@ -252,7 +252,7 @@ pub enum FontStyle {
 }
 
 type Click<C> = Box<dyn FnMut(&mut C)>;
-type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation)>;
+type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation, u8)>;
 type InputKeyCallback<C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool>;
 type Change<C> = Box<dyn FnMut(&mut C, bool)>;
 type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
@@ -480,6 +480,8 @@ pub struct Element<C> {
     /// Containers: a drag began on them; the offset from the press.
     drag: Option<DragCallback<C>>,
     drag_start: Option<Click<C>>,
+    drag_from: Option<DragCallback<C>>,
+    drag_end: Option<Click<C>>,
 }
 impl<C> Element<C> {
     #[cfg(feature = "mobile")]
@@ -513,6 +515,8 @@ impl<C> Element<C> {
             input_key: None,
             drag: None,
             drag_start: None,
+            drag_from: None,
+            drag_end: None,
         }
     }
 }
@@ -559,6 +563,8 @@ impl<C: 'static> Element<C> {
                 input_key,
                 drag,
                 drag_start,
+                drag_from,
+                drag_end,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -594,6 +600,20 @@ impl<C: 'static> Element<C> {
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_drag_start = Some(name);
             }
+            if let Some(f) = drag_end {
+                let name = format!("rust-drag-end-{}", *count);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag_end = Some(name);
+            }
+            if let Some(f) = drag_from {
+                let name = format!("rust-drag-from-{}", *count);
+                handlers
+                    .on_context_requested(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_drag_from = Some(name);
+            }
             if let Some(f) = drag {
                 let name = format!("rust-drag-{}", *count);
                 handlers
@@ -625,7 +645,7 @@ impl<C: 'static> Element<C> {
             if let Some(f) = input_activation {
                 let name = format!("rust-input-{}", *count);
                 handlers
-                    .on_activate_with(&name, f)
+                    .on_activate_counted(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_activate_input = Some(name);
             }
@@ -1176,7 +1196,17 @@ impl<C> Button<C> {
 impl<C> Button<C> {
     /// Opt-in activation with press-time modifiers and an honest input source.
     /// Replaces `.on_click`; calling `.on_click` later replaces this handler.
-    pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+    pub fn on_click_with(mut self, mut f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+        self.0.callback = None;
+        self.0.input_activation = Some(Box::new(move |c, event, _| f(c, event)));
+        self
+    }
+    /// Pointer activation with the host's click count: one, two, or three.
+    /// Other activation sources report zero. Replaces on_click/on_click_with.
+    pub fn on_click_counted(
+        mut self,
+        f: impl FnMut(&mut C, PointerActivation, u8) + 'static,
+    ) -> Self {
         self.0.callback = None;
         self.0.input_activation = Some(Box::new(f));
         self
@@ -1263,10 +1293,16 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// Receive native file drops without changing the container layout.
+            /// Drops over descendants route to this nearest registered ancestor.
+            pub fn on_files_dropped(mut self, f: impl FnMut(&mut C, Vec<std::path::PathBuf>) + 'static) -> Self {
+                self.0.callback = Some(Callback::Files(Box::new(f)));
+                self
+            }
             /// Make a rich container an activation target; descendants that are
             /// independently interactive take precedence. Supply an accessible label.
-            pub fn on_click_with(mut self, f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
-                self.0.input_activation = Some(Box::new(f));
+            pub fn on_click_with(mut self, mut f: impl FnMut(&mut C, PointerActivation) + 'static) -> Self {
+                self.0.input_activation = Some(Box::new(move |c, event, _| f(c, event)));
                 self
             }
             /// Rising-edge focus request for a stable keyed interactive row.
@@ -1316,6 +1352,16 @@ macro_rules! container_modifiers {
             /// the pointer returned to the origin, not that a new drag began.
             pub fn on_drag_start(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
                 self.0.drag_start = Some(Box::new(f)); self
+            }
+            /// Called once on a grip press with where it landed inside this
+            /// container, in logical points, before the first `on_drag`: for
+            /// drawing and placing things where the pointer went down.
+            pub fn on_drag_from(mut self, f: impl FnMut(&mut C, [f32; 2]) + 'static) -> Self {
+                self.0.drag_from = Some(Box::new(f)); self
+            }
+            /// Called once when the drag that began on this container ends.
+            pub fn on_drag_end(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+                self.0.drag_end = Some(Box::new(f)); self
             }
             /// A drag grip: called with `[0, 0]` when the pointer is pressed on
             /// this container (not on a control inside it), then with its offset

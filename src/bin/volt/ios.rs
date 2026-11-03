@@ -4,14 +4,14 @@ use super::{error, fs, io, Path};
 pub fn resolve<'a>(kind: &'a str, platform: Option<&str>, desktop: bool) -> io::Result<&'a str> {
     let kind=match platform {
         None=>kind,
-        Some("desktop") if kind!="ios"=>kind,
+        Some("desktop") if !["ios","android"].contains(&kind)=>kind,
         Some("ios") if ["minimal","navigation","ios"].contains(&kind)=>"ios",
-        Some("android")=>return Err(error("Android has no host/template yet. The common Rust application layer is platform-neutral; Android runtime support is not implemented.")),
-        _=>return Err(error("unsupported platform/template combination; use --platform ios with minimal/navigation, or an existing desktop template")),
+        Some("android") if ["minimal","navigation","android"].contains(&kind)=>"android",
+        _=>return Err(error("unsupported platform/template combination; use --platform ios with minimal/navigation, --platform android with minimal/navigation, or an existing desktop template")),
     };
-    if kind == "ios" && desktop {
+    if ["ios", "android"].contains(&kind) && desktop {
         return Err(error(
-            "--desktop integrations cannot be combined with an iOS template",
+            "--desktop integrations cannot be combined with a mobile template",
         ));
     }
     Ok(kind)
@@ -89,7 +89,9 @@ pub fn scaffold(destination: &Path, kit: &Path) -> io::Result<()> {
         fs::write(destination.join("Cargo.toml"),format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nrust-version = \"1.89\"\npublish = false\n\n[lib]\ncrate-type = [\"staticlib\", \"rlib\"]\n\n[dependencies]\nvolt-ui-kit-mobile = {{ path = {host_dependency} }}\n\n[profile.release]\nopt-level = 2\n"))?;
         fs::write(
             destination.join("src/lib.rs"),
-            include_str!("ios/app.rs.in").replace("__APP_NAME__", name),
+            include_str!("mobile-app.rs.in")
+                .replace("__APP_NAME__", name)
+                .replace("__VOLT_EXPORT__", "export_ios_app"),
         )?;
         fs::write(
             destination.join("ios/VoltApp.xcodeproj/project.pbxproj"),
@@ -160,9 +162,9 @@ Simulator lacks Vello compute/indirect support; compatible hardware uses GPU
 drawing. Inspect the renderer diagnostic instead of assuming GPU rasterization.
 All rendering/theme/input behavior is owned by the Rust application/Volt host.
 
-Android is not implemented yet. Its future Activity/native-window/IME adapter
-can reuse the platform-neutral Rust Application/PlatformEvent layer, but this
-Xcode project and UIKit code are iOS-only.
+Android has a separate experimental --platform android template and native
+adapter reusing the common Rust Application/PlatformEvent layer. This Xcode
+project and UIKit code remain iOS-only.
 "#
             ),
         )?;
@@ -184,12 +186,18 @@ mod tests {
             "navigation"
         );
         assert_eq!(resolve("minimal", Some("ios"), false).unwrap(), "ios");
+        assert_eq!(
+            resolve("minimal", Some("android"), false).unwrap(),
+            "android"
+        );
         assert_eq!(resolve("ios", None, false).unwrap(), "ios");
         for (kind, p, d) in [
             ("mail", Some("ios"), false),
             ("ios", Some("desktop"), false),
             ("ios", None, true),
-            ("minimal", Some("android"), false),
+            ("mail", Some("android"), false),
+            ("android", Some("desktop"), false),
+            ("android", None, true),
         ] {
             assert!(resolve(kind, p, d).is_err());
         }

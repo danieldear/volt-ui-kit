@@ -22,6 +22,8 @@ __pycache__/
 
 /crates/volt-ui-kit-mobile/target/
 /crates/volt-ui-kit-mobile/apple/.build/
+/crates/volt-ui-kit-mobile/android/.gradle/
+/crates/volt-ui-kit-mobile/android/build/
 
 # Browser host build products; source and lockfiles stay tracked.
 /crates/volt-ui-kit-web/target/

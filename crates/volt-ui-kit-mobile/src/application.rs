@@ -1,6 +1,6 @@
 use crate::PlatformEvent;
 use serde_json::{json, Value};
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 use volt_ui_kit::rendering::{PresentStatus, SurfaceRenderer};
 use volt_ui_kit::{mobile::MobileView, ui::Element, Palette, ThemeMode, UiTheme};
 
@@ -10,6 +10,7 @@ pub struct HostContext {
     pub font_family: String,
 }
 /// A Rust-owned mobile application. Rendering policy and themes belong to the app.
+type BackNavigation<C> = (fn(&C) -> bool, fn(&mut C));
 pub struct Application<C: 'static> {
     ui: MobileView<C>,
     mode: ThemeMode,
@@ -18,6 +19,7 @@ pub struct Application<C: 'static> {
     suspended: bool,
     allow_software: bool,
     scale: f32,
+    back: Option<BackNavigation<C>>,
 }
 fn default_theme<C>(_: &C, mode: ThemeMode) -> UiTheme {
     UiTheme::from_palette(if mode == ThemeMode::Dark {
@@ -36,6 +38,7 @@ impl<C: 'static> Application<C> {
             suspended: false,
             allow_software: false,
             scale: 1.,
+            back: None,
         })
     }
     pub fn theme_with(mut self, theme: fn(&C, ThemeMode) -> UiTheme) -> Self {
@@ -51,6 +54,11 @@ impl<C: 'static> Application<C> {
     /// such as iOS Simulator. The drawing mode is always reported to diagnostics.
     pub fn allow_software_fallback(mut self, allow: bool) -> Self {
         self.allow_software = allow;
+        self
+    }
+    /// Optional platform back navigation; Android falls back to Activity back otherwise.
+    pub fn back_with(mut self, can_go_back: fn(&C) -> bool, action: fn(&mut C)) -> Self {
+        self.back = Some((can_go_back, action));
         self
     }
     pub fn state(&self) -> &C {
@@ -111,6 +119,13 @@ impl<C: 'static> Application<C> {
                 self.suspended = value;
                 self.ui.set_suspended(value);
             }
+            PlatformEvent::Back {} => {
+                if let Some((can, action)) = self.back {
+                    if !self.suspended && can(self.ui.context()) {
+                        self.ui.update(action)?;
+                    }
+                }
+            }
             PlatformEvent::Draw {} => {}
         }
         Ok(())
@@ -138,11 +153,11 @@ impl<C: 'static> Application<C> {
                 "password":n.password,"readOnly":n.read_only || n.password,"bounds":n.bounds.map(|v|v/self.scale),"visibleBounds":visible.map(|v|v/self.scale)})
         }).collect::<Vec<_>>();
         let theme = (self.theme)(self.ui.context(), self.mode);
-        json!({"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
+        json!({"canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
             "fieldBackground":theme.palette.base[1],"foreground":theme.palette.content,"accent":theme.palette.primary})
     }
 }
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 pub(crate) trait HostedApplication {
     fn handle(&mut self, event: PlatformEvent) -> Result<(), String>;
     fn draw(&mut self, renderer: &mut SurfaceRenderer) -> Result<PresentStatus, String>;
@@ -150,7 +165,7 @@ pub(crate) trait HostedApplication {
     fn suspended(&self) -> bool;
     fn allow_software(&self) -> bool;
 }
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 impl<C: 'static> HostedApplication for Application<C> {
     fn handle(&mut self, e: PlatformEvent) -> Result<(), String> {
         self.handle(e)
@@ -371,5 +386,21 @@ mod tests {
             .find(|n| n["id"] == "locked")
             .unwrap();
         assert_eq!(node["value"], "locked");
+    }
+
+    #[test]
+    fn platform_back_is_opt_in_and_suspended_back_cannot_mutate_state() {
+        let mut a = app().back_with(|s| s.clicks > 0, |s| s.clicks -= 1);
+        assert_eq!(a.snapshot()["canGoBack"], false);
+        a.handle(PlatformEvent::Activate { id: "count".into() })
+            .unwrap();
+        assert_eq!(a.snapshot()["canGoBack"], true);
+        a.handle(PlatformEvent::Suspend { value: true }).unwrap();
+        a.handle(PlatformEvent::Back {}).unwrap();
+        assert_eq!(a.state().clicks, 1);
+        a.handle(PlatformEvent::Suspend { value: false }).unwrap();
+        a.handle(PlatformEvent::Back {}).unwrap();
+        assert_eq!(a.state().clicks, 0);
+        assert_eq!(a.snapshot()["canGoBack"], false);
     }
 }

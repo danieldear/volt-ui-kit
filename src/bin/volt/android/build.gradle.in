@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application' version '8.13.2'
+}
+def host = file(__VOLT_HOST__)
+def rustAbi = providers.gradleProperty('voltAbi').getOrElse('arm64-v8a')
+if (!(rustAbi in ['arm64-v8a', 'x86_64'])) throw new GradleException('voltAbi must be arm64-v8a or x86_64')
+android {
+    namespace '__BUNDLE_ID__'
+    compileSdk 36
+    ndkVersion '29.0.13599879'
+    defaultConfig {
+        applicationId '__BUNDLE_ID__'
+        minSdk 30
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters rustAbi }
+    }
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = [new File(host, 'android/java')]
+            jniLibs.srcDirs = [layout.buildDirectory.dir('rustJniLibs').get().asFile]
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packaging { jniLibs { useLegacyPackaging = false } }
+}
+tasks.register('buildRust', Exec) {
+    def rustManifest = file('../Cargo.toml')
+    def ndk = android.ndkDirectory
+    workingDir '..'
+    commandLine providers.gradleProperty('voltPython').getOrElse('python3'),
+        new File(host, 'android/build-rust.py').absolutePath,
+        rustManifest.absolutePath, rustAbi, ndk.absolutePath,
+        layout.buildDirectory.dir('rustJniLibs').get().asFile.absolutePath
+}
+tasks.named('preBuild').configure { dependsOn 'buildRust' }

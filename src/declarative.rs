@@ -444,7 +444,7 @@ pub use runtime::accessibility::{AccessNode, AccessRole, AccessTableInfo, Access
 pub(crate) use runtime::code_view::CodeViewProps;
 #[cfg(feature = "rust-ui")]
 pub use runtime::code_view::{
-    CodeDecoration, CodeInput, CodeKey, CodeLine, CodeMark, CodePosition, CodeSelection,
+    CodeDecoration, CodeInput, CodeKey, CodeLine, CodeMark, CodePosition, CodeSelection, RawKey,
 };
 #[cfg(feature = "rust-ui")]
 pub use runtime::editing::EditKey;

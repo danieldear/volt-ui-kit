@@ -64,7 +64,9 @@ Rust-owned screens, navigation, touch scrolling and editable profile forms,
 with a reusable UIKit keyboard/Metal host. Generate a Rust app with
 `cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`:
 no per-app Swift application code is needed. See the guide for setup, tests
-and limits. Android has a shared Rust foundation, not a native host yet. Simulator software drawing is reported
+and limits. An [experimental Android host/template](docs/android-prototype.md)
+also builds Rust-owned screens with shared native OS glue; neither mobile
+adapter is production support. Simulator software drawing is reported
 explicitly; physical-device GPU acceptance is still pending. Desktop remains
 the primary supported host.
 
@@ -183,7 +185,6 @@ WebAssembly; an [experimental browser host](docs/web-prototype.md) now renders t
 ## Preview the documentation site
 
 ```sh
-python3 scripts/build_web.py  # live previews; see web setup below for prerequisites
 python3 -m http.server 8000 --bind 127.0.0.1 --directory docs
 # Open http://127.0.0.1:8000
 ```
@@ -217,8 +218,8 @@ for package verification, account prerequisites and the separately approved
 ### Experimental live web components
 
 Try real Rust components in a browser rather than static images. The separate,
-opt-in web host reuses the original Catalog declarations, including buttons,
-menus, tables, editable forms, scrolling and a small code-editor input fixture, with WebGPU preferred and clearly labeled software fallback. This
+opt-in web host supports a first slice of buttons, tabs, editable forms and
+scrolling, with WebGPU preferred and clearly labeled software fallback. This
 is not full browser/desktop parity. See the [web setup and limitations](docs/web-prototype.md).
 
 ```sh
