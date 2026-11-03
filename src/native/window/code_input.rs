@@ -21,7 +21,11 @@ impl<C: 'static> App<C> {
         let primary = modifiers.primary();
         // A terminal takes keys as typed. Copy, paste and select all stay
         // shortcuts (on other desktops with Shift, as terminals do there).
-        let reserved = if cfg!(target_os = "macos") { modifiers.meta } else { modifiers.control && modifiers.shift };
+        let reserved = if cfg!(target_os = "macos") {
+            modifiers.meta
+        } else {
+            modifiers.control && modifiers.shift
+        };
         if self.runtime.code_view_raw_keys() && !reserved {
             let key = match &event.logical_key {
                 Key::Named(named) => Some(format!("{named:?}")),
@@ -34,7 +38,13 @@ impl<C: 'static> App<C> {
                         winit::keyboard::PhysicalKey::Code(code) => Some(format!("{code:?}")),
                         _ => None,
                     };
-                    self.code_send(CodeInput::Raw(RawKey { key, code, text: event.text.as_ref().map(|t| t.to_string()), modifiers, repeat: event.repeat }))
+                    self.code_send(CodeInput::Raw(RawKey {
+                        key,
+                        code,
+                        text: event.text.as_ref().map(|t| t.to_string()),
+                        modifiers,
+                        repeat: event.repeat,
+                    }))
                 }
                 // Dead keys and the like arrive as composed text instead.
                 None => Ok(false),
