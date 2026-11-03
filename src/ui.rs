@@ -1203,7 +1203,10 @@ impl<C> Button<C> {
     }
     /// Pointer activation with the host's click count: one, two, or three.
     /// Other activation sources report zero. Replaces on_click/on_click_with.
-    pub fn on_click_counted(mut self, f: impl FnMut(&mut C, PointerActivation, u8) + 'static) -> Self {
+    pub fn on_click_counted(
+        mut self,
+        f: impl FnMut(&mut C, PointerActivation, u8) + 'static,
+    ) -> Self {
         self.0.callback = None;
         self.0.input_activation = Some(Box::new(f));
         self
