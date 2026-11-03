@@ -912,7 +912,8 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             self.last_pointer_activation = last_pointer_activation.filter(|(id, kind, _)| {
-                find(self.document.root(), id).is_some_and(|n| n.kind == *kind && enabled(n, values))
+                find(self.document.root(), id)
+                    .is_some_and(|n| n.kind == *kind && enabled(n, values))
                     && self.scope_allows_id(id)
             });
         }
@@ -2083,10 +2084,16 @@ impl Runtime {
     /// Runtime additionally requires the same keyed target/kind/press modifiers.
     #[cfg(feature = "rust-ui")]
     pub fn pointer_down_outcome_with_clicks<C>(
-        &mut self, x: f32, y: f32, modifiers: InputModifiers, clicks: u8,
-        handlers: &mut Handlers<'_, C>, context: &mut C,
+        &mut self,
+        x: f32,
+        y: f32,
+        modifiers: InputModifiers,
+        clicks: u8,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
-        let outcome = self.pointer_down_outcome_with_modifiers(x, y, modifiers, handlers, context)?;
+        let outcome =
+            self.pointer_down_outcome_with_modifiers(x, y, modifiers, handlers, context)?;
         self.capture_clicks = clicks.clamp(1, 3);
         Ok(outcome)
     }
@@ -2180,15 +2187,26 @@ impl Runtime {
         {
             #[cfg(feature = "rust-ui")]
             {
-                let kind = self.layout_boxes.iter().find(|b| b.id == *id).map(|b| b.kind);
+                let kind = self
+                    .layout_boxes
+                    .iter()
+                    .find(|b| b.id == *id)
+                    .map(|b| b.kind);
                 let identity = kind.map(|kind| (id.clone(), kind, self.capture_modifiers));
                 let clicks = if identity.is_some() && self.last_pointer_activation == identity {
                     self.capture_clicks
-                } else { 1 };
+                } else {
+                    1
+                };
                 let activated = self.activate_with_click_count(
                     id,
-                    PointerActivation { modifiers: self.capture_modifiers, source: InputSource::Pointer },
-                    clicks, handlers, context,
+                    PointerActivation {
+                        modifiers: self.capture_modifiers,
+                        source: InputSource::Pointer,
+                    },
+                    clicks,
+                    handlers,
+                    context,
                 )?;
                 self.last_pointer_activation = if activated { identity } else { None };
                 activated
@@ -2201,7 +2219,9 @@ impl Runtime {
             false
         };
         #[cfg(feature = "rust-ui")]
-        if !activated { self.last_pointer_activation = None; }
+        if !activated {
+            self.last_pointer_activation = None;
+        }
         Ok(InputOutcome {
             changed: pressed.is_some(),
             activated,
@@ -2402,7 +2422,10 @@ impl Runtime {
     }
     pub fn cancel_input(&mut self) -> bool {
         #[cfg(feature = "rust-ui")]
-        { self.last_pointer_activation = None; self.capture_clicks = 1; }
+        {
+            self.last_pointer_activation = None;
+            self.capture_clicks = 1;
+        }
         let changed = self.scrollbar_capture.take().is_some()
             || self.capture.is_some()
             || self.keyboard.is_some()
@@ -2526,13 +2549,21 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<bool, DocumentError> {
-        let clicks = if event.source == InputSource::Pointer { 1 } else { 0 };
+        let clicks = if event.source == InputSource::Pointer {
+            1
+        } else {
+            0
+        };
         self.activate_with_click_count(id, event, clicks, handlers, context)
     }
     #[cfg(feature = "rust-ui")]
     fn activate_with_click_count<C>(
-        &self, id: &str, event: PointerActivation, clicks: u8,
-        handlers: &mut Handlers<'_, C>, context: &mut C,
+        &self,
+        id: &str,
+        event: PointerActivation,
+        clicks: u8,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
     ) -> Result<bool, DocumentError> {
         if !self.scope_allows_id(id) {
             return Ok(false);
@@ -4618,8 +4649,13 @@ fn intrinsic(
     let resolved = &styles[&node_key(n)];
     let lay = &resolved.layout;
     let limit = [0, 1].map(|a| {
-        let base = fixed_size(lay, a, avail[a])
-            .map_or(avail[a], |v| if natural_axes[a] { v } else { v.min(avail[a]) });
+        let base = fixed_size(lay, a, avail[a]).map_or(avail[a], |v| {
+            if natural_axes[a] {
+                v
+            } else {
+                v.min(avail[a])
+            }
+        });
         lay.max[a].map_or(base, |max| base.min(max))
     });
     let [top, right, bottom, left] = lay.padding;
@@ -5180,11 +5216,19 @@ fn place(
                                 offset[1] = if list.reveal_index {
                                     let height = available[1] / s;
                                     let bottom = top + lz.height(row, estimates);
-                                    if top < offset[1] { top }
-                                    else if bottom > offset[1] + height { (bottom - height).min(top) }
-                                    else { offset[1] }
-                                } else { top };
-                                if !list.reveal_index { offset[0] = 0.; }
+                                    if top < offset[1] {
+                                        top
+                                    } else if bottom > offset[1] + height {
+                                        (bottom - height).min(top)
+                                    } else {
+                                        offset[1]
+                                    }
+                                } else {
+                                    top
+                                };
+                                if !list.reveal_index {
+                                    offset[0] = 0.;
+                                }
                             }
                             lz.request = request;
                         }
@@ -5624,11 +5668,11 @@ mod tests {
                         vstack([vstack([text("Long response ".repeat(512))
                             .key(format!("reply-{i}"))
                             .into()])
-                            .align(Align::Stretch)
-                            .into()])
-                            .gap(12., Axis::Vertical)
-                            .align(Align::Stretch)
-                            .into()
+                        .align(Align::Stretch)
+                        .into()])
+                        .gap(12., Axis::Vertical)
+                        .align(Align::Stretch)
+                        .into()
                     })
                     .collect();
                 let thread: Element<()> = vstack(replies)
@@ -5654,12 +5698,21 @@ mod tests {
                     if compact { 420. * scale } else { 960. * scale },
                     600. * scale,
                     scale,
-                ).unwrap();
+                )
+                .unwrap();
                 let mut metrics = Metrics(0);
                 runtime.layout(viewport, &values, &mut metrics).unwrap();
-                let scroll = runtime.boxes().iter().find(|b| b.id == "transcript").unwrap();
+                let scroll = runtime
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == "transcript")
+                    .unwrap();
                 // Offscreen paint boxes are culled; inspect full layout before scrolling.
-                let last = runtime.layout_boxes.iter().find(|b| b.id == "reply-19").unwrap();
+                let last = runtime
+                    .layout_boxes
+                    .iter()
+                    .find(|b| b.id == "reply-19")
+                    .unwrap();
                 let [_, y, _, h] = scroll.bounds.bounds();
                 let [_, last_y, _, last_h] = last.bounds.bounds();
                 assert!(scroll.scroll_max[1] > 16_384.);
@@ -5668,7 +5721,11 @@ mod tests {
                     runtime.scroll_at(5. * scale, 5. * scale, [0., 16_384.]);
                 }
                 runtime.layout(viewport, &values, &mut metrics).unwrap();
-                let scroll = runtime.boxes().iter().find(|b| b.id == "transcript").unwrap();
+                let scroll = runtime
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == "transcript")
+                    .unwrap();
                 let last = runtime.boxes().iter().find(|b| b.id == "reply-19").unwrap();
                 let [_, y, _, h] = scroll.bounds.bounds();
                 let [_, last_y, _, last_h] = last.bounds.bounds();
