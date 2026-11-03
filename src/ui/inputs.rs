@@ -116,6 +116,12 @@ impl<C> TextInput<C> {
     }
     /// Take keyboard focus when the field first appears (not on every
     /// rebuild), as a find field does when its bar opens.
+    /// Explicit, rising-epoch focus request for an existing keyed text field.
+    /// Unchanged epochs do not steal focus during normal typing or Tab traversal.
+    pub fn focus_request(mut self, epoch: u64) -> Self {
+        self.0.node.input_focus_epoch = epoch;
+        self
+    }
     pub fn autofocus(mut self, value: bool) -> Self {
         self.0.node.editor.as_mut().unwrap().autofocus = value;
         self

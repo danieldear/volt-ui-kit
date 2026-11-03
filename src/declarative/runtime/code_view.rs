@@ -168,6 +168,25 @@ pub enum CodeInput {
         at: Option<CodePosition>,
         point: [i32; 2],
     },
+    /// With `raw_keys`: a key press as typed, for views that interpret keys
+    /// themselves, such as a terminal. The primary shortcuts (copy, paste,
+    /// select all, the application's commands) keep their usual meaning.
+    Raw(RawKey),
+}
+
+/// A key press for a `raw_keys` view. `key` names a key ("Enter",
+/// "ArrowUp", "F5", "Escape", "Tab", "Backspace", "Space") or is the
+/// character it makes ignoring Shift-free modifiers ("c" for Control-C);
+/// `code` is where the key is, as a W3C UI Events code ("KeyC", "Digit2"),
+/// for terminals that encode by position; `text` is what the keyboard
+/// typed, control characters included.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawKey {
+    pub key: String,
+    pub code: Option<String>,
+    pub text: Option<String>,
+    pub modifiers: InputModifiers,
+    pub repeat: bool,
 }
 
 /// Most lines one document may carry; supply a window around the visible one.
@@ -196,6 +215,8 @@ pub(crate) struct CodeViewProps {
     pub line_height: f32,
     pub gutter: bool,
     pub read_only: bool,
+    /// Every key press arrives as `CodeInput::Raw`, not as editing keys.
+    pub raw_keys: bool,
     pub highlight_line: bool,
     pub reveal: u32,
     pub scroll_to: Option<(usize, u32)>,
@@ -240,6 +261,7 @@ impl Default for CodeViewProps {
             line_height: 20.,
             gutter: true,
             read_only: false,
+            raw_keys: false,
             highlight_line: true,
             reveal: 0,
             scroll_to: None,
@@ -270,7 +292,7 @@ impl CodeViewProps {
                     && self
                         .line_numbers
                         .iter()
-                        .all(|n| *n > 0 && *n <= self.source_line_count)))
+                        .all(|n| *n <= self.source_line_count)))
             && self.fold_controls.len() <= MAX_CODE_LINES
             && self
                 .fold_controls
@@ -519,6 +541,12 @@ impl Runtime {
     /// A code view has keyboard focus: keys, text and input methods go to it.
     pub fn code_view_focused(&self) -> bool {
         self.focused_code().is_some()
+    }
+    /// Whether the focused code view takes every key press itself.
+    pub fn code_view_raw_keys(&self) -> bool {
+        self.focused_code()
+            .and_then(|b| b.ext.code.as_ref())
+            .is_some_and(|p| p.raw_keys)
     }
     /// Whether the focused code view is read-only.
     pub fn code_view_read_only(&self) -> bool {
@@ -1637,12 +1665,16 @@ impl Runtime {
                 let mut number_style = style.clone();
                 number_style.size = (props.font_size - 1.).max(4.) * s;
                 for line in first..last.min(props.line_count) {
-                    let label = props
+                    let number = props
                         .line_numbers
                         .get(line.saturating_sub(props.first))
                         .copied()
-                        .unwrap_or(line + 1)
-                        .to_string();
+                        .unwrap_or(line + 1);
+                    // 0: a row that goes on from the line above.
+                    if number == 0 {
+                        continue;
+                    }
+                    let label = number.to_string();
                     let width = label.len() as f32 * f.advance * (number_style.size / style.size);
                     let color = if caret_lines.contains(&line) {
                         text_color

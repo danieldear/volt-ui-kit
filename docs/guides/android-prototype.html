@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Reusable Android host, Rust-first APK template, native input and explicit device-validation limits."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Experimental Android — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.5 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html">WebAssembly prototype</a><a href="../guides/android-prototype.html" aria-current="page">Experimental Android</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html">WebAssembly prototype</a><a href="../guides/android-prototype.html" aria-current="page">Experimental Android</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Experimental Android</div><div class="reference-title"><p>Guide</p><h1>Experimental Android</h1><div class="reference-description">Reusable Android host, Rust-first APK template, native input and explicit device-validation limits.</div></div><article class="guide-article"><p>A Rust-first Android vertical slice, <strong>not production Android support</strong>. The
+same Volt elements, layout/runtime, application state and typed callbacks drive
+the screen. A single reusable Java OS adapter supplies SurfaceView/Vulkan,
+lifecycle, insets, the native single-line editor and basic accessibility proxies.
+No per-app Java/Kotlin screen code, Compose, WebView or second UI framework is
+needed. App design is deliberately left to the application developer.</p>
+<h2 id="create-and-build">Create and build</h2>
+<p>Requires Cargo/Rust 1.89+, JDK 17, Python 3, Android SDK platform 36, SDK build
+tools 35.0.0+ and NDK <strong>29.0.13599879</strong>. The template pins Android Gradle Plugin
+8.13.2 and Gradle 8.13, rather than selecting dynamic versions. The checked-in
+Gradle wrapper verifies the distribution SHA-256. See the official
+<a href="https://developer.android.com/build/releases/agp-8-13-0-release-notes">AGP compatibility table</a>.
+This is a tested SDK 36 baseline, not a claim to target the newest Android SDK.</p>
+<p>From a current toolkit checkout:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo install --locked --path . --features dev-tools --bin cargo-volt
+rustup target add aarch64-linux-android
+cargo volt new my-android-app --platform android --kit-path /path/to/volt-ui-kit
+cd my-android-app/android
+./gradlew assembleDebug
+adb -s YOUR_DEVICE_SERIAL install -r build/outputs/apk/debug/VoltApp-debug.apk
+adb -s YOUR_DEVICE_SERIAL shell am start \
+  -n dev.volt.apps.my_android_app/dev.volt.host.VoltActivity</code></pre></div><p>On Windows use <code>gradlew.bat</code> and, if needed, <code>-PvoltPython=python</code>. SDK components
+and Rust targets must be installed by the developer; the host does not silently
+accept SDK licenses or install tools. Android Studio can install the components.
+Build dependencies are downloaded normally by Cargo/Gradle; the app itself adds
+no network permission, telemetry or network requests.</p>
+<p>The starter targets <strong>API 30+</strong>, compile/target SDK 36, with arm64-v8a by default.
+For an x86_64 emulator, install <code>x86_64-linux-android</code> and pass
+<code>-PvoltAbi=x86_64</code>. Only one ABI is built per invocation. The NDK helper requests
+16 KiB linker alignment; this is not device/page-size acceptance coverage.
+Debug signing is for local testing only. Release signing and Play submission
+remain developer-owned. Moving the toolkit requires updating both Cargo and
+Gradle source references.</p>
+<h2 id="what-you-edit">What you edit</h2>
+<div class="reference-code"><div>text<span>Source</span></div><pre tabindex="0" role="region" aria-label="text"><code>my-android-app/
+  Cargo.toml             Rust cdylib/rlib, shared mobile host dependency
+  src/lib.rs             your Rust state, views, callbacks and factory
+  android/
+    AndroidManifest.xml  application identity and OS configuration
+    build.gradle         references the canonical Java host; calls Rust helper
+    settings.gradle
+    gradlew / gradlew.bat pinned, checksum-verified Gradle launcher
+    gradle/wrapper/</code></pre></div><p>There is <strong>no per-app Java/Kotlin application source</strong>. <code>cargo volt new</code> refuses
+existing destinations and unsupported desktop/mobile combinations. The first
+build resolves <code>Cargo.lock</code>; commit it. Later builds are locked. <code>cargo volt dev</code>
+is still desktop-only; Android uses the generated Gradle build.</p>
+<p>The template reuses the iOS starter&#39;s ordinary Rust navigation/list/form/counter
+composition, but exports <code>export_android_app!(application)</code> from a <strong>cdylib</strong>.
+Its factory returns <code>Application&lt;State&gt;</code>. Use <code>.back_with(can_go_back, action)</code>
+to handle platform Back in Rust; without it, Back follows Activity behavior.
+Theme and font fallback remain app-controlled; Android registers installed
+Roboto locally instead of redistributing a system font.</p>
+<div class="reference-code"><div>text<span>Source</span></div><pre tabindex="0" role="region" aria-label="text"><code>Rust app -&gt; Application + PlatformEvent -&gt; MobileView -&gt; existing Runtime
+                         ^                                  |
+                         |                                  v
+ Android main Looper -&gt; bounded JNI events           shared drawing batches
+    Activity lifecycle / SurfaceView                        |
+    native EditText / basic virtual AX nodes                v
+    system bars + IME insets                         Vulkan presentation
+                                                    /                 \
+                                     Vello on compatible GPU      explicit software
+                                                                  drawing fallback</code></pre></div><h2 id="rendering-and-lifecycle-boundaries">Rendering and lifecycle boundaries</h2>
+<ul>
+<li>JNI entry points check the main Looper, validate handle IDs and bound events
+and font data. The common strict decoder rejects unknown operations/fields.</li>
+<li><code>ANativeWindow_fromSurface</code> supplies a retained reference. Its Vulkan renderer
+is dropped <strong>before</strong> the reference is released on detach/destroy.</li>
+<li>Surface detach/recreation preserves Rust application state in the same
+Activity. Pause suppresses rendering/input; resume recreates the surface as
+needed. Orientation changes are handled without recreating the Activity.
+Process death resets session-only state; restoration is not implemented.</li>
+<li>System/keyboard insets resize the Rust viewport, rather than covering the
+editable form. The active single-line field uses native EditText and keeps
+composition native until commit. Secure fields remain read-only, because
+snapshots intentionally withhold their values. Multiline/complete IME support
+is not claimed.</li>
+<li>Rendering is event-driven, with bounded surface retries, no permanent timer
+and no display loop. Android&#39;s redraw-needed callback supplies initial pixels.</li>
+<li>Android SurfaceView can advertise only <code>Inherit</code> alpha. The native window is
+explicitly opaque, and the renderer selects an advertised alpha mode instead
+of assuming <code>Opaque</code> is supported. Desktop opaque mode remains preferred.</li>
+</ul>
+<p>The starter explicitly permits software fallback. This covers adapters without
+Vello compute/indirect support <strong>and CPU adapters such as SwiftShader</strong>; it does
+not silently change the desktop GPU constructor. The diagnostic reports the
+actual adapter and software drawing versus Vello drawing. A Vulkan surface,
+SwiftShader compute execution or successful APK build does <strong>not</strong> establish
+physical hardware GPU rendering. The emulator&#39;s software Vulkan driver exhibited
+a native crash during Vello buffer uploads, so running compute rasterization on
+that CPU adapter is deliberately avoided under the opt-in fallback policy.</p>
+<p>The platform boundaries follow Android&#39;s <a href="https://developer.android.com/reference/android/view/SurfaceView">SurfaceView lifetime contract</a>
+and <a href="https://developer.android.com/ndk/reference/group/a-native-window">native-window API</a>.
+The shared host is experimental, not a stable JNI ABI or complete Android SDK.</p>
+<h2 id="validation-and-repeatable-smoke-test">Validation and repeatable smoke test</h2>
+<p>The generated SDK 36 arm64 APK was built and run on the API 36 emulator:
+Rust callbacks, navigation, native editing/Save, Back, background/resume, last-row
+scrolling and idle redraw checks passed. A separate live check passed rotation,
+surface recreation, dark-mode changes and Rust state preservation. Rendering used software drawing with
+Vulkan presentation on SwiftShader; physical GPU acceptance remains pending.</p>
+<p>The generated APK is built from Rust source and the canonical Java host. For an
+already-installed <strong>fresh starter</strong>, a bounded test uses an explicitly selected
+emulator/device, checks Rust callbacks, navigation, native editing/Save, Back,
+background/resume, scrolling to the last row and idle frame stability:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>python3 /path/to/volt-ui-kit/crates/volt-ui-kit-mobile/android/smoke-test.py \
+  --serial YOUR_DEVICE_SERIAL --package dev.volt.apps.my_android_app \
+  --output /path/to/qa-output</code></pre></div><p>It does not install/uninstall apps, request permissions, delete personal files
+or reset a device. It uses only the generated starter and removes its own
+<code>/sdcard/volt-starter-smoke.xml</code> UI dump. Screenshots and the last semantic dump
+are retained in the selected output directory. Run on a disposable starter,
+not an app with personal data. Start with count zero and the default name.</p>
+<p>Shared Rust tests cover events, secure value withholding, theme/font behavior,
+back navigation, suspension and clipping. Root tests retain desktop coverage;
+compatibility is checked against a copied Volt consumer, never by editing the
+live vendor. Android-only JNI/NDK dependencies do not enter desktop/default
+builds. See the <a href="../guides/ios-prototype.html">iOS guide</a> for the other adapter.</p>
+<h2 id="still-pending-before-android-support">Still pending before Android support</h2>
+<p>Physical-device Vulkan rendering and recovery, memory/energy/frame-time profiling;
+full IME/selection/dictation and accessibility/TalkBack acceptance; native
+predictive Back, multi-touch/kinetic gestures; state restoration and mobile
+services; multi-ABI release bundles, signing and store acceptance; and broader
+SDK/device/16 KiB-page coverage. This first template/build helper does not make
+those production guarantees.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/android-prototype.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#create-and-build">Create and build</a><a href="#what-you-edit">What you edit</a><a href="#rendering-and-lifecycle-boundaries">Rendering and lifecycle boundaries</a><a href="#validation-and-repeatable-smoke-test">Validation and repeatable smoke test</a><a href="#still-pending-before-android-support">Still pending before Android support</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

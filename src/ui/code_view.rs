@@ -36,7 +36,8 @@ pub fn code_view<C>(line_count: usize) -> CodeView<C> {
 }
 impl<C> CodeView<C> {
     /// Original source line numbers for the supplied window of projected rows.
-    /// Empty restores the normal sequential gutter. Numbers are one-based.
+    /// Empty restores the normal sequential gutter. Numbers are one-based;
+    /// 0 leaves a row unnumbered, such as a wrapped line's later rows.
     pub fn line_numbers(mut self, numbers: Vec<usize>, source_count: usize) -> Self {
         self.props().line_numbers = numbers;
         self.props().source_line_count = source_count;
@@ -97,6 +98,12 @@ impl<C> CodeView<C> {
     /// Read-only views still select, scroll and copy.
     pub fn read_only(mut self, value: bool) -> Self {
         self.props().read_only = value;
+        self
+    }
+    /// Hand every key press to `on_input` as `CodeInput::Raw` (a terminal),
+    /// except the primary shortcuts, which keep their usual meaning.
+    pub fn raw_keys(mut self, value: bool) -> Self {
+        self.props().raw_keys = value;
         self
     }
     /// Shade the lines holding a caret (default on).

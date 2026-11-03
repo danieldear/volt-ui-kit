@@ -275,6 +275,10 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) on_drag_start: Option<String>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag_from: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_drag_end: Option<String>,
+    #[cfg(feature = "rust-ui")]
     pub(crate) on_hover: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_focus_within: Option<String>,
@@ -411,6 +415,7 @@ struct DragCapture {
     kind: Kind,
     action: String,
     origin: [f32; 2],
+    end: Option<String>,
 }
 /// Shared document layout and event state; owns no window or background tasks.
 pub struct Runtime {
@@ -445,6 +450,10 @@ pub struct Runtime {
     capture: Option<String>,
     #[cfg(feature = "rust-ui")]
     capture_modifiers: InputModifiers,
+    #[cfg(feature = "rust-ui")]
+    capture_clicks: u8,
+    #[cfg(feature = "rust-ui")]
+    last_pointer_activation: Option<(String, Kind, InputModifiers)>,
     #[cfg(feature = "rust-ui")]
     pending_input_focus: Option<String>,
     keyboard: Option<String>,
@@ -540,6 +549,10 @@ impl Runtime {
             capture: None,
             #[cfg(feature = "rust-ui")]
             capture_modifiers: InputModifiers::default(),
+            #[cfg(feature = "rust-ui")]
+            capture_clicks: 1,
+            #[cfg(feature = "rust-ui")]
+            last_pointer_activation: None,
             #[cfg(feature = "rust-ui")]
             pending_input_focus,
             keyboard: None,
@@ -808,7 +821,41 @@ impl Runtime {
         if let Some(focus) = roving_focus {
             self.focused = focus;
         } else if !keep_focus {
-            self.focused = None;
+            #[cfg(feature = "rust-ui")]
+            {
+                self.focused = self.focused.as_deref().and_then(|id| {
+                    // Only removal (virtualization), not disabling/replacing a
+                    // control, can transfer focus to its keyboard owner.
+                    if find(next.root(), id).is_some() {
+                        return None;
+                    }
+                    fn path<'a>(n: &'a Node, id: &str, out: &mut Vec<&'a Node>) -> bool {
+                        out.push(n);
+                        if n.id == id || n.children.iter().any(|c| path(c, id, out)) {
+                            return true;
+                        }
+                        out.pop();
+                        false
+                    }
+                    let mut ancestors = Vec::new();
+                    path(self.document.root(), id, &mut ancestors);
+                    ancestors.iter().rev().skip(1).find_map(|old| {
+                        old.on_input_key.as_ref()?;
+                        let mut surviving = Vec::new();
+                        if !path(next.root(), &old.id, &mut surviving)
+                            || !surviving.iter().all(|n| enabled(n, values))
+                        {
+                            return None;
+                        }
+                        let new = surviving.last()?;
+                        (old.kind == new.kind && new.on_input_key.is_some()).then(|| new.id.clone())
+                    })
+                });
+            }
+            #[cfg(not(feature = "rust-ui"))]
+            {
+                self.focused = None;
+            }
         }
         fn keys(n: &Node, ids: &mut BTreeSet<String>) {
             ids.insert(n.id.clone());
@@ -842,6 +889,8 @@ impl Runtime {
             self.pending_input_focus =
                 Self::input_focus_request(Some(self.document.root()), next.root());
         }
+        #[cfg(feature = "rust-ui")]
+        let last_pointer_activation = self.last_pointer_activation.clone();
         let mut old = std::mem::replace(&mut self.document, next);
         self.reuse.prepare(
             &mut old,
@@ -860,6 +909,21 @@ impl Runtime {
         self.boxes.clear();
         self.layout_boxes.clear();
         self.cancel_input();
+        #[cfg(feature = "rust-ui")]
+        {
+            self.last_pointer_activation = last_pointer_activation.filter(|(id, kind, _)| {
+                find(self.document.root(), id)
+                    .is_some_and(|n| n.kind == *kind && enabled(n, values))
+                    && self.scope_allows_id(id)
+            });
+        }
+        if self
+            .focused
+            .as_deref()
+            .is_some_and(|id| !self.scope_allows_id(id))
+        {
+            self.focused = None;
+        }
         #[cfg(feature = "rust-ui")]
         if let Some(id) = autofocus.filter(|id| self.scope_allows_id(id)) {
             self.focused = Some(id);
@@ -1264,16 +1328,10 @@ impl Runtime {
                 // The 8px interaction lane surrounds the visible 3px thumb.
                 let [tx, ty, tw, th] = geometry.track;
                 if x >= tx && y >= ty && x <= tx + tw && y <= ty + th {
-                    let subtree_end = self.boxes[index + 1..]
-                        .iter()
-                        .position(|next| next.depth <= b.depth)
-                        .map_or(self.boxes.len(), |i| index + 1 + i);
-                    if self.boxes[subtree_end..].iter().any(|next| {
-                        !self.portal_passthrough(&next.id)
-                            && next.clip.contains(x, y)
-                            && next.bounds.contains(x, y)
-                            && next.clip_regions.iter().all(|r| r.contains(x, y))
-                    }) {
+                    // A transparent full-window layout wrapper is not a
+                    // painted/input surface. Use the same occlusion contract
+                    // as text and code selection, including real overlays.
+                    if self.input_occluded(index, x, y) {
                         return None;
                     }
                     let position = if axis == 0 { x } else { y };
@@ -1644,6 +1702,10 @@ impl Runtime {
                     && self.input_surface(b)
             })
     }
+    #[cfg(feature = "native")]
+    pub(crate) fn pointer_click_target(&self, x: f32, y: f32) -> Option<String> {
+        self.hit(x, y)
+    }
     fn hit(&self, x: f32, y: f32) -> Option<String> {
         let index = self.boxes.iter().rposition(|b| {
             self.scope_allows_id(&b.id)
@@ -1872,10 +1934,24 @@ impl Runtime {
                     kind: b.kind,
                     action: b.on_drag.clone().unwrap(),
                     origin: [x, y],
+                    end: b.on_drag_end.clone(),
                 };
                 if let Some(start) = &b.on_drag_start {
                     handlers
                         .dispatch(start, Event::Activate, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                }
+                if let Some(from) = &b.on_drag_from {
+                    let [bx, by, _, _] = b.bounds.bounds();
+                    handlers
+                        .dispatch(
+                            from,
+                            Event::ContextRequested {
+                                x_bits: ((x - bx) / self.scale).to_bits(),
+                                y_bits: ((y - by) / self.scale).to_bits(),
+                            },
+                            context,
+                        )
                         .map_err(|e| DocumentError(e.to_string()))?;
                 }
                 handlers
@@ -1941,6 +2017,7 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             self.capture_modifiers = InputModifiers::default();
+            self.capture_clicks = 1;
         }
         if self.scrollbar_pointer_down(x, y) {
             return true;
@@ -2003,6 +2080,23 @@ impl Runtime {
         self.capture_modifiers = modifiers;
         Ok(outcome)
     }
+    /// Host-supplied click count; old pointer adapters remain single-click.
+    /// Runtime additionally requires the same keyed target/kind/press modifiers.
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_down_outcome_with_clicks<C>(
+        &mut self,
+        x: f32,
+        y: f32,
+        modifiers: InputModifiers,
+        clicks: u8,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        let outcome =
+            self.pointer_down_outcome_with_modifiers(x, y, modifiers, handlers, context)?;
+        self.capture_clicks = clicks.clamp(1, 3);
+        Ok(outcome)
+    }
     /// Compatibility wrapper: true means a pressed capture was released, even
     /// if release was outside. Use pointer_up_outcome to distinguish activation.
     pub fn pointer_up<C>(
@@ -2023,7 +2117,16 @@ impl Runtime {
     ) -> Result<InputOutcome, DocumentError> {
         #[cfg(feature = "rust-ui")]
         {
-            if self.drag_capture.take().is_some() {
+            if let Some(capture) = self.drag_capture.take() {
+                if let Some(end) = capture.end.filter(|_| self.scope_allows_id(&capture.id)) {
+                    handlers
+                        .dispatch(&end, Event::Activate, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                    return Ok(InputOutcome {
+                        changed: true,
+                        activated: true,
+                    });
+                }
                 return Ok(InputOutcome {
                     changed: true,
                     activated: false,
@@ -2084,15 +2187,29 @@ impl Runtime {
         {
             #[cfg(feature = "rust-ui")]
             {
-                self.activate_with_input(
+                let kind = self
+                    .layout_boxes
+                    .iter()
+                    .find(|b| b.id == *id)
+                    .map(|b| b.kind);
+                let identity = kind.map(|kind| (id.clone(), kind, self.capture_modifiers));
+                let clicks = if identity.is_some() && self.last_pointer_activation == identity {
+                    self.capture_clicks
+                } else {
+                    1
+                };
+                let activated = self.activate_with_click_count(
                     id,
                     PointerActivation {
                         modifiers: self.capture_modifiers,
                         source: InputSource::Pointer,
                     },
+                    clicks,
                     handlers,
                     context,
-                )?
+                )?;
+                self.last_pointer_activation = if activated { identity } else { None };
+                activated
             }
             #[cfg(not(feature = "rust-ui"))]
             {
@@ -2101,6 +2218,10 @@ impl Runtime {
         } else {
             false
         };
+        #[cfg(feature = "rust-ui")]
+        if !activated {
+            self.last_pointer_activation = None;
+        }
         Ok(InputOutcome {
             changed: pressed.is_some(),
             activated,
@@ -2300,6 +2421,11 @@ impl Runtime {
         })
     }
     pub fn cancel_input(&mut self) -> bool {
+        #[cfg(feature = "rust-ui")]
+        {
+            self.last_pointer_activation = None;
+            self.capture_clicks = 1;
+        }
         let changed = self.scrollbar_capture.take().is_some()
             || self.capture.is_some()
             || self.keyboard.is_some()
@@ -2423,6 +2549,22 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<bool, DocumentError> {
+        let clicks = if event.source == InputSource::Pointer {
+            1
+        } else {
+            0
+        };
+        self.activate_with_click_count(id, event, clicks, handlers, context)
+    }
+    #[cfg(feature = "rust-ui")]
+    fn activate_with_click_count<C>(
+        &self,
+        id: &str,
+        event: PointerActivation,
+        clicks: u8,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
         if !self.scope_allows_id(id) {
             return Ok(false);
         }
@@ -2433,7 +2575,7 @@ impl Runtime {
             .and_then(|b| b.on_activate_input.as_ref())
         {
             handlers
-                .dispatch_activation(action, event, context)
+                .dispatch_activation(action, event, clicks, context)
                 .map_err(|e| DocumentError(e.to_string()))?;
             return Ok(true);
         }
@@ -4273,6 +4415,18 @@ fn clamp_axis(l: &ResolvedLayout, axis: usize, value: f32, avail: f32) -> f32 {
     }
     v.min(avail).max(0.)
 }
+/// A scroll descendant's natural extent is not bounded by the finite probe
+/// used to measure it. Still honour explicit min/max; fixed containers reset
+/// natural sizing for their own children through `natural_children`.
+fn clamp_measured_axis(
+    l: &ResolvedLayout,
+    axis: usize,
+    value: f32,
+    avail: f32,
+    natural: bool,
+) -> f32 {
+    clamp_axis(l, axis, value, if natural { f32::MAX } else { avail })
+}
 /// The box a node occupies inside the area its parent allocated: explicit
 /// sizes, min/max and aspect. Unset axes fill the area, as before. Fractions
 /// were already resolved against the parent's space when it allocated the
@@ -4495,7 +4649,13 @@ fn intrinsic(
     let resolved = &styles[&node_key(n)];
     let lay = &resolved.layout;
     let limit = [0, 1].map(|a| {
-        let base = fixed_size(lay, a, avail[a]).map_or(avail[a], |v| v.min(avail[a]));
+        let base = fixed_size(lay, a, avail[a]).map_or(avail[a], |v| {
+            if natural_axes[a] {
+                v
+            } else {
+                v.min(avail[a])
+            }
+        });
         lay.max[a].map_or(base, |max| base.min(max))
     });
     let [top, right, bottom, left] = lay.padding;
@@ -4614,8 +4774,8 @@ fn intrinsic(
         }
     }
     let result = [
-        clamp_axis(lay, 0, size[0], avail[0]),
-        clamp_axis(lay, 1, size[1], avail[1]),
+        clamp_measured_axis(lay, 0, size[0], avail[0], natural_axes[0]),
+        clamp_measured_axis(lay, 1, size[1], avail[1], natural_axes[1]),
     ];
     memo.insert(key, result);
     result
@@ -4632,14 +4792,19 @@ fn child_sizes(
     natural_axes: [bool; 2],
 ) -> (Vec<[f32; 2]>, f32) {
     let axis = styles[&node_key(n)].layout.axis;
-    let gap = styles[&node_key(n)].layout.gap.min(
-        available[axis]
-            / n.children
-                .iter()
-                .filter(|c| in_flow(c, styles))
-                .count()
-                .max(1) as f32,
-    );
+    let requested_gap = styles[&node_key(n)].layout.gap;
+    let gap = if natural_axes[axis] {
+        requested_gap
+    } else {
+        requested_gap.min(
+            available[axis]
+                / n.children
+                    .iter()
+                    .filter(|c| in_flow(c, styles))
+                    .count()
+                    .max(1) as f32,
+        )
+    };
     let room = (available[axis]
         - gap
             * n.children
@@ -4679,11 +4844,12 @@ fn child_sizes(
         } else if !natural_axes[axis] && total_flex > 0. && room > natural {
             size[axis] += (room - natural) * child.flex / total_flex;
         }
-        size[axis] = clamp_axis(
+        size[axis] = clamp_measured_axis(
             &styles[&node_key(child)].layout,
             axis,
             size[axis],
             available[axis],
+            natural_axes[axis],
         );
         if axis == 0 {
             let measured = intrinsic(
@@ -4825,6 +4991,10 @@ fn place(
         #[cfg(feature = "rust-ui")]
         on_drag_start: n.on_drag_start.clone(),
         #[cfg(feature = "rust-ui")]
+        on_drag_from: n.on_drag_from.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_drag_end: n.on_drag_end.clone(),
+        #[cfg(feature = "rust-ui")]
         on_hover: n.on_hover.clone(),
         #[cfg(feature = "rust-ui")]
         on_focus_within: n.on_focus_within.clone(),
@@ -4942,6 +5112,8 @@ fn place(
     if let Some(mode) = n.surface.scroll {
         let axes = mode.axes();
         let mut measure = available;
+        // Finite measurement hints (especially for horizontal text wrapping),
+        // not an extent ceiling: natural descendants retain their full size.
         for axis in 0..2 {
             if axes[axis] {
                 measure[axis] = 16_384. * s;
@@ -5040,7 +5212,23 @@ fn place(
                         if request != lz.request {
                             if request != 0 {
                                 let top = lz.top(row, estimates, gap_l);
-                                offsets.insert(n.id.clone(), [0., top]);
+                                let offset = offsets.entry(n.id.clone()).or_insert([0.; 2]);
+                                offset[1] = if list.reveal_index {
+                                    let height = available[1] / s;
+                                    let bottom = top + lz.height(row, estimates);
+                                    if top < offset[1] {
+                                        top
+                                    } else if bottom > offset[1] + height {
+                                        (bottom - height).min(top)
+                                    } else {
+                                        offset[1]
+                                    }
+                                } else {
+                                    top
+                                };
+                                if !list.reveal_index {
+                                    offset[0] = 0.;
+                                }
                             }
                             lz.request = request;
                         }
@@ -5464,6 +5652,85 @@ mod tests {
                 // down to the panel's 12px bottom padding.
                 let bottom = bounds("bottom");
                 assert!((bottom[1] + bottom[3] + 12. - first[1] - first[3]).abs() < 0.01);
+            }
+        }
+    }
+    #[cfg(feature = "rust-ui")]
+    #[test]
+    fn long_nested_transcripts_keep_the_last_response_reachable() {
+        use crate::ui::prelude::*;
+        for scale in [1., 2.] {
+            for compact in [false, true] {
+                // Keep each label below the 8 KiB guard; use many messages
+                // to test large aggregate scroll extents without invalid input.
+                let replies: Vec<Element<()>> = (0..20)
+                    .map(|i| {
+                        vstack([vstack([text("Long response ".repeat(512))
+                            .key(format!("reply-{i}"))
+                            .into()])
+                        .align(Align::Stretch)
+                        .into()])
+                        .gap(12., Axis::Vertical)
+                        .align(Align::Stretch)
+                        .into()
+                    })
+                    .collect();
+                let thread: Element<()> = vstack(replies)
+                    .gap(14., Axis::Vertical)
+                    .align(Align::Stretch)
+                    .width_fraction(1.)
+                    .max_width(640.)
+                    .into();
+                let body = if compact {
+                    thread
+                } else {
+                    hstack([spacer().into(), thread, spacer().into()]).into()
+                };
+                let ui: Element<()> = vstack([body])
+                    .key("transcript")
+                    .align(Align::Stretch)
+                    .scroll(Scroll::Auto)
+                    .into();
+                let (doc, callbacks) = ui.build().unwrap().into_parts();
+                let values = Bindings::default();
+                let mut runtime = Runtime::new(doc, &callbacks, &values).unwrap();
+                let viewport = Viewport::new(
+                    if compact { 420. * scale } else { 960. * scale },
+                    600. * scale,
+                    scale,
+                )
+                .unwrap();
+                let mut metrics = Metrics(0);
+                runtime.layout(viewport, &values, &mut metrics).unwrap();
+                let scroll = runtime
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == "transcript")
+                    .unwrap();
+                // Offscreen paint boxes are culled; inspect full layout before scrolling.
+                let last = runtime
+                    .layout_boxes
+                    .iter()
+                    .find(|b| b.id == "reply-19")
+                    .unwrap();
+                let [_, y, _, h] = scroll.bounds.bounds();
+                let [_, last_y, _, last_h] = last.bounds.bounds();
+                assert!(scroll.scroll_max[1] > 16_384.);
+                assert!(last_y + last_h <= y + h + scroll.scroll_max[1] * scale + 0.1);
+                for _ in 0..8 {
+                    runtime.scroll_at(5. * scale, 5. * scale, [0., 16_384.]);
+                }
+                runtime.layout(viewport, &values, &mut metrics).unwrap();
+                let scroll = runtime
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == "transcript")
+                    .unwrap();
+                let last = runtime.boxes().iter().find(|b| b.id == "reply-19").unwrap();
+                let [_, y, _, h] = scroll.bounds.bounds();
+                let [_, last_y, _, last_h] = last.bounds.bounds();
+                assert!(last_y < y + h);
+                assert!((last_y + last_h - y - h).abs() < 0.1);
             }
         }
     }

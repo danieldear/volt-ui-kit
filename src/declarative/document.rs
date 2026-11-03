@@ -308,6 +308,12 @@ pub struct Node {
     pub(crate) on_drag: Option<String>,
     #[serde(skip)]
     pub(crate) on_drag_start: Option<String>,
+    /// Where a drag began, inside the container (see `on_drag_from`).
+    #[serde(skip)]
+    pub(crate) on_drag_from: Option<String>,
+    /// The drag that began on this container ended (the button was released).
+    #[serde(skip)]
+    pub(crate) on_drag_end: Option<String>,
     /// Reports the pointer entering (true) or leaving (false) the bounds.
     #[serde(skip)]
     pub(crate) on_hover: Option<String>,
@@ -475,6 +481,8 @@ pub(crate) struct VirtualListProps {
     pub generation: u64,
     /// Scroll so row `.0` is at the top whenever `.1` changes.
     pub scroll_to_index: Option<(usize, u32)>,
+    /// Minimal reveal rather than top alignment (opt-in).
+    pub reveal_index: bool,
 }
 /// Most rows a variable-height list mounts at once.
 pub(crate) const MAX_LAZY_WINDOW: usize = 256;
@@ -611,6 +619,8 @@ impl Node {
             on_height: None,
             on_drag: None,
             on_drag_start: None,
+            on_drag_from: None,
+            on_drag_end: None,
             on_hover: None,
             on_focus_within: None,
             on_escape: None,
@@ -858,6 +868,8 @@ impl Document {
                 (&n.on_height, EventKind::ValueChanged),
                 (&n.on_drag, EventKind::ContextRequested),
                 (&n.on_drag_start, EventKind::Activate),
+                (&n.on_drag_from, EventKind::ContextRequested),
+                (&n.on_drag_end, EventKind::Activate),
                 (&n.on_hover, EventKind::ToggleChanged),
                 (&n.on_focus_within, EventKind::ToggleChanged),
                 (&n.on_escape, EventKind::Activate),
@@ -1424,6 +1436,8 @@ fn check_node(
         &n.on_height,
         &n.on_drag,
         &n.on_drag_start,
+        &n.on_drag_from,
+        &n.on_drag_end,
         &n.on_hover,
         &n.on_focus_within,
         &n.on_escape,
