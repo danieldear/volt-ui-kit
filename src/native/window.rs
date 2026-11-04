@@ -9,6 +9,9 @@ use crate::{
 };
 use softbuffer::{Context, Surface};
 mod code_input;
+// Parsing tests use Unix paths, so they run on macOS and Linux.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+mod system_motion;
 use std::{
     io::Read,
     num::NonZeroU32,
@@ -126,7 +129,8 @@ pub enum WindowChrome {
 /// Additive host configuration for effects and custom chrome.
 ///
 /// Explicit declarative drag regions are honored without making controls drag
-/// the window. `VOLT_UI_REDUCED_MOTION=1` also disables animation at startup.
+/// the window. `VOLT_UI_REDUCED_MOTION=1` also disables animation at startup,
+/// as does the system's reduce-motion setting on macOS, KDE and GNOME.
 pub struct WindowOptions {
     pub native: NativeOptions,
     pub chrome: WindowChrome,
@@ -451,11 +455,27 @@ fn run_host<C: 'static>(
         options.reduced_motion,
         std::env::var("VOLT_UI_REDUCED_MOTION").ok().as_deref(),
     );
+    // The system preference can only turn motion off.
     #[cfg(target_os = "macos")]
     let reduced_motion = reduced_motion
         || objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+    #[cfg(target_os = "linux")]
+    let reduced_motion = reduced_motion || system_motion::kde_reduced_motion();
     runtime.set_reduced_motion(reduced_motion);
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
+    // GNOME's setting needs a subprocess: keep it off the UI thread and apply
+    // it when it arrives, settling anything already animating.
+    #[cfg(target_os = "linux")]
+    if !reduced_motion {
+        let proxy = event_loop.create_proxy();
+        let _ = std::thread::Builder::new()
+            .name("volt-reduced-motion".into())
+            .spawn(move || {
+                if system_motion::gnome_reduced_motion() {
+                    let _ = proxy.send_event(HostEvent::SystemReducedMotion);
+                }
+            });
+    }
     if let Some(messages) = messages.as_mut() {
         let proxy = event_loop.create_proxy();
         messages.connect(Arc::new(move || {
@@ -578,6 +598,9 @@ enum HostEvent {
     Command(String),
     /// Screen-reader activation and action requests from AccessKit.
     Access(accesskit_winit::Event),
+    /// The desktop asks for reduced motion (read off the UI thread).
+    #[cfg(target_os = "linux")]
+    SystemReducedMotion,
 }
 impl From<accesskit_winit::Event> for HostEvent {
     fn from(event: accesskit_winit::Event) -> Self {
@@ -1848,6 +1871,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if let Err(error) = self.access_event(event.window_event) {
                 self.fail(event_loop, error);
             }
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if matches!(event, HostEvent::SystemReducedMotion) {
+            self.reduced_motion = true;
+            self.settle_animations();
+            self.redraw();
             return;
         }
         if matches!(event, HostEvent::Requests) {

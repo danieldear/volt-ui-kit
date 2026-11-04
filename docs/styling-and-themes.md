@@ -240,10 +240,23 @@ rows.build().unwrap();
 stops decorative ambient motion. Delayed-only scenes sleep until the first
 useful update rather than render unchanged frames; custom hosts can use
 `Runtime::animation_wait()` (None for idle, zero for frame pacing, or a positive
-delay). The macOS native host also samples the system
-Reduce Motion preference at startup. It does not monitor live system preference
-changes yet. Unfocused, occluded or minimized native windows already settle
+delay). Unfocused, occluded or minimized native windows already settle
 animations rather than requesting invisible frames.
+
+The native host also reads the system's reduce-motion setting once at startup.
+It can only turn motion off, never back on:
+
+- **macOS:** Reduce Motion.
+- **Linux:** KDE Plasma's animation speed set to Instant
+  (`AnimationDurationFactor=0` in the `[KDE]` group of `kdeglobals`), or GNOME's
+  animations turned off (`org.gnome.desktop.interface enable-animations`).
+  GNOME's setting is read with `gsettings` on a background thread and applies
+  when it arrives; an animation already running then jumps to its end. Inside a
+  Flatpak sandbox, `gsettings` may not see the host's setting.
+- **Windows:** the Animation effects setting is not read yet. Use
+  `VOLT_UI_REDUCED_MOTION=1` or the app's own setting.
+
+Changes to the system setting while the app runs are not picked up yet.
 
 `Ambient::pulse(0.4)`, `float(..)` and canvas-only `spin()` are intentionally
 continuous while visible; opt into them only where useful and remove loading
