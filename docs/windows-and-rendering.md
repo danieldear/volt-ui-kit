@@ -86,7 +86,7 @@ stable winit/desktop interfaces instead of requiring that migration.
 Application::new("Glass", app, view)
     .background(WindowBackground::Blur { opacity: 0.72 })
     .on_backdrop_status(|app, status| {
-        app.blur_status = status.description().to_owned();
+        app.backdrop_status = status.description().to_owned();
     })
     .run()?;
 ```
@@ -113,7 +113,7 @@ duplicate controller creation is rejected before sending protocol requests.
 The native Volt host manages this automatically. An older standalone terminal
 binary using only `Window::set_blur` does **not** inherit this fix automatically.
 
-Diagnostics include `VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)`
+The native host logs `VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)`
 or the actual unsupported/failure status. Wire-level mock-compositor tests cover
 modern-only/legacy-only servers, missing protocols, capability withdrawal and
 restoration, global removal/rebinding, resize, disable/re-enable, idle behavior,

@@ -49,8 +49,11 @@ fn desired_for_window(window: &Window, enabled: bool) -> Desired {
 ///
 /// Keep exactly one controller for a window. Its callback runs on the protocol
 /// dispatcher thread: use an event-loop proxy, not application/UI state, there.
-/// Call [`Self::update`] after resize/scale/blur changes and drop this controller
-/// before dropping the event loop. The controller is deliberately not Send/Sync.
+/// Call [`Self::update`] after resize/scale/blur changes. The callback is the
+/// only status channel; the controller does not log. `Failed` is the worker's
+/// last report: drop the controller and create a new one to retry. Drop it on
+/// the window's thread; it retains the window and display connection, so it
+/// may outlive the event loop. The controller is deliberately not Send/Sync.
 /// It never captures the desktop or changes compositor settings.
 pub struct Controller {
     shared: Arc<Shared>,

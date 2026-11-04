@@ -30,6 +30,8 @@ struct Server {
     audit: Arc<Mutex<Audit>>,
     managers: Vec<sm::ExtBackgroundEffectManagerV1>,
     blur: bool,
+    /// Withhold the capabilities event on bind (a misbehaving compositor).
+    silent_bind: bool,
 }
 impl GlobalDispatch<sc::WlCompositor, ()> for Server {
     fn bind(
@@ -110,11 +112,13 @@ impl GlobalDispatch<sm::ExtBackgroundEffectManagerV1, ()> for Server {
         init: &mut DataInit<'_, Self>,
     ) {
         let manager = init.init(resource, ());
-        manager.capabilities(if state.blur {
-            sm::Capability::Blur
-        } else {
-            sm::Capability::empty()
-        });
+        if !state.silent_bind {
+            manager.capabilities(if state.blur {
+                sm::Capability::Blur
+            } else {
+                sm::Capability::empty()
+            });
+        }
         state.managers.push(manager);
     }
 }
@@ -252,21 +256,28 @@ struct Fixture {
     server_stop: Arc<AtomicBool>,
     blur: Arc<AtomicBool>,
     modern: Arc<AtomicBool>,
+    /// Ask the server to (re)send current capabilities to every manager.
+    announce: Arc<AtomicBool>,
     audit: Arc<Mutex<Audit>>,
 }
 impl Fixture {
     fn new(modern: bool, legacy: bool) -> Self {
+        Self::build(modern, legacy, false, Duration::from_secs(5))
+    }
+    fn build(modern: bool, legacy: bool, silent_bind: bool, discovery: Duration) -> Self {
         let (client, server) = UnixStream::pair().unwrap();
         let audit = Arc::new(Mutex::new(Audit::default()));
         let server_stop = Arc::new(AtomicBool::new(false));
         let blur = Arc::new(AtomicBool::new(true));
         let modern_flag = Arc::new(AtomicBool::new(modern));
+        let announce = Arc::new(AtomicBool::new(false));
         let server_thread = {
-            let (audit, stop, blur, modern_flag) = (
+            let (audit, stop, blur, modern_flag, announce) = (
                 audit.clone(),
                 server_stop.clone(),
                 blur.clone(),
                 modern_flag.clone(),
+                announce.clone(),
             );
             thread::spawn(move || {
                 let mut display = Display::<Server>::new().unwrap();
@@ -283,6 +294,7 @@ impl Fixture {
                     audit,
                     managers: vec![],
                     blur: true,
+                    silent_bind,
                 };
                 while !stop.load(Ordering::Acquire) {
                     if global.is_some() != modern_flag.load(Ordering::Acquire) {
@@ -298,7 +310,7 @@ impl Fixture {
                         }
                     }
                     let current = blur.load(Ordering::Acquire);
-                    if state.blur != current {
+                    if state.blur != current || announce.swap(false, Ordering::AcqRel) {
                         state.blur = current;
                         for manager in &state.managers {
                             if manager.is_alive() {
@@ -342,7 +354,7 @@ impl Fixture {
         let worker = {
             let shared = shared.clone();
             thread::spawn(move || {
-                let mut engine = Engine::new(connection, surface);
+                let mut engine = Engine::new(connection, surface).with_discovery_timeout(discovery);
                 let notify: Notify = Arc::new(move |s| {
                     let _ = tx.send(s);
                 });
@@ -363,6 +375,7 @@ impl Fixture {
             server_stop,
             blur,
             modern: modern_flag,
+            announce,
             audit,
         }
     }
@@ -567,4 +580,27 @@ fn server_disconnect_terminates_dispatch_instead_of_spinning() {
         .unwrap()
         .is_err());
     f.worker.take().unwrap().join().unwrap();
+}
+#[test]
+fn missing_capabilities_fall_back_without_failing_and_a_late_event_recovers() {
+    let on = BackdropStatus::Requested(BackdropProtocol::WaylandBackgroundEffect);
+    for legacy in [true, false] {
+        let mut f = Fixture::build(true, legacy, true, Duration::from_millis(100));
+        f.wait(if legacy {
+            BackdropStatus::Requested(BackdropProtocol::WaylandKde)
+        } else {
+            BackdropStatus::Unsupported(BackdropUnavailable::CompositorDeclined)
+        });
+        assert_eq!(f.audit.lock().unwrap().creates, 0);
+        if legacy {
+            f.until(|a| a.legacy_commits == 1);
+        }
+        f.announce.store(true, Ordering::Release);
+        f.wait(on);
+        f.until(|a| a.creates == 1 && a.regions == vec![vec![[0, 0, 1440, 864]]]);
+        if legacy {
+            f.until(|a| a.legacy_unsets == 1 && a.legacy_releases == 1);
+        }
+        f.stop();
+    }
 }

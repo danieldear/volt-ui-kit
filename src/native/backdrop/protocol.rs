@@ -51,6 +51,7 @@ pub(crate) struct Engine {
     registry: wl_registry::WlRegistry,
     connection: Connection,
     state: ProtocolState,
+    discovery_timeout: Duration,
 }
 impl Engine {
     pub(crate) fn new(connection: Connection, surface: wl_surface::WlSurface) -> Self {
@@ -73,7 +74,13 @@ impl Engine {
                 effect: None,
                 applied: None,
             },
+            discovery_timeout: Duration::from_secs(5),
         }
+    }
+    #[cfg(test)]
+    fn with_discovery_timeout(mut self, timeout: Duration) -> Self {
+        self.discovery_timeout = timeout;
+        self
     }
     pub(crate) fn run(
         &mut self,
@@ -97,13 +104,21 @@ impl Engine {
             let discovering = !self.state.ready
                 || (self.state.manager.is_some() && self.state.modern_capability.is_none());
             let deadline = if discovering {
-                *discovery_started.get_or_insert_with(|| Instant::now() + Duration::from_secs(5))
+                *discovery_started.get_or_insert_with(|| Instant::now() + self.discovery_timeout)
             } else {
                 discovery_started = None;
                 Instant::now()
             };
             if discovering && Instant::now() >= deadline {
-                return Err("compositor capability discovery timed out".into());
+                if !self.state.ready {
+                    return Err("compositor did not answer the initial sync".into());
+                }
+                // A manager that never reports capabilities is treated as
+                // declining blur, so the legacy fallback still applies. A late
+                // capabilities event overwrites this and is honoured.
+                self.state.modern_capability = Some(false);
+                discovery_started = None;
+                continue;
             }
             let status = negotiate(
                 desired.enabled && desired.width > 0 && desired.height > 0,
@@ -181,10 +196,8 @@ impl Engine {
                 }
                 Err(e) => return Err(e.to_string()),
             };
+            // Status goes only through `notify`; callers decide whether to log.
             if !blocked && (last_status != Some(status) || request_changed) {
-                if last_status != Some(status) {
-                    eprintln!("VOLT_UI_BACKDROP status={status:?}");
-                }
                 notify(status);
                 last_status = Some(status);
             }

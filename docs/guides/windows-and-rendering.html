@@ -59,7 +59,7 @@ stable winit/desktop interfaces instead of requiring that migration.</p>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>Application::new(&quot;Glass&quot;, app, view)
     .background(WindowBackground::Blur { opacity: 0.72 })
     .on_backdrop_status(|app, status| {
-        app.blur_status = status.description().to_owned();
+        app.backdrop_status = status.description().to_owned();
     })
     .run()?;</code></pre></div><p><code>BackdropStatus</code> distinguishes <code>Disabled</code>, <code>Discovering</code>, <code>Requested(protocol)</code>,
 <code>Unsupported(reason)</code> and <code>Failed</code>. <strong>Requested is not proof of visible blur</strong>:
@@ -80,7 +80,7 @@ winit&#39;s own blur object for that window. Keep only one controller per window
 duplicate controller creation is rejected before sending protocol requests.
 The native Volt host manages this automatically. An older standalone terminal
 binary using only <code>Window::set_blur</code> does <strong>not</strong> inherit this fix automatically.</p>
-<p>Diagnostics include <code>VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)</code>
+<p>The native host logs <code>VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)</code>
 or the actual unsupported/failure status. Wire-level mock-compositor tests cover
 modern-only/legacy-only servers, missing protocols, capability withdrawal and
 restoration, global removal/rebinding, resize, disable/re-enable, idle behavior,
