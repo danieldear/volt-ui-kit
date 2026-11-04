@@ -170,6 +170,10 @@ headless CI matrix; their native runtime has not been validated yet. Check
 results; configured jobs are not evidence of a passing run. The core compiles to
 WebAssembly; an [experimental browser host](docs/web-prototype.md) now renders the original Catalog components directly in the documentation, with WebGPU/software rendering. This is not full web parity. Expect API changes before 1.0.
 
+Linux native backdrop blur now negotiates modern and legacy Wayland protocols;
+Catalog reports the request status and unsupported cases. The compositor still
+controls the visible effect. See [Linux blur and diagnostics](docs/windows-and-rendering.md#linux-desktop-blur).
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
