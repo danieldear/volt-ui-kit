@@ -131,6 +131,7 @@ struct MenuOptions<C, T> {
     on_submenu: Option<SubmenuChange<C>>,
     surface: Option<String>,
     layout: PopupLayout,
+    motion: bool,
 }
 impl<C, T> MenuOptions<C, T> {
     fn new(items: impl IntoIterator<Item = MenuItem<T>>) -> Self {
@@ -144,6 +145,7 @@ impl<C, T> MenuOptions<C, T> {
             on_submenu: None,
             surface: None,
             layout: PopupLayout::default(),
+            motion: true,
         }
     }
 }
@@ -187,6 +189,12 @@ macro_rules! menu_options {
             }
             pub fn enabled(mut self, enabled: bool) -> Self {
                 self.$field.enabled = enabled;
+                self
+            }
+            /// Built-in motion (default on): the popup fades in while settling
+            /// into place and fades out on close. `false` shows it instantly.
+            pub fn motion(mut self, value: bool) -> Self {
+                self.$field.motion = value;
                 self
             }
             pub fn on_action(mut self, action: impl FnMut(&mut C, T) + 'static) -> Self {
@@ -345,6 +353,7 @@ struct Popup<C, T> {
     on_submenu: Option<SubmenuChange<C>>,
     surface: Option<String>,
     layout: PopupLayout,
+    motion: bool,
 }
 struct CardContext<'a, C, T> {
     width: f32,
@@ -576,6 +585,7 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
         on_submenu,
         surface,
         layout,
+        motion,
     } = p;
     let cx = CardContext {
         width,
@@ -620,6 +630,9 @@ fn popup<C: 'static, T: Clone + 'static>(items: Vec<MenuItem<T>>, p: Popup<C, T>
         }),
     );
     root.node.overlay.as_mut().unwrap().anchor = Some(anchor);
+    if motion {
+        root.node.effects.transition = Some(super::dialogs::popup_motion());
+    }
     root
 }
 impl<C: 'static, T: Clone + 'static> From<Menu<C, T>> for Element<C> {
@@ -657,6 +670,7 @@ impl<C: 'static, T: Clone + 'static> From<Menu<C, T>> for Element<C> {
                     on_submenu: menu.2.on_submenu,
                     surface: menu.2.surface,
                     layout: menu.2.layout,
+                    motion: menu.2.motion,
                 },
             ));
         }
@@ -704,6 +718,7 @@ impl<C: 'static, T: Clone + 'static> From<ContextMenu<C, T>> for Element<C> {
                     on_submenu: menu.2.on_submenu,
                     surface: menu.2.surface,
                     layout: menu.2.layout,
+                    motion: menu.2.motion,
                 },
             );
             popup.node.overlay.as_mut().unwrap().position = Some(menu.3);

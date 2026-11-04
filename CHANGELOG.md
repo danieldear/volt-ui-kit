@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Built-in component motion, on by default: dialogs and the command palette
+  fade their backdrop and card in and out; popovers, menus, context menus and
+  selects fade while settling into place; tooltips and hover cards fade in.
+  Drawers, toasts, collapsibles, accordions and carousels keep their existing
+  motion. Every one of these takes `.motion(false)`, and the new
+  `Application::motion(Motion::Default | Motion::None)` sets the level for the
+  whole app (`reduced_motion(true)` is the same as `Motion::None`). New projects
+  from `cargo volt new` set `.motion(Motion::Default)` explicitly.
+- Overlays now sit in a stable zero-size `"{key}-slot"` element while closed
+  instead of reusing the overlay's key, so a closing dialog, drawer or palette
+  fades out above the window rather than inside its original parent's clip and
+  opacity. Code that looked up a closed overlay by its key should use the slot.
+
 - Extend the experimental web host with write-only password input, UTF-16/UTF-8
   caret/selection synchronization, native composition cancellation/commit,
   code-surface input and trusted-event clipboard routing. Add a small Rust-owned

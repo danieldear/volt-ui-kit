@@ -151,6 +151,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         options,
         move |application| {
             let application = application
+                // Built-in component animations (as `cargo volt new` sets).
+                .motion(volt_ui_kit::ui::Motion::Default)
                 .background_from_state(catalog::window_background)
                 .renderer(renderer)
                 .commands(catalog::lifecycle::commands())
