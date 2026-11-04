@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add native Linux Wayland backdrop negotiation for `ext-background-effect-v1`,
+  retaining the legacy KDE protocol without migrating stable winit/AccessKit to
+  a beta. Add UI-thread backdrop status callbacks, truthful Catalog diagnostics,
+  logical-coordinate blur regions, bounded asynchronous discovery and idle-safe
+  dispatch/teardown. Add mock-compositor protocol regression tests. The two raw
+  handle imports are isolated in a documented Linux-native-only FFI boundary;
+  desktop defaults and existing Volt drawing APIs remain unchanged. Real
+  KDE/COSMIC GPU visual acceptance remains a separate test gate.
+
 - Extend the experimental web host with write-only password input, UTF-16/UTF-8
   caret/selection synchronization, native composition cancellation/commit,
   code-surface input and trusted-event clipboard routing. Add a small Rust-owned
