@@ -82,6 +82,8 @@ pub struct App {
     /// Explicit opt-in to winit compositor blur (private API on macOS).
     pub compositor_blur: bool,
     pub blur: bool,
+    /// Native host report; a request is not proof of visible compositor blur.
+    pub backdrop_status: String,
     pub sidebar_query: String,
     /// Site search (⌘K): open flag and query.
     pub palette: volt_ui_kit::ui::CommandPaletteState,
@@ -194,6 +196,7 @@ impl App {
             opacity: 72,
             compositor_blur: false,
             blur: true,
+            backdrop_status: "Blur status is reported by the native window host".into(),
             sidebar_query: String::new(),
             palette: Default::default(),
             nav_open: false,

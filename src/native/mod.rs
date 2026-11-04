@@ -3,7 +3,11 @@
 mod accessibility;
 mod application;
 pub use application::{Application, RendererPreference};
+mod backdrop;
+pub use backdrop::{BackdropProtocol, BackdropStatus, BackdropUnavailable};
 mod commands;
+#[cfg(target_os = "linux")]
+pub mod linux_backdrop;
 pub use commands::{
     ApplicationRequest, CloseDecision, CloseReason, Command, CommandDispatch, CommandInfo,
     CommandRegistry, Shortcut,

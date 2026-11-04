@@ -154,6 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Built-in component animations (as `cargo volt new` sets).
                 .motion(volt_ui_kit::ui::Motion::Default)
                 .background_from_state(catalog::window_background)
+                .on_backdrop_status(|app, status| app.backdrop_status = status.description().into())
                 .renderer(renderer)
                 .commands(catalog::lifecycle::commands())
                 .requests(|app, sender| app.requests = Some(sender))
