@@ -242,6 +242,18 @@ impl<C: 'static> Application<C> {
         self.options.palette = Some(palette);
         self
     }
+    /// App-wide motion level. [`Motion::Default`] plays each component's
+    /// built-in animations; [`Motion::None`] settles every change instantly.
+    /// `VOLT_UI_REDUCED_MOTION=1` and the macOS Reduce Motion setting still
+    /// turn motion off when the app asks for `Default`.
+    ///
+    /// [`Motion::Default`]: crate::declarative::Motion::Default
+    /// [`Motion::None`]: crate::declarative::Motion::None
+    pub fn motion(mut self, motion: crate::declarative::Motion) -> Self {
+        self.options.window.reduced_motion = motion == crate::declarative::Motion::None;
+        self
+    }
+    /// Same as `.motion(Motion::None)` when `true`.
     pub fn reduced_motion(mut self, value: bool) -> Self {
         self.options.window.reduced_motion = value;
         self
@@ -410,6 +422,17 @@ mod lifecycle_tests {
         dirty: bool,
         prompts: usize,
         saves: usize,
+    }
+    #[test]
+    fn motion_setting_maps_to_the_reduced_motion_host_option() {
+        use crate::declarative::Motion;
+        use crate::ui::spacer;
+        let app = |motion| Application::new("Motion", (), |_| spacer().into()).motion(motion);
+        assert!(!app(Motion::Default).options.window.reduced_motion);
+        assert!(app(Motion::None).options.window.reduced_motion);
+        assert_eq!(Motion::default(), Motion::Default);
+        let legacy = Application::new("Motion", (), |_| spacer().into()).reduced_motion(true);
+        assert!(legacy.options.window.reduced_motion);
     }
     #[test]
     fn state_background_callback_is_additive_and_keeps_public_defaults() {

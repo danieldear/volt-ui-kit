@@ -1045,6 +1045,7 @@ pub struct Carousel<C> {
     on_change: Option<Page<C>>,
     height: f32,
     wrap: bool,
+    motion: bool,
 }
 pub fn carousel<C>(slides: impl IntoIterator<Item = Element<C>>, index: usize) -> Carousel<C> {
     Carousel {
@@ -1054,6 +1055,7 @@ pub fn carousel<C>(slides: impl IntoIterator<Item = Element<C>>, index: usize) -
         on_change: None,
         height: 240.,
         wrap: true,
+        motion: true,
     }
 }
 impl<C> Carousel<C> {
@@ -1066,6 +1068,11 @@ impl<C> Carousel<C> {
         self
     }
     /// Loop from the last slide to the first (default true).
+    /// Built-in motion (default on): slides cross-fade. `false` switches instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.motion = value;
+        self
+    }
     pub fn wrap_around(mut self, value: bool) -> Self {
         self.wrap = value;
         self
@@ -1140,10 +1147,13 @@ impl<C: 'static> From<Carousel<C>> for Element<C> {
             .collect();
         vstack![
             zstack![
-                vstack![slide]
-                    .key(format!("{key}-slide-{i}"))
-                    .align(Align::Stretch)
-                    .transition(Transition::fade().duration_ms(180)),
+                super::dialogs::with_motion(
+                    vstack![slide]
+                        .key(format!("{key}-slide-{i}"))
+                        .align(Align::Stretch),
+                    c.motion,
+                    Transition::fade().duration_ms(180),
+                ),
                 hstack![
                     arrow(
                         format!("{key}-prev"),
