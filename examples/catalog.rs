@@ -152,6 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move |application| {
             let application = application
                 .background_from_state(catalog::window_background)
+                .on_backdrop_status(|app, status| app.backdrop_status = status.description().into())
                 .renderer(renderer)
                 .commands(catalog::lifecycle::commands())
                 .requests(|app, sender| app.requests = Some(sender))

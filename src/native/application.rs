@@ -28,6 +28,7 @@ impl RendererPreference {
 pub(super) type CommandCallback<C> = Box<dyn FnMut(&mut C, &str)>;
 pub(super) type CloseCallback<C> = Box<dyn FnMut(&mut C, CloseReason) -> CloseDecision>;
 pub(super) type WindowVisible<C> = Box<dyn Fn(&C) -> bool>;
+pub(super) type BackdropCallback<C> = Box<dyn FnMut(&mut C, super::BackdropStatus)>;
 pub(super) type BackgroundFn<C> = Box<dyn Fn(&C) -> WindowBackground>;
 pub(super) type AppearanceFn<C> = Box<dyn Fn(&C) -> ThemeMode>;
 pub(super) type RequestPump = Box<dyn Messages<Vec<ApplicationRequest>>>;
@@ -54,6 +55,7 @@ pub(super) struct HostExtensions<C> {
     pub close: Option<CloseCallback<C>>,
     pub requests: Option<RequestPump>,
     pub background: Option<BackgroundFn<C>>,
+    pub backdrop_status: Option<BackdropCallback<C>>,
     /// The app's chosen appearance, and the one last applied to the window.
     pub appearance: Option<AppearanceFn<C>>,
     pub applied_appearance: Option<ThemeMode>,
@@ -77,6 +79,7 @@ impl<C> Default for HostExtensions<C> {
             close: None,
             requests: None,
             background: None,
+            backdrop_status: None,
             appearance: None,
             applied_appearance: None,
             dev_state: None,
@@ -228,6 +231,16 @@ impl<C: 'static> Application<C> {
     ) -> Self {
         self.options.background = background(&self.context);
         self.extensions.background = Some(Box::new(background));
+        self
+    }
+    /// Observe native blur discovery/request status on the UI thread. A
+    /// `Requested` status identifies the protocol, not proof of visible blur.
+    /// Unsupported or failed backdrop setup never changes the drawing backend.
+    pub fn on_backdrop_status(
+        mut self,
+        callback: impl FnMut(&mut C, super::BackdropStatus) + 'static,
+    ) -> Self {
+        self.extensions.backdrop_status = Some(Box::new(callback));
         self
     }
     pub fn chrome(mut self, chrome: WindowChrome) -> Self {
@@ -410,6 +423,18 @@ mod lifecycle_tests {
         dirty: bool,
         prompts: usize,
         saves: usize,
+    }
+    #[test]
+    fn backdrop_reporting_is_additive_and_does_not_change_the_background_policy() {
+        use super::super::{BackdropProtocol, BackdropStatus};
+        use crate::ui::spacer;
+        let mut app = Application::new("Glass", BackdropStatus::Disabled, |_| spacer().into())
+            .on_backdrop_status(|state, status| *state = status);
+        assert_eq!(app.options.background, WindowBackground::Opaque);
+        let status = BackdropStatus::Requested(BackdropProtocol::WaylandBackgroundEffect);
+        app.extensions.backdrop_status.as_mut().unwrap()(&mut app.context, status);
+        assert_eq!(app.context, status);
+        assert!(HostExtensions::<()>::default().backdrop_status.is_none());
     }
     #[test]
     fn state_background_callback_is_additive_and_keeps_public_defaults() {

@@ -492,6 +492,12 @@ fn run_host<C: 'static>(
         theme_fn,
         messages,
         window_update_in_progress: false,
+        backdrop_status: super::BackdropStatus::Disabled,
+        backdrop_generation: 0,
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        linux_backdrop: None,
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        backdrop_display: event_loop.owned_display_handle(),
         system_theme: ThemeMode::Dark,
         #[cfg(feature = "native-gpu")]
         gpu: None,
@@ -572,6 +578,10 @@ impl<C: 'static> Content<C> {
 enum HostEvent {
     Messages,
     Requests,
+    Backdrop {
+        generation: u64,
+        status: super::BackdropStatus,
+    },
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
     Close(CloseReason),
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
@@ -605,6 +615,12 @@ struct App<C> {
     theme_fn: Option<ThemeFn<C>>,
     messages: Option<Box<dyn Messages<C>>>,
     window_update_in_progress: bool,
+    backdrop_status: super::BackdropStatus,
+    backdrop_generation: u64,
+    #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+    linux_backdrop: Option<super::linux_backdrop::Controller>,
+    #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+    backdrop_display: winit::event_loop::OwnedDisplayHandle,
     system_theme: ThemeMode,
     #[cfg(feature = "native-gpu")]
     gpu: Option<super::gpu::GpuPresenter>,
@@ -821,6 +837,16 @@ impl<C: 'static> App<C> {
     fn layout(&mut self) -> Result<(), String> {
         let Some(w) = &self.window else { return Ok(()) };
         let size = w.inner_size();
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        if let Some(backdrop) = &self.linux_backdrop {
+            backdrop.update(
+                w,
+                matches!(
+                    self.options.background,
+                    WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ),
+            );
+        }
         if size.width == 0 || size.height == 0 {
             return Ok(());
         };
@@ -864,8 +890,16 @@ impl<C: 'static> App<C> {
         }
         Ok(())
     }
+    fn report_backdrop_status(&self, status: super::BackdropStatus) {
+        if self.backdrop_status != status {
+            let _ = self.proxy.send_event(HostEvent::Backdrop {
+                generation: self.backdrop_generation,
+                status,
+            });
+        }
+    }
     #[cfg(feature = "native-gpu")]
-    fn sync_native_backdrop(&mut self, window: &Window) {
+    fn sync_native_backdrop(&mut self, window: &Arc<Window>) {
         #[cfg(target_os = "macos")]
         {
             let public = matches!(self.options.background, WindowBackground::Blur { .. });
@@ -901,11 +935,62 @@ impl<C: 'static> App<C> {
                 );
             }
         }
-        #[cfg(not(target_os = "macos"))]
-        window.set_blur(matches!(
-            self.options.background,
-            WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
-        ));
+        #[cfg(target_os = "macos")]
+        {
+            use super::{BackdropProtocol as P, BackdropStatus as S, BackdropUnavailable as U};
+            self.report_backdrop_status(match self.options.background {
+                WindowBackground::Blur { .. } if self.material.is_some() => {
+                    S::Requested(P::AppKitMaterial)
+                }
+                WindowBackground::Blur { .. } => S::Failed,
+                WindowBackground::CompositorBlur { .. } if self.compositor_blur_active => {
+                    S::Requested(P::MacosCompositor)
+                }
+                WindowBackground::CompositorBlur { .. } => S::Unsupported(U::ReducedTransparency),
+                _ => S::Disabled,
+            });
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let enabled = matches!(
+                self.options.background,
+                WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+            );
+            if let Some(backdrop) = &self.linux_backdrop {
+                backdrop.update(window, enabled);
+            } else if enabled {
+                self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+                let generation = self.backdrop_generation;
+                let proxy = self.proxy.clone();
+                match super::linux_backdrop::Controller::new(
+                    window.clone(),
+                    self.backdrop_display.clone(),
+                    true,
+                    move |status| {
+                        let _ = proxy.send_event(HostEvent::Backdrop { generation, status });
+                    },
+                ) {
+                    Ok(controller) => self.linux_backdrop = Some(controller),
+                    Err(status) => self.report_backdrop_status(status),
+                }
+            } else {
+                self.report_backdrop_status(super::BackdropStatus::Disabled);
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = window;
+            self.report_backdrop_status(
+                if matches!(
+                    self.options.background,
+                    WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ) {
+                    super::BackdropStatus::Unsupported(super::BackdropUnavailable::Platform)
+                } else {
+                    super::BackdropStatus::Disabled
+                },
+            );
+        }
     }
     fn sync_state_background(&mut self) -> Result<(), String> {
         let Some(callback) = &self.extensions.background else {
@@ -1678,8 +1763,16 @@ impl<C: 'static> App<C> {
                                 self.compositor_blur_active = false;
                             }
                         }
+                        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+                        {
+                            self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+                            self.linux_backdrop = None;
+                        }
                         #[cfg(not(target_os = "macos"))]
                         w.set_blur(false);
+                        self.report_backdrop_status(super::BackdropStatus::Unsupported(
+                            super::BackdropUnavailable::SoftwareRenderer,
+                        ));
                         let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                         self.surface =
                             Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
@@ -1705,8 +1798,16 @@ impl<C: 'static> App<C> {
                         self.compositor_blur_active = false;
                     }
                 }
+                #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+                {
+                    self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+                    self.linux_backdrop = None;
+                }
                 #[cfg(not(target_os = "macos"))]
                 w.set_blur(false);
+                self.report_backdrop_status(super::BackdropStatus::Unsupported(
+                    super::BackdropUnavailable::SoftwareRenderer,
+                ));
                 let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                 self.surface = Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
                 w.set_transparent(false);
@@ -1842,6 +1943,23 @@ impl<C: 'static> App<C> {
 impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: HostEvent) {
         if event_loop.exiting() {
+            return;
+        }
+        if let HostEvent::Backdrop { generation, status } = event {
+            if generation != self.backdrop_generation || status == self.backdrop_status {
+                return;
+            }
+            self.backdrop_status = status;
+            eprintln!("VOLT_UI_BACKDROP status={status:?}");
+            if let Some(callback) = self.extensions.backdrop_status.as_mut() {
+                callback(&mut self.context, status);
+                if let Err(error) = self.after_input(InputOutcome {
+                    changed: true,
+                    activated: true,
+                }) {
+                    self.fail(event_loop, error);
+                }
+            }
             return;
         }
         if let HostEvent::Access(event) = event {
@@ -2005,6 +2123,16 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             #[cfg(not(target_os = "macos"))]
             w.set_blur(false);
+            self.report_backdrop_status(
+                if matches!(
+                    self.options.background,
+                    WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ) {
+                    super::BackdropStatus::Unsupported(super::BackdropUnavailable::SoftwareRenderer)
+                } else {
+                    super::BackdropStatus::Disabled
+                },
+            );
             eprintln!("Volt UI: software renderer active");
             let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
             let surface = Surface::new(&context, w.clone()).map_err(|e| e.to_string())?;
@@ -2027,6 +2155,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        {
+            self.linux_backdrop = None;
+        }
         #[cfg(all(feature = "native-desktop", target_os = "macos"))]
         {
             // Drop the previous menu before resumed installs its replacement.
@@ -2670,7 +2803,7 @@ fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
             cfg!(feature = "native-gpu") && options.background != WindowBackground::Opaque,
         )
         .with_blur(
-            !cfg!(target_os = "macos")
+            !cfg!(any(target_os = "macos", target_os = "linux"))
                 && cfg!(feature = "native-gpu")
                 && matches!(
                     options.background,
@@ -3457,7 +3590,7 @@ mod surface_option_tests {
             );
             assert_eq!(
                 attrs.blur,
-                !cfg!(target_os = "macos")
+                !cfg!(any(target_os = "macos", target_os = "linux"))
                     && cfg!(feature = "native-gpu")
                     && matches!(background, WindowBackground::Blur { .. })
             );

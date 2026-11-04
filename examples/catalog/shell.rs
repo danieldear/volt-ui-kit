@@ -396,13 +396,9 @@ fn glass_controls(app: &App) -> El<App> {
             .key("window-blur")
             .on_change(|app: &mut App, value| app.blur = value),
         source,
-        text(if app.compositor_blur {
-            "Compositor: private macOS API"
-        } else {
-            "Material adds its own system tint"
-        })
-        .font_size(10.)
-        .color(ColorToken::Muted),
+        text(&app.backdrop_status)
+            .font_size(10.)
+            .color(ColorToken::Muted),
     ]
     .key("glass-controls")
     .gap(8., Axis::Vertical)
