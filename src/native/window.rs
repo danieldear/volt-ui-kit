@@ -898,6 +898,18 @@ impl<C: 'static> App<C> {
             });
         }
     }
+    /// Status under opaque software presentation: unavailable only when the
+    /// app actually asked for blur.
+    fn software_backdrop_status(&self) -> super::BackdropStatus {
+        if matches!(
+            self.options.background,
+            WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+        ) {
+            super::BackdropStatus::Unsupported(super::BackdropUnavailable::SoftwareRenderer)
+        } else {
+            super::BackdropStatus::Disabled
+        }
+    }
     #[cfg(feature = "native-gpu")]
     fn sync_native_backdrop(&mut self, window: &Arc<Window>) {
         #[cfg(target_os = "macos")]
@@ -1028,6 +1040,15 @@ impl<C: 'static> App<C> {
         }
         #[cfg(not(feature = "native-gpu"))]
         let _ = previous;
+        // Software presentation never requests blur, but the reported status
+        // still follows the app's blur toggle (unavailable vs. off).
+        #[cfg(feature = "native-gpu")]
+        let software = self.gpu.is_none();
+        #[cfg(not(feature = "native-gpu"))]
+        let software = true;
+        if software && self.window.is_some() {
+            self.report_backdrop_status(self.software_backdrop_status());
+        }
         Ok(())
     }
     /// Report `on_focus_within` regions keyboard focus entered or left.
@@ -1770,9 +1791,7 @@ impl<C: 'static> App<C> {
                         }
                         #[cfg(not(target_os = "macos"))]
                         w.set_blur(false);
-                        self.report_backdrop_status(super::BackdropStatus::Unsupported(
-                            super::BackdropUnavailable::SoftwareRenderer,
-                        ));
+                        self.report_backdrop_status(self.software_backdrop_status());
                         let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                         self.surface =
                             Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
@@ -1805,9 +1824,7 @@ impl<C: 'static> App<C> {
                 }
                 #[cfg(not(target_os = "macos"))]
                 w.set_blur(false);
-                self.report_backdrop_status(super::BackdropStatus::Unsupported(
-                    super::BackdropUnavailable::SoftwareRenderer,
-                ));
+                self.report_backdrop_status(self.software_backdrop_status());
                 let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                 self.surface = Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
                 w.set_transparent(false);
@@ -1946,7 +1963,16 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             return;
         }
         if let HostEvent::Backdrop { generation, status } = event {
-            if generation != self.backdrop_generation || status == self.backdrop_status {
+            if generation != self.backdrop_generation {
+                return;
+            }
+            // `Failed` is the worker's last report before it exits. Release the
+            // dead controller so a later blur change can start a fresh one.
+            #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+            if status == super::BackdropStatus::Failed {
+                self.linux_backdrop = None;
+            }
+            if status == self.backdrop_status {
                 return;
             }
             self.backdrop_status = status;
@@ -2123,16 +2149,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             #[cfg(not(target_os = "macos"))]
             w.set_blur(false);
-            self.report_backdrop_status(
-                if matches!(
-                    self.options.background,
-                    WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
-                ) {
-                    super::BackdropStatus::Unsupported(super::BackdropUnavailable::SoftwareRenderer)
-                } else {
-                    super::BackdropStatus::Disabled
-                },
-            );
+            self.report_backdrop_status(self.software_backdrop_status());
             eprintln!("Volt UI: software renderer active");
             let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
             let surface = Surface::new(&context, w.clone()).map_err(|e| e.to_string())?;
