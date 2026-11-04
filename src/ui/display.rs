@@ -1067,12 +1067,12 @@ impl<C> Carousel<C> {
         self.height = value;
         self
     }
-    /// Loop from the last slide to the first (default true).
     /// Built-in motion (default on): slides cross-fade. `false` switches instantly.
     pub fn motion(mut self, value: bool) -> Self {
         self.motion = value;
         self
     }
+    /// Loop from the last slide to the first (default true).
     pub fn wrap_around(mut self, value: bool) -> Self {
         self.wrap = value;
         self
