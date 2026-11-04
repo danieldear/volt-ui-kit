@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add native Linux Wayland backdrop negotiation for `ext-background-effect-v1`,
+  retaining the legacy KDE protocol without migrating stable winit/AccessKit to
+  a beta. Add UI-thread backdrop status callbacks, truthful Catalog diagnostics,
+  logical-coordinate blur regions, bounded asynchronous discovery and idle-safe
+  dispatch/teardown. Add mock-compositor protocol regression tests. The two raw
+  handle imports are isolated in a documented Linux-native-only FFI boundary;
+  desktop defaults and existing Volt drawing APIs remain unchanged. Real
+  KDE/COSMIC GPU visual acceptance remains a separate test gate.
 - Built-in component motion, on by default: dialogs and the command palette
   fade their backdrop and card in and out; popovers, menus, context menus and
   selects fade while settling into place; tooltips and hover cards fade in.
