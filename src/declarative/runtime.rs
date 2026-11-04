@@ -987,6 +987,7 @@ impl Runtime {
                     // Rebind by node identity, never by the old numeric callback
                     // name (streaming content can insert handlers before a grip).
                     capture.action = action.clone();
+                    capture.end = node.on_drag_end.clone();
                     self.drag_capture = Some(capture);
                 }
             }

@@ -278,3 +278,75 @@ fn drag_start_is_once_per_press_not_each_return_to_zero_offset() {
     press(&mut r, &mut h, &mut a);
     assert_eq!(a.starts, 2);
 }
+#[derive(Default)]
+struct Ends {
+    generation: u32,
+    before: usize,
+    ends: Vec<u32>,
+}
+fn ends_view(a: &Ends) -> Element<Ends> {
+    let generation = a.generation;
+    let mut children: Vec<Element<Ends>> = (0..a.before)
+        .map(|i| {
+            button("Earlier callback")
+                .key(format!("before-{i}"))
+                .on_click(|_: &mut Ends| {})
+                .into()
+        })
+        .collect();
+    children.push(
+        panel([])
+            .key("grip")
+            .width(40.)
+            .height(40.)
+            .on_drag(|_: &mut Ends, _| {})
+            .on_drag_end(move |a: &mut Ends| a.ends.push(generation))
+            .into(),
+    );
+    vstack(children).key("root").width(300.).height(200.).into()
+}
+#[test]
+fn release_runs_the_drag_end_of_the_latest_build_after_callbacks_renumber() {
+    let mut a = Ends::default();
+    let (d, mut h) = ends_view(&a).build().unwrap().into_parts();
+    let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    let layout = |r: &mut Runtime| {
+        r.layout(
+            Viewport::new(300., 200., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+    };
+    layout(&mut r);
+    let b = r
+        .boxes()
+        .iter()
+        .find(|b| b.id == "grip")
+        .unwrap()
+        .bounds
+        .bounds();
+    let p = [b[0] + 20., b[1] + 20.];
+    assert!(
+        r.pointer_down_outcome(p[0], p[1], &mut h, &mut a)
+            .unwrap()
+            .activated
+    );
+    // Streaming content adds callbacks before the grip, so every numeric
+    // handler name shifts; the old drag-end name no longer exists.
+    for i in 1..=3 {
+        a.generation = i;
+        a.before = i as usize;
+        let (d, next) = ends_view(&a).build().unwrap().into_parts();
+        r.replace_document(d, &next, &Bindings::default()).unwrap();
+        h = next;
+        layout(&mut r);
+        r.pointer_move_outcome(p[0], p[1] + 10. * i as f32, &mut h, &mut a)
+            .unwrap();
+    }
+    let up = r
+        .pointer_up_outcome(p[0], p[1] + 30., &mut h, &mut a)
+        .unwrap();
+    assert!(up.activated);
+    assert_eq!(a.ends, [3]);
+}
