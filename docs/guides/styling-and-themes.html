@@ -177,10 +177,22 @@ No scale/rotation transforms, layout tweening or automatic FLIP are implied.</li
 stops decorative ambient motion. Delayed-only scenes sleep until the first
 useful update rather than render unchanged frames; custom hosts can use
 <code>Runtime::animation_wait()</code> (None for idle, zero for frame pacing, or a positive
-delay). The macOS native host also samples the system
-Reduce Motion preference at startup. It does not monitor live system preference
-changes yet. Unfocused, occluded or minimized native windows already settle
+delay). Unfocused, occluded or minimized native windows already settle
 animations rather than requesting invisible frames.</p>
+<p>The native host also reads the system&#39;s reduce-motion setting once at startup.
+It can only turn motion off, never back on:</p>
+<ul>
+<li><strong>macOS:</strong> Reduce Motion.</li>
+<li><strong>Linux:</strong> KDE Plasma&#39;s animation speed set to Instant
+(<code>AnimationDurationFactor=0</code> in the <code>[KDE]</code> group of <code>kdeglobals</code>), or GNOME&#39;s
+animations turned off (<code>org.gnome.desktop.interface enable-animations</code>).
+GNOME&#39;s setting is read with <code>gsettings</code> on a background thread and applies
+when it arrives; an animation already running then jumps to its end. Inside a
+Flatpak sandbox, <code>gsettings</code> may not see the host&#39;s setting.</li>
+<li><strong>Windows:</strong> the Animation effects setting is not read yet. Use
+<code>VOLT_UI_REDUCED_MOTION=1</code> or the app&#39;s own setting.</li>
+</ul>
+<p>Changes to the system setting while the app runs are not picked up yet.</p>
 <p><code>Ambient::pulse(0.4)</code>, <code>float(..)</code> and canvas-only <code>spin()</code> are intentionally
 continuous while visible; opt into them only where useful and remove loading
 indicators when finished. They stop under reduced motion. Shadows and glows

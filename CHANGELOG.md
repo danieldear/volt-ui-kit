@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The native host now reads the Linux desktop's reduce-motion setting at
+  startup, as it already did on macOS: KDE Plasma's Instant animation speed
+  (`AnimationDurationFactor=0` in `kdeglobals`) and GNOME's
+  `enable-animations` turned off (read with `gsettings` on a background
+  thread). It can only turn motion off; `VOLT_UI_REDUCED_MOTION=1` and
+  `reduced_motion(true)` work as before. The Windows setting is not read yet.
+
 - Extend the experimental web host with write-only password input, UTF-16/UTF-8
   caret/selection synchronization, native composition cancellation/commit,
   code-surface input and trusted-event clipboard routing. Add a small Rust-owned
