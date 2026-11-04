@@ -77,7 +77,7 @@ volt_ui_kit_mobile::export_ios_app!(application);
 
 Export one factory per static-library application. The macro supplies the
 registration symbol; developers need no raw pointers or handwritten UIKit glue.
-The root toolkit retains `forbid(unsafe_code)`. The separate host crate contains
+The iOS toolkit build retains `forbid(unsafe_code)`. The separate host crate contains
 the narrow, documented unsafe iOS surface/FFI boundary. Installed system SF is
 read locally, not bundled; an explicit app root font overrides the host fallback.
 
