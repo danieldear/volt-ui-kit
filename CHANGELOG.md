@@ -29,6 +29,15 @@
   instead of reusing the overlay's key, so a closing dialog, drawer or palette
   fades out above the window rather than inside its original parent's clip and
   opacity. Code that looked up a closed overlay by its key should use the slot.
+- The native host now reads the Linux desktop's reduce-motion setting at
+  startup, as it already did on macOS: KDE Plasma's Instant animation speed
+  (`AnimationDurationFactor=0` in `kdeglobals`) and GNOME's
+  `enable-animations` turned off (read with `gsettings` on a background
+  thread). Only the active KDE/GNOME session is queried. KDE config reads
+  are limited to 64 KiB per file; GNOME queries have a two-second timeout,
+  a 64-byte output limit and child-process cleanup. It can only turn motion
+  off; `VOLT_UI_REDUCED_MOTION=1` and
+  `reduced_motion(true)` work as before. The Windows setting is not read yet.
 
 - Extend the experimental web host with write-only password input, UTF-16/UTF-8
   caret/selection synchronization, native composition cancellation/commit,
