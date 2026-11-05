@@ -268,8 +268,9 @@ let app = Application::new("My app", (), view).motion(Motion::Default);
 
 `Motion::None` is the same switch as `reduced_motion(true)`: it also stops the
 app's own `.transition(..)`, `.animation(..)` and `Ambient` effects.
-`VOLT_UI_REDUCED_MOTION=1` and the macOS Reduce Motion setting win over
-`Motion::Default`. The Linux and Windows system settings are not read yet.
+`VOLT_UI_REDUCED_MOTION=1` and the system reduce-motion setting on macOS,
+KDE and GNOME win over `Motion::Default`. The Windows system setting is not
+read yet.
 A closing overlay leaves a paint-only copy that fades out above the window
 like the open overlay, and never takes input. Data charts do not animate yet.
 
@@ -291,7 +292,10 @@ It can only turn motion off, never back on:
 - **Linux:** KDE Plasma's animation speed set to Instant
   (`AnimationDurationFactor=0` in the `[KDE]` group of `kdeglobals`), or GNOME's
   animations turned off (`org.gnome.desktop.interface enable-animations`).
-  GNOME's setting is read with `gsettings` on a background thread and applies
+  Only the active KDE or GNOME session is queried; settings left by another
+  installed desktop are ignored. KDE config reads are limited to 64 KiB per file.
+  GNOME's setting is read with `gsettings` on a background thread (a two-second
+  timeout and a 64-byte output limit) and applies
   when it arrives; an animation already running then jumps to its end. Inside a
   Flatpak sandbox, `gsettings` may not see the host's setting.
 - **Windows:** the Animation effects setting is not read yet. Use
