@@ -40,7 +40,7 @@ cargo run --features native --example components
 
 Every node needs a unique `id` (1–128 ASCII letters, digits, `_` or `-`).
 Unknown properties and wrong types are errors, reported with a line and column
-or the node's path. Documents are limited to 256 KiB, 4,096 nodes and depth 48.
+or the node's path. Documents are limited to 256 KiB, 16,384 nodes and depth 48.
 The JSON format covers the core layout and controls; the larger components
 (tables, menus, charts, …) are Rust-only.
 

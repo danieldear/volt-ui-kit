@@ -163,6 +163,22 @@ pub struct Palette {
     pub border: [f32; 4],
     pub muted: [f32; 4],
 }
+/// A colour value `UiTheme::resolve` accepts: `#RRGGBB[AA]`, a token
+/// (`@primary`, `@primary/30`), or a `"light|dark"` pair of those.
+#[cfg_attr(not(feature = "declarative"), allow(dead_code))]
+pub(crate) fn is_color_value(value: &str) -> bool {
+    let one = |v: &str| {
+        let v = v.trim();
+        let hex = v
+            .strip_prefix('#')
+            .is_some_and(|h| matches!(h.len(), 6 | 8) && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        hex || ColorToken::parse(v).is_some()
+    };
+    match value.split_once('|') {
+        Some((light, dark)) => !dark.contains('|') && one(light) && one(dark),
+        None => one(value),
+    }
+}
 /// `#RRGGBB`, or `#RRGGBBAA` when not opaque.
 pub fn hex(c: [f32; 4]) -> String {
     let b = c.map(|v| (v.clamp(0., 1.) * 255.).round() as u8);
@@ -307,6 +323,59 @@ impl Palette {
     }
     pub fn light() -> Self {
         UiTheme::from_legacy(&Theme::light()).palette
+    }
+    /// The Catalog's neutral Zinc palette, light: white and zinc surfaces with
+    /// near-black text, which is also the primary colour. `with_accent` gives
+    /// it a coloured primary.
+    pub fn zinc_light() -> Self {
+        Self::zinc(false)
+    }
+    /// The Catalog's neutral Zinc palette, dark; see [`Palette::zinc_light`].
+    pub fn zinc_dark() -> Self {
+        Self::zinc(true)
+    }
+    fn zinc(dark: bool) -> Self {
+        // Each role as `0xRRGGBB`, light then dark.
+        let c = |light: u32, night: u32| {
+            let v = if dark { night } else { light };
+            [
+                ((v >> 16) & 255) as f32 / 255.,
+                ((v >> 8) & 255) as f32 / 255.,
+                (v & 255) as f32 / 255.,
+                1.,
+            ]
+        };
+        let base = [
+            c(0xFFFFFF, 0x09090B),
+            c(0xF4F4F5, 0x18181B),
+            c(0xE4E4E7, 0x27272A),
+        ];
+        let content = c(0x09090B, 0xFAFAFA);
+        // Secondary stays the default palette's blue.
+        let secondary = [0.22, 0.60, 0.95, 1.];
+        Self {
+            name: "Zinc".into(),
+            base,
+            content,
+            primary: content,
+            on_primary: base[0],
+            secondary,
+            on_secondary: contrast(secondary),
+            accent: content,
+            on_accent: base[0],
+            neutral: c(0x18181B, 0xFAFAFA),
+            on_neutral: c(0xFAFAFA, 0x18181B),
+            info: c(0x2563EB, 0x3B82F6),
+            on_info: contrast(c(0x2563EB, 0x3B82F6)),
+            success: c(0x16A34A, 0x22C55E),
+            on_success: contrast(c(0x16A34A, 0x22C55E)),
+            warning: c(0xD97706, 0xF59E0B),
+            on_warning: c(0x18181B, 0x18181B),
+            error: c(0xDC2626, 0xDC2626),
+            on_error: c(0xFFFFFF, 0xFAFAFA),
+            border: c(0xE4E4E7, 0x27272A),
+            muted: c(0x71717A, 0xA1A1AA),
+        }
     }
     pub fn with_accent(mut self, c: [f32; 4]) -> Self {
         self.accent = c;
@@ -541,6 +610,17 @@ impl UiTheme {
         c
     }
     pub fn resolve(&self, value: &str) -> Option<[f32; 4]> {
+        if let Some((light, dark)) = value.split_once('|') {
+            // Validate the pair before choosing a half, in both theme modes.
+            if dark.contains('|') {
+                return None;
+            }
+            // Light text means a dark theme.
+            let c = self.palette.content;
+            let night = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] > 0.5;
+            let half = if night { dark } else { light }.trim();
+            return self.resolve(half);
+        }
         if let Some((token, alpha)) = ColorToken::parse_with_alpha(value) {
             let mut color = self.palette.color(token);
             color[3] *= alpha;
@@ -601,6 +681,39 @@ mod tests {
         let mut p = Palette::dark();
         p.error[0] = f32::NAN;
         assert!(!p.is_valid());
+    }
+    #[test]
+    fn zinc_palettes_are_neutral_readable_and_take_an_accent() {
+        let (light, dark) = (Palette::zinc_light(), Palette::zinc_dark());
+        assert_eq!(light.base.map(hex), ["#FFFFFF", "#F4F4F5", "#E4E4E7"]);
+        assert_eq!(dark.base.map(hex), ["#09090B", "#18181B", "#27272A"]);
+        for p in [&light, &dark] {
+            assert!(p.is_valid());
+            assert_eq!(p.name, "Zinc");
+            assert_eq!((p.primary, p.on_primary), (p.content, p.base[0]));
+            assert!(contrast_ratio(p.content, p.base[0]) >= 4.5);
+            assert!(contrast_ratio(p.muted, p.base[0]) >= 4.5);
+            for role in [
+                ColorToken::Primary,
+                ColorToken::Secondary,
+                ColorToken::Accent,
+                ColorToken::Neutral,
+                ColorToken::Info,
+                ColorToken::Success,
+                ColorToken::Warning,
+                ColorToken::Error,
+            ] {
+                assert!(
+                    contrast_ratio(p.color(role), p.color(role.content_pair())) >= 4.5,
+                    "{role:?}"
+                );
+            }
+        }
+        let violet = parse_hex("#7C3AED").unwrap();
+        let accented = light.clone().with_accent(violet);
+        assert_eq!((accented.primary, accented.accent), (violet, violet));
+        assert_eq!(accented.on_primary, [1.; 4]);
+        assert_eq!(accented.base, light.base, "surfaces stay neutral");
     }
 }
 #[cfg(test)]

@@ -43,6 +43,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Try the complete Catalog
+
+From a checkout of this repository:
+
+```sh
+./scripts/run_catalog.sh
+```
+
+Builds and opens the full GPU Catalog, including macOS desktop services and
+local notifications, with app packaging handled automatically. Permission is
+requested only when you click the notification permission button. Use
+`--check` to build/verify without opening it. Requires Cargo, Python 3 and, on
+macOS, the command-line tools. Individual library features remain optional.
+
+## Experimental Rust-first iOS apps
+
+[Field Notes](docs/ios-prototype.md) is an opt-in iOS integration prototype:
+Rust-owned screens, navigation, touch scrolling and editable profile forms,
+with a reusable UIKit keyboard/Metal host. Generate a Rust app with
+`cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`:
+no per-app Swift application code is needed. See the guide for setup, tests
+and limits. An [experimental Android host/template](docs/android-prototype.md)
+also builds Rust-owned screens with shared native OS glue; neither mobile
+adapter is production support. Simulator software drawing is reported
+explicitly; physical-device GPU acceptance is still pending. Desktop remains
+the primary supported host.
+
 ## Highlights
 
 - **Plain Rust.** Views are functions and callbacks are closures over your own
@@ -61,6 +88,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   bundles (macOS first).
 - **Accessible.** Roles, labels, values and actions go to screen readers
   through AccessKit, with full keyboard navigation.
+- **App-owned navigation.** Typed route links, bounded Back/Forward history and
+  standalone keyboard-accessible web links. Browser opening is explicit; see
+  [navigation and links](docs/components.md#typed-navigation-and-web-links).
+- **Deliberate motion.** Finite spring responses, staggered entrances and explicit
+  replay, with reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
 - **A fast dev loop.** `cargo volt dev` rebuilds on save and restarts the app
   with its state and window position intact.
 
@@ -71,19 +103,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```sh
 git clone https://github.com/danieldear/volt-ui-kit
 cd volt-ui-kit
-cargo run --release --locked --features native-gpu,native-desktop --example catalog
+./scripts/run_catalog.sh
 ```
 
-The Catalog showcases components with live previews, source code and API
-tables. Pass arguments after `--`, for example:
+The launcher enables all demo capabilities and handles the identified macOS
+app bundle required by local notifications. It does not request permission or
+send a notification automatically. Run it from a **repository checkout**, not
+an extracted crates.io source package; source-maintenance scripts are not
+shipped in the crate.
+
+For targeted component development, direct Cargo launches accept example
+arguments after `--`:
 
 ```sh
 cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
 ```
 
+Direct launches do not package an app: the command above supports GPU drawing,
+menus and file panels, but not the local-notification demo. Adding
+`native-notifications` alone is not enough on macOS; use the launcher for that
+end-to-end test. For software-only component testing, use `--features native`.
+See [examples](examples/README.md#catalog-launch-modes) for the launch modes.
+
 ## Use it
 
-The crate is not on crates.io yet; depend on it from Git:
+Version **0.5.0** is prepared in this repository but is **not published on
+crates.io**. Until publication, depend on it from Git:
 
 ```toml
 [dependencies]
@@ -111,23 +156,29 @@ cargo volt dev my-app
 | `native-notifications` | macOS local notifications |
 | `rust-ui` / `declarative` | The builders and runtime without a window, for custom hosts |
 | `dev-tools` | The `cargo volt` command |
+| `rendering` / `rendering-gpu` | Shared drawing adapters without desktop window/clipboard integration |
+| `mobile` | Experimental touch controller for a platform-owned view; see the iOS prototype |
 
 Rust 1.89 or newer.
 
 ## Status
 
-Version 0.4, pre-release. macOS is the primary platform and is tested on Apple
+Version 0.5.0, pre-1.0. macOS is the primary platform and is tested on Apple
 silicon. Windows and Linux have local cross-compilation checks and a configured
 headless CI matrix; their native runtime has not been validated yet. Check
 [Actions](https://github.com/danieldear/volt-ui-kit/actions) for actual remote
 results; configured jobs are not evidence of a passing run. The core compiles to
-WebAssembly; a web host is planned. Expect API changes before 1.0.
+WebAssembly; an [experimental browser host](docs/web-prototype.md) now renders the original Catalog components directly in the documentation, with WebGPU/software rendering. This is not full web parity. Expect API changes before 1.0.
+
+Linux native backdrop blur now negotiates modern and legacy Wayland protocols;
+Catalog reports the request status and unsupported cases. The compositor still
+controls the visible effect. See [Linux blur and diagnostics](docs/windows-and-rendering.md#linux-desktop-blur).
 
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
 - [Building interfaces](docs/building-uis.md)
-- [Components](docs/components.md)
+- [Components](docs/components.md) — including [component spacing overrides](docs/components.md#customizing-component-spacing)
 - [Styling and themes](docs/styling-and-themes.md)
 - [Windows and rendering](docs/windows-and-rendering.md)
 - [Application services](docs/app-services.md)
@@ -143,10 +194,10 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory docs
 ```
 
 The site uses local assets, an OFL-licensed display font, system interface
-fonts and no JavaScript or analytics.
+fonts and no analytics. Prose stays static; opt-in live component previews use a small JavaScript/WASM browser host.
 GitHub Pages publishing is a separate, manual maintainer step; see the
 [public-release checklist](docs/public-release.md). The landing page leads to
-the [component reference](docs/reference/index.html) and eight HTML how-to guides.
+the [component reference](docs/reference/index.html) and HTML how-to guides.
 The reference includes source-backed Rust excerpts, API notes and toolkit-rendered
 previews. See [site maintenance](docs/site-maintenance.md) to regenerate them.
 
@@ -160,3 +211,23 @@ application code or native dependencies are free of vulnerabilities.
 ## License
 
 MIT. See [LICENSE](LICENSE) and [third-party notes](docs/third-party.md).
+
+## Publishing
+
+A merged PR, package version or Git tag does not upload a crate. Maintainers:
+follow the [crates.io publication checklist](docs/public-release.md#publish-the-crate)
+for package verification, account prerequisites and the separately approved
+`cargo publish` operation. `cargo push` is not a Cargo command.
+
+### Experimental live web components
+
+Try real Rust components in a browser rather than static images. The separate,
+opt-in web host supports a first slice of buttons, tabs, editable forms and
+scrolling, with WebGPU preferred and clearly labeled software fallback. This
+is not full browser/desktop parity. See the [web setup and limitations](docs/web-prototype.md).
+
+```sh
+python3 scripts/build_web.py  # requires wasm32 target and wasm-bindgen-cli 0.2.129
+python3 -m http.server 8768 --bind 127.0.0.1 --directory docs
+# Open http://127.0.0.1:8768/index.html or /reference/index.html
+```

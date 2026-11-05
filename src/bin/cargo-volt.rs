@@ -1,10 +1,14 @@
 //! Local scaffolding, rebuild/restart and macOS packaging. No shell evaluation.
 #![forbid(unsafe_code)]
+#[path = "volt/android.rs"]
+mod android;
 #[path = "volt/bundle.rs"]
 mod bundle;
 #[cfg(test)]
 #[path = "volt/bundle_tests.rs"]
 mod bundle_tests;
+#[path = "volt/ios.rs"]
+mod ios;
 #[path = "volt/release.rs"]
 mod release;
 // Releases are macOS-only; the tests compare macOS paths.
@@ -40,10 +44,15 @@ fn view(_: &()) -> Element<()> {
         .background(ColorToken::Base100).color(ColorToken::BaseContent).into()
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Application::new("My app", (), view).chrome(window_chrome()).run()
+    // Built-in component animations; Motion::None turns them all off.
+    Application::new("My app", (), view)
+        .motion(Motion::Default)
+        .chrome(window_chrome()).theme_with(theme).run()
 }
 "#,
-        ) + WINDOW_SHELL);
+        ) + THEME
+            + WINDOW_CHROME
+            + WINDOW_HEADER);
     }
     let (title,items,body)=match kind {
         "mail"=>("Mailbox","Inbox|Sent|Drafts", "text(\"Your mail interface\").font_size(24.).into()"),
@@ -56,40 +65,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "agent" => ", draft: String",
         _ => "",
     };
-    let items = items
-        .split('|')
+    let labels: Vec<&str> = items.split('|').collect();
+    let names = labels
+        .iter()
+        .map(|label| format!("\"{label}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let count = labels.len();
+    let items = labels
+        .iter()
         .enumerate()
         .map(|(i, label)| format!("navigation_item({i}u8, \"{label}\").key(\"destination-{i}\")"))
         .collect::<Vec<_>>()
-        .join(",\n            ");
+        .join(",\n                ");
     Ok(format!(
         r#"use volt_ui_kit::{{native::{{Application, WindowChrome}}, ui::prelude::*}};
+const PAGES: [&str; {count}] = [{names}];
+// sidebar_width stays None until the sidebar's divider is first dragged.
 #[derive(Default)]
-struct App {{ page: u8{extra_state} }}
+struct App {{ page: u8, nav_open: bool, sidebar_width: Option<f32>{extra_state} }}
 fn view(app: &App) -> Element<App> {{
     let content: Element<App> = {body};
-    let body = hstack![
-        navigation([
-            {items}
-        ]).key("navigation").selected(app.page).width(200.)
-            .on_select(|app: &mut App, page| app.page = page),
-        vstack![content].flex(1.).padding(24., Edge::All),
-    ].key("app-content").flex(1.).align(Align::Stretch)
-        .gap(16., Axis::Horizontal).padding(16., Edge::All);
-    vstack![window_header("{title}"), divider().background(ColorToken::Border), body]
-        .align(Align::Stretch).font_family("SF")
-        .background(ColorToken::Base100).color(ColorToken::BaseContent).into()
+    // The Catalog's shell: the sidebar beside the page. Below 1024pt the
+    // sidebar moves into a drawer opened from the toolbar.
+    navigation_split_view(
+        |place| {{
+            navigation([
+                {items}
+            ])
+            .key(place.key("destinations"))
+            .selected(app.page)
+            .on_select(|app: &mut App, page| {{
+                app.page = page;
+                app.nav_open = false;
+            }})
+        }},
+        vstack![content].key("page").padding(24., Edge::All),
+    )
+    .key("app")
+    .title("{title}")
+    .sidebar_header(
+        hstack![text("{title}").font_size(15.).font_weight(700)]
+            .key("app-name").height(40.).align(Align::Center).padding(18., Edge::Horizontal),
+    )
+    .toolbar(text(PAGES[app.page as usize]).key("page-title").font_weight(600))
+    // Drag the divider to resize the sidebar (200-420pt), as in the Catalog.
+    .sidebar_width(app.sidebar_width.unwrap_or(248.))
+    .on_sidebar_resize(|app: &mut App, width| app.sidebar_width = Some(width.round()))
+    .drawer_open(app.nav_open)
+    .on_drawer_change(|app: &mut App, open| app.nav_open = open)
+    .font_family("SF").color(ColorToken::BaseContent).into()
 }}
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // Catalog-style macOS chrome; native controls remain. Blur is your choice.
+    // Built-in component animations; Motion::None turns them all off.
     Application::new("{title}", App::default(), view)
-        .size(1100, 760).chrome(window_chrome()).run()
+        .motion(Motion::Default)
+        .size(1100, 760).chrome(window_chrome()).theme_with(theme).run()
 }}
 "#
-    ) + WINDOW_SHELL)
+    ) + THEME
+        + WINDOW_CHROME)
 }
-// Kept in the generated source so developers can edit the header/chrome directly.
-const WINDOW_SHELL: &str = r#"
+// The Catalog's colours, not the kit's default warm palette.
+const THEME: &str = r#"
+fn theme<C>(_: &C, system: ThemeMode) -> UiTheme {
+    // The Catalog's neutral Zinc palette, light or dark with the system.
+    // Add .with_accent([0.49, 0.23, 0.93, 1.]) for a violet primary.
+    let palette = if system == ThemeMode::Dark {
+        Palette::zinc_dark()
+    } else {
+        Palette::zinc_light()
+    };
+    UiTheme::from_palette(palette)
+}
+"#;
+// Kept in the generated source so developers can edit the chrome directly.
+const WINDOW_CHROME: &str = r#"
 fn window_chrome() -> WindowChrome {
     if cfg!(target_os = "macos") {
         WindowChrome::Overlay
@@ -97,6 +149,9 @@ fn window_chrome() -> WindowChrome {
         WindowChrome::Native
     }
 }
+"#;
+// The minimal template's own title row; split views bring their own.
+const WINDOW_HEADER: &str = r#"
 fn window_header<C: 'static>(title: &str) -> Element<C> {
     // 60pt unified header, with a clear lane for native macOS traffic lights.
     hstack![text(title).key("window-title").font_size(15.).font_weight(600), spacer()]
@@ -135,6 +190,14 @@ fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
     }
 }
 fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Result<()> {
+    if kind == "android" {
+        ios::resolve(kind, None, desktop)?;
+        return android::scaffold(destination, kit);
+    }
+    if kind == "ios" {
+        ios::resolve(kind, None, desktop)?;
+        return ios::scaffold(destination, kit);
+    }
     let source = template(kind)?;
     let source = if desktop {
         desktop_template(source, kind)
@@ -180,7 +243,12 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
         fs::write(destination.join("Cargo.toml"),format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nresolver = \"3\"\nrust-version = \"1.89\"\n\n[dependencies]\nvolt-ui-kit = {{ path = {path}, features = [{features}] }}\n"))?;
         fs::write(destination.join("src/main.rs"), source)?;
         fs::write(destination.join(".gitignore"), "/target\n")?;
-        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable 60pt header with reserved control space. Other platforms retain native window decorations.\nChange window_chrome() to WindowChrome::Native for a standard title bar. Background blur/transparency is not forced.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
+        let (shell, native) = if kind == "minimal" {
+            ("", "")
+        } else {
+            ("The sidebar and page come from navigation_split_view, the Catalog's own shell: drag the divider to resize the sidebar, and below 1024pt it moves into a drawer.\n", " (and turn off .titlebar_inset on macOS)")
+        };
+        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable header with reserved control space. Other platforms retain native window decorations.\n{shell}Change window_chrome() to WindowChrome::Native for a standard title bar{native}. Background blur/transparency is not forced.\ntheme() gives the app the Catalog's neutral Zinc palette, light or dark with the system; add .with_accent(..) there for a brand colour.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
         Ok(())
     })();
     if result.is_err() {
@@ -372,15 +440,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     match args.first().map(String::as_str) {
         Some("new") if args.len()>=2 => {
-            let mut kind="minimal"; let mut kit=None; let mut desktop=false; let mut i=2;
+            let mut kind="minimal"; let mut kit=None; let mut desktop=false; let mut platform=None; let mut i=2;
             while i<args.len() {match args[i].as_str() {
                 "--desktop" => {desktop=true;i+=1;},
+                "--platform" if i+1<args.len()=>{platform=Some(args[i+1].as_str());i+=2;},
                 "--template" if i+1<args.len()=>{kind=&args[i+1];i+=2;},
                 "--kit-path" if i+1<args.len()=>{kit=Some(Path::new(&args[i+1]));i+=2;},
                 _=>return Err(error("unknown/missing scaffold option").into()),
             }}
+            let kind=ios::resolve(kind,platform,desktop)?;
             scaffold(Path::new(&args[1]),kind,kit.ok_or_else(||error("--kit-path required until published"))?, desktop)?;
-            println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);
+            if kind=="android" {println!("Created {}. Build: cd {}/android && ./gradlew assembleDebug; edit src/lib.rs.",args[1],args[1]);}
+            else if kind=="ios" {println!("Created {}. Open {}/ios/VoltApp.xcodeproj; edit src/lib.rs (no Swift glue required).",args[1],args[1]);}
+            else {println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);}
         }
         Some("bundle" | "release") if args.get(1).is_some_and(|s| s == "--help") && args.len()==2 => {
             println!("{}\n\nManual bundling from a prebuilt binary:\n{}", release::HELP, bundle::HELP)
@@ -390,7 +462,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("bundle") => release::main(&args[1..], false)?,
         Some("release") => release::main(&args[1..], true)?,
         Some("dev") if args.len()<=2=>dev(Path::new(args.get(1).map_or(".",String::as_str)))?,
-        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--template minimal|navigation|mail|settings|agent] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
+        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--platform desktop|ios|android] [--template minimal|navigation|mail|settings|agent|ios|android] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
     }
     Ok(())
 }
@@ -449,6 +521,7 @@ mod tests {
         for kind in ["minimal", "navigation", "mail", "settings", "agent"] {
             let s = template(kind).unwrap();
             assert!(s.contains("Application::new"));
+            assert!(s.contains(".motion(Motion::Default)"), "{kind}");
         }
         assert!(template("unknown").is_err());
     }
@@ -469,14 +542,50 @@ mod tests {
                 assert!(source.contains("WindowChrome::Overlay"));
                 assert!(source.contains("WindowChrome::Native"));
                 assert!(source.contains("cfg!(target_os = \"macos\")"));
-                assert!(source.contains("fn window_header"));
-                assert!(source.contains(".height(60.)"));
-                assert!(source.contains(".drag_region(true)"));
-                assert!(source.contains("{ 96. } else { 20. }"));
+                if kind == "minimal" {
+                    assert!(source.contains("fn window_header"));
+                    assert!(source.contains(".height(60.)"));
+                    assert!(source.contains(".drag_region(true)"));
+                    assert!(source.contains("{ 96. } else { 20. }"));
+                } else {
+                    // The split view brings the drag header, the window-control
+                    // lane and the narrow-window drawer.
+                    assert!(source.contains("navigation_split_view("));
+                    assert!(source.contains(".key(place.key(\"destinations\"))"));
+                    assert!(source.contains(".drawer_open(app.nav_open)"));
+                    assert!(source.contains(".on_drawer_change("));
+                    assert!(source.contains(".sidebar_width(app.sidebar_width.unwrap_or(248.))"));
+                    assert!(source.contains(".on_sidebar_resize("));
+                    assert!(!source.contains("fn window_header"), "no dead helper");
+                }
                 assert!(!source.contains("WindowChrome::Borderless"));
                 assert!(!source.contains("WindowBackground::Blur"));
                 assert_eq!(source.matches(".run()").count(), 1);
                 assert_eq!(source.contains(".desktop(desktop(),"), desktop);
+            }
+        }
+    }
+    #[test]
+    fn every_template_uses_the_catalog_zinc_palette_in_both_modes() {
+        for kind in ["minimal", "navigation", "mail", "settings", "agent"] {
+            for desktop in [false, true] {
+                let source = template(kind).unwrap();
+                let source = if desktop {
+                    desktop_template(source, kind)
+                } else {
+                    source
+                };
+                assert_eq!(
+                    source.matches(".theme_with(theme)").count(),
+                    1,
+                    "{kind}, desktop={desktop}"
+                );
+                assert_eq!(source.matches("fn theme<C>(").count(), 1);
+                assert!(source.contains("if system == ThemeMode::Dark"));
+                assert!(source.contains("Palette::zinc_dark()"));
+                assert!(source.contains("Palette::zinc_light()"));
+                assert!(!source.contains("Palette::dark()"), "not the warm default");
+                assert!(!source.contains("Palette::light()"));
             }
         }
     }
@@ -491,10 +600,13 @@ mod tests {
         assert!(String::from_utf8_lossy(&original).contains("resolver = \"3\""));
         let source = fs::read_to_string(dest.join("src/main.rs")).unwrap();
         assert!(source.contains(".chrome(window_chrome())"));
-        assert!(source.contains("window_header(\"Mailbox\")"));
+        assert!(source.contains(".title(\"Mailbox\")"));
         let readme = fs::read_to_string(dest.join("README.md")).unwrap();
         assert!(readme.contains("native traffic lights"));
+        assert!(readme.contains("navigation_split_view"));
+        assert!(readme.contains("drag the divider to resize the sidebar"));
         assert!(readme.contains("Background blur/transparency is not forced"));
+        assert!(readme.contains("Catalog's neutral Zinc palette"));
         assert!(scaffold(
             &dest,
             "settings",

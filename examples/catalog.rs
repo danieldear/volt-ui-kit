@@ -1,6 +1,7 @@
 //! Volt UI catalog: every component, documented with live previews, code,
 //! variations and API tables, in a shadcn/ui-style documentation shell.
 //!
+//! ./scripts/run_catalog.sh  # full Catalog, automatically bundled on macOS
 //! cargo run --release --features native --example catalog
 //! cargo run --release --features native --example catalog -- --page table --theme dark --accent violet
 //! cargo run --release --features native-gpu --example catalog   # frosted sidebar
@@ -150,7 +151,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         options,
         move |application| {
             let application = application
+                // Built-in component animations (as `cargo volt new` sets).
+                .motion(volt_ui_kit::ui::Motion::Default)
                 .background_from_state(catalog::window_background)
+                .on_backdrop_status(|app, status| app.backdrop_status = status.description().into())
                 .renderer(renderer)
                 .commands(catalog::lifecycle::commands())
                 .requests(|app, sender| app.requests = Some(sender))

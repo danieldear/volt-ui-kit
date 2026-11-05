@@ -26,7 +26,10 @@
     not(feature = "native"),
     doc = "The guides are in the repository's `docs/` folder, and in the `guide` module when built with the `native` feature."
 )]
-#![forbid(unsafe_code)]
+// Only the Linux native handle bridge opts out locally. All other modules deny
+// unsafe code; non-Linux and non-native builds retain the stronger forbid.
+#![cfg_attr(not(all(target_os = "linux", feature = "native")), forbid(unsafe_code))]
+#![deny(unsafe_code)]
 pub mod card_paint;
 pub mod form_paint;
 pub mod paint;
@@ -70,6 +73,14 @@ pub mod declarative;
 #[cfg(feature = "rust-ui")]
 pub mod ui;
 
+/// Host-independent shaping, retained drawing and optional GPU presentation.
+#[cfg(feature = "rendering")]
+pub mod rendering;
+
+/// Experimental touch host for embedding Volt in a platform-owned view.
+#[cfg(feature = "mobile")]
+pub mod mobile;
+
 /// Optional standalone software-rendered desktop host. Never used by legacy consumers.
 #[cfg(feature = "native")]
 pub mod native;
@@ -94,4 +105,9 @@ pub mod guide {
     pub mod json_ui {}
     #[doc = include_str!("../docs/architecture.md")]
     pub mod architecture {}
+    #[cfg(feature = "mobile")]
+    #[doc = include_str!("../docs/android-prototype.md")]
+    pub mod android_prototype {}
+    #[doc = include_str!("../docs/ios-prototype.md")]
+    pub mod ios_prototype {}
 }

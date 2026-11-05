@@ -175,6 +175,33 @@ if let Some(path) = file_dialog::open_file(&FileDialogOptions::new("Open notes")
 - These helpers are for small UTF-8 text files (up to 8 KiB). Use `std::fs`
   directly for anything larger.
 
+## Opening web links
+
+Composition never launches another application. A link's callback can capture,
+confirm or reject the target, or explicitly call the native adapter:
+
+```rust,no_run
+use volt_ui_kit::{native::links, ui::prelude::*};
+#[derive(Default)]
+struct App { status: String }
+let ui: Element<App> = link("Project website ↗", "https://example.com")
+    .key("website")
+    .on_open(|app: &mut App, url| {
+        app.status = match links::open_url(&url) {
+            Ok(()) => "Browser request accepted".into(),
+            Err(error) => error.to_string(),
+        };
+    }).into();
+```
+
+`native::links::available()` reports compiled support: currently macOS with
+`native-desktop`. Dispatch requires the main thread and uses public
+`NSWorkspace`/`NSURL` APIs, not a shell or subprocess. Other builds return
+`OpenUrlError::Unsupported`. Success means the OS accepted the request, not
+that a browser loaded the page. Volt itself makes no network request. Custom
+schemes, email actions, app deep-link registration and embedded browsing are not
+part of this HTTP(S)-only adapter.
+
 ## Menus and tray
 
 With `native-desktop` on macOS, add an application menu and a tray item. Their
@@ -192,6 +219,24 @@ let desktop = DesktopConfig::new("My app").menu(DesktopMenu::new(
 
 The menu includes the standard About, Services, Hide and Quit items. A
 `TrayConfig` adds a menu-bar icon (RGBA, up to 128×128) with its own commands.
+
+`native::file_dialog::reveal_file(&absolute_path)` asks Finder to select an
+existing file or folder without opening its contents. It requires
+`native-desktop` on macOS and the UI thread; other platforms return
+`Unsupported`. Success reports dispatch, not an observed Finder window.
+
+### Tray-resident window visibility
+
+Use `.window_visibility_from_state(|app| !app.hidden)` with a tray command that
+clears `hidden`. In `.on_close_request`, set `hidden = true` and return
+`CloseDecision::KeepOpen` for `CloseReason::Window`; allow `Quit` to close.
+Hiding changes the native window's visibility without shutting down the worker
+queues. A false-to-true transition restores and focuses the window. Visibility
+is not focus-stealing on every message: it is applied only on a transition.
+
+This opt-in does not install a tray icon, login item or daemon automatically.
+Always provide an explicit Open and Quit path. Existing applications retain
+normal close-to-exit behavior unless they opt into a close guard.
 
 ## Notifications
 
@@ -213,6 +258,36 @@ Notifications work only from a bundled `.app` (see [Packaging and releasing](#pa
 "Accepted" means the OS took the request; Focus modes and user settings decide
 whether it is shown. Forward the callback results to your UI with a
 background message.
+
+### Testing Catalog notifications
+
+Use the full Catalog launcher from the repository root:
+
+```sh
+./scripts/run_catalog.sh
+```
+
+It builds every Catalog capability (GPU, desktop integrations and local
+notifications), creates and ad-hoc signs a temporary identified macOS `.app`,
+registers it with Launch Services, and launches it. There is no separate feature or packaging setup. The launcher
+waits for the app to quit and removes its temporary bundle afterward; it does
+not duplicate repository history. Python 3, Cargo and the macOS command-line
+tools are required. `./scripts/run_catalog.sh --check` builds and verifies
+without opening the app or requesting permission.
+
+Open **Desktop services**, click **Request alert permission** and allow alerts.
+Then click **Send in 8 seconds** and switch to another app before the timer
+expires: this adapter does not force foreground presentation. Check
+Notification Center if no banner appears, and use **Remove test notification**
+to clean up. Focus modes and macOS notification settings can suppress banners.
+No permission prompt or notification is sent automatically. The stable Catalog
+bundle identifier is `com.volt.ui.catalog`.
+
+Direct `cargo run --features native-desktop --example catalog` still works for
+ordinary component testing, including context menus, but intentionally omits
+GPU rendering and the separately opt-in notification adapter. Application
+developers retain independent library feature flags. Non-macOS launches report
+that local notifications are unavailable rather than pretending to deliver.
 
 ## The development loop
 
@@ -239,6 +314,18 @@ Application::new("Dev", App::default(), view)
   position too. Use any format for the saved string.
 - `theme_file` reloads the palette whenever the file changes, without a rebuild.
 - The dev loop runs your project's build scripts; use it on code you trust.
+
+### Explicit macOS Trash
+
+`native::file_dialog::move_to_trash(&absolute_path)` moves one item to macOS
+Trash through Foundation, without permanently deleting it or emptying Trash.
+It requires `native-desktop` on macOS; other builds report `Unsupported`.
+The caller must own the confirmation UI, protected-location policy and
+concurrent-change validation. Run preflight and the filesystem operation on a
+worker, not in the rendering callback. The helper never falls back to deletion.
+Moving synced content can propagate to other devices; returning success does
+not guarantee immediate free-space recovery. The OS API is documented by
+[Apple](https://developer.apple.com/documentation/foundation/filemanager/trashitem(at:resultingitemurl:)).
 
 ## Packaging and releasing
 

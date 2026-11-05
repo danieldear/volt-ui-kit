@@ -12,7 +12,7 @@ GITHUB = "https://github.com/danieldear/volt-ui-kit/"
 
 
 class Site(HTMLParser):
-    def __init__(self):
+    def __init__(self, *, live=False, modules=()):
         super().__init__(convert_charrefs=True)
         self.ids = set()
         self.links = []
@@ -20,6 +20,9 @@ class Site(HTMLParser):
         self.h1_count = 0
         self.stylesheets = 0
         self.csp = False
+        self.modules = set(modules) | ({"live.js"} if live else set())
+        self.live = live
+        self.in_script = False
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -28,7 +31,10 @@ class Site(HTMLParser):
                 self.errors.append(f"duplicate HTML id: {a['id']}")
             self.ids.add(a["id"])
         self.h1_count += tag == "h1"
-        if tag in {"script", "iframe", "form", "object", "embed", "base"}:
+        reviewed_script = tag == "script" and a.get("src") in self.modules and a == {"type": "module", "src": a.get("src")}
+        if tag == "script":
+            self.in_script = True
+        if tag in {"script", "iframe", "form", "object", "embed", "base"} and not reviewed_script:
             self.errors.append(f"active content is not allowed in static site: {tag}")
         if any(k.startswith("on") or k == "style" for k in a):
             self.errors.append("inline scripts/styles are not allowed")
@@ -45,6 +51,14 @@ class Site(HTMLParser):
             resource = a.get("src") or a.get("href", "")
             if urlsplit(resource).scheme or resource.startswith("//"):
                 self.errors.append("site assets must be local, not external downloads")
+
+    def handle_data(self, data):
+        if self.in_script and data.strip():
+            self.errors.append("inline script bodies are not allowed")
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self.in_script = False
 
 
 def check_link(root: Path, source: Path, link: str, ids=None):
@@ -76,7 +90,11 @@ def check_link(root: Path, source: Path, link: str, ids=None):
 def inspect_site(root: Path):
     errors = []
     for source in (root / "docs").rglob("*.html"):
-        site = Site()
+        relative = source.relative_to(root / "docs").as_posix()
+        modules = (("live/catalog-previews.js",) if relative == "index.html"
+                   else ("../live/catalog-previews.js",) if relative.startswith("reference/")
+                   else ())
+        site = Site(live=relative == "live/index.html", modules=modules)
         site.feed(source.read_text())
         errors.extend(f"{source.relative_to(root)}: {e}" for e in site.errors)
         if site.h1_count != 1 or not 1 <= site.stylesheets <= 2 or not site.csp:

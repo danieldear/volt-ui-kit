@@ -567,6 +567,6 @@ fn four_thousand_node_screens_build_and_lay_out() {
         start.elapsed().as_secs_f64() * 1000.
     );
     // Past the budget, building fails with an error instead of degrading.
-    let too_many: Vec<Element<App>> = (0..4200).map(|i| text(format!("{i}")).into()).collect();
+    let too_many: Vec<Element<App>> = (0..16_500).map(|i| text(format!("{i}")).into()).collect();
     assert!(Element::<App>::from(vstack(too_many)).build().is_err());
 }

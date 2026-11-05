@@ -23,6 +23,8 @@ struct App {
     quantity: f64,
     fruit: Option<u8>,
     combo: ComboboxState,
+    many: ComboboxState,
+    font: Option<u8>,
     tags: Vec<String>,
     tag_state: TagInputState,
     colour: String,
@@ -52,6 +54,15 @@ fn view(app: &App) -> Element<App> {
             .selected(app.fruit)
             .state(|app: &mut App| &mut app.combo)
             .on_select(|app: &mut App, v| app.fruit = Some(v)),
+        combobox((0u8..20).map(|i| (i, format!("Font {i}"))), &app.many)
+            .key("many")
+            .selected(app.font)
+            .max_results(20)
+            .height(30.)
+            .font_size(12.5)
+            .surface("#202020")
+            .state(|app: &mut App| &mut app.many)
+            .on_select(|app: &mut App, v| app.font = Some(v)),
         tag_input(&app.tags, &app.tag_state)
             .key("tags")
             .state(|app: &mut App| &mut app.tag_state)
@@ -210,6 +221,21 @@ fn combobox_filters_and_picks_with_click_or_enter() {
     assert_eq!(h.app.fruit, Some(2), "Enter picks the best match");
     h.click("fruit-toggle");
     assert!(h.app.combo.open && h.app.combo.query.is_empty());
+}
+
+#[test]
+fn a_combobox_can_list_every_option_and_still_filters() {
+    let mut h = Harness::new();
+    h.click("many-toggle");
+    assert!(h.app.many.open);
+    assert!(
+        h.has("many-option-0") && h.has("many-option-8"),
+        "more than eight listed; the rest scroll into view"
+    );
+    h.type_into("many-field", "font 1");
+    assert!(h.has("many-option-1") && h.has("many-option-12") && !h.has("many-option-2"));
+    h.enter();
+    assert_eq!(h.app.font, Some(1), "the prefix match comes first");
 }
 
 #[test]
@@ -480,4 +506,84 @@ fn containers_report_their_width_after_layout_when_it_changes() {
         "a resize reports again"
     );
     assert_eq!(seen, [500., 320.], "logical points, padding included");
+}
+#[test]
+fn flexible_containers_report_their_height_after_layout_when_it_changes() {
+    // A header of fixed height, and a body that takes the rest of the window.
+    let page: Element<Vec<f32>> = vstack![
+        text("header").height(40.),
+        vstack![text("body")]
+            .key("body")
+            .flex(1.)
+            .on_height(|seen: &mut Vec<f32>, h| seen.push(h))
+    ]
+    .key("page")
+    .height_fraction(1.)
+    .into();
+    let (d, mut h) = page.build().unwrap().into_parts();
+    let mut rt = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    let mut seen: Vec<f32> = Vec::new();
+    let at = |height: f32,
+              rt: &mut Runtime,
+              h: &mut Handlers<'static, Vec<f32>>,
+              seen: &mut Vec<f32>| {
+        let vp = Viewport::new(800., height * 2., 2.).unwrap();
+        rt.layout(vp, &Bindings::default(), &mut Metrics).unwrap();
+        rt.dispatch_widths(h, seen).unwrap()
+    };
+    assert!(at(500., &mut rt, &mut h, &mut seen), "first layout reports");
+    assert!(
+        !at(500., &mut rt, &mut h, &mut seen),
+        "same height: no report"
+    );
+    assert!(
+        at(700., &mut rt, &mut h, &mut seen),
+        "a taller window reports again"
+    );
+    assert_eq!(seen, [460., 660.], "logical points, what the header leaves");
+}
+
+#[test]
+fn a_container_reports_drags_from_where_the_press_began() {
+    use std::{cell::Cell, rc::Rc};
+    let seen: Rc<Cell<[f32; 2]>> = Rc::new(Cell::new([9.; 2]));
+    let log_press = |s: &Rc<Cell<[f32; 2]>>| assert_eq!(s.get(), [9.; 2]);
+    let log = seen.clone();
+    let tree: Element<()> = zstack![panel([])
+        .key("grip")
+        .width(20.)
+        .height(20.)
+        .on_drag(move |_: &mut (), d| log.set(d)),]
+    .key("root")
+    .into();
+    let (doc, mut handlers) = tree.build().unwrap().into_parts();
+    let v = Bindings::default();
+    let mut r = Runtime::new(doc, &handlers, &v).unwrap();
+    r.layout(Viewport::new(200., 200., 2.).unwrap(), &v, &mut Metrics)
+        .unwrap();
+    let [x, y, _, _] = r
+        .boxes()
+        .iter()
+        .find(|b| b.id == "grip")
+        .unwrap()
+        .bounds
+        .bounds();
+    log_press(&seen);
+    let pressed = r
+        .pointer_down_outcome(x + 4., y + 4., &mut handlers, &mut ())
+        .unwrap();
+    assert!(
+        pressed.activated && seen.get() == [0., 0.],
+        "the press reports where the drag starts"
+    );
+    let moved = r
+        .pointer_move_outcome(x + 4. - 30., y + 4. + 50., &mut handlers, &mut ())
+        .unwrap();
+    assert!(moved.activated);
+    assert_eq!(seen.get(), [-15., 25.], "logical points at scale 2");
+    r.pointer_up_outcome(x - 26., y + 54., &mut handlers, &mut ())
+        .unwrap();
+    r.pointer_move_outcome(x + 100., y + 100., &mut handlers, &mut ())
+        .unwrap();
+    assert_eq!(seen.get(), [-15., 25.], "released: no more reports");
 }

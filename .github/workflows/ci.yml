@@ -40,7 +40,7 @@ jobs:
       - name: Each feature builds on its own
         shell: bash
         run: |
-          for f in declarative rust-ui native native-gpu native-desktop native-notifications dev-tools; do
+          for f in declarative rust-ui rendering rendering-gpu mobile native native-gpu native-desktop native-notifications dev-tools; do
             cargo check --locked --lib --no-default-features --features "$f"
           done
       - name: Core builds for WebAssembly

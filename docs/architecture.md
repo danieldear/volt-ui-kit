@@ -59,8 +59,16 @@ tests; live sessions with VoiceOver, Narrator and Orca are still to do.
 
 ## Security and resource boundaries
 
-- The crate is `#![forbid(unsafe_code)]`. Platform bridges use safe bindings
-  (`objc2`, `muda`, `tray-icon`) that contain native FFI internally.
+- Default/core builds and non-Linux builds retain `forbid(unsafe_code)`.
+  Linux native builds use `deny(unsafe_code)` with one function-level exception:
+  `native::linux_backdrop::Imported::new` imports a live winit Wayland display
+  and surface through two documented unsafe calls. Its private owner retains
+  the matching `OwnedDisplayHandle` and `Arc<Window>` until the guest queue and
+  proxies are dropped, including spawn failure and panic paths. It does not own,
+  disconnect, commit or replace dispatchers on winit's display/surface. The rest
+  of the protocol engine remains safe Rust and is exercised against a mock
+  compositor. Other platform bridges use safe bindings (`objc2`, `muda`,
+  `tray-icon`) that contain native FFI internally.
 - Every tree is validated before installation: sizes, colours, text length,
   depth and node count are bounded (see [limits](building-uis.md#validation-and-limits)).
 - Images: PNG/JPEG up to 16 MiB encoded, 4096 px per side and 128 MiB decoded.

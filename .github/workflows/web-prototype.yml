@@ -1,0 +1,44 @@
+name: WebAssembly prototype
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: web-prototype-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+      - run: cargo test --locked --manifest-path crates/volt-ui-kit-web/Cargo.toml
+      - run: cargo test --locked --manifest-path examples/web/Cargo.toml --lib
+      - run: cargo clippy --locked --manifest-path crates/volt-ui-kit-web/Cargo.toml --target wasm32-unknown-unknown --features gpu -- -D warnings
+      - run: cargo install --locked wasm-bindgen-cli --version 0.2.129
+      - run: python3 scripts/build_web.py
+      - run: npm install --prefix target/web-test-tools --no-save --ignore-scripts playwright@1.62.1
+      - run: ./target/web-test-tools/node_modules/.bin/playwright install --with-deps chromium
+      - name: Real browser smoke tests
+        shell: bash
+        run: |
+          python3 scripts/build_docs_site.py target/web-pages/volt-ui-kit --web-assets docs/live/pkg
+          python3 -m http.server 8768 --bind 127.0.0.1 --directory target/web-pages > target/web-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server"' EXIT
+          for i in {1..30}; do curl --fail --silent http://127.0.0.1:8768/volt-ui-kit/live/ > /dev/null && break; sleep 1; done
+          export VOLT_WEB_URL=http://127.0.0.1:8768/volt-ui-kit
+          NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_web.cjs
+          NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_catalog_web.cjs
+          NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_web_input.cjs

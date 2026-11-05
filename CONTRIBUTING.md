@@ -13,11 +13,19 @@ src/
                       accessibility, menus, files, notifications
   theme.rs            colour roles, palettes, theme JSON
   *_paint.rs, svg.rs  drawing recipes and the SVG painter (no features needed)
-  bin/cargo-volt.rs   `cargo volt new | dev | bundle`
+  bin/cargo-volt.rs   `cargo volt new | dev | bundle | release`
 examples/             Catalog and other examples (see examples/README.md)
 tests/                integration tests, one file per area
-docs/                 guides; their Rust examples run as doctests
+docs/                 guides; Rust examples checked by doctests
 ```
+
+## Run the full demo
+
+From this checkout, `./scripts/run_catalog.sh` prepares the complete Catalog,
+including macOS bundle registration and explicit notification controls. Use
+`--check` for a build/signature check without UI or permission prompts. Direct
+launches below remain useful for targeted rendering and performance work but
+are not end-to-end notification tests.
 
 ## Checks
 
@@ -76,10 +84,12 @@ Don't benchmark while something else is compiling.
 
 ## Releases
 
-1. Move the changelog's *Unreleased* entries under the new version.
-2. Bump `version` in `Cargo.toml`.
-3. Run all checks above, `cargo package --locked` and `cargo audit`.
-4. Tag the release.
+Follow the [publication checklist](docs/public-release.md#publish-the-crate):
+keep the manifest, lockfile, launcher bundle, changelog and docs version labels
+consistent; regenerate the HTML guides and run packaging/dry-run validation.
+Use `cargo publish --dry-run --locked` to verify without uploading. Real
+publication and release tags require a separate, explicit maintainer decision;
+neither a version bump nor a merged PR performs them.
 
 ## The Volt terminal
 

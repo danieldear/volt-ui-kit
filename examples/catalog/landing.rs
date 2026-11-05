@@ -16,6 +16,88 @@ const SCREEN_GAP: f32 = 128.;
 /// available width.
 const COLUMN: f32 = 4096.;
 
+#[cfg(all(test, feature = "native"))]
+mod claims_tests {
+    use super::*;
+    use volt_ui_kit::{
+        declarative::{Bindings, Runtime},
+        native::RasterPainter,
+        Viewport,
+    };
+
+    fn labels(element: El<App>, width: f32) -> Vec<String> {
+        let (document, handlers) = element.build().unwrap().into_parts();
+        let bindings = Bindings::default();
+        let mut runtime = Runtime::new(document, &handlers, &bindings).unwrap();
+        runtime.set_reduced_motion(true);
+        let viewport = Viewport::new(width, 5000., 1.).unwrap();
+        runtime
+            .layout(viewport, &bindings, &mut RasterPainter::new(viewport))
+            .unwrap();
+        runtime
+            .boxes()
+            .iter()
+            .map(|b| b.text().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn landing_claims_do_not_reintroduce_unverified_metrics_or_blanket_guarantees() {
+        let app = App::new();
+        for tier in [Tier::Compact, Tier::Medium, Tier::Full] {
+            let mut text = labels(hero_tier(&app, tier), 1600.);
+            text.extend(labels(features(), 1600.));
+            text.extend(labels(code(&app), 1600.));
+            let copy = text.join("\n");
+            for unsupported in [
+                "3.7",
+                "8K",
+                "no unsafe code",
+                "speaks it to screen readers",
+                "no macros to learn",
+            ] {
+                assert!(!copy.contains(unsupported), "stale claim: {unsupported}");
+            }
+            assert!(copy.contains("MACOS FIRST"));
+            assert!(copy.contains("accessibility semantics"));
+        }
+    }
+
+    #[test]
+    fn landing_counts_are_derived_from_catalog_groups_not_performance_estimates() {
+        let count = |group| {
+            PAGES
+                .iter()
+                .filter(|p| p.group() == group)
+                .count()
+                .to_string()
+        };
+        assert_eq!(
+            labels(numbers(), 1600.),
+            vec![
+                count("Components"),
+                "COMPONENT PAGES".into(),
+                count("Patterns"),
+                "APP PATTERNS".into(),
+                "0".into(),
+                "EMBEDDED WEBVIEWS FOR NATIVE UI".into(),
+                "Rust".into(),
+                "VIEWS, STATE AND CALLBACKS".into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn hero_accent_card_uses_the_current_preset_count_instead_of_a_fake_timing() {
+        let cards = labels(zstack(fragments()).into(), 1600.);
+        assert!(cards.iter().any(|s| s == &THEMES.len().to_string()));
+        assert!(cards.iter().any(|s| s == "presets"));
+        assert!(cards.iter().any(|s| s == "BUILD DEMO"));
+        assert!(!cards.iter().any(|s| s.contains("FRAME TIME") || s == "ms"));
+    }
+}
+
 // Type system: an editorial serif for display, SF for reading and UI, a mono
 // for labels and code. Lists fall back to whatever the machine has installed.
 /// Apple's New York, cut for very large sizes.
@@ -190,7 +272,7 @@ fn hero(app: &App) -> El<App> {
     .into()
 }
 
-fn hero_tier(app: &App, tier: Tier) -> El<App> {
+fn hero_tier(_app: &App, tier: Tier) -> El<App> {
     let t = tier.name();
     let k = |name: &str| format!("{name}-{t}");
     let (mark_size, sans, serif, lead, height, orbit_size) = match tier {
@@ -237,7 +319,7 @@ fn hero_tier(app: &App, tier: Tier) -> El<App> {
         )
     };
     let lead_copy: El<App> = if tier == Tier::Compact {
-        text("Declare your interface as a function of your state. Volt lays it out, draws it on the GPU and handles input, text and accessibility.")
+        text("Declare your interface as a function of your state. Volt handles layout, rendering, input and accessibility semantics.")
             .font_size(lead)
             .line_height(1.45)
             .color(ColorToken::Muted)
@@ -252,7 +334,7 @@ fn hero_tier(app: &App, tier: Tier) -> El<App> {
                     .color(ColorToken::Muted)
             ),
             centered(
-                text("Volt lays it out, draws it on the GPU and handles input, text and accessibility.")
+                text("Volt handles layout, rendering, input and accessibility semantics.")
                     .font_size(lead)
                     .color(ColorToken::Muted)
             ),
@@ -358,7 +440,7 @@ fn hero_tier(app: &App, tier: Tier) -> El<App> {
     ];
     // Floating fragments need room beside the copy: widest tier only.
     if tier == Tier::Full {
-        layers.extend(fragments(app));
+        layers.extend(fragments());
     }
     layers.push(copy.into());
     // Full bleed for the orbits, but the floating cards stay near the copy
@@ -378,7 +460,7 @@ fn hero_tier(app: &App, tier: Tier) -> El<App> {
 }
 
 /// Small floating cards built from real components (widest hero only).
-fn fragments(app: &App) -> Vec<El<App>> {
+fn fragments() -> Vec<El<App>> {
     let label = |value: &'static str| {
         text(value)
             .font_family(LABEL)
@@ -389,7 +471,7 @@ fn fragments(app: &App) -> Vec<El<App>> {
     let build = fragment(
         "fragment-build",
         vstack![
-            hstack![label("CARGO BUILD"), spacer(), label("72%")],
+            hstack![label("BUILD DEMO"), spacer(), label("72%")],
             progress(0.72).key("fragment-build-bar").height(4.),
         ]
         .gap(10., Axis::Vertical)
@@ -397,7 +479,6 @@ fn fragments(app: &App) -> Vec<El<App>> {
         190.,
         Ambient::float(6., 4.).period_ms(11_000),
     );
-    let dark_mode = app.mode == ThemeMode::Dark;
     let accent = fragment(
         "fragment-accent",
         vstack![
@@ -410,12 +491,11 @@ fn fragments(app: &App) -> Vec<El<App>> {
             ]
             .gap(4., Axis::Horizontal)
             .align(Align::End),
-            canvas(move |c| {
+            canvas(|c| {
                 for (i, (_, light, dark)) in THEMES.iter().enumerate() {
-                    let rgb = if dark_mode { *dark } else { *light };
                     c.fill(
                         VectorPath::circle(6. + i as f32 * 20., 9., 6.),
-                        format!("#{rgb:06X}"),
+                        format!("#{light:06X}|#{dark:06X}"),
                     );
                 }
             })
@@ -721,8 +801,8 @@ fn numbers() -> El<App> {
     stack([
         figure(pages_in("Components"), "component pages"),
         figure(pages_in("Patterns"), "app patterns"),
-        figure("0".into(), "webviews, browsers or JavaScript"),
-        figure("100%".into(), "Rust, with one declarative API"),
+        figure("0".into(), "embedded webviews for native UI"),
+        figure("Rust".into(), "views, state and callbacks"),
     ])
     .key("numbers")
     .direction(responsive(Direction::Vertical).at(Breakpoint::Lg, Direction::Horizontal))
@@ -768,7 +848,7 @@ fn features() -> El<App> {
         row([
             feature(Icon::Layers, "Declarative", "Rebuild your view from state on every change; stable keys preserve input state, and software damage tracking limits repaint work."),
             feature(Icon::Chip, "GPU rendered", "Shapes and text drawn by Vello on Metal, Vulkan or DX12, with an automatic software fallback."),
-            feature(Icon::Person, "Accessible", "An AccessKit tree with roles, values and actions, plus keyboard focus for every control and reduced motion."),
+            feature(Icon::Person, "Accessible", "An AccessKit tree with roles, values and actions, plus keyboard navigation and reduced motion."),
         ]),
         row([
             feature(Icon::Palette, "Themeable", "Semantic colour roles, light and dark palettes and translucent tokens restyle every component at once."),
@@ -822,25 +902,7 @@ fn code(app: &App) -> El<App> {
     ]
     .gap(14., Axis::Vertical)
     .width(COLUMN);
-    let count = app.counter;
-    let preview = vstack![
-        text(format!(
-            "Clicked {count} time{}",
-            if count == 1 { "" } else { "s" }
-        ))
-        .font_size(15.),
-        button("Click me")
-            .key("landing-counter")
-            .variant(ButtonVariant::Primary)
-            .on_click(|app: &mut App| app.counter = app.counter.saturating_add(1)),
-    ]
-    .key("counter-preview")
-    .gap(12., Axis::Vertical)
-    .padding(20., Edge::All)
-    .background(ColorToken::Base100)
-    .border_color(ColorToken::Border)
-    .border_width(1.)
-    .rounded(12.);
+    let preview = counter_sample(app);
     let right = vstack![
         hstack![
             icon(Icon::Code, 16., "#A1A1AA"),
@@ -913,53 +975,7 @@ fn theming(app: &App) -> El<App> {
                 ThemeMode::Light
             }
         });
-    let sample = vstack![
-        hstack![
-            text("Pro plan").font_size(18.).font_weight(700).flex(1.),
-            badge("Popular")
-                .rounded(Rounding::Full)
-                .background(ColorToken::Primary.alpha(14))
-                .color(ColorToken::Primary),
-        ]
-        .align(Align::Center),
-        hstack![
-            text("$24")
-                .font_family(DISPLAY)
-                .font_size(48.)
-                .font_weight(500),
-            text("/ month").font_size(14.).color(ColorToken::Muted),
-        ]
-        .gap(6., Axis::Horizontal)
-        .align(Align::End),
-        progress(0.68).key("plan-usage").height(8.),
-        text("68% of build minutes used")
-            .font_size(12.)
-            .color(ColorToken::Muted),
-        checkbox("Email me usage reports", app.checked)
-            .key("plan-reports")
-            .on_change(|app: &mut App, v| app.checked = v),
-        hstack![
-            button("Upgrade")
-                .key("plan-upgrade")
-                .variant(ButtonVariant::Primary)
-                .flex(1.)
-                .on_click(|app: &mut App| app.notify("This is a theming preview")),
-            button("Compare")
-                .key("plan-compare")
-                .variant(ButtonVariant::Outline)
-                .on_click(|app: &mut App| app.go(Page::Theming)),
-        ]
-        .gap(10., Axis::Horizontal),
-    ]
-    .key("theme-sample")
-    .gap(14., Axis::Vertical)
-    .padding(24., Edge::All)
-    .width(360.)
-    .rounded(16.)
-    .background(ColorToken::Base100)
-    .border_color(ColorToken::Border)
-    .border_width(1.)
-    .shadow(Shadow::new().color("#0000001F").blur(28.).offset(0., 12.));
+    let sample = plan_sample(app);
     let left = vstack![
         eyebrow("04 — THEMING"),
         headline("One palette", "restyles", "everything."),
@@ -969,7 +985,7 @@ fn theming(app: &App) -> El<App> {
     ]
     .gap(16., Axis::Vertical)
     .flex(1.);
-    stack([left.into(), sample.into()])
+    stack([left.into(), sample])
         .key("theming")
         .direction(responsive(Direction::Vertical).at(Breakpoint::Xl, Direction::Horizontal))
         .gap(48., Axis::Both)
@@ -1108,5 +1124,80 @@ fn closing() -> El<App> {
     .key("closing")
     .gap(22., Axis::Vertical)
     .padding(24., Edge::Top)
+    .into()
+}
+
+/// Shared by the native landing page and live web documentation.
+pub(super) fn counter_sample(app: &App) -> El<App> {
+    let count = app.counter;
+    vstack![
+        text(format!(
+            "Clicked {count} time{}",
+            if count == 1 { "" } else { "s" }
+        ))
+        .font_size(15.),
+        button("Click me")
+            .key("landing-counter")
+            .variant(ButtonVariant::Primary)
+            .on_click(|app: &mut App| app.counter = app.counter.saturating_add(1)),
+    ]
+    .key("counter-preview")
+    .gap(12., Axis::Vertical)
+    .padding(20., Edge::All)
+    .background(ColorToken::Base100)
+    .border_color(ColorToken::Border)
+    .border_width(1.)
+    .rounded(12.)
+    .into()
+}
+
+pub(super) fn plan_sample(app: &App) -> El<App> {
+    vstack![
+        hstack![
+            text("Pro plan").font_size(18.).font_weight(700).flex(1.),
+            badge("Popular")
+                .rounded(Rounding::Full)
+                .background(ColorToken::Primary.alpha(14))
+                .color(ColorToken::Primary),
+        ]
+        .align(Align::Center),
+        hstack![
+            text("$24")
+                .font_family(DISPLAY)
+                .font_size(48.)
+                .font_weight(500),
+            text("/ month").font_size(14.).color(ColorToken::Muted),
+        ]
+        .gap(6., Axis::Horizontal)
+        .align(Align::End),
+        progress(0.68).key("plan-usage").height(8.),
+        text("68% of build minutes used")
+            .font_size(12.)
+            .color(ColorToken::Muted),
+        checkbox("Email me usage reports", app.checked)
+            .key("plan-reports")
+            .on_change(|app: &mut App, v| app.checked = v),
+        hstack![
+            button("Upgrade")
+                .key("plan-upgrade")
+                .variant(ButtonVariant::Primary)
+                .flex(1.)
+                .on_click(|app: &mut App| app.notify("This is a theming preview")),
+            button("Compare")
+                .key("plan-compare")
+                .variant(ButtonVariant::Outline)
+                .on_click(|app: &mut App| app.go(Page::Theming)),
+        ]
+        .gap(10., Axis::Horizontal),
+    ]
+    .key("theme-sample")
+    .gap(14., Axis::Vertical)
+    .padding(24., Edge::All)
+    .width(360.)
+    .rounded(16.)
+    .background(ColorToken::Base100)
+    .border_color(ColorToken::Border)
+    .border_width(1.)
+    .shadow(Shadow::new().color("#0000001F").blur(28.).offset(0., 12.))
     .into()
 }
