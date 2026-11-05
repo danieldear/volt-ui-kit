@@ -45,10 +45,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `Native` (default) | The platform's standard title bar. |
 | `Overlay` | macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar. |
 | `CompactOverlay` | The same with the shorter, older macOS title bar geometry. |
-| `Borderless` | No system decorations; you supply the window controls. |
+| `Borderless` | No system decorations or toolkit resize frame; you own the complete window UI. |
+| `Custom` | No system decorations. Use your own header and `window_controls`; the host adds edge resizing on Linux/Windows and draggable-header double-click maximize/restore. |
 
 Mark your header with `.drag_region(true)` so the window can be dragged by it.
 Buttons and other controls inside the header still receive clicks.
+
+### Custom controls and live mode switching
+
+The native Catalog has a **Window** selector in the sidebar footer (also in its
+wide toolbar): Native, Custom and Borderless, plus Unified on macOS. The choice
+is live: it does not replace the window, restart workers or clear application
+state. At narrow widths, open the navigation drawer to reach the selector.
+`--chrome native|custom|borderless|overlay` chooses the initial mode.
+
+```rust,no_run
+use volt_ui_kit::{native::{Application, WindowChrome, WindowState, UiSender}, ui::prelude::*};
+#[derive(Default)]
+struct State {
+    chrome: WindowChrome,
+    window: WindowState,
+    actions: Option<UiSender<WindowAction>>,
+}
+fn view(app: &State) -> Element<State> {
+    vstack![
+        hstack![text("My workspace"), spacer(),
+            window_controls(app.window.maximized, |app: &mut State, action| {
+                if let Some(sender) = &app.actions { let _ = sender.send(action); }
+            }),
+        ].height(44.).min_height(44.).padding(8., Edge::Horizontal)
+         .align(Align::Center).drag_region(true),
+        text("Your content"),
+    ].into()
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let state = State { chrome: WindowChrome::Custom, ..Default::default() };
+    Application::new("Workspace", state, view)
+        .chrome_from_state(|app| app.chrome)
+        .custom_resize_border(6.)
+        .window_actions(|app, sender| app.actions = Some(sender))
+        .on_window_state(|app, state| app.window = state)
+        .run()
+}
+```
+
+- `window_controls` draws accessible vector buttons; it emits `WindowAction`
+  intents, not OS calls. Its returned row accepts ordinary gap/padding/style
+  modifiers, and can be replaced entirely with application-owned controls. Pass
+  `WindowControlsState` instead of a boolean to disable individual actions (for
+  example maximize when the window is not resizable or is fullscreen).
+- `window_actions` uses a separate bounded queue, leaving existing application
+  command IDs and `ApplicationRequest` unchanged. Close always follows
+  `on_close_request`, including Save/Discard/Cancel policies.
+- `on_window_state` reports native maximize/fullscreen/focus/resizable state;
+  its `chrome` field is the host's applied decoration policy, not compositor
+  acknowledgement. It runs only on the UI thread, with no idle polling timer.
+- Linux/Windows Custom edges use a logical resize border (default 6 px,
+  configurable 0–24). Maximized/fullscreen/non-resizable windows have no edge
+  hits. Reserve that border around interactive content. Header buttons never
+  start a window drag. Double-click a blank draggable header to maximize or
+  restore. The Catalog's right-click header menu uses the same guarded intents.
+- **macOS:** winit does not implement interactive `drag_resize_window` there.
+  Choose Native or Unified for native edge resizing. The current public material
+  underlay also needs decorated chrome; Custom/Borderless report this limitation
+  and retain transparency without silently enabling private compositor blur.
+- Chrome changes requested while fullscreen are deferred until fullscreen ends;
+  the Catalog disables its selector there. Compositor shadows, corner shaping,
+  snapping affordances and decoration policy are still platform-owned—custom
+  painting does not promise identical OS behavior everywhere.
+- Native remains the default. `WindowChrome` gains `Custom`; downstream exhaustive
+  matches on that enum need to handle the new variant. Existing option structs,
+  core painters, application request variants and rendering defaults are unchanged.
 
 ## Transparency and blur
 

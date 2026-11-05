@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add optional custom window chrome and live Catalog Native/Custom/Borderless
+  selection (plus macOS Unified), typed accessible window controls, a separate
+  bounded native action queue, native state reporting, and Linux/Windows edge
+  resizing with fractional-scale hit tests. Custom header close honors existing
+  unsaved-work guards; explicit macOS resize/public-material limits remain.
+  Keep Native defaults and legacy request/option APIs. Add `WindowChrome::Custom`
+  (exhaustive downstream matches must handle it), docs and regression coverage.
+  Fix passive toast layers blocking otherwise draggable headers.
+
 - Add native Linux Wayland backdrop negotiation for `ext-background-effect-v1`,
   retaining the legacy KDE protocol without migrating stable winit/AccessKit to
   a beta. Add UI-thread backdrop status callbacks, truthful Catalog diagnostics,

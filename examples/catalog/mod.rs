@@ -113,6 +113,18 @@ pub struct App {
     #[cfg(feature = "native")]
     pub requests: Option<UiSender<volt_ui_kit::native::ApplicationRequest>>,
     #[cfg(feature = "native")]
+    pub window_actions: Option<UiSender<volt_ui_kit::ui::WindowAction>>,
+    #[cfg(feature = "native")]
+    pub chrome: volt_ui_kit::native::WindowChrome,
+    #[cfg(feature = "native")]
+    pub window_state: volt_ui_kit::native::WindowState,
+    #[cfg(feature = "native")]
+    pub window_menu: Option<[f32; 2]>,
+    #[cfg(feature = "native")]
+    pub chrome_picker: Option<&'static str>,
+    #[cfg(feature = "native")]
+    pub chrome_demo_maximized: bool,
+    #[cfg(feature = "native")]
     pub documents: documents::State,
     #[cfg(feature = "native")]
     pub services: desktop_services::State,
@@ -173,6 +185,18 @@ impl App {
         Self {
             #[cfg(feature = "native")]
             requests: None,
+            #[cfg(feature = "native")]
+            window_actions: None,
+            #[cfg(feature = "native")]
+            chrome: if cfg!(target_os = "macos") { volt_ui_kit::native::WindowChrome::Overlay } else { volt_ui_kit::native::WindowChrome::Native },
+            #[cfg(feature = "native")]
+            window_state: Default::default(),
+            #[cfg(feature = "native")]
+            window_menu: None,
+            #[cfg(feature = "native")]
+            chrome_picker: None,
+            #[cfg(feature = "native")]
+            chrome_demo_maximized: false,
             #[cfg(feature = "native")]
             documents: documents::State::default(),
             #[cfg(feature = "native")]

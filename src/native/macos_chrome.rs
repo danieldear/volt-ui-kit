@@ -111,3 +111,118 @@ pub(super) fn trace_geometry(window: &Window) {
         }
     }
 }
+
+/// Change only the toolbar/style owned by this host. Never replace a delegate,
+/// content view or Metal layer while switching native/custom decorations.
+pub(super) fn apply_chrome(window: &Window, chrome: super::WindowChrome) -> Result<(), String> {
+    use objc2_app_kit::NSWindowTitleVisibility;
+    let mtm = MainThreadMarker::new().ok_or("AppKit chrome requires the main thread")?;
+    let ns_window = app_window(window, mtm)?;
+    if let Some(toolbar) = ns_window.toolbar() {
+        if toolbar.identifier().to_string() == "dev.volt-ui.overlay" {
+            ns_window.setToolbar(None);
+        }
+    }
+    let overlay = matches!(
+        chrome,
+        super::WindowChrome::Overlay | super::WindowChrome::CompactOverlay
+    );
+    window.set_decorations(!matches!(
+        chrome,
+        super::WindowChrome::Custom | super::WindowChrome::Borderless
+    ));
+    let mut mask = ns_window.styleMask();
+    mask.set(NSWindowStyleMask::FullSizeContentView, overlay);
+    ns_window.setStyleMask(mask);
+    ns_window.setTitlebarAppearsTransparent(overlay);
+    ns_window.setTitleVisibility(if overlay {
+        NSWindowTitleVisibility::Hidden
+    } else {
+        NSWindowTitleVisibility::Visible
+    });
+    if chrome == super::WindowChrome::Overlay {
+        install_unified_titlebar(window)?;
+    }
+    Ok(())
+}
+
+/// Native geometry for borderless zoom, without winit's temporary style-mask
+/// mutation in is_maximized(). Screen coordinates here are AppKit points.
+#[derive(Default)]
+pub(super) struct CustomZoom {
+    restore: Option<objc2_foundation::NSRect>,
+}
+fn same_frame(a: objc2_foundation::NSRect, b: objc2_foundation::NSRect) -> bool {
+    [
+        a.origin.x - b.origin.x,
+        a.origin.y - b.origin.y,
+        a.size.width - b.size.width,
+        a.size.height - b.size.height,
+    ]
+    .iter()
+    .all(|v| v.abs() <= 1.)
+}
+pub(super) fn maximized(window: &Window) -> Result<bool, String> {
+    let mtm = MainThreadMarker::new().ok_or("AppKit zoom requires main thread")?;
+    let native = app_window(window, mtm)?;
+    if window.is_decorated() {
+        return Ok(native.isZoomed());
+    }
+    Ok(native
+        .screen()
+        .is_some_and(|screen| same_frame(native.frame(), screen.visibleFrame())))
+}
+pub(super) fn toggle_custom_zoom(window: &Window, cache: &mut CustomZoom) -> Result<(), String> {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let mtm = MainThreadMarker::new().ok_or("AppKit zoom requires main thread")?;
+    let native = app_window(window, mtm)?;
+    let visible = native
+        .screen()
+        .ok_or("window has no screen")?
+        .visibleFrame();
+    let current = native.frame();
+    let target = if same_frame(current, visible) {
+        cache.restore.take().unwrap_or_else(|| {
+            let w = (visible.size.width * 0.75)
+                .max(320.)
+                .min(visible.size.width);
+            let h = (visible.size.height * 0.75)
+                .max(240.)
+                .min(visible.size.height);
+            NSRect::new(
+                NSPoint::new(
+                    visible.origin.x + (visible.size.width - w) / 2.,
+                    visible.origin.y + (visible.size.height - h) / 2.,
+                ),
+                NSSize::new(w, h),
+            )
+        })
+    } else {
+        cache.restore = Some(current);
+        visible
+    };
+    native.setFrame_display(target, true);
+    Ok(())
+}
+#[cfg(test)]
+mod zoom_tests {
+    use super::*;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    #[test]
+    fn zoom_state_requires_matching_size_and_origin_with_point_rounding_tolerance() {
+        let r = |x, y, w, h| NSRect::new(NSPoint::new(x, y), NSSize::new(w, h));
+        assert!(same_frame(r(0., 24., 1440., 900.), r(0., 24., 1440., 900.)));
+        assert!(same_frame(
+            r(0.5, 24., 1439.5, 900.),
+            r(0., 24., 1440., 900.)
+        ));
+        assert!(!same_frame(
+            r(10., 24., 1440., 900.),
+            r(0., 24., 1440., 900.)
+        ));
+        assert!(!same_frame(
+            r(0., 24., 1100., 800.),
+            r(0., 24., 1440., 900.)
+        ));
+    }
+}

@@ -29,6 +29,9 @@ pub(super) type CommandCallback<C> = Box<dyn FnMut(&mut C, &str)>;
 pub(super) type CloseCallback<C> = Box<dyn FnMut(&mut C, CloseReason) -> CloseDecision>;
 pub(super) type WindowVisible<C> = Box<dyn Fn(&C) -> bool>;
 pub(super) type BackdropCallback<C> = Box<dyn FnMut(&mut C, super::BackdropStatus)>;
+pub(super) type ChromeFn<C> = Box<dyn Fn(&C) -> WindowChrome>;
+pub(super) type WindowStateFn<C> = Box<dyn FnMut(&mut C, super::WindowState)>;
+pub(super) type WindowActionPump = Box<dyn Messages<Vec<crate::ui::WindowAction>>>;
 pub(super) type BackgroundFn<C> = Box<dyn Fn(&C) -> WindowBackground>;
 pub(super) type AppearanceFn<C> = Box<dyn Fn(&C) -> ThemeMode>;
 pub(super) type RequestPump = Box<dyn Messages<Vec<ApplicationRequest>>>;
@@ -56,6 +59,10 @@ pub(super) struct HostExtensions<C> {
     pub requests: Option<RequestPump>,
     pub background: Option<BackgroundFn<C>>,
     pub backdrop_status: Option<BackdropCallback<C>>,
+    pub chrome: Option<ChromeFn<C>>,
+    pub resize_border: f32,
+    pub window_state: Option<WindowStateFn<C>>,
+    pub window_actions: Option<WindowActionPump>,
     /// The app's chosen appearance, and the one last applied to the window.
     pub appearance: Option<AppearanceFn<C>>,
     pub applied_appearance: Option<ThemeMode>,
@@ -80,6 +87,10 @@ impl<C> Default for HostExtensions<C> {
             requests: None,
             background: None,
             backdrop_status: None,
+            chrome: None,
+            resize_border: 6.,
+            window_state: None,
+            window_actions: None,
             appearance: None,
             applied_appearance: None,
             dev_state: None,
@@ -211,6 +222,39 @@ impl<C: 'static> Application<C> {
         self.extensions.window_visible = Some(Box::new(visible));
         self
     }
+    /// Bounded native-window intents, separate from application commands.
+    /// Close always goes through the existing close-request guard.
+    pub fn window_actions(
+        mut self,
+        initialize: impl FnOnce(&mut C, UiSender<crate::ui::WindowAction>),
+    ) -> Self {
+        let (sender, pump) =
+            messages::channel(|actions: &mut Vec<crate::ui::WindowAction>, action| {
+                actions.push(action)
+            });
+        initialize(&mut self.context, sender);
+        self.extensions.window_actions = Some(pump);
+        self
+    }
+    /// Change chrome after UI actions without restarting or replacing the window.
+    pub fn chrome_from_state(mut self, chrome: impl Fn(&C) -> WindowChrome + 'static) -> Self {
+        self.extensions.chrome = Some(Box::new(chrome));
+        self
+    }
+    /// Observe actual native maximize/fullscreen/focus state on the UI thread.
+    pub fn on_window_state(
+        mut self,
+        changed: impl FnMut(&mut C, super::WindowState) + 'static,
+    ) -> Self {
+        self.extensions.window_state = Some(Box::new(changed));
+        self
+    }
+    /// Custom-chrome resize hit area in logical pixels (0 disables edge hits).
+    /// Values must be finite and between 0 and 24. Native/Borderless ignore it.
+    pub fn custom_resize_border(mut self, logical_pixels: f32) -> Self {
+        self.extensions.resize_border = logical_pixels;
+        self
+    }
     pub fn renderer(mut self, preference: RendererPreference) -> Self {
         self.extensions.renderer = Some(preference);
         self
@@ -244,6 +288,7 @@ impl<C: 'static> Application<C> {
         self
     }
     pub fn chrome(mut self, chrome: WindowChrome) -> Self {
+        self.extensions.chrome = None;
         self.options.window.chrome = chrome;
         self
     }
@@ -458,6 +503,52 @@ mod lifecycle_tests {
         app.extensions.backdrop_status.as_mut().unwrap()(&mut app.context, status);
         assert_eq!(app.context, status);
         assert!(HostExtensions::<()>::default().backdrop_status.is_none());
+    }
+    #[test]
+    fn window_action_queue_and_state_chrome_are_additive_and_bounded() {
+        use crate::ui::{spacer, WindowAction};
+        struct State {
+            actions: Option<UiSender<WindowAction>>,
+            chrome: WindowChrome,
+        }
+        let mut app = Application::new(
+            "Chrome",
+            State {
+                actions: None,
+                chrome: WindowChrome::Custom,
+            },
+            |_| spacer().into(),
+        )
+        .chrome_from_state(|s| s.chrome)
+        .window_actions(|s, sender| s.actions = Some(sender));
+        assert_eq!(app.options.chrome, WindowChrome::Native);
+        assert_eq!(
+            app.extensions.chrome.as_ref().unwrap()(&app.context),
+            WindowChrome::Custom
+        );
+        assert!(app.extensions.requests.is_none());
+        let sender = app.context.actions.as_ref().unwrap().clone();
+        for _ in 0..256 {
+            sender.send(WindowAction::Close).unwrap();
+        }
+        assert_eq!(
+            sender.send(WindowAction::Minimize),
+            Err(super::super::UiSendError::Full)
+        );
+        let mut actions = vec![];
+        app.extensions
+            .window_actions
+            .as_mut()
+            .unwrap()
+            .drain(&mut actions);
+        assert_eq!(actions.len(), 64);
+        app.extensions.window_actions.as_mut().unwrap().close();
+        assert_eq!(
+            sender.send(WindowAction::Close),
+            Err(super::super::UiSendError::Closed)
+        );
+        let app = app.chrome(WindowChrome::Borderless);
+        assert!(app.extensions.chrome.is_none());
     }
     #[test]
     fn state_background_callback_is_additive_and_keeps_public_defaults() {

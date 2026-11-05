@@ -367,6 +367,8 @@ macro_rules! root_spacing_methods {
         }
     };
 }
+mod window_chrome;
+pub use window_chrome::{window_controls, WindowAction, WindowControlsState};
 mod bars;
 mod charts;
 mod hierarchy;
@@ -1561,17 +1563,17 @@ pub mod prelude {
         progress_indeterminate, range_slider, responsive, row, segmented_control, select,
         select_item, separator, slider, spacer, spinner, split, stack, tab, tab_bar, tab_item,
         table, table_column, table_row, tabs, text, text_area, text_field, toggle, toolbar,
-        tooltip, tree_node, tree_view, virtual_list, vstack, zstack, Align, Ambient, Animation,
-        Axes, Axis, BackgroundImage, BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas,
-        Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem,
-        Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient,
-        GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, Menu,
-        MenuItem, Motion, Navigation, NavigationItem, NavigationPlacement, Palette, Popover,
-        Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl,
-        Shadow, Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem,
-        TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput,
-        ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath,
-        VirtualList, VisualStyle,
+        tooltip, tree_node, tree_view, virtual_list, vstack, window_controls, zstack, Align,
+        Ambient, Animation, Axes, Axis, BackgroundImage, BorderStyle, Breakpoint, ButtonBar,
+        ButtonVariant, Canvas, Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet,
+        Corners, Cursor, DataItem, Dialog, Direction, Easing, Edge, Edges, Element, Flow,
+        FontStyle, Glow, Gradient, GridColumns, Image, ImageFit, ImagePosition, Interaction,
+        Justify, LazyList, Menu, MenuItem, Motion, Navigation, NavigationItem, NavigationPlacement,
+        Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem,
+        SelectionControl, Shadow, Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring,
+        Tab, TabItem, TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign,
+        TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme,
+        VectorPath, VirtualList, VisualStyle, WindowAction, WindowControlsState,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,

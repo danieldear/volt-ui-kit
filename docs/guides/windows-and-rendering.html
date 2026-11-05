@@ -32,8 +32,69 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
         .renderer(RendererPreference::Auto)
         .run()
 }</code></pre></div><h2 id="title-bar-and-chrome">Title bar and chrome</h2>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowChrome</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Native</code> (default)</td><td>The platform&#39;s standard title bar.</td></tr><tr><td><code>Overlay</code></td><td>macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar.</td></tr><tr><td><code>CompactOverlay</code></td><td>The same with the shorter, older macOS title bar geometry.</td></tr><tr><td><code>Borderless</code></td><td>No system decorations; you supply the window controls.</td></tr></tbody></table></div><p>Mark your header with <code>.drag_region(true)</code> so the window can be dragged by it.
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowChrome</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Native</code> (default)</td><td>The platform&#39;s standard title bar.</td></tr><tr><td><code>Overlay</code></td><td>macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar.</td></tr><tr><td><code>CompactOverlay</code></td><td>The same with the shorter, older macOS title bar geometry.</td></tr><tr><td><code>Borderless</code></td><td>No system decorations or toolkit resize frame; you own the complete window UI.</td></tr><tr><td><code>Custom</code></td><td>No system decorations. Use your own header and <code>window_controls</code>; the host adds edge resizing on Linux/Windows and draggable-header double-click maximize/restore.</td></tr></tbody></table></div><p>Mark your header with <code>.drag_region(true)</code> so the window can be dragged by it.
 Buttons and other controls inside the header still receive clicks.</p>
+<h3 id="custom-controls-and-live-mode-switching">Custom controls and live mode switching</h3>
+<p>The native Catalog has a <strong>Window</strong> selector in the sidebar footer (also in its
+wide toolbar): Native, Custom and Borderless, plus Unified on macOS. The choice
+is live: it does not replace the window, restart workers or clear application
+state. At narrow widths, open the navigation drawer to reach the selector.
+<code>--chrome native|custom|borderless|overlay</code> chooses the initial mode.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::{Application, WindowChrome, WindowState, UiSender}, ui::prelude::*};
+#[derive(Default)]
+struct State {
+    chrome: WindowChrome,
+    window: WindowState,
+    actions: Option&lt;UiSender&lt;WindowAction&gt;&gt;,
+}
+fn view(app: &amp;State) -&gt; Element&lt;State&gt; {
+    vstack![
+        hstack![text(&quot;My workspace&quot;), spacer(),
+            window_controls(app.window.maximized, |app: &amp;mut State, action| {
+                if let Some(sender) = &amp;app.actions { let _ = sender.send(action); }
+            }),
+        ].height(44.).min_height(44.).padding(8., Edge::Horizontal)
+         .align(Align::Center).drag_region(true),
+        text(&quot;Your content&quot;),
+    ].into()
+}
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let state = State { chrome: WindowChrome::Custom, ..Default::default() };
+    Application::new(&quot;Workspace&quot;, state, view)
+        .chrome_from_state(|app| app.chrome)
+        .custom_resize_border(6.)
+        .window_actions(|app, sender| app.actions = Some(sender))
+        .on_window_state(|app, state| app.window = state)
+        .run()
+}</code></pre></div><ul>
+<li><code>window_controls</code> draws accessible vector buttons; it emits <code>WindowAction</code>
+intents, not OS calls. Its returned row accepts ordinary gap/padding/style
+modifiers, and can be replaced entirely with application-owned controls. Pass
+<code>WindowControlsState</code> instead of a boolean to disable individual actions (for
+example maximize when the window is not resizable or is fullscreen).</li>
+<li><code>window_actions</code> uses a separate bounded queue, leaving existing application
+command IDs and <code>ApplicationRequest</code> unchanged. Close always follows
+<code>on_close_request</code>, including Save/Discard/Cancel policies.</li>
+<li><code>on_window_state</code> reports native maximize/fullscreen/focus/resizable state;
+its <code>chrome</code> field is the host&#39;s applied decoration policy, not compositor
+acknowledgement. It runs only on the UI thread, with no idle polling timer.</li>
+<li>Linux/Windows Custom edges use a logical resize border (default 6 px,
+configurable 0–24). Maximized/fullscreen/non-resizable windows have no edge
+hits. Reserve that border around interactive content. Header buttons never
+start a window drag. Double-click a blank draggable header to maximize or
+restore. The Catalog&#39;s right-click header menu uses the same guarded intents.</li>
+<li><strong>macOS:</strong> winit does not implement interactive <code>drag_resize_window</code> there.
+Choose Native or Unified for native edge resizing. The current public material
+underlay also needs decorated chrome; Custom/Borderless report this limitation
+and retain transparency without silently enabling private compositor blur.</li>
+<li>Chrome changes requested while fullscreen are deferred until fullscreen ends;
+the Catalog disables its selector there. Compositor shadows, corner shaping,
+snapping affordances and decoration policy are still platform-owned—custom
+painting does not promise identical OS behavior everywhere.</li>
+<li>Native remains the default. <code>WindowChrome</code> gains <code>Custom</code>; downstream exhaustive
+matches on that enum need to handle the new variant. Existing option structs,
+core painters, application request variants and rendering defaults are unchanged.</li>
+</ul>
 <h2 id="transparency-and-blur">Transparency and blur</h2>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowBackground</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Opaque</code> (default)</td><td>A solid window.</td></tr><tr><td><code>Transparent { opacity }</code></td><td>The window&#39;s background is see-through; content stays opaque.</td></tr><tr><td><code>Blur { opacity }</code></td><td>macOS: public system material (<code>NSVisualEffectView</code>), requiring a decorated window. Linux Wayland: negotiated compositor blur. Both require <code>native-gpu</code>.</td></tr><tr><td><code>CompositorBlur { opacity }</code></td><td>A raw compositor blur request (Wayland uses the same negotiated adapter). On macOS this uses a private API, so it is not App Store safe.</td></tr></tbody></table></div><ul>
 <li><code>opacity</code> applies only to the window background. Text and controls keep their
@@ -150,4 +211,4 @@ skipping when one is unavailable.</p>
 <h2 id="resource-limits">Resource limits</h2>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Resource</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>Window framebuffer</td><td>64 megapixels</td></tr><tr><td>GPU image cache</td><td>64 MiB</td></tr><tr><td>GPU glyph cache</td><td>16 MiB / 4,096 glyphs</td></tr><tr><td>Opacity layer depth / clip depth</td><td>24 / 48</td></tr><tr><td>Shadow work per frame (software)</td><td>16 megapixels; extra shadows are skipped and counted</td></tr></tbody></table></div><p>These bound the kit&#39;s own caches. GPU drivers, Vello&#39;s internal buffers and the
 OS compositor use additional memory.</p>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#configuring-the-window">Configuring the window</a><a href="#title-bar-and-chrome">Title bar and chrome</a><a href="#transparency-and-blur">Transparency and blur</a><a href="#linux-desktop-blur">Linux desktop blur</a><a href="#testing-on-linux">Testing on Linux</a><a href="#gpu-and-software-drawing">GPU and software drawing</a><a href="#large-scenes">Large scenes</a><a href="#performance-and-diagnostics">Performance and diagnostics</a><a href="#headless-scene-budget-checks">Headless scene-budget checks</a><a href="#resource-limits">Resource limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#configuring-the-window">Configuring the window</a><a href="#title-bar-and-chrome">Title bar and chrome</a><a href="#custom-controls-and-live-mode-switching">Custom controls and live mode switching</a><a href="#transparency-and-blur">Transparency and blur</a><a href="#linux-desktop-blur">Linux desktop blur</a><a href="#testing-on-linux">Testing on Linux</a><a href="#gpu-and-software-drawing">GPU and software drawing</a><a href="#large-scenes">Large scenes</a><a href="#performance-and-diagnostics">Performance and diagnostics</a><a href="#headless-scene-budget-checks">Headless scene-budget checks</a><a href="#resource-limits">Resource limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
