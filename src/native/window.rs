@@ -460,13 +460,16 @@ fn run_host<C: 'static>(
     let reduced_motion = reduced_motion
         || objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
     #[cfg(target_os = "linux")]
-    let reduced_motion = reduced_motion || system_motion::kde_reduced_motion();
+    let linux_desktop = system_motion::desktop();
+    #[cfg(target_os = "linux")]
+    let reduced_motion = reduced_motion
+        || (linux_desktop == system_motion::Desktop::Kde && system_motion::kde_reduced_motion());
     runtime.set_reduced_motion(reduced_motion);
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     // GNOME's setting needs a subprocess: keep it off the UI thread and apply
     // it when it arrives, settling anything already animating.
     #[cfg(target_os = "linux")]
-    if !reduced_motion {
+    if !reduced_motion && linux_desktop == system_motion::Desktop::Gnome {
         let proxy = event_loop.create_proxy();
         let _ = std::thread::Builder::new()
             .name("volt-reduced-motion".into())

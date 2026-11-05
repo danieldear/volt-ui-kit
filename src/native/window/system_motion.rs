@@ -19,23 +19,137 @@ pub(super) fn kde_reduced_motion() -> bool {
         std::env::var_os("XDG_CONFIG_HOME").as_deref(),
         std::env::var_os("XDG_CONFIG_DIRS").as_deref(),
     );
-    first_kde_setting(paths.iter().map(|path| std::fs::read_to_string(path).ok()))
+    first_kde_setting(paths.iter().map(|path| {
+        use std::io::Read;
+        let mut text = String::new();
+        std::fs::File::open(path)
+            .ok()?
+            .take(65_537)
+            .read_to_string(&mut text)
+            .ok()?;
+        (text.len() <= 65_536).then_some(text)
+    }))
 }
 
 /// True when GNOME's `enable-animations` is off. Runs a subprocess: call it
 /// off the UI thread. A missing `gsettings` or schema means no preference.
 #[cfg(target_os = "linux")]
 pub(super) fn gnome_reduced_motion() -> bool {
-    use std::process::{Command, Stdio};
-    Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.interface", "enable-animations"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .is_ok_and(|output| {
-            output.status.success()
-                && gnome_animations_off(&String::from_utf8_lossy(&output.stdout))
-        })
+    let mut command = std::process::Command::new("gsettings");
+    command.args(["get", "org.gnome.desktop.interface", "enable-animations"]);
+    bounded_output(command, std::time::Duration::from_secs(2))
+        .is_some_and(|output| gnome_animations_off(&String::from_utf8_lossy(&output)))
+}
+
+/// Only read preferences belonging to the active desktop, not stale settings
+/// left behind by another installed desktop environment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Desktop {
+    Kde,
+    Gnome,
+    Unknown,
+}
+#[cfg(target_os = "linux")]
+pub(super) fn desktop() -> Desktop {
+    desktop_from(
+        std::env::var_os("XDG_CURRENT_DESKTOP").as_deref(),
+        std::env::var_os("XDG_SESSION_DESKTOP").as_deref(),
+    )
+}
+fn desktop_from(current: Option<&OsStr>, session: Option<&OsStr>) -> Desktop {
+    for value in [current, session]
+        .into_iter()
+        .flatten()
+        .filter_map(OsStr::to_str)
+    {
+        for name in value.split(':').map(str::trim) {
+            if name.eq_ignore_ascii_case("KDE") {
+                return Desktop::Kde;
+            }
+            if name.eq_ignore_ascii_case("GNOME") {
+                return Desktop::Gnome;
+            }
+        }
+    }
+    Desktop::Unknown
+}
+
+/// A one-shot query with bounded time and output. A nonblocking local socket
+/// captures stdout without a second reader thread or a pipe-capacity deadlock.
+/// Any early return kills and reaps the child. No shell is used in production.
+fn bounded_output(
+    mut command: std::process::Command,
+    timeout: std::time::Duration,
+) -> Option<Vec<u8>> {
+    use std::{
+        io::Read,
+        os::{fd::OwnedFd, unix::net::UnixStream},
+        process::{Child, Stdio},
+        time::{Duration, Instant},
+    };
+    struct Query(Child);
+    impl Drop for Query {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let (mut reader, writer) = UnixStream::pair().ok()?;
+    reader.set_nonblocking(true).ok()?;
+    let stdout: OwnedFd = writer.into();
+    let mut query = Query(
+        command
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .spawn()
+            .ok()?,
+    );
+    // Command may retain its copy of the stdout descriptor until dropped.
+    drop(command);
+    let deadline = Instant::now() + timeout;
+    let mut output = Vec::new();
+    loop {
+        let mut bytes = [0; 32];
+        loop {
+            match reader.read(&mut bytes) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if output.len() + n > 64 {
+                        return None;
+                    }
+                    output.extend_from_slice(&bytes[..n]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => return None,
+            }
+        }
+        if let Some(status) = query.0.try_wait().ok()? {
+            // The process may have exited between our first read and try_wait.
+            loop {
+                match reader.read(&mut bytes) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if output.len() + n > 64 {
+                            return None;
+                        }
+                        output.extend_from_slice(&bytes[..n]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => return None,
+                }
+            }
+            return status.success().then_some(output);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(
+            Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
 }
 
 /// `$XDG_CONFIG_HOME/kdeglobals` (default `~/.config`), then each
@@ -121,6 +235,51 @@ fn gnome_animations_off(stdout: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_desktop_selection_does_not_mix_gnome_and_kde_preferences() {
+        let os = |s: &'static str| Some(OsStr::new(s));
+        assert_eq!(desktop_from(os("KDE"), os("GNOME")), Desktop::Kde);
+        assert_eq!(desktop_from(os("ubuntu:GNOME"), os("KDE")), Desktop::Gnome);
+        assert_eq!(
+            desktop_from(os("GNOME-Classic:GNOME"), None),
+            Desktop::Gnome
+        );
+        assert_eq!(desktop_from(None, os("kde")), Desktop::Kde);
+        assert_eq!(desktop_from(os("COSMIC"), None), Desktop::Unknown);
+        assert_eq!(desktop_from(None, None), Desktop::Unknown);
+    }
+
+    fn shell(script: &str) -> std::process::Command {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", script]);
+        command
+    }
+
+    #[test]
+    fn settings_queries_require_success_and_bounded_output() {
+        let timeout = std::time::Duration::from_secs(1);
+        assert_eq!(
+            bounded_output(shell("printf 'false\\n'"), timeout),
+            Some(b"false\n".to_vec())
+        );
+        assert!(bounded_output(shell("printf false; exit 1"), timeout).is_none());
+        assert!(bounded_output(shell("printf '%100s' x"), timeout).is_none());
+        assert!(bounded_output(
+            std::process::Command::new("/nonexistent/volt-settings-qa"),
+            timeout
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn stuck_settings_queries_are_killed_and_reaped() {
+        let started = std::time::Instant::now();
+        assert!(
+            bounded_output(shell("exec sleep 5"), std::time::Duration::from_millis(30)).is_none()
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
 
     #[test]
     fn kde_zero_factor_turns_animation_off() {

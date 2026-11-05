@@ -187,12 +187,11 @@ fn view(_: &amp;()) -&gt; Element&lt;()&gt; {
         .into()
 }
 // Motion::None turns every animation off, including the app&#39;s own.
-let app = Application::new(&quot;My app&quot;, (), view).motion(Motion::Default);
-</code></pre></div>
-<p><code>Motion::None</code> is the same switch as <code>reduced_motion(true)</code>: it also stops the
+let app = Application::new(&quot;My app&quot;, (), view).motion(Motion::Default);</code></pre></div><p><code>Motion::None</code> is the same switch as <code>reduced_motion(true)</code>: it also stops the
 app&#39;s own <code>.transition(..)</code>, <code>.animation(..)</code> and <code>Ambient</code> effects.
-<code>VOLT_UI_REDUCED_MOTION=1</code> and the macOS Reduce Motion setting win over
-<code>Motion::Default</code>. The Linux and Windows system settings are not read yet.
+<code>VOLT_UI_REDUCED_MOTION=1</code> and the system reduce-motion setting on macOS,
+KDE and GNOME win over <code>Motion::Default</code>. The Windows system setting is not
+read yet.
 A closing overlay leaves a paint-only copy that fades out above the window
 like the open overlay, and never takes input. Data charts do not animate yet.</p>
 <h3 id="reduced-motion-and-idle">Reduced motion and idle</h3>
@@ -211,7 +210,10 @@ It can only turn motion off, never back on:</p>
 <li><strong>Linux:</strong> KDE Plasma&#39;s animation speed set to Instant
 (<code>AnimationDurationFactor=0</code> in the <code>[KDE]</code> group of <code>kdeglobals</code>), or GNOME&#39;s
 animations turned off (<code>org.gnome.desktop.interface enable-animations</code>).
-GNOME&#39;s setting is read with <code>gsettings</code> on a background thread and applies
+Only the active KDE or GNOME session is queried; settings left by another
+installed desktop are ignored. KDE config reads are limited to 64 KiB per file.
+GNOME&#39;s setting is read with <code>gsettings</code> on a background thread (a two-second
+timeout and a 64-byte output limit) and applies
 when it arrives; an animation already running then jumps to its end. Inside a
 Flatpak sandbox, <code>gsettings</code> may not see the host&#39;s setting.</li>
 <li><strong>Windows:</strong> the Animation effects setting is not read yet. Use
