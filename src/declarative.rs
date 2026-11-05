@@ -424,7 +424,7 @@ pub use extras::{
 };
 mod responsive;
 pub use effects::{
-    Ambient, Animation, Easing, Glow, Interaction, Shadow, Spring, Transition, VisualStyle,
+    Ambient, Animation, Easing, Glow, Interaction, Motion, Shadow, Spring, Transition, VisualStyle,
 };
 mod motion;
 mod runtime;

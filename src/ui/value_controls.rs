@@ -151,6 +151,7 @@ struct SelectOptions<C, T> {
     on_select: Option<Selected<C, T>>,
     on_open_change: Option<Opened<C>>,
     surface: Option<String>,
+    motion: bool,
 }
 pub fn select<C, T>(items: impl IntoIterator<Item = SelectItem<T>>) -> Select<C, T> {
     let mut element = Element::new(Kind::Column);
@@ -165,6 +166,7 @@ pub fn select<C, T>(items: impl IntoIterator<Item = SelectItem<T>>) -> Select<C,
             on_select: None,
             on_open_change: None,
             surface: None,
+            motion: true,
         },
     )
 }
@@ -193,6 +195,12 @@ impl<C, T> Select<C, T> {
     /// blurred, so over busy content give it an opaque one.
     pub fn surface(mut self, color: impl Into<String>) -> Self {
         self.1.surface = Some(color.into());
+        self
+    }
+    /// Built-in motion (default on): the list fades in while settling into
+    /// place and fades out on close. `false` shows it instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.1.motion = value;
         self
     }
 }
@@ -370,6 +378,9 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
             Box::new(move |app: &mut C| (close.borrow_mut())(app, false)),
         );
         popup.node.overlay.as_mut().expect("popup metadata").anchor = Some(trigger_key);
+        if select.1.motion {
+            popup.node.effects.transition = Some(super::dialogs::popup_motion());
+        }
         select.0.children.push(popup);
         select.0
     }

@@ -44,7 +44,9 @@ fn view(_: &()) -> Element<()> {
         .background(ColorToken::Base100).color(ColorToken::BaseContent).into()
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Built-in component animations; Motion::None turns them all off.
     Application::new("My app", (), view)
+        .motion(Motion::Default)
         .chrome(window_chrome()).theme_with(theme).run()
 }
 "#,
@@ -116,7 +118,9 @@ fn view(app: &App) -> Element<App> {{
 }}
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // Catalog-style macOS chrome; native controls remain. Blur is your choice.
+    // Built-in component animations; Motion::None turns them all off.
     Application::new("{title}", App::default(), view)
+        .motion(Motion::Default)
         .size(1100, 760).chrome(window_chrome()).theme_with(theme).run()
 }}
 "#
@@ -517,6 +521,7 @@ mod tests {
         for kind in ["minimal", "navigation", "mail", "settings", "agent"] {
             let s = template(kind).unwrap();
             assert!(s.contains("Application::new"));
+            assert!(s.contains(".motion(Motion::Default)"), "{kind}");
         }
         assert!(template("unknown").is_err());
     }
