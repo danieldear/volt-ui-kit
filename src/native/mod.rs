@@ -3,7 +3,11 @@
 mod accessibility;
 mod application;
 pub use application::{Application, RendererPreference};
+mod backdrop;
+pub use backdrop::{BackdropProtocol, BackdropStatus, BackdropUnavailable};
 mod commands;
+#[cfg(target_os = "linux")]
+pub mod linux_backdrop;
 pub use commands::{
     ApplicationRequest, CloseDecision, CloseReason, Command, CommandDispatch, CommandInfo,
     CommandRegistry, Shortcut,
@@ -12,20 +16,22 @@ mod assets;
 pub mod clipboard;
 pub mod file_dialog;
 pub mod files;
+pub mod links;
 #[cfg(target_os = "macos")]
 mod macos_chrome;
 #[cfg(all(target_os = "macos", feature = "native-gpu"))]
 mod macos_material;
 pub mod notifications;
-mod raster;
+pub mod text_menu;
+pub(crate) use crate::rendering::raster;
 pub mod system;
+#[cfg(feature = "native-gpu")]
+pub(crate) use crate::rendering::gpu;
+#[cfg(feature = "native-gpu")]
+pub(crate) use crate::rendering::gpu_scene;
 pub use assets::{decode_image, load_image};
 #[cfg(feature = "native-gpu")]
-mod gpu;
-#[cfg(feature = "native-gpu")]
 pub use gpu::GpuOffscreenRenderer;
-#[cfg(feature = "native-gpu")]
-mod gpu_scene;
 #[cfg(feature = "native-gpu")]
 pub use gpu_scene::{estimate_gpu_scene, GpuSceneEstimate};
 #[cfg(all(test, feature = "native-gpu"))]

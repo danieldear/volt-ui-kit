@@ -150,4 +150,41 @@ mod tests {
         );
         assert_eq!(calls, 0);
     }
+    #[test]
+    fn plain_container_accepts_file_drops_over_an_editable_child() {
+        let e: Element<Vec<PathBuf>> = vstack([text_area("keep my draft")
+            .key("message")
+            .on_change(|_: &mut Vec<PathBuf>, _| {})
+            .into()])
+        .key("composer")
+        .on_files_dropped(|paths: &mut Vec<PathBuf>, received| paths.extend(received))
+        .into();
+        let (doc, mut handlers) = e.build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        runtime
+            .layout(
+                Viewport::new(400., 400., 1.).unwrap(),
+                &Bindings::default(),
+                &mut Metrics,
+            )
+            .unwrap();
+        let b = runtime
+            .boxes()
+            .iter()
+            .find(|b| b.id == "message")
+            .unwrap()
+            .bounds
+            .bounds();
+        let mut paths = vec![];
+        let result = runtime
+            .drop_files(
+                Some([b[0] + 2., b[1] + 2.]),
+                vec![PathBuf::from("snapshot.rs")],
+                &mut handlers,
+                &mut paths,
+            )
+            .unwrap();
+        assert!(result.activated);
+        assert_eq!(paths, vec![PathBuf::from("snapshot.rs")]);
+    }
 }

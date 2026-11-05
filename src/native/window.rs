@@ -8,6 +8,7 @@ use crate::{
     Palette, Theme, ThemeMode, UiTheme, Viewport,
 };
 use softbuffer::{Context, Surface};
+mod code_input;
 use std::{
     io::Read,
     num::NonZeroU32,
@@ -23,6 +24,26 @@ use winit::{
     keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowAttributes, WindowId},
 };
+
+type ClickSequence = (Instant, [f32; 2], u8, Option<String>);
+fn pointer_click_count(
+    previous: Option<&ClickSequence>,
+    now: Instant,
+    at: [f32; 2],
+    target: Option<&str>,
+) -> u8 {
+    match previous {
+        Some((when, p, n, old))
+            if old.as_deref() == target
+                && now.duration_since(*when) < Duration::from_millis(450)
+                && (p[0] - at[0]).abs() < 5.
+                && (p[1] - at[1]).abs() < 5. =>
+        {
+            n.saturating_add(1).min(3)
+        }
+        _ => 1,
+    }
+}
 
 /// Renderer choice stays additive without changing public legacy option structs.
 fn gpu_policy(value: Option<&str>, available: bool) -> Result<(bool, bool), String> {
@@ -430,6 +451,9 @@ fn run_host<C: 'static>(
         options.reduced_motion,
         std::env::var("VOLT_UI_REDUCED_MOTION").ok().as_deref(),
     );
+    #[cfg(target_os = "macos")]
+    let reduced_motion = reduced_motion
+        || objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
     runtime.set_reduced_motion(reduced_motion);
     let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
     if let Some(messages) = messages.as_mut() {
@@ -468,6 +492,12 @@ fn run_host<C: 'static>(
         theme_fn,
         messages,
         window_update_in_progress: false,
+        backdrop_status: super::BackdropStatus::Disabled,
+        backdrop_generation: 0,
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        linux_backdrop: None,
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        backdrop_display: event_loop.owned_display_handle(),
         system_theme: ThemeMode::Dark,
         #[cfg(feature = "native-gpu")]
         gpu: None,
@@ -485,6 +515,7 @@ fn run_host<C: 'static>(
         last_click: None,
         painter: RasterPainter::new(Viewport::new(860., 640., 1.).unwrap()),
         pointer: None,
+        key_scroll_at: None,
         modifiers: ModifiersState::empty(),
         activation_key: None,
         dropped: Vec::new(),
@@ -547,6 +578,10 @@ impl<C: 'static> Content<C> {
 enum HostEvent {
     Messages,
     Requests,
+    Backdrop {
+        generation: u64,
+        status: super::BackdropStatus,
+    },
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
     Close(CloseReason),
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
@@ -580,6 +615,12 @@ struct App<C> {
     theme_fn: Option<ThemeFn<C>>,
     messages: Option<Box<dyn Messages<C>>>,
     window_update_in_progress: bool,
+    backdrop_status: super::BackdropStatus,
+    backdrop_generation: u64,
+    #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+    linux_backdrop: Option<super::linux_backdrop::Controller>,
+    #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+    backdrop_display: winit::event_loop::OwnedDisplayHandle,
     system_theme: ThemeMode,
     #[cfg(feature = "native-gpu")]
     gpu: Option<super::gpu::GpuPresenter>,
@@ -595,9 +636,12 @@ struct App<C> {
     trace: bool,
     pending_release: Option<Instant>,
     /// The last left press: when, where and its click count.
-    last_click: Option<(Instant, [f32; 2], u8)>,
+    last_click: Option<ClickSequence>,
     painter: RasterPainter,
     pointer: Option<[f32; 2]>,
+    /// Where the last left press landed: arrow and page keys no control
+    /// takes scroll the view there, else the one under the pointer.
+    key_scroll_at: Option<[f32; 2]>,
     modifiers: ModifiersState,
     activation_key: Option<NamedKey>,
     /// Files from one system drop arrive as separate events; batched per turn.
@@ -793,6 +837,16 @@ impl<C: 'static> App<C> {
     fn layout(&mut self) -> Result<(), String> {
         let Some(w) = &self.window else { return Ok(()) };
         let size = w.inner_size();
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        if let Some(backdrop) = &self.linux_backdrop {
+            backdrop.update(
+                w,
+                matches!(
+                    self.options.background,
+                    WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ),
+            );
+        }
         if size.width == 0 || size.height == 0 {
             return Ok(());
         };
@@ -836,8 +890,28 @@ impl<C: 'static> App<C> {
         }
         Ok(())
     }
+    fn report_backdrop_status(&self, status: super::BackdropStatus) {
+        if self.backdrop_status != status {
+            let _ = self.proxy.send_event(HostEvent::Backdrop {
+                generation: self.backdrop_generation,
+                status,
+            });
+        }
+    }
+    /// Status under opaque software presentation: unavailable only when the
+    /// app actually asked for blur.
+    fn software_backdrop_status(&self) -> super::BackdropStatus {
+        if matches!(
+            self.options.background,
+            WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+        ) {
+            super::BackdropStatus::Unsupported(super::BackdropUnavailable::SoftwareRenderer)
+        } else {
+            super::BackdropStatus::Disabled
+        }
+    }
     #[cfg(feature = "native-gpu")]
-    fn sync_native_backdrop(&mut self, window: &Window) {
+    fn sync_native_backdrop(&mut self, window: &Arc<Window>) {
         #[cfg(target_os = "macos")]
         {
             let public = matches!(self.options.background, WindowBackground::Blur { .. });
@@ -873,11 +947,62 @@ impl<C: 'static> App<C> {
                 );
             }
         }
-        #[cfg(not(target_os = "macos"))]
-        window.set_blur(matches!(
-            self.options.background,
-            WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
-        ));
+        #[cfg(target_os = "macos")]
+        {
+            use super::{BackdropProtocol as P, BackdropStatus as S, BackdropUnavailable as U};
+            self.report_backdrop_status(match self.options.background {
+                WindowBackground::Blur { .. } if self.material.is_some() => {
+                    S::Requested(P::AppKitMaterial)
+                }
+                WindowBackground::Blur { .. } => S::Failed,
+                WindowBackground::CompositorBlur { .. } if self.compositor_blur_active => {
+                    S::Requested(P::MacosCompositor)
+                }
+                WindowBackground::CompositorBlur { .. } => S::Unsupported(U::ReducedTransparency),
+                _ => S::Disabled,
+            });
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let enabled = matches!(
+                self.options.background,
+                WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+            );
+            if let Some(backdrop) = &self.linux_backdrop {
+                backdrop.update(window, enabled);
+            } else if enabled {
+                self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+                let generation = self.backdrop_generation;
+                let proxy = self.proxy.clone();
+                match super::linux_backdrop::Controller::new(
+                    window.clone(),
+                    self.backdrop_display.clone(),
+                    true,
+                    move |status| {
+                        let _ = proxy.send_event(HostEvent::Backdrop { generation, status });
+                    },
+                ) {
+                    Ok(controller) => self.linux_backdrop = Some(controller),
+                    Err(status) => self.report_backdrop_status(status),
+                }
+            } else {
+                self.report_backdrop_status(super::BackdropStatus::Disabled);
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = window;
+            self.report_backdrop_status(
+                if matches!(
+                    self.options.background,
+                    WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ) {
+                    super::BackdropStatus::Unsupported(super::BackdropUnavailable::Platform)
+                } else {
+                    super::BackdropStatus::Disabled
+                },
+            );
+        }
     }
     fn sync_state_background(&mut self) -> Result<(), String> {
         let Some(callback) = &self.extensions.background else {
@@ -915,6 +1040,43 @@ impl<C: 'static> App<C> {
         }
         #[cfg(not(feature = "native-gpu"))]
         let _ = previous;
+        // Software presentation never requests blur, but the reported status
+        // still follows the app's blur toggle (unavailable vs. off).
+        #[cfg(feature = "native-gpu")]
+        let software = self.gpu.is_none();
+        #[cfg(not(feature = "native-gpu"))]
+        let software = true;
+        if software && self.window.is_some() {
+            self.report_backdrop_status(self.software_backdrop_status());
+        }
+        Ok(())
+    }
+    /// Report `on_focus_within` regions keyboard focus entered or left.
+    fn focus_regions(&mut self) -> Result<(), String> {
+        let ran = self
+            .runtime
+            .dispatch_focus_regions(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if ran {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
+        Ok(())
+    }
+    /// Report `on_hover` regions the pointer entered or left.
+    fn hover_regions(&mut self, pointer: Option<[f32; 2]>) -> Result<(), String> {
+        let ran = self
+            .runtime
+            .dispatch_hover_regions(pointer, &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if ran {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
         Ok(())
     }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
@@ -1089,16 +1251,9 @@ impl<C: 'static> App<C> {
     /// Count clicks at about the same place in quick succession (1, 2, 3).
     fn count_click(&mut self, at: [f32; 2]) -> u8 {
         let now = Instant::now();
-        let near = |p: [f32; 2]| (p[0] - at[0]).abs() < 5. && (p[1] - at[1]).abs() < 5.;
-        let count = match self.last_click {
-            Some((when, p, n))
-                if now.duration_since(when) < Duration::from_millis(450) && near(p) =>
-            {
-                n.saturating_add(1).min(3)
-            }
-            _ => 1,
-        };
-        self.last_click = Some((now, at, count));
+        let target = self.runtime.pointer_click_target(at[0], at[1]);
+        let count = pointer_click_count(self.last_click.as_ref(), now, at, target.as_deref());
+        self.last_click = Some((now, at, count, target));
         count
     }
     /// Redraw for a changed text selection and tell the application.
@@ -1118,6 +1273,56 @@ impl<C: 'static> App<C> {
     }
     /// Cmd/Ctrl+C copies and Cmd/Ctrl+A selects all selectable text when no
     /// editor has focus.
+    fn input_modifiers(&self) -> crate::declarative::InputModifiers {
+        crate::declarative::InputModifiers {
+            shift: self.modifiers.shift_key(),
+            control: self.modifiers.control_key(),
+            alt: self.modifiers.alt_key(),
+            meta: self.modifiers.super_key(),
+        }
+    }
+    /// Narrow focused-control keys only. Commands, editors, value controls and
+    /// overlay/modal scope retain priority; Tab never reaches application rows.
+    fn control_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
+        use crate::declarative::{InputKey, InputKeyEvent};
+        let modifiers = self.input_modifiers();
+        let key = match &event.logical_key {
+            Key::Named(NamedKey::ArrowUp) => InputKey::ArrowUp,
+            Key::Named(NamedKey::ArrowDown) => InputKey::ArrowDown,
+            Key::Named(NamedKey::ArrowLeft) => InputKey::ArrowLeft,
+            Key::Named(NamedKey::ArrowRight) => InputKey::ArrowRight,
+            Key::Named(NamedKey::Home) => InputKey::Home,
+            Key::Named(NamedKey::End) => InputKey::End,
+            Key::Named(NamedKey::Enter) => InputKey::Enter,
+            Key::Named(NamedKey::Space) => InputKey::Space,
+            Key::Named(NamedKey::Escape) => InputKey::Escape,
+            Key::Character(c)
+                if modifiers.primary()
+                    && !modifiers.alt
+                    && !modifiers.shift
+                    && c.eq_ignore_ascii_case("a") =>
+            {
+                InputKey::SelectAll
+            }
+            _ => return Ok(false),
+        };
+        let roving_key = self.runtime.is_roving_key(key);
+        let outcome = self
+            .runtime
+            .input_key(
+                InputKeyEvent {
+                    key,
+                    modifiers,
+                    repeat: event.repeat,
+                },
+                &mut self.handlers,
+                &mut self.context,
+            )
+            .map_err(|e| e.to_string())?;
+        let consumed = outcome.activated || roving_key;
+        self.after_input(outcome)?;
+        Ok(consumed)
+    }
     fn selection_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
         if self.runtime.editing_focus() {
             return Ok(false);
@@ -1378,6 +1583,8 @@ impl<C: 'static> App<C> {
                 &runtime.accessibility_nodes(),
                 title,
                 [size.width as f32, size.height as f32],
+                &runtime.accessibility_multiselectable_ids(),
+                &runtime.accessibility_links(),
             );
             *ids = map;
             update
@@ -1455,14 +1662,43 @@ impl<C: 'static> App<C> {
         else {
             return Ok(());
         };
+        // An app-chosen appearance: apply it to the window once per change.
+        let chosen = self
+            .extensions
+            .appearance
+            .as_ref()
+            .map(|f| f(&self.context));
+        if let Some(chosen) = chosen {
+            if self.extensions.applied_appearance != Some(chosen) {
+                self.extensions.applied_appearance = Some(chosen);
+                w.set_theme(match chosen {
+                    ThemeMode::Light => Some(winit::window::Theme::Light),
+                    ThemeMode::Dark => Some(winit::window::Theme::Dark),
+                    ThemeMode::System => None,
+                });
+                if chosen == ThemeMode::System {
+                    // While forced, theme events reported the forced look.
+                    self.system_theme = if w.theme() == Some(winit::window::Theme::Light) {
+                        ThemeMode::Light
+                    } else {
+                        ThemeMode::Dark
+                    };
+                }
+            }
+        }
+        let mode = match chosen {
+            Some(ThemeMode::Light) => ThemeMode::Light,
+            Some(ThemeMode::Dark) => ThemeMode::Dark,
+            _ => self.system_theme,
+        };
         let ui = self.theme_fn.as_ref().map_or_else(
-            || self.options.resolve_theme(self.system_theme),
-            |f| f(&self.context, self.system_theme),
+            || self.options.resolve_theme(mode),
+            |f| f(&self.context, mode),
         );
         if !ui.palette.is_valid() {
             return Err("theme callback returned invalid palette".into());
         }
-        if self.theme_fn.is_some() && self.options.theme != ThemeMode::System {
+        if self.theme_fn.is_some() && self.options.theme != ThemeMode::System && chosen.is_none() {
             let bg = ui.palette.base[0];
             w.set_theme(Some(if bg[0] + bg[1] + bg[2] > 1.5 {
                 winit::window::Theme::Light
@@ -1548,8 +1784,14 @@ impl<C: 'static> App<C> {
                                 self.compositor_blur_active = false;
                             }
                         }
+                        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+                        {
+                            self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+                            self.linux_backdrop = None;
+                        }
                         #[cfg(not(target_os = "macos"))]
                         w.set_blur(false);
+                        self.report_backdrop_status(self.software_backdrop_status());
                         let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                         self.surface =
                             Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
@@ -1575,8 +1817,14 @@ impl<C: 'static> App<C> {
                         self.compositor_blur_active = false;
                     }
                 }
+                #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+                {
+                    self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+                    self.linux_backdrop = None;
+                }
                 #[cfg(not(target_os = "macos"))]
                 w.set_blur(false);
+                self.report_backdrop_status(self.software_backdrop_status());
                 let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
                 self.surface = Some(Surface::new(&context, w.clone()).map_err(|e| e.to_string())?);
                 w.set_transparent(false);
@@ -1636,6 +1884,18 @@ impl<C: 'static> App<C> {
         self.frames += 1;
         self.update_access();
         self.animation_clock.presented(Instant::now());
+        // Geometry from actual shaping is available only after paint. Opt-in
+        // caret observers request one corrective frame, never an idle loop.
+        if self
+            .runtime
+            .dispatch_code_carets(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?
+        {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
         if let Some(start) = started {
             let presented = Instant::now();
             let layout = layout_done.unwrap();
@@ -1700,6 +1960,32 @@ impl<C: 'static> App<C> {
 impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: HostEvent) {
         if event_loop.exiting() {
+            return;
+        }
+        if let HostEvent::Backdrop { generation, status } = event {
+            if generation != self.backdrop_generation {
+                return;
+            }
+            // `Failed` is the worker's last report before it exits. Release the
+            // dead controller so a later blur change can start a fresh one.
+            #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+            if status == super::BackdropStatus::Failed {
+                self.linux_backdrop = None;
+            }
+            if status == self.backdrop_status {
+                return;
+            }
+            self.backdrop_status = status;
+            eprintln!("VOLT_UI_BACKDROP status={status:?}");
+            if let Some(callback) = self.extensions.backdrop_status.as_mut() {
+                callback(&mut self.context, status);
+                if let Err(error) = self.after_input(InputOutcome {
+                    changed: true,
+                    activated: true,
+                }) {
+                    self.fail(event_loop, error);
+                }
+            }
             return;
         }
         if let HostEvent::Access(event) = event {
@@ -1863,6 +2149,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             #[cfg(not(target_os = "macos"))]
             w.set_blur(false);
+            self.report_backdrop_status(self.software_backdrop_status());
             eprintln!("Volt UI: software renderer active");
             let context = Context::new(w.clone()).map_err(|e| e.to_string())?;
             let surface = Surface::new(&context, w.clone()).map_err(|e| e.to_string())?;
@@ -1885,6 +2172,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+        #[cfg(all(target_os = "linux", feature = "native-gpu"))]
+        {
+            self.linux_backdrop = None;
+        }
         #[cfg(all(feature = "native-desktop", target_os = "macos"))]
         {
             // Drop the previous menu before resumed installs its replacement.
@@ -1957,6 +2249,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                     }
                     self.pointer = Some([position.x as f32, position.y as f32]);
+                    if self.code_pointer_drag(position.x as f32, position.y as f32)? {
+                        self.update_cursor(position.x as f32, position.y as f32);
+                        return Ok(());
+                    }
                     if self.runtime.text_selecting() {
                         if self.runtime.text_select_drag(
                             position.x as f32,
@@ -1985,7 +2281,21 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                         self.redraw();
                     }
+                    self.hover_regions(Some([position.x as f32, position.y as f32]))?;
                     self.update_cursor(position.x as f32, position.y as f32);
+                    if let Some(outcome) = self
+                        .runtime
+                        .code_pointer_hover(
+                            Some([position.x as f32, position.y as f32]),
+                            &mut self.handlers,
+                            &mut self.context,
+                        )
+                        .map_err(|e| e.to_string())?
+                    {
+                        if outcome.activated || outcome.changed {
+                            self.after_input(outcome)?;
+                        }
+                    }
                 }
                 WindowEvent::ThemeChanged(theme) => {
                     self.system_theme = if theme == winit::window::Theme::Light {
@@ -1996,6 +2306,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.redraw();
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
+                    self.last_click = None;
                     self.layout()?;
                     if let Some([x, y]) = self.pointer {
                         let scale = self.window.as_ref().map_or(1., |w| w.scale_factor() as f32);
@@ -2033,9 +2344,20 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 }
                 WindowEvent::DroppedFile(path) => self.dropped.push(path),
                 WindowEvent::CursorLeft { .. } => {
+                    self.last_click = None;
                     self.pointer = None;
                     if self.runtime.pointer_leave() {
                         self.redraw();
+                    }
+                    self.hover_regions(None)?;
+                    if let Some(outcome) = self
+                        .runtime
+                        .code_pointer_hover(None, &mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?
+                    {
+                        if outcome.activated || outcome.changed {
+                            self.after_input(outcome)?;
+                        }
                     }
                 }
                 WindowEvent::MouseInput {
@@ -2047,6 +2369,15 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     self.activation_key = None;
                     self.runtime.cancel_input();
                     if let Some([x, y]) = self.pointer {
+                        // Over code, the caret moves to what was clicked first.
+                        if let Some(outcome) = self
+                            .runtime
+                            .code_context_press(x, y, &mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?
+                        {
+                            self.after_input(outcome)?;
+                            self.layout()?;
+                        }
                         let outcome = self
                             .runtime
                             .context_menu_at(x, y, &mut self.handlers, &mut self.context)
@@ -2066,6 +2397,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     if let Some([x, y]) = self.pointer {
                         match state {
                             ElementState::Pressed => {
+                                self.key_scroll_at = Some([x, y]);
                                 self.runtime.pointer_move(x, y);
                                 self.activation_key = None;
                                 if self.runtime.drag_region_hit(x, y) {
@@ -2078,17 +2410,24 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                         }
                                     }
                                 } else {
+                                    if self.code_pointer_down(x, y)? {
+                                        self.redraw();
+                                        return Ok(());
+                                    }
                                     if self.modifiers.shift_key()
                                         && self.runtime.editor_pointer_down(x, y, true)
                                     {
                                         self.redraw();
                                         return Ok(());
                                     }
+                                    let clicks = self.count_click([x, y]);
                                     let outcome = self
                                         .runtime
-                                        .pointer_down_outcome(
+                                        .pointer_down_outcome_with_clicks(
                                             x,
                                             y,
+                                            self.input_modifiers(),
+                                            clicks,
                                             &mut self.handlers,
                                             &mut self.context,
                                         )
@@ -2096,8 +2435,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     // A press on plain text selects it: one
                                     // click places, two pick a word, three
                                     // the paragraph; Shift extends.
-                                    let clicks = self.count_click([x, y]);
-                                    let selected = self.runtime.press_was_free()
+                                    let selected = self.runtime.press_allows_text_selection()
                                         && self.runtime.text_select_press(
                                             x,
                                             y,
@@ -2113,6 +2451,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                 self.redraw();
                             }
                             ElementState::Released => {
+                                self.code_pointer_up();
                                 if self.runtime.text_select_release() {
                                     self.after_selection()?;
                                 }
@@ -2180,18 +2519,47 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 },
                 WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
                 WindowEvent::KeyboardInput { event, .. } => {
+                    if event.state == ElementState::Pressed {
+                        self.last_click = None;
+                    }
                     if event.state == ElementState::Pressed
                         && self.command_keyboard(event_loop, &event)?
                     {
                         return Ok(());
                     }
-                    if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
+                    if event.state == ElementState::Pressed
+                        && !event.repeat
+                        && (event.logical_key == Key::Named(NamedKey::ContextMenu)
+                            || (event.logical_key == Key::Named(NamedKey::F10)
+                                && self.modifiers.shift_key()
+                                && !self.modifiers.alt_key()
+                                && !self.modifiers.control_key()
+                                && !self.modifiers.super_key()))
+                    {
+                        let outcome = self
+                            .runtime
+                            .context_menu_focused(&mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?;
+                        if outcome.activated {
+                            self.activation_key = None;
+                            self.after_input(outcome)?;
+                            return Ok(());
+                        }
+                    }
+                    if event.state == ElementState::Pressed && self.code_keyboard(&event)? {
                         return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.editor_keyboard(&event)? {
                         return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.value_keyboard(&event)? {
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.control_keyboard(&event)? {
+                        self.activation_key = None;
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
                         return Ok(());
                     }
                     if let Key::Named(key) = event.logical_key {
@@ -2229,6 +2597,42 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                 }
                                 self.after_input(outcome)?;
                             }
+                            // Nothing took them: scroll the content, as a
+                            // reader expects of a page.
+                            NamedKey::ArrowUp
+                            | NamedKey::ArrowDown
+                            | NamedKey::PageUp
+                            | NamedKey::PageDown
+                                if event.state == ElementState::Pressed =>
+                            {
+                                if let Some([x, y]) = self.key_scroll_at.or(self.pointer) {
+                                    let [line, page] = self.runtime.key_scroll_steps(x, y);
+                                    let dy = match key {
+                                        NamedKey::ArrowUp => -line,
+                                        NamedKey::ArrowDown => line,
+                                        NamedKey::PageUp => -page,
+                                        _ => page,
+                                    };
+                                    let outcome = self
+                                        .runtime
+                                        .scroll_outcome(
+                                            x,
+                                            y,
+                                            [0., dy],
+                                            &mut self.handlers,
+                                            &mut self.context,
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                    if outcome.changed || outcome.activated {
+                                        self.after_input(outcome)?;
+                                        self.layout()?;
+                                        if let Some([px, py]) = self.pointer {
+                                            self.runtime.pointer_move(px, py);
+                                        }
+                                        self.redraw();
+                                    }
+                                }
+                            }
                             NamedKey::Enter | NamedKey::Space => match event.state {
                                 ElementState::Pressed
                                     if !event.repeat && self.activation_key.is_none() =>
@@ -2254,8 +2658,18 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                     .runtime
                                     .dismiss_overlay(&mut self.handlers, &mut self.context)
                                     .map_err(|e| e.to_string())?;
+                                let escaped = !outcome.activated
+                                    && self
+                                        .runtime
+                                        .dispatch_escape(&mut self.handlers, &mut self.context)
+                                        .map_err(|e| e.to_string())?;
                                 if outcome.activated {
                                     self.after_input(outcome)?;
+                                } else if escaped {
+                                    self.after_input(InputOutcome {
+                                        changed: true,
+                                        activated: true,
+                                    })?;
                                 } else if self.runtime.cancel_input() {
                                     self.redraw();
                                 }
@@ -2266,6 +2680,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 }
                 _ => {}
             }
+            self.focus_regions()?;
             self.sync_ime();
             Ok(())
         })();
@@ -2276,6 +2691,17 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if event_loop.exiting() {
             return;
+        }
+        if let (Some(visible), Some(window)) = (&self.extensions.window_visible, &self.window) {
+            let desired = visible(&self.context);
+            if self.extensions.last_window_visible != Some(desired) {
+                window.set_visible(desired);
+                if desired {
+                    window.set_minimized(false);
+                    window.focus_window();
+                }
+                self.extensions.last_window_visible = Some(desired);
+            }
         }
         if let Some(messages) = self.messages.as_mut() {
             messages.finish_turn();
@@ -2298,8 +2724,14 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
         }
         let now = Instant::now();
+        let previous_wait = self.runtime.animation_wait();
         let changed = self.advance_animations(now);
-        let active = self.animations_can_run() && self.runtime.is_animating();
+        let wait = if self.animations_can_run() {
+            self.runtime.animation_wait()
+        } else {
+            None
+        };
+        let active = wait == Some(Duration::ZERO);
         if active {
             self.update_pacing(now);
         }
@@ -2308,10 +2740,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             // Consume this deadline even if the platform coalesces the redraw;
             // never repeatedly wake at a deadline that is already in the past.
             self.animation_clock.presented(now);
-        } else if changed && !active {
+        } else if motion_needs_final_frame(changed, previous_wait, wait) {
             self.redraw();
         }
         let mut deadline = self.animation_clock.deadline(now, active);
+        if let Some(delay) = wait.filter(|delay| !delay.is_zero()) {
+            deadline = Some(now + delay);
+        }
         #[cfg(feature = "native-gpu")]
         {
             if self.gpu_retry.due(now) {
@@ -2385,7 +2820,7 @@ fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
             cfg!(feature = "native-gpu") && options.background != WindowBackground::Opaque,
         )
         .with_blur(
-            !cfg!(target_os = "macos")
+            !cfg!(any(target_os = "macos", target_os = "linux"))
                 && cfg!(feature = "native-gpu")
                 && matches!(
                     options.background,
@@ -2428,6 +2863,16 @@ fn reduced_motion_enabled(option: bool, environment: Option<&str>) -> bool {
 }
 
 const ANIMATION_FRAME: Duration = Duration::from_nanos(16_666_667);
+// Present the endpoint even when another animation is waiting in a stagger gap.
+// Delayed-only scenes otherwise stay asleep without redrawing unchanged paint.
+fn motion_needs_final_frame(
+    changed: bool,
+    before: Option<Duration>,
+    after: Option<Duration>,
+) -> bool {
+    changed && after != Some(Duration::ZERO) && (after.is_none() || before == Some(Duration::ZERO))
+}
+
 /// Paces animation frames. Under vsync (GPU, FIFO presentation) the display
 /// sets the rate: the next frame is requested right after each present and
 /// the swap chain waits for the next refresh — 120 Hz on ProMotion — with no
@@ -2661,6 +3106,17 @@ mod tests {
         assert!(!reduced_motion_enabled(false, Some("0")));
         assert!(!reduced_motion_enabled(false, Some("true")));
         assert!(!reduced_motion_enabled(false, None));
+    }
+    #[test]
+    fn animation_endpoint_is_presented_before_a_stagger_gap_sleeps() {
+        let frame = Some(Duration::ZERO);
+        let delay = Some(Duration::from_millis(200));
+        assert!(motion_needs_final_frame(true, frame, delay));
+        assert!(motion_needs_final_frame(true, frame, None));
+        assert!(!motion_needs_final_frame(true, delay, delay));
+        assert!(!motion_needs_final_frame(true, frame, frame));
+        assert!(!motion_needs_final_frame(false, frame, delay));
+        assert!(!motion_needs_final_frame(false, None, None));
     }
     #[test]
     fn animation_clock_follows_vsync_or_a_drift_free_refresh_cadence() {
@@ -3151,7 +3607,7 @@ mod surface_option_tests {
             );
             assert_eq!(
                 attrs.blur,
-                !cfg!(target_os = "macos")
+                !cfg!(any(target_os = "macos", target_os = "linux"))
                     && cfg!(feature = "native-gpu")
                     && matches!(background, WindowBackground::Blur { .. })
             );
@@ -3231,5 +3687,65 @@ mod command_scope_tests {
                 assert!(runtime.application_commands_allowed());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod click_sequence_tests {
+    use super::*;
+    #[test]
+    fn code_and_text_click_counts_are_preserved_but_do_not_cross_targets() {
+        let now = Instant::now();
+        let at = [20., 30.];
+        for target in [Some("code-1"), Some("reply"), None] {
+            let previous = (now, at, 1, target.map(str::to_string));
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(100),
+                    at,
+                    target
+                ),
+                2
+            );
+            let previous = (now, at, 2, target.map(str::to_string));
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(100),
+                    at,
+                    target
+                ),
+                3
+            );
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(500),
+                    at,
+                    target
+                ),
+                1
+            );
+            assert_eq!(
+                pointer_click_count(
+                    Some(&previous),
+                    now + Duration::from_millis(100),
+                    [40., 30.],
+                    target
+                ),
+                1
+            );
+        }
+        let row = (now, at, 1, Some("row-a".to_string()));
+        assert_eq!(
+            pointer_click_count(
+                Some(&row),
+                now + Duration::from_millis(100),
+                at,
+                Some("row-b")
+            ),
+            1
+        );
     }
 }

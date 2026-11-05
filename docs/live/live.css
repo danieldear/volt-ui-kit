@@ -1,0 +1,33 @@
+.live-page{max-width:1000px;margin:auto;padding:48px 24px;color:var(--ink,#161616)}
+.live-page h1{font-size:clamp(36px,6vw,64px);letter-spacing:-.055em;line-height:1.05;margin:24px 0}
+.live-page .lead{max-width:650px;font-size:18px;color:var(--muted,#777);line-height:1.65}
+.live-toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:24px 0 12px;font:13px system-ui}
+.live-toolbar button,.live-toolbar select{font:inherit;background:transparent;border:1px solid #8886;border-radius:7px;padding:8px 12px;color:inherit}
+.live-toolbar output{font-family:ui-monospace,monospace;color:var(--muted,#777)}
+.volt-root{position:relative;width:100%;height:500px;overflow:hidden;border:1px solid #8884;border-radius:14px;isolation:isolate;background:#f5f5f5}
+.volt-root canvas{display:block;width:100%;height:100%;touch-action:pan-y}
+.volt-semantics{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.volt-access-node{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip-path:inset(50%);white-space:nowrap;border:0!important}
+.volt-text-proxy{position:absolute;box-sizing:border-box;margin:0;padding:8px 12px;border:0;background:transparent;color:transparent;caret-color:transparent;font:14px system-ui;pointer-events:auto;resize:none;outline:none}
+.volt-text-proxy::placeholder{color:transparent}
+.volt-text-proxy::selection{background:transparent;color:transparent}
+.volt-status{font:12px/1.5 ui-monospace,monospace;color:var(--muted,#777);min-height:20px}
+.volt-status[data-error=true]{color:#c44}
+.live-note{font-size:14px;line-height:1.6;color:var(--muted,#777);max-width:740px}
+@media(max-width:520px){.live-page{padding:24px 12px}.volt-root{height:570px}.live-toolbar{font-size:12px}}
+html[data-embed=true] .live-page{padding:0;max-width:none}
+html[data-embed=true] .live-intro,html[data-embed=true] .live-note,html[data-embed=true] .live-back{display:none}
+html[data-embed=true] .volt-root{border:0;border-radius:0}
+html[data-embed=true] .live-toolbar{margin:8px 12px}
+
+/* Direct Catalog islands: HTML provides the document; Rust draws the previews. */
+.volt-preview{min-width:0;width:100%}
+.volt-preview .volt-root{height:320px}
+.volt-preview .volt-status{margin:6px 0 0;font-size:10px;min-height:15px}
+.volt-preview[data-volt-mode=directory] .volt-root{pointer-events:none;border:0;border-radius:0}
+.volt-preview[data-volt-mode=directory] .volt-status{padding:4px 10px;margin:0;border-bottom:1px solid #8882}
+.volt-preview[data-volt-mode=directory] canvas{pointer-events:none}
+.directory-item:has(.volt-preview){display:block;text-decoration:none}
+.directory-item .directory-copy{display:block;text-decoration:none;color:inherit}
+.plan:has(.volt-preview),.code-preview:has(.volt-preview){overflow:hidden}
+.plan:has(.volt-preview) figcaption{margin-top:14px}

@@ -75,6 +75,81 @@ fn bounds(r: &Runtime, id: &str) -> [f32; 4] {
 }
 
 #[test]
+fn selectable_links_still_click_but_word_selection_and_drag_do_not_activate_them() {
+    let ui: Element<Vec<String>> = vstack![
+        rich_text([span("linked label").link("reference.rs")])
+            .key("link")
+            .on_link(|a: &mut Vec<String>, target| a.push(target)),
+        text("After the link").key("after"),
+        button("Control")
+            .key("control")
+            .on_click(|_: &mut Vec<String>| {}),
+    ]
+    .selectable(true)
+    .into();
+    let (doc, mut handlers) = ui.build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(400., 200., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    let mut targets = Vec::new();
+    let a = bounds(&r, "link");
+    let y = a[1] + 5.;
+    let x = a[0] + 7.;
+    for clicks in [1, 2, 3] {
+        r.pointer_down(x, y);
+        assert!(
+            !r.press_was_free(),
+            "legacy free-press semantics stay unchanged"
+        );
+        assert!(r.press_allows_text_selection());
+        r.text_select_press(x, y, clicks, false, &mut Metrics);
+        r.text_select_release();
+        let outcome = r
+            .pointer_up_outcome(x, y, &mut handlers, &mut targets)
+            .unwrap();
+        assert_eq!(outcome.activated, clicks == 1);
+        if clicks == 2 {
+            assert_eq!(r.selected_text(), Some("linked"));
+        }
+        if clicks == 3 {
+            assert_eq!(r.selected_text(), Some("linked label"));
+        }
+    }
+    // Both endpoints remain in the very same link: a release must not open it.
+    r.pointer_down(x, y);
+    r.text_select_press(x, y, 1, false, &mut Metrics);
+    r.text_select_drag(x + 7. * 4., y, &mut Metrics);
+    r.text_select_release();
+    assert_eq!(r.selected_text(), Some("inke"));
+    assert!(
+        !r.pointer_up_outcome(x + 7. * 4., y, &mut handlers, &mut targets)
+            .unwrap()
+            .activated
+    );
+    // Selection can extend from a link into the next paragraph as well.
+    r.pointer_down(a[0], y);
+    r.text_select_press(a[0], y, 1, false, &mut Metrics);
+    let b = bounds(&r, "after");
+    r.text_select_drag(b[0] + 7. * 5., b[1] + 5., &mut Metrics);
+    r.text_select_release();
+    assert_eq!(r.selected_text(), Some("linked label\nAfter"));
+    assert!(
+        !r.pointer_up_outcome(b[0], b[1] + 5., &mut handlers, &mut targets)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(targets, ["reference.rs"]);
+    // A captured button still owns its input, even inside a selectable parent.
+    let c = bounds(&r, "control");
+    r.pointer_down(c[0] + 3., c[1] + 3.);
+    assert!(!r.press_allows_text_selection());
+}
+
+#[test]
 fn drag_selects_across_paragraphs_and_reports_the_text() {
     let mut app = App::default();
     let (doc, mut h) = view(&app).build().unwrap().into_parts();
@@ -339,4 +414,79 @@ fn copy_popups_keep_the_authorized_selection_including_inside_a_dialog() {
         }
         assert_eq!(app.selected, ["Selected text"]);
     }
+}
+
+#[test]
+fn a_new_root_context_clears_selection_even_when_descendant_keys_are_reused() {
+    let build = |root: &str, words: &str| -> Element<App> {
+        vstack![text(words).key("same-message")]
+            .key(root)
+            .selectable(true)
+            .into()
+    };
+    let (d, h) = build("session-one", "First answer")
+        .build()
+        .unwrap()
+        .into_parts();
+    let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    let viewport = Viewport::new(400., 200., 1.).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
+    r.select_all_text(&mut Metrics);
+    assert_eq!(r.selected_text(), Some("First answer"));
+    let (d, next) = build("session-two", "Other answer")
+        .build()
+        .unwrap()
+        .into_parts();
+    r.replace_document(d, &next, &Bindings::default()).unwrap();
+    r.layout(viewport, &Bindings::default(), &mut Metrics)
+        .unwrap();
+    assert_eq!(r.selected_text(), None);
+}
+
+#[test]
+fn a_floating_surface_blocks_selection_of_read_only_text_behind_its_blank_space() {
+    let ui: Element<()> = zstack([
+        vstack([text("Underlying document text").key("under").into()])
+            .selectable(true)
+            .width(300.)
+            .height(160.)
+            .into(),
+        hstack([panel([])
+            .key("floating")
+            .width(120.)
+            .height(80.)
+            .background("#FFFFFF|#202020")
+            .into()])
+        .align(Align::Start)
+        .width(300.)
+        .height(160.)
+        .into(),
+    ])
+    .align(Align::Start)
+    .width(300.)
+    .height(160.)
+    .into();
+    let (doc, handlers) = ui.build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(300., 160., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    let a = bounds(&r, "under");
+    assert!(
+        !r.text_select_press(a[0] + 5., a[1] + 5., 3, false, &mut Metrics),
+        "text={a:?}, floating={:?}",
+        bounds(&r, "floating")
+    );
+    assert!(
+        r.selected_text().is_none(),
+        "blank popup must not select hidden document text"
+    );
+    // Still inside the same paragraph, but beyond the floating surface.
+    assert!(r.text_select_press(a[0] + 150., a[1] + 5., 3, false, &mut Metrics));
+    r.text_select_release();
+    assert_eq!(r.selected_text(), Some("Underlying document text"));
 }

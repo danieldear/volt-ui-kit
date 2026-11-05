@@ -150,6 +150,8 @@ struct SelectOptions<C, T> {
     enabled: bool,
     on_select: Option<Selected<C, T>>,
     on_open_change: Option<Opened<C>>,
+    surface: Option<String>,
+    motion: bool,
 }
 pub fn select<C, T>(items: impl IntoIterator<Item = SelectItem<T>>) -> Select<C, T> {
     let mut element = Element::new(Kind::Column);
@@ -163,6 +165,8 @@ pub fn select<C, T>(items: impl IntoIterator<Item = SelectItem<T>>) -> Select<C,
             enabled: true,
             on_select: None,
             on_open_change: None,
+            surface: None,
+            motion: true,
         },
     )
 }
@@ -185,6 +189,18 @@ impl<C, T> Select<C, T> {
     }
     pub fn on_open_change(mut self, callback: impl FnMut(&mut C, bool) + 'static) -> Self {
         self.1.on_open_change = Some(Rc::new(RefCell::new(callback)));
+        self
+    }
+    /// The open list's colour, `base-200` by default. Nothing behind it is
+    /// blurred, so over busy content give it an opaque one.
+    pub fn surface(mut self, color: impl Into<String>) -> Self {
+        self.1.surface = Some(color.into());
+        self
+    }
+    /// Built-in motion (default on): the list fades in while settling into
+    /// place and fades out on close. `false` shows it instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.1.motion = value;
         self
     }
 }
@@ -283,7 +299,13 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
         items.node.access_set_size = Some(select.1.items.len());
         items.node.padding = 6.;
         items.node.style.radius = Some(Rounding::Radius(10.));
-        items.node.style.background = Some(ColorToken::Base200.into());
+        items.node.style.background = Some(
+            select
+                .1
+                .surface
+                .take()
+                .unwrap_or_else(|| ColorToken::Base200.into()),
+        );
         items.node.style.border_color = Some(ColorToken::Border.into());
         items.node.style.border_width = Some(1.);
         items.node.effects.base.shadow = Some(super::tokens::shadow::lg());
@@ -356,6 +378,9 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
             Box::new(move |app: &mut C| (close.borrow_mut())(app, false)),
         );
         popup.node.overlay.as_mut().expect("popup metadata").anchor = Some(trigger_key);
+        if select.1.motion {
+            popup.node.effects.transition = Some(super::dialogs::popup_motion());
+        }
         select.0.children.push(popup);
         select.0
     }

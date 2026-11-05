@@ -7,7 +7,8 @@ your Rust closures when something happens.
 
 ## Add the dependency
 
-The crate is not on crates.io yet. Use a Git or path dependency:
+Version **0.5.0** is prepared in the repository but is not yet on crates.io.
+Use a Git or path dependency until it is published:
 
 ```toml
 [dependencies]
@@ -94,7 +95,12 @@ cargo volt dev my-app
 
 Templates: `minimal`, `navigation`, `mail`, `settings` and `agent`. Add
 `--desktop` for macOS menus and a tray item. `new` never overwrites an existing
-directory.
+directory. All but `minimal` start from `navigation_split_view`, the Catalog's
+own sidebar-and-detail shell, with a sidebar you resize by dragging its
+divider. Every template also uses the Catalog's colours:
+its `theme()` function picks `Palette::zinc_light()` or `Palette::zinc_dark()`
+to match the system appearance (see
+[Built-in palettes](styling-and-themes.md#built-in-palettes)).
 
 `cargo volt dev` watches your sources, rebuilds on save and restarts the app
 after a successful build; a failed build leaves the running app alone. Apps that
@@ -103,16 +109,34 @@ state and window position across restarts.
 
 ## Explore the components
 
-The Catalog example shows every component with live previews, source code,
-API tables, themes and a working dashboard:
+The Catalog example shows components with live previews, source code,
+API tables, themes and a working dashboard. From a repository checkout:
 
 ```sh
-cargo run --release --locked --features native-gpu,native-desktop --example catalog
+./scripts/run_catalog.sh
 ```
 
-Useful flags: `--page dashboard`, `--theme light|dark`, `--accent violet`.
+This is the recommended full-demo path: it enables GPU, desktop integrations
+and notifications, builds and signs an identified macOS `.app`, registers it
+before launch, and opens it. Notification permission is requested only when
+you click its button. The launcher requires Cargo and Python 3; macOS also
+needs the command-line tools. Use `--check` to build/verify without opening.
+The script is a repository tool, not part of the crates.io package.
+
+For targeted component development or snapshot flags, launch directly:
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
+```
+
+That direct command does **not** package the app or enable the notification
+adapter; use the full launcher for the notification demo. `--features native`
+is the software-only alternative. See the [launch-mode table](../examples/README.md#catalog-launch-modes).
+
+Useful direct flags: `--page dashboard`, `--theme light|dark`, `--accent violet`.
 Page names are the sidebar titles in lowercase with hyphens, for example
-`--page theme-editor` or `--page form-inputs`.
+`--page theme-editor` or `--page form-inputs`. These flags are not accepted by
+the launcher script, which intentionally only accepts `--check` and `--help`.
 
 ## Platform support
 
@@ -121,7 +145,9 @@ Page names are the sidebar titles in lowercase with hyphens, for example
 | macOS 11+ | Primary platform; tested on Apple silicon with Metal. |
 | Windows | Cross-compilation checked; headless CI configured (DX12). Native runtime not yet validated. |
 | Linux | Cross-compilation checked; headless CI configured (Vulkan, X11/Wayland). Native runtime not yet validated. |
-| WebAssembly | The core (`rust-ui`) compiles for `wasm32-unknown-unknown`; there is no web host yet. |
+| iOS | [Experimental reusable host/template](ios-prototype.md): Rust screens without per-app Swift glue. Simulator workflows tested; physical-device GPU acceptance pending. |
+| Android | [Experimental host/template](android-prototype.md): Rust UI + shared SurfaceView/JNI/native editor; APK/emulator validation separate from hardware GPU acceptance. |
+| WebAssembly | [Experimental browser host](web-prototype.md): live Rust buttons, tabs, forms and scrolling with WebGPU/software rendering; not full web parity. |
 
 ## Next
 

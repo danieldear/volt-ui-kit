@@ -51,3 +51,31 @@ fn required_renderer_and_unsupported_services_report_missing_capabilities() {
         cfg!(all(target_os = "macos", feature = "native-desktop"))
     );
 }
+
+#[test]
+fn tray_visibility_is_opt_in_and_does_not_change_existing_options() {
+    let app = Application::new("Tray", true, |_| text("Monitor").into())
+        .window_visibility_from_state(|hidden| !*hidden);
+    assert!(app.validate().is_ok());
+    assert_eq!(app.options().theme, ThemeMode::System);
+}
+
+#[test]
+fn reveal_rejects_relative_paths_before_opening_any_os_ui() {
+    assert_eq!(
+        volt_ui_kit::native::file_dialog::reveal_file(std::path::Path::new("relative")),
+        Err(volt_ui_kit::native::file_dialog::FileDialogError::InvalidOptions)
+    );
+}
+
+#[cfg(feature = "native")]
+#[test]
+fn trash_rejects_relative_root_and_parent_traversal_without_os_actions() {
+    use volt_ui_kit::native::file_dialog::{move_to_trash, FileDialogError};
+    for path in ["relative", "/", "/tmp/../etc"] {
+        assert_eq!(
+            move_to_trash(std::path::Path::new(path)),
+            Err(FileDialogError::InvalidOptions)
+        );
+    }
+}

@@ -14,3 +14,21 @@
 *.mobileprovision
 *.provisionprofile
 __pycache__/
+
+# Experimental iOS host local build state.
+/examples/ios/rust/target/
+/examples/ios/.build/
+/examples/ios/**/xcuserdata/
+
+/crates/volt-ui-kit-mobile/target/
+/crates/volt-ui-kit-mobile/apple/.build/
+/crates/volt-ui-kit-mobile/android/.gradle/
+/crates/volt-ui-kit-mobile/android/build/
+
+# Browser host build products; source and lockfiles stay tracked.
+/crates/volt-ui-kit-web/target/
+/examples/web/target/
+/docs/live/pkg/
+/docs/live/volt-host.js
+
+/docs/live/text-input.js

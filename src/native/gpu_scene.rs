@@ -58,7 +58,7 @@ pub fn estimate_gpu_scene(
 }
 
 #[derive(Default, Debug, Clone, Copy)]
-pub(super) struct SceneStats {
+pub(crate) struct SceneStats {
     /// Conservative estimate of Vello blend-spill slots this scene needs.
     pub spill_slots: u32,
     /// Name of the first Vello buffer this frame would overflow, if any.
@@ -89,7 +89,7 @@ struct CachedGlyph {
     used: u64,
 }
 #[derive(Default)]
-pub(super) struct GpuSceneEncoder {
+pub(crate) struct GpuSceneEncoder {
     pub scene: Scene,
     stats: SceneStats,
     images: BTreeMap<usize, CachedImage>,
@@ -154,21 +154,26 @@ impl AsRef<[u8]> for FontBytes {
 }
 /// Supplies GPU-resident images. Without one, images are uploaded from CPU
 /// memory every frame (Vello rebuilds its atlas per frame).
-pub(super) type ImageResolver<'a, 'b> =
+pub(crate) type ImageResolver<'a, 'b> =
     &'a mut (dyn FnMut(&Image) -> Result<ImageData, String> + 'b);
 /// Vello keeps this many nested layers on chip; deeper tiles spill.
 const BLEND_STACK_SPLIT: u8 = 4;
 /// Vello's fixed blend spill buffer holds 4096 tile-layer slots per frame;
 /// exceeding it silently drops the whole frame. Keep a safety margin.
-pub(super) const SPILL_SLOT_LIMIT: u32 = 3584;
+pub(crate) const SPILL_SLOT_LIMIT: u32 = 3584;
 const IMAGE_BUDGET: usize = 64 * 1024 * 1024;
 const GLYPH_BUDGET: usize = 16 * 1024 * 1024;
 /// macOS draws text with font smoothing: each glyph outline is dilated
 /// slightly, so text looks heavier than its plain coverage. Without it,
 /// Volt text reads thin and light next to native apps. The amounts follow
 /// Pathfinder's emulation of CoreText (per side, in device pixels, up to
-/// 0.3px, none above 72px). `VOLT_UI_TEXT_DARKENING=0` turns it off.
-fn stem_darkening(size: f32) -> Option<vello::FontEmbolden> {
+/// 0.3px, none above 72px), weighed by the text's colour as CoreText does:
+/// it blends in linear light, so light text on dark gains more than dark
+/// text on light. Measured against CoreText at 2x (JetBrains Mono 13pt),
+/// one amount for every colour drew dark text 14% heavier and light text 5%
+/// lighter than macOS; `colour_weight` brings both within a few percent.
+/// `VOLT_UI_TEXT_DARKENING=0` turns it off.
+fn stem_darkening(size: f32, color: [f32; 4]) -> Option<vello::FontEmbolden> {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let enabled = *ENABLED.get_or_init(|| {
         cfg!(target_os = "macos")
@@ -177,17 +182,24 @@ fn stem_darkening(size: f32) -> Option<vello::FontEmbolden> {
     if !enabled || !(1. ..=72.).contains(&size) {
         return None;
     }
-    let x = (0.0121 * size).min(0.3);
-    let y = (0.0121 * 1.25 * size).min(0.3);
+    let k = colour_weight(color);
+    let x = (0.0121 * size).min(0.3) * k;
+    let y = (0.0121 * 1.25 * size).min(0.3) * k;
     Some(vello::FontEmbolden::new(vello::kurbo::Diagonal2::new(
         f64::from(x),
         f64::from(y),
     )))
 }
+/// How much of the dilation a text colour gets, by its luminance: about
+/// 0.46 for near-black text, 1.23 for near-white.
+fn colour_weight(c: [f32; 4]) -> f32 {
+    let luminance = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    0.33 + 0.975 * luminance.clamp(0., 1.)
+}
 fn byte(v: f32) -> u8 {
     (v.clamp(0., 1.) * 255.).round() as u8
 }
-pub(super) fn color(c: [f32; 4]) -> Color {
+pub(crate) fn color(c: [f32; 4]) -> Color {
     Color::from_rgba8(byte(c[0]), byte(c[1]), byte(c[2]), byte(c[3]))
 }
 impl GpuSceneEncoder {
@@ -314,7 +326,7 @@ fn opacity_layer_bounds(batches: &[PaintBatch<Shape, Glyph>]) -> Vec<Rect> {
     out
 }
 impl GpuSceneEncoder {
-    pub(super) fn reject_frame(&mut self, reason: &'static str) {
+    pub(crate) fn reject_frame(&mut self, reason: &'static str) {
         // Do not retain the previous frame's resources/statistics on fallback.
         self.scene.reset();
         self.bands.clear();
@@ -1055,7 +1067,7 @@ impl GpuSceneEncoder {
         // Retina text keeps its true outlines, as native macOS text does.
         let hint = painter.gpu_viewport().scale < 1.5;
         for (run, font) in runs.iter().zip(&fonts) {
-            let darken = stem_darkening(run.size);
+            let darken = stem_darkening(run.size, run.color);
             for &(_, x, y) in &run.glyphs {
                 let s = f64::from(run.size);
                 self.note(Rect::new(

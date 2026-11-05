@@ -16,22 +16,27 @@ fn invalid<C>(message: &str) -> Element<C> {
 
 /// A header button that shows or hides its content.
 pub struct Collapsible<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     title: String,
     content: Element<C>,
     open: bool,
     on_toggle: Option<Change<C>>,
+    motion: bool,
 }
 pub fn collapsible<C>(title: impl Into<String>, content: impl Into<Element<C>>) -> Collapsible<C> {
     Collapsible {
+        spacing: RootSpacing::default(),
         key: None,
         title: title.into(),
         content: content.into(),
         open: false,
         on_toggle: None,
+        motion: true,
     }
 }
 impl<C> Collapsible<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -45,6 +50,11 @@ impl<C> Collapsible<C> {
         self.on_toggle = Some(Box::new(f));
         self
     }
+    /// Built-in motion (default on). `false` shows and hides it instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.motion = value;
+        self
+    }
 }
 /// The shared header + body composition used by collapsibles and accordions.
 fn section<C>(
@@ -54,6 +64,7 @@ fn section<C>(
     open: bool,
     toggle: Click<C>,
     divider: bool,
+    motion: bool,
 ) -> Element<C> {
     let mut header: Element<C> = button(title)
         .key(format!("{key}-trigger"))
@@ -66,15 +77,15 @@ fn section<C>(
     header.node.access_expanded = Some(open);
     let mut parts = vec![header];
     if open {
-        parts.push(
+        parts.push(super::dialogs::with_motion(
             vstack![content]
                 .key(format!("{key}-content"))
                 .padding(10., Edge::Horizontal)
                 .padding(4., Edge::Top)
-                .padding(12., Edge::Bottom)
-                .transition(Transition::slide(0., -6.).duration_ms(160))
-                .into(),
-        );
+                .padding(12., Edge::Bottom),
+            motion,
+            Transition::slide(0., -6.).duration_ms(160),
+        ));
     }
     let mut column = vstack(parts).key(key.to_owned()).align(Align::Stretch);
     if divider {
@@ -94,14 +105,15 @@ impl<C: 'static> From<Collapsible<C>> for Element<C> {
             return invalid("collapsible requires on_toggle");
         };
         let open = c.open;
-        section(
+        c.spacing.apply(section(
             &key,
             c.title,
             c.content,
             open,
             Box::new(move |app: &mut C| toggle(app, !open)),
             false,
-        )
+            c.motion,
+        ))
     }
 }
 
@@ -110,24 +122,29 @@ impl<C: 'static> From<Collapsible<C>> for Element<C> {
 type Expanded<C> = Rc<RefCell<dyn FnMut(&mut C, Vec<usize>)>>;
 /// Stacked collapsible sections. Single mode (default) keeps one open.
 pub struct Accordion<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     sections: Vec<(String, Element<C>)>,
     expanded: Vec<usize>,
     multiple: bool,
     on_change: Option<Expanded<C>>,
+    motion: bool,
 }
 pub fn accordion<C>(
     sections: impl IntoIterator<Item = (impl Into<String>, Element<C>)>,
 ) -> Accordion<C> {
     Accordion {
+        spacing: RootSpacing::default(),
         key: None,
         sections: sections.into_iter().map(|(t, c)| (t.into(), c)).collect(),
         expanded: Vec::new(),
         multiple: false,
         on_change: None,
+        motion: true,
     }
 }
 impl<C> Accordion<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -140,6 +157,11 @@ impl<C> Accordion<C> {
     /// Allow several sections open at once.
     pub fn multiple(mut self, value: bool) -> Self {
         self.multiple = value;
+        self
+    }
+    /// Built-in motion (default on). `false` shows and hides it instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.motion = value;
         self
     }
     /// Called with the next set of open indices.
@@ -173,7 +195,7 @@ impl<C: 'static> From<Accordion<C>> for Element<C> {
         if a.sections.is_empty() {
             return invalid("accordion requires at least one section");
         }
-        let (expanded, multiple) = (a.expanded, a.multiple);
+        let (expanded, multiple, motion) = (a.expanded, a.multiple, a.motion);
         let rows: Vec<Element<C>> = a
             .sections
             .into_iter()
@@ -189,10 +211,11 @@ impl<C: 'static> From<Accordion<C>> for Element<C> {
                         (change.borrow_mut())(app, toggled(&current, i, multiple))
                     }),
                     true,
+                    motion,
                 )
             })
             .collect();
-        vstack(rows).key(key).into()
+        a.spacing.apply(vstack(rows).key(key).into())
     }
 }
 
@@ -209,6 +232,7 @@ pub enum DrawerSide {
 }
 /// A modal panel attached to a window edge (a "sheet" in some libraries).
 pub struct Drawer<C> {
+    spacing: RootSpacing,
     key: Option<String>,
     content: Element<C>,
     title: Option<String>,
@@ -216,9 +240,11 @@ pub struct Drawer<C> {
     size: f32,
     open: bool,
     on_dismiss: Option<Click<C>>,
+    motion: bool,
 }
 pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
     Drawer {
+        spacing: RootSpacing::default(),
         key: None,
         content: content.into(),
         title: None,
@@ -226,9 +252,11 @@ pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
         size: 360.,
         open: false,
         on_dismiss: None,
+        motion: true,
     }
 }
 impl<C> Drawer<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -255,19 +283,22 @@ impl<C> Drawer<C> {
         self.on_dismiss = Some(Box::new(f));
         self
     }
+    /// Built-in motion (default on). `false` shows and hides it instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.motion = value;
+        self
+    }
 }
 impl<C: 'static> From<Drawer<C>> for Element<C> {
     fn from(d: Drawer<C>) -> Self {
         let Some(key) = d.key.filter(|k| !k.is_empty()) else {
             return invalid("drawer requires a key");
         };
+        // The stable slot keeps the departing card painting like the live
+        // portal (last and unclipped) while it slides out.
+        let slot = Some(format!("{key}-slot"));
         if !d.open {
-            return zstack![]
-                .key(key)
-                .width(0.)
-                .height(0.)
-                .scroll_passthrough(true)
-                .into();
+            return super::dialogs::overlay_slot(slot, None);
         }
         let Some(dismiss) = d.on_dismiss else {
             return invalid("open drawer requires on_dismiss");
@@ -321,22 +352,25 @@ impl<C: 'static> From<Drawer<C>> for Element<C> {
         .border_sides(sides)
         .border_color(ColorToken::Border)
         .border_width(1.)
-        .shadow(tokens::shadow::xl())
-        .transition(Transition::slide(slide[0], slide[1]).duration_ms(220));
+        .shadow(tokens::shadow::xl());
         card = if horizontal {
             card.width(d.size)
         } else {
             card.height(d.size)
         };
         let mut root = super::dialogs::overlay_scope(
-            card.into(),
+            d.spacing.apply(super::dialogs::with_motion(
+                card,
+                d.motion,
+                Transition::slide(slide[0], slide[1]).duration_ms(220),
+            )),
             key,
             OverlayKind::Modal,
             Box::new(move |app: &mut C| (dismiss.borrow_mut())(app)),
         );
         root.node.flow = Some(flow);
         root.node.align = Align::Stretch;
-        root
+        super::dialogs::overlay_slot(slot, Some(root))
     }
 }
 
@@ -390,22 +424,27 @@ type ToastEvent<C> = Rc<RefCell<dyn FnMut(&mut C, u64)>>;
 /// a `zstack!`; the page underneath stays interactive. Timing is the app's:
 /// remove a toast after a delay (e.g. via `UiSender`) for auto-dismissal.
 pub struct Toaster<C> {
+    spacing: RootSpacing,
     key: String,
     toasts: Vec<Toast>,
     position: ToastPosition,
     on_dismiss: Option<ToastEvent<C>>,
     on_action: Option<ToastEvent<C>>,
+    motion: bool,
 }
 pub fn toaster<C>(toasts: &[Toast]) -> Toaster<C> {
     Toaster {
+        spacing: RootSpacing::default(),
         key: "toaster".into(),
         toasts: toasts.iter().rev().take(5).rev().cloned().collect(),
         position: ToastPosition::BottomRight,
         on_dismiss: None,
         on_action: None,
+        motion: true,
     }
 }
 impl<C> Toaster<C> {
+    root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = key.into();
         self
@@ -416,6 +455,12 @@ impl<C> Toaster<C> {
     }
     pub fn on_dismiss(mut self, f: impl FnMut(&mut C, u64) + 'static) -> Self {
         self.on_dismiss = Some(Rc::new(RefCell::new(f)));
+        self
+    }
+    /// Built-in motion (default on): toasts rise in and fade out. `false`
+    /// shows and removes them instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.motion = value;
         self
     }
     pub fn on_action(mut self, f: impl FnMut(&mut C, u64) + 'static) -> Self {
@@ -432,6 +477,7 @@ impl<C: 'static> From<Toaster<C>> for Element<C> {
         if t.toasts.iter().any(|x| x.action.is_some()) && t.on_action.is_none() {
             return invalid("toasts with actions require on_action");
         }
+        let motion = t.motion;
         let cards: Vec<Element<C>> = t
             .toasts
             .into_iter()
@@ -478,7 +524,7 @@ impl<C: 'static> From<Toaster<C>> for Element<C> {
                     .flow(Flow::Center)
                     .into(),
                 );
-                hstack(row)
+                let card = hstack(row)
                     .key(format!("{key}-{id}"))
                     .width(340.)
                     .gap(12., Axis::Horizontal)
@@ -488,9 +534,12 @@ impl<C: 'static> From<Toaster<C>> for Element<C> {
                     .background(ColorToken::Base200)
                     .border_color(ColorToken::Border)
                     .border_width(1.)
-                    .shadow(tokens::shadow::lg())
-                    .transition(Transition::slide(0., 12.).duration_ms(200))
-                    .into()
+                    .shadow(tokens::shadow::lg());
+                super::dialogs::with_motion(
+                    card,
+                    motion,
+                    Transition::slide(0., 12.).duration_ms(200),
+                )
             })
             .collect();
         let flow = match t.position {
@@ -500,15 +549,31 @@ impl<C: 'static> From<Toaster<C>> for Element<C> {
             ToastPosition::BottomCenter => Flow::Bottom,
             ToastPosition::BottomLeft => Flow::BottomLeft,
         };
-        zstack![vstack(cards)
-            .key(format!("{key}-stack"))
-            .gap(8., Axis::Vertical)
-            .scroll_passthrough(true)]
-        .key(key)
-        .flow(flow)
-        .padding(16., Edge::All)
-        .scroll_passthrough(true)
-        .into()
+        // Padding belongs to the viewport overlay; gap belongs to the cards,
+        // not the outer ZStack (whose layout intentionally ignores gaps).
+        let stack_spacing = RootSpacing {
+            gap: t.spacing.gap,
+            ..RootSpacing::default()
+        };
+        let overlay_spacing = RootSpacing {
+            padding: t.spacing.padding,
+            ..RootSpacing::default()
+        };
+        let stack = stack_spacing.apply(
+            vstack(cards)
+                .key(format!("{key}-stack"))
+                .gap(8., Axis::Vertical)
+                .scroll_passthrough(true)
+                .into(),
+        );
+        overlay_spacing.apply(
+            zstack![stack]
+                .key(key)
+                .flow(flow)
+                .padding(16., Edge::All)
+                .scroll_passthrough(true)
+                .into(),
+        )
     }
 }
 
@@ -584,27 +649,39 @@ type Run<C, T> = Rc<RefCell<dyn FnMut(&mut C, T)>>;
 type Access<C, S> = Rc<dyn Fn(&mut C) -> &mut S>;
 /// A searchable modal list of commands (⌘K). Enter runs the best match.
 pub struct CommandPalette<C, T> {
+    spacing: RootSpacing,
     key: String,
     commands: Vec<Command<T>>,
     snapshot: CommandPaletteState,
     state: Option<Access<C, CommandPaletteState>>,
     on_run: Option<Run<C, T>>,
     placeholder: String,
+    surface: Option<String>,
+    motion: bool,
 }
 pub fn command_palette<C, T>(
     commands: impl IntoIterator<Item = Command<T>>,
     state: &CommandPaletteState,
 ) -> CommandPalette<C, T> {
     CommandPalette {
+        spacing: RootSpacing::default(),
         key: "command-palette".into(),
         commands: commands.into_iter().collect(),
         snapshot: state.clone(),
         state: None,
         on_run: None,
         placeholder: "Type a command or search…".into(),
+        surface: None,
+        motion: true,
     }
 }
 impl<C, T> CommandPalette<C, T> {
+    root_spacing_methods!();
+    /// Built-in motion (default on). `false` opens and closes it instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.motion = value;
+        self
+    }
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = key.into();
         self
@@ -621,6 +698,12 @@ impl<C, T> CommandPalette<C, T> {
         self.placeholder = value.into();
         self
     }
+    /// The card's colour, `base-200` by default. Nothing behind the card is
+    /// blurred, so over busy content give it an opaque one.
+    pub fn surface(mut self, color: impl Into<String>) -> Self {
+        self.surface = Some(color.into());
+        self
+    }
 }
 impl<C: 'static, T: Clone + 'static> From<CommandPalette<C, T>> for Element<C> {
     fn from(p: CommandPalette<C, T>) -> Self {
@@ -628,13 +711,9 @@ impl<C: 'static, T: Clone + 'static> From<CommandPalette<C, T>> for Element<C> {
         let (Some(state), Some(run)) = (p.state, p.on_run) else {
             return invalid("command_palette requires state(..) and on_run(..)");
         };
+        let slot = Some(format!("{key}-slot"));
         if !p.snapshot.open {
-            return zstack![]
-                .key(key)
-                .width(0.)
-                .height(0.)
-                .scroll_passthrough(true)
-                .into();
+            return super::dialogs::overlay_slot(slot, None);
         }
         // Rank, then keep group order by first appearance.
         let mut hits: Vec<(u8, usize)> = p
@@ -752,21 +831,31 @@ impl<C: 'static, T: Clone + 'static> From<CommandPalette<C, T>> for Element<C> {
             .gap(8., Axis::Vertical)
             .padding(10., Edge::All)
             .rounded(14.)
-            .background(ColorToken::Base200)
+            .background(
+                p.surface
+                    .clone()
+                    .unwrap_or_else(|| ColorToken::Base200.into()),
+            )
             .border_color(ColorToken::Border)
             .border_width(1.)
-            .shadow(tokens::shadow::xl2())
-            .transition(Transition::slide(0., -8.).duration_ms(160));
+            .shadow(tokens::shadow::xl2());
         let dismiss = state;
         let mut root = super::dialogs::overlay_scope(
-            card.into(),
+            p.spacing.apply(super::dialogs::with_motion(
+                card,
+                p.motion,
+                Transition::slide(0., -8.).duration_ms(160),
+            )),
             key,
             OverlayKind::Modal,
             Box::new(move |app: &mut C| close(dismiss(app))),
         );
         root.node.flow = Some(Flow::Top);
         root.node.responsive.padding[0] = Some(96f32.into());
-        root
+        if p.motion {
+            root.node.effects.transition = Some(super::dialogs::overlay_fade());
+        }
+        super::dialogs::overlay_slot(slot, Some(root))
     }
 }
 

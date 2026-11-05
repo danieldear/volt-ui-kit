@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Live Volt components: actual Rust UI running in WebAssembly with WebGPU or software rendering.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<title>Live Rust components — Volt UI Kit</title>
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="live.css">
+<script type="module" src="live.js"></script>
+</head><body><main class="live-page" id="main">
+<a class="live-back" href="../index.html">← Volt UI Kit</a>
+<div class="live-intro"><p class="eyebrow">EXPERIMENTAL / WEB HOST</p><h1>Try it.<br>Don’t just look at it.</h1><p class="lead">Real Volt components, compiled from Rust. Click, type, switch themes and scroll. The browser hosts the canvas; Volt does the work.</p></div>
+<div class="live-toolbar"><label>Renderer <select id="renderer"><option value="gpu">WebGPU preferred</option><option value="software">Software / Canvas2D</option></select></label><button id="restart" type="button">Reset demo</button><output id="backend">Not started</output></div>
+<div class="volt-root" id="demo"><canvas aria-hidden="true"></canvas><div class="volt-semantics" aria-label="Live Volt component demo"></div></div>
+<p class="volt-status" id="status" role="status" aria-live="polite">Loading the Rust runtime…</p>
+<noscript><p>This interactive demo needs JavaScript to load WebAssembly. The <a href="../reference/index.html">component reference</a> and native Catalog remain available.</p></noscript>
+<p class="live-note">The components and callbacks are Rust—not HTML recreations. A small browser adapter provides text input and accessibility semantics. WebGPU needs HTTPS or localhost and a compatible browser/device; software rendering is available explicitly. This prototype does not provide native menus, tray, desktop blur or file-system access.</p>
+<p class="live-note">Typography uses the bundled, open-source <a href="OFL.txt">Inter font</a>. SF fonts are not redistributed. No data is stored or sent by the form.</p>
+</main></body></html>

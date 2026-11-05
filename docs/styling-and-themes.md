@@ -8,7 +8,7 @@ them.
 
 | Area | Modifiers |
 | --- | --- |
-| Text | `font_family`, `font_size`, `font_weight`, `italic`, `color`, `line_height`, `letter_spacing`, `text_align`, `uppercase`, `underline`, `strikethrough`, `max_lines` (ellipsis), `no_wrap` |
+| Text | `font_family`, `font_size`, `text_scale`, `font_weight`, `italic`, `color`, `line_height`, `letter_spacing`, `text_align`, `uppercase`, `underline`, `strikethrough`, `max_lines` (ellipsis), `no_wrap` |
 | Surface | `background`, `background_gradient`, `border_color`, `border_width`, `border_style`, `border_sides`, `rounded`, `rounded_on` |
 | Effects | `shadow`, `glow`, `opacity`, `hover_style`, `pressed_style`, `focus_style`, `disabled_style` |
 | Interaction | `accent_color`, `cursor`, `enabled` |
@@ -43,6 +43,41 @@ their text); `Primary`, `Secondary`, `Accent` and `Neutral`; the status colours
 `Info`, `Success`, `Warning` and `Error`; each with a matching `*Content` role
 for text drawn on it; plus `Border` and `Muted`. `ColorToken::Primary.alpha(15)`
 is the role at 15% opacity, which keeps tints correct in both modes.
+
+## Built-in palettes
+
+`Palette::light()` and `Palette::dark()` are the kit's default, a warm palette
+with an amber accent, which `Application` uses unless you choose another.
+`Palette::zinc_light()` and `Palette::zinc_dark()` are the Catalog's neutral
+Zinc palette: white or near-black surfaces in zinc greys, with the text colour
+as the primary. Apps made with `cargo volt new` start with Zinc.
+`.with_accent(rgba)` gives Zinc a coloured primary on the same neutral
+surfaces, which is how the Catalog's Blue, Violet, Rose, Green and Orange
+themes are made.
+
+`.palette(..)` sets one palette for both appearances. To follow the system's
+light or dark mode, choose the palette in `.theme_with(..)`:
+
+```rust,no_run
+use volt_ui_kit::{native::Application, ui::prelude::*};
+
+fn view(_: &()) -> Element<()> {
+    text("Hello").color(ColorToken::BaseContent).into()
+}
+
+fn theme(_: &(), system: ThemeMode) -> UiTheme {
+    let palette = if system == ThemeMode::Dark {
+        Palette::zinc_dark()
+    } else {
+        Palette::zinc_light()
+    };
+    UiTheme::from_palette(palette.with_accent([0.49, 0.23, 0.93, 1.]))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Application::new("Zinc", (), view).theme_with(theme).run()
+}
+```
 
 ## Custom themes
 
@@ -102,6 +137,11 @@ println!("registered {families:?}");
 
 Up to 64 font files (256 MiB in total) can be registered.
 
+
+`text_scale(f)` multiplies every font size beneath it, explicit sizes
+included, and nested scales multiply (clamped to 0.5–2). Put it on the root
+to offer an interface text-size setting; code views keep their own size.
+
 ## Effects and interaction states
 
 ```rust
@@ -125,22 +165,137 @@ save.build()?;
 - State styles apply in the order focus, hover, pressed; disabled controls use
   `disabled_style` instead. Focus rings appear only after keyboard navigation.
 
+
+State styles accept the same colour values as static ones: `#RRGGBB[AA]`, a
+token such as `@primary/80`, or a `"light|dark"` pair, so a hover follows the
+appearance in effect. Shadows take pairs too.
+
 ## Animation and transitions
 
-- `animate_on(Interaction::Hover, Animation::ease_out().duration_ms(120))`
-  animates the change into a state style.
-- `.animation(..)` animates appearance changes after recomposition, for
-  elements with a stable key.
-- `.transition(Transition::fade().duration_ms(180))` fades an element in and out
-  as it is added and removed; `Transition::slide(dx, dy)` slides it.
-- `Ambient::pulse(0.4)` pulses opacity, for skeleton loaders.
-- Curves: `linear`, `ease_out`, `ease_in_out` and `Easing::CubicBezier(..)`,
-  with optional `delay_ms`.
+Use motion to explain a state change, not as a permanent decoration. These
+animations use the host's monotonic clock, never call `view` or your callbacks,
+and return to idle after finishing. All values are logical pixels.
 
-Colours, borders and opacity interpolate. Animation never calls `view` or
-your callbacks, and the app goes back to idle when motion ends.
-`Application::reduced_motion(true)` (or `VOLT_UI_REDUCED_MOTION=1`) jumps
-straight to final states.
+```rust
+use volt_ui_kit::ui::prelude::*;
+let task: Element<()> = panel![text("Ready for review")].key("task")
+    .offset(64., 0.)
+    .animation(Animation::spring().duration_ms(520))
+    .into();
+task.build().unwrap();
+```
+
+`.animation(..)` interpolates appearance and offset changes for a stable key.
+`animate_on(Interaction::Hover, ..)` (also Pressed or Focus) supplies timing for
+interaction patches. Interruptions start from the current painted value. Only
+position overshoots; opacity, colors and border widths stay bounded. Existing
+linear/ease-in/ease-out/ease-in-out and `Easing::CubicBezier(..)` curves remain
+available. Explicit `.easing(..)` replaces any spring timing on that animation.
+
+`Animation::spring_with(Spring::new().damping_ratio(0.7))` tunes bounce. The valid
+damping range is 0.4..=2, default 0.8; 1 is critically damped. This is a finite,
+normalized damped response: duration controls settling time, and interruptions
+preserve position **not physical velocity**. It is not a layout/sizing animation
+or a physics simulation. Small offsets suit controls; larger movement is best
+kept to decorative or noninteractive content because hit targets do not move.
+
+### Entrances, exits and stagger
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let replay_revision = 0u64; // owned by the application
+let rows: Element<()> = vstack((0..3).map(|index| -> Element<()> {
+    text(format!("Update {}", index + 1)).key(format!("update-{index}"))
+        .transition(Transition::slide(0., 10.)
+            .animation(Animation::ease_out().duration_ms(320))
+            .stagger(index, 70))
+        .transition_revision(replay_revision)
+        .into()
+})).into();
+rows.build().unwrap();
+```
+
+- `Transition::fade()` fades a keyed subtree in/out; `slide(dx, dy)` adds an
+  offset. `.animation(Animation)` shares timing configuration, including springs.
+- `.delay_ms(..)` waits before starting. `.stagger(index, interval_ms)` adds
+  `index * interval` to that delay on either `Animation` or `Transition`.
+  A transition uses this timing on both entrance and exit. Invalid or overflowing
+  configurations are rejected during build; values never wrap to a short delay.
+- Animation durations are at most 10 seconds and delays at most 60 seconds.
+  Scheduling covers the entire delay plus duration, including zero-duration
+  delayed changes. Overshooting curves do not end a track prematurely.
+- `.transition_revision(revision)` replays an entrance when the revision changes
+  without changing identity, editor selection or focus. The same revision stays
+  stable across ordinary recompositions. Increment it in an explicit action;
+  never generate it from the clock inside `view`.
+- Departing subtrees are paint-only snapshots. Removed controls cannot activate
+  through pointer, keyboard or accessibility, even while their exit is visible.
+- `.offset`, slide and ambient effects move pixels, **not layout or hit targets**.
+  No scale/rotation transforms, layout tweening or automatic FLIP are implied.
+
+### Built-in component motion
+
+Overlay and disclosure components animate by default. Timing comes from the
+`tokens::motion` presets: roughly 100–220 ms, ease-out, no overshoot.
+
+| Component | Built-in motion |
+| --- | --- |
+| `dialog` | Backdrop and card fade in while the card rises 8 px; both fade out on close |
+| `command_palette` | Backdrop fades; the card settles 8 px down into place |
+| `popover`, `menu`, `context_menu`, `select` | Fade in while settling 4 px into place; fade out on close |
+| `tooltip`, `hover_card` | Quick fade in; hides instantly |
+| `drawer` | Slides in from its edge and back out |
+| `toaster`, `collapsible`, `accordion`, `carousel` | Toasts rise in, sections slide open, slides cross-fade |
+
+Each of these takes `.motion(false)` to open and close instantly.
+`dialog(..).transition(..)` replaces the card's rise with your own timing.
+Choose the level for the whole app once, usually in `main`:
+
+```rust
+use volt_ui_kit::{native::Application, ui::prelude::*};
+fn view(_: &()) -> Element<()> {
+    dialog(text("Saved"))
+        .key("saved")
+        .open(true)
+        .motion(false) // this dialog alone opens and closes instantly
+        .on_dismiss(|_| {})
+        .into()
+}
+// Motion::None turns every animation off, including the app's own.
+let app = Application::new("My app", (), view).motion(Motion::Default);
+# drop(app);
+```
+
+`Motion::None` is the same switch as `reduced_motion(true)`: it also stops the
+app's own `.transition(..)`, `.animation(..)` and `Ambient` effects.
+`VOLT_UI_REDUCED_MOTION=1` and the macOS Reduce Motion setting win over
+`Motion::Default`. The Linux and Windows system settings are not read yet.
+A closing overlay leaves a paint-only copy that fades out above the window
+like the open overlay, and never takes input. Data charts do not animate yet.
+
+### Reduced motion and idle
+
+`Application::motion(Motion::None)` (or `reduced_motion(true)`),
+`VOLT_UI_REDUCED_MOTION=1`, or `Runtime::set_reduced_motion(true)` in a custom
+host settles finite transitions immediately and
+stops decorative ambient motion. Delayed-only scenes sleep until the first
+useful update rather than render unchanged frames; custom hosts can use
+`Runtime::animation_wait()` (None for idle, zero for frame pacing, or a positive
+delay). The macOS native host also samples the system
+Reduce Motion preference at startup. It does not monitor live system preference
+changes yet. Unfocused, occluded or minimized native windows already settle
+animations rather than requesting invisible frames.
+
+`Ambient::pulse(0.4)`, `float(..)` and canvas-only `spin()` are intentionally
+continuous while visible; opt into them only where useful and remove loading
+indicators when finished. They stop under reduced motion. Shadows and glows
+remain optional; geometry stays fixed during alpha/color animation so native
+blur masks can be reused.
+
+The Catalog's **Effects & motion** page has Smooth/Spring/Instant comparison,
+reversible task motion, a replayable three-step sequence, and hover/press/focus
+feedback. Instant previews are local to those demos; the launch/runtime reduced
+motion controls apply to the entire app.
 
 ## Images
 

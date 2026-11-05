@@ -27,7 +27,10 @@ impl RendererPreference {
 }
 pub(super) type CommandCallback<C> = Box<dyn FnMut(&mut C, &str)>;
 pub(super) type CloseCallback<C> = Box<dyn FnMut(&mut C, CloseReason) -> CloseDecision>;
+pub(super) type WindowVisible<C> = Box<dyn Fn(&C) -> bool>;
+pub(super) type BackdropCallback<C> = Box<dyn FnMut(&mut C, super::BackdropStatus)>;
 pub(super) type BackgroundFn<C> = Box<dyn Fn(&C) -> WindowBackground>;
+pub(super) type AppearanceFn<C> = Box<dyn Fn(&C) -> ThemeMode>;
 pub(super) type RequestPump = Box<dyn Messages<Vec<ApplicationRequest>>>;
 /// Development-only state carried across `cargo volt dev` restarts.
 type DevLoad<C> = Box<dyn Fn(&mut C, &str)>;
@@ -42,6 +45,8 @@ pub(super) fn dev_dir() -> Option<std::path::PathBuf> {
 pub(super) type LaunchHook<C> = Box<dyn FnOnce(&mut C)>;
 pub(super) struct HostExtensions<C> {
     pub renderer: Option<RendererPreference>,
+    pub window_visible: Option<WindowVisible<C>>,
+    pub last_window_visible: Option<bool>,
     /// Platform setup to run once the native application object exists.
     pub before_launch: Option<LaunchHook<C>>,
     pub desktop: Option<super::system::DesktopConfig>,
@@ -50,6 +55,10 @@ pub(super) struct HostExtensions<C> {
     pub close: Option<CloseCallback<C>>,
     pub requests: Option<RequestPump>,
     pub background: Option<BackgroundFn<C>>,
+    pub backdrop_status: Option<BackdropCallback<C>>,
+    /// The app's chosen appearance, and the one last applied to the window.
+    pub appearance: Option<AppearanceFn<C>>,
+    pub applied_appearance: Option<ThemeMode>,
     pub dev_state: Option<DevState<C>>,
     /// A theme JSON file reloaded when it changes, and its last seen mtime.
     pub theme_file: Option<(std::path::PathBuf, Option<std::time::SystemTime>)>,
@@ -61,6 +70,8 @@ impl<C> Default for HostExtensions<C> {
     fn default() -> Self {
         Self {
             renderer: None,
+            window_visible: None,
+            last_window_visible: None,
             before_launch: None,
             desktop: None,
             command: None,
@@ -68,6 +79,9 @@ impl<C> Default for HostExtensions<C> {
             close: None,
             requests: None,
             background: None,
+            backdrop_status: None,
+            appearance: None,
+            applied_appearance: None,
             dev_state: None,
             theme_file: None,
             restore_frame: None,
@@ -82,7 +96,7 @@ impl<C> HostExtensions<C> {
         modifiers: winit::keyboard::ModifiersState,
         repeat: bool,
     ) -> Option<super::CommandDispatch> {
-        let id = self.commands.shortcut_id(key, modifiers)?;
+        let id = self.commands.shortcut_id(context, key, modifiers)?;
         if repeat {
             // A matching repeat is consumed without invoking either callback path.
             return Some(super::CommandDispatch::Disabled);
@@ -189,6 +203,14 @@ impl<C: 'static> Application<C> {
         self.extensions.requests = Some(pump);
         self
     }
+    /// Control native window visibility without exiting the app or its workers.
+    /// Useful with a tray command and a close guard that sets state to hidden.
+    /// A hidden-to-visible transition restores and focuses the window. No tray
+    /// or login item is installed automatically. The default remains visible.
+    pub fn window_visibility_from_state(mut self, visible: impl Fn(&C) -> bool + 'static) -> Self {
+        self.extensions.window_visible = Some(Box::new(visible));
+        self
+    }
     pub fn renderer(mut self, preference: RendererPreference) -> Self {
         self.extensions.renderer = Some(preference);
         self
@@ -211,6 +233,16 @@ impl<C: 'static> Application<C> {
         self.extensions.background = Some(Box::new(background));
         self
     }
+    /// Observe native blur discovery/request status on the UI thread. A
+    /// `Requested` status identifies the protocol, not proof of visible blur.
+    /// Unsupported or failed backdrop setup never changes the drawing backend.
+    pub fn on_backdrop_status(
+        mut self,
+        callback: impl FnMut(&mut C, super::BackdropStatus) + 'static,
+    ) -> Self {
+        self.extensions.backdrop_status = Some(Box::new(callback));
+        self
+    }
     pub fn chrome(mut self, chrome: WindowChrome) -> Self {
         self.options.window.chrome = chrome;
         self
@@ -223,6 +255,18 @@ impl<C: 'static> Application<C> {
         self.options.palette = Some(palette);
         self
     }
+    /// App-wide motion level. [`Motion::Default`] plays each component's
+    /// built-in animations; [`Motion::None`] settles every change instantly.
+    /// `VOLT_UI_REDUCED_MOTION=1` and the macOS Reduce Motion setting still
+    /// turn motion off when the app asks for `Default`.
+    ///
+    /// [`Motion::Default`]: crate::declarative::Motion::Default
+    /// [`Motion::None`]: crate::declarative::Motion::None
+    pub fn motion(mut self, motion: crate::declarative::Motion) -> Self {
+        self.options.window.reduced_motion = motion == crate::declarative::Motion::None;
+        self
+    }
+    /// Same as `.motion(Motion::None)` when `true`.
     pub fn reduced_motion(mut self, value: bool) -> Self {
         self.options.window.reduced_motion = value;
         self
@@ -252,6 +296,14 @@ impl<C: 'static> Application<C> {
     }
     pub fn theme_with(mut self, theme: impl Fn(&C, ThemeMode) -> UiTheme + 'static) -> Self {
         self.theme = Some(Box::new(theme));
+        self
+    }
+    /// Let an in-app setting choose Light, Dark or System appearance. The
+    /// window (and so its native material) and the mode passed to
+    /// `theme_with` follow the choice after each update; `System` follows
+    /// the OS again.
+    pub fn appearance_from_state(mut self, appearance: impl Fn(&C) -> ThemeMode + 'static) -> Self {
+        self.extensions.appearance = Some(Box::new(appearance));
         self
     }
     /// Install bounded background messages before starting the window.
@@ -383,6 +435,29 @@ mod lifecycle_tests {
         dirty: bool,
         prompts: usize,
         saves: usize,
+    }
+    #[test]
+    fn motion_setting_maps_to_the_reduced_motion_host_option() {
+        use crate::declarative::Motion;
+        use crate::ui::spacer;
+        let app = |motion| Application::new("Motion", (), |_| spacer().into()).motion(motion);
+        assert!(!app(Motion::Default).options.window.reduced_motion);
+        assert!(app(Motion::None).options.window.reduced_motion);
+        assert_eq!(Motion::default(), Motion::Default);
+        let legacy = Application::new("Motion", (), |_| spacer().into()).reduced_motion(true);
+        assert!(legacy.options.window.reduced_motion);
+    }
+    #[test]
+    fn backdrop_reporting_is_additive_and_does_not_change_the_background_policy() {
+        use super::super::{BackdropProtocol, BackdropStatus};
+        use crate::ui::spacer;
+        let mut app = Application::new("Glass", BackdropStatus::Disabled, |_| spacer().into())
+            .on_backdrop_status(|state, status| *state = status);
+        assert_eq!(app.options.background, WindowBackground::Opaque);
+        let status = BackdropStatus::Requested(BackdropProtocol::WaylandBackgroundEffect);
+        app.extensions.backdrop_status.as_mut().unwrap()(&mut app.context, status);
+        assert_eq!(app.context, status);
+        assert!(HostExtensions::<()>::default().backdrop_status.is_none());
     }
     #[test]
     fn state_background_callback_is_additive_and_keeps_public_defaults() {
@@ -575,5 +650,45 @@ mod lifecycle_tests {
             sender.send(ApplicationRequest::Close(CloseReason::Window)),
             Err(super::super::UiSendError::Closed)
         );
+    }
+    #[test]
+    fn remapped_shortcut_uses_current_state_and_consumes_held_repeats() {
+        use crate::native::Shortcut;
+        use winit::keyboard::ModifiersState as M;
+        struct Keys {
+            key: char,
+            calls: usize,
+        }
+        let mut state = Keys { key: 'j', calls: 0 };
+        let mut extensions = HostExtensions::<Keys> {
+            commands: CommandRegistry::new().command(
+                Command::new("chat", "Chat", |s: &mut Keys| s.calls += 1)
+                    .shortcut_from_state(|s: &Keys| Some(Shortcut::primary(s.key).shift(true))),
+            ),
+            ..HostExtensions::default()
+        };
+        let mods = if cfg!(target_os = "macos") {
+            M::SUPER
+        } else {
+            M::CONTROL
+        } | M::SHIFT;
+        assert!(extensions
+            .shortcut_dispatch(&mut state, 'j', mods, false)
+            .is_some());
+        for _ in 0..30 {
+            assert_eq!(
+                extensions.shortcut_dispatch(&mut state, 'j', mods, true),
+                Some(crate::native::CommandDispatch::Disabled)
+            );
+        }
+        assert_eq!(state.calls, 1);
+        state.key = 'k';
+        assert!(extensions
+            .shortcut_dispatch(&mut state, 'j', mods, false)
+            .is_none());
+        assert!(extensions
+            .shortcut_dispatch(&mut state, 'k', mods, false)
+            .is_some());
+        assert_eq!(state.calls, 2);
     }
 }

@@ -1437,8 +1437,36 @@ pub fn charts_doc(app: &App) -> Doc {
         560.,
         220.,
     );
+    let hierarchy_nodes = vec![
+        HierarchyNode::new("root", "Projects", 100, None),
+        HierarchyNode::new("rust", "Rust", 60, Some(0)),
+        HierarchyNode::new("build", "Build output", 40, Some(1)),
+        HierarchyNode::new("source", "Source", 20, Some(1)),
+        HierarchyNode::new("web", "Web", 40, Some(0)),
+    ];
+    let hierarchy = vstack![
+        icicle_chart(hierarchy_nodes.clone())
+            .key("catalog-icicle")
+            .size(560., 180.)
+            .on_select(|app: &mut App, key| app.kit.ran = format!("Hierarchy: {key}")),
+        treemap_chart(hierarchy_nodes)
+            .key("catalog-treemap")
+            .size(560., 180.)
+            .on_select(|app: &mut App, key| app.kit.ran = format!("Hierarchy: {key}")),
+        muted(if app.kit.ran.starts_with("Hierarchy:") {
+            app.kit.ran.clone()
+        } else {
+            "Click a tile or use Tab and Enter".into()
+        }),
+    ]
+    .gap(16., Axis::Vertical);
     Doc {
         sections: vec![
+            section("chart-hierarchy", "Hierarchy explorer", "Icicle depth bands and squarified treemap tiles. Inclusive values, exact tooltips and native keyboard/click activation.", hierarchy,
+                r#"icicle_chart(nodes.clone()).key("folders").size(560., 180.)
+    .on_select(|app: &mut App, key| app.selected_folder = key);
+treemap_chart(nodes).key("space").size(560., 180.);"#),
+
             section(
                 "chart-interactive",
                 "Interactive charts",

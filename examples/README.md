@@ -1,6 +1,7 @@
 # Examples
 
-Run any example with `cargo run --release --features <features> --example <name>`.
+From a repository checkout, launch the complete Catalog with `./scripts/run_catalog.sh`.
+Run individual examples with `cargo run --release --locked --features <features> --example <name>`.
 `native-gpu` draws with Vello on the GPU; `native` draws on the CPU.
 
 ## Start here
@@ -19,9 +20,31 @@ Run any example with `cargo run --release --features <features> --example <name>
 | `rust_transparent` | A see-through window (needs `native-gpu`) |
 
 ```sh
-cargo run --release --features native-gpu,native-desktop --example catalog
-cargo run --features native --example rust_counter
+./scripts/run_catalog.sh
+cargo run --locked --features native --example rust_counter
 ```
+
+## Catalog launch modes
+
+| Mode | Command / purpose |
+| --- | --- |
+| Full Catalog (recommended) | `./scripts/run_catalog.sh`: GPU, desktop services and local notifications; builds, signs and registers an identified macOS `.app` before opening it. |
+| Build/verify only | `./scripts/run_catalog.sh --check`: no UI launch, permission prompt or notification. |
+| Targeted component work | Direct `cargo run` below: accepts Catalog flags, but does not package the notification demo. |
+| Software component work | Replace the features below with `native`; no GPU drawing, native menus/tray or notification adapter. |
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
+```
+
+On macOS, local notifications need both `native-notifications` **and** a running
+identified app bundle; use the full launcher rather than adding a flag to
+`cargo run`. Permission remains an explicit button click. See
+[notification testing](../docs/app-services.md#testing-catalog-notifications).
+Other platforms report the unavailable notification adapter explicitly.
+The launcher takes only `--check` or `--help`; it does not forward the direct
+example flags above. It requires Cargo and Python 3 (plus macOS command-line
+tools for bundling), and exists only in the repository, not the published crate.
 
 ## Apps
 
@@ -31,6 +54,16 @@ cargo run --features native --example rust_counter
 | `northbound` | A trip planner using most components, with generated photos and two themes. |
 | `showcase` | Volt Atelier: welcome, workspace and component-studio screens. |
 | `desk` | A three-pane conversation workbench with an editable composer. |
+
+## Experimental iOS app
+
+[`ios/VoltIOS.xcodeproj`](ios/VoltIOS.xcodeproj) runs **Field Notes**, a Rust-owned
+notes/list/detail/profile prototype with a UIKit keyboard and Metal host. It
+uses a separate unpublished static-library crate, not `cargo run --example`.
+The example uses the reusable mobile host. For your own Rust-only app source,
+use `cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`.
+See the [iOS guide](../docs/ios-prototype.md) for setup, tests, Android direction
+and limitations; no per-app Swift implementation is required.
 
 ## JSON frontend
 
@@ -64,3 +97,14 @@ such as `theme-editor` or `form-inputs`), `--accent zinc|blue|violet|rose|green|
 
 Snapshots and benchmarks use the same layout and drawing code as the window,
 but they don't exercise real input or the OS compositor.
+
+## Experimental Android starter
+
+Use `cargo volt new my-android-app --platform android --kit-path /path/to/volt-ui-kit`.
+The generated Rust app references one shared native OS adapter; no per-app
+Java/Kotlin UI code. See the [Android guide](../docs/android-prototype.md) for
+SDK/NDK setup, APK commands, the smoke test and remaining hardware gates.
+
+## WebAssembly live demo
+
+`examples/web` uses the separate Rust browser host for live buttons, tabs, forms and scrolling. See the [web guide](../docs/web-prototype.md) for tool versions, build steps, GPU/software behavior and remaining limitations.

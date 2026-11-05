@@ -609,6 +609,9 @@ impl Runtime {
         })
     }
     pub fn editing_ime_allowed(&self) -> bool {
+        if self.code_view_focused() {
+            return !self.code_view_read_only();
+        }
         self.editable_box()
             .is_some_and(|b| b.editor.as_ref().is_some_and(|e| !e.read_only))
     }
@@ -628,6 +631,29 @@ impl Runtime {
     }
     pub fn editor_selection(&self, id: &str) -> Option<(usize, usize)> {
         self.editors.borrow().get(id).map(|e| (e.anchor, e.caret))
+    }
+    /// Set the focused plain editor's anchor/caret in UTF-8 bytes. Invalid
+    /// boundaries, missing/disabled targets and background modal scopes are
+    /// rejected atomically. Read-only editors may still select text.
+    pub fn editor_select_range(&mut self, id: &str, anchor: usize, caret: usize) -> bool {
+        if self.editable_box().is_none_or(|b| b.id != id) {
+            return false;
+        }
+        let Some(editor) = self.editors.get_mut().get_mut(id) else {
+            return false;
+        };
+        if !editor.text.is_char_boundary(anchor) || !editor.text.is_char_boundary(caret) {
+            return false;
+        }
+        if (editor.anchor, editor.caret) == (anchor, caret) {
+            return false;
+        }
+        editor.anchor = anchor;
+        editor.caret = caret;
+        editor.upstream = false;
+        editor.follow_caret = true;
+        self.invalidate_layout();
+        true
     }
     pub(super) fn editor_composition_snapshot(&self, next: &Document) -> Option<Composition> {
         let id = self.ime_target.as_deref()?;
@@ -1165,6 +1191,9 @@ impl Runtime {
         Ok((text, outcome))
     }
     pub fn ime_preedit(&mut self, text: &str, cursor: Option<(usize, usize)>) -> bool {
+        if let Some(changed) = self.code_ime_preedit(text, cursor) {
+            return changed;
+        }
         let Some(b) = self.editable_box() else {
             return false;
         };
@@ -1210,6 +1239,15 @@ impl Runtime {
                 activated: false,
             });
         }
+        if self.code_view_focused() {
+            let (mut outcome, _) = self.code_input(
+                super::code_view::CodeInput::Insert(text.into()),
+                handlers,
+                ctx,
+            )?;
+            outcome.changed |= cancelled;
+            return Ok(outcome);
+        }
         let mut outcome = self.text_input(text, handlers, ctx)?;
         outcome.changed |= cancelled;
         Ok(outcome)
@@ -1218,7 +1256,7 @@ impl Runtime {
         if self.ime_target.take().is_some() {
             self.ime_cancelled = true;
         }
-        let mut changed = false;
+        let mut changed = self.code_ime_cancel();
         for e in self.editors.get_mut().values_mut() {
             changed |= !e.preedit.is_empty();
             e.preedit.clear();
@@ -1230,6 +1268,9 @@ impl Runtime {
         changed
     }
     pub fn ime_active(&self) -> bool {
+        if let Some(active) = self.code_ime_active() {
+            return active;
+        }
         self.editable_box()
             .and_then(|b| {
                 self.editors
@@ -1240,6 +1281,9 @@ impl Runtime {
             .unwrap_or(false)
     }
     pub fn editor_candidate_bounds(&self) -> Option<[f32; 4]> {
+        if self.code_view_focused() {
+            return self.code_candidate_bounds();
+        }
         let b = self.editable_box()?;
         if !b.layout_visible {
             return None;
