@@ -171,9 +171,34 @@ through pointer, keyboard or accessibility, even while their exit is visible.</l
 <li><code>.offset</code>, slide and ambient effects move pixels, <strong>not layout or hit targets</strong>.
 No scale/rotation transforms, layout tweening or automatic FLIP are implied.</li>
 </ul>
+<h3 id="built-in-component-motion">Built-in component motion</h3>
+<p>Overlay and disclosure components animate by default. Timing comes from the
+<code>tokens::motion</code> presets: roughly 100–220 ms, ease-out, no overshoot.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Component</th><th scope="col">Built-in motion</th></tr></thead><tbody><tr><td><code>dialog</code></td><td>Backdrop and card fade in while the card rises 8 px; both fade out on close</td></tr><tr><td><code>command_palette</code></td><td>Backdrop fades; the card settles 8 px down into place</td></tr><tr><td><code>popover</code>, <code>menu</code>, <code>context_menu</code>, <code>select</code></td><td>Fade in while settling 4 px into place; fade out on close</td></tr><tr><td><code>tooltip</code>, <code>hover_card</code></td><td>Quick fade in; hides instantly</td></tr><tr><td><code>drawer</code></td><td>Slides in from its edge and back out</td></tr><tr><td><code>toaster</code>, <code>collapsible</code>, <code>accordion</code>, <code>carousel</code></td><td>Toasts rise in, sections slide open, slides cross-fade</td></tr></tbody></table></div><p>Each of these takes <code>.motion(false)</code> to open and close instantly.
+<code>dialog(..).transition(..)</code> replaces the card&#39;s rise with your own timing.
+Choose the level for the whole app once, usually in <code>main</code>:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::Application, ui::prelude::*};
+fn view(_: &amp;()) -&gt; Element&lt;()&gt; {
+    dialog(text(&quot;Saved&quot;))
+        .key(&quot;saved&quot;)
+        .open(true)
+        .motion(false) // this dialog alone opens and closes instantly
+        .on_dismiss(|_| {})
+        .into()
+}
+// Motion::None turns every animation off, including the app&#39;s own.
+let app = Application::new(&quot;My app&quot;, (), view).motion(Motion::Default);
+</code></pre></div>
+<p><code>Motion::None</code> is the same switch as <code>reduced_motion(true)</code>: it also stops the
+app&#39;s own <code>.transition(..)</code>, <code>.animation(..)</code> and <code>Ambient</code> effects.
+<code>VOLT_UI_REDUCED_MOTION=1</code> and the macOS Reduce Motion setting win over
+<code>Motion::Default</code>. The Linux and Windows system settings are not read yet.
+A closing overlay leaves a paint-only copy that fades out above the window
+like the open overlay, and never takes input. Data charts do not animate yet.</p>
 <h3 id="reduced-motion-and-idle">Reduced motion and idle</h3>
-<p><code>Application::reduced_motion(true)</code>, <code>VOLT_UI_REDUCED_MOTION=1</code>, or
-<code>Runtime::set_reduced_motion(true)</code> settles finite transitions immediately and
+<p><code>Application::motion(Motion::None)</code> (or <code>reduced_motion(true)</code>),
+<code>VOLT_UI_REDUCED_MOTION=1</code>, or <code>Runtime::set_reduced_motion(true)</code> in a custom
+host settles finite transitions immediately and
 stops decorative ambient motion. Delayed-only scenes sleep until the first
 useful update rather than render unchanged frames; custom hosts can use
 <code>Runtime::animation_wait()</code> (None for idle, zero for frame pacing, or a positive
@@ -236,4 +261,4 @@ SVG path data.</li>
 clicks follow the same shape. <code>.clip_contents(true)</code> clips to the rounded
 corners.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/styling-and-themes.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#modifiers-and-inheritance">Modifiers and inheritance</a><a href="#theme-colours">Theme colours</a><a href="#built-in-palettes">Built-in palettes</a><a href="#custom-themes">Custom themes</a><a href="#typography-and-fonts">Typography and fonts</a><a href="#effects-and-interaction-states">Effects and interaction states</a><a href="#animation-and-transitions">Animation and transitions</a><a href="#entrances-exits-and-stagger">Entrances, exits and stagger</a><a href="#reduced-motion-and-idle">Reduced motion and idle</a><a href="#images">Images</a><a href="#vector-drawing-and-clipping">Vector drawing and clipping</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/styling-and-themes.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#modifiers-and-inheritance">Modifiers and inheritance</a><a href="#theme-colours">Theme colours</a><a href="#built-in-palettes">Built-in palettes</a><a href="#custom-themes">Custom themes</a><a href="#typography-and-fonts">Typography and fonts</a><a href="#effects-and-interaction-states">Effects and interaction states</a><a href="#animation-and-transitions">Animation and transitions</a><a href="#entrances-exits-and-stagger">Entrances, exits and stagger</a><a href="#built-in-component-motion">Built-in component motion</a><a href="#reduced-motion-and-idle">Reduced motion and idle</a><a href="#images">Images</a><a href="#vector-drawing-and-clipping">Vector drawing and clipping</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

@@ -121,7 +121,8 @@ fn bounded_semantic_name(text: &str, fallback: &str) -> String {
 }
 pub use crate::declarative::{
     responsive, Align, Ambient, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
-    Responsive, Rounding, Scroll, Scrollbars, Shadow, Spring, Tone, Transition, VisualStyle,
+    Motion, Responsive, Rounding, Scroll, Scrollbars, Shadow, Spring, Tone, Transition,
+    VisualStyle,
 };
 pub use crate::declarative::{
     BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
@@ -1565,12 +1566,12 @@ pub mod prelude {
         Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem,
         Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient,
         GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, Menu,
-        MenuItem, Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress,
-        Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
-        Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
-        TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone,
-        Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
-        VisualStyle,
+        MenuItem, Motion, Navigation, NavigationItem, NavigationPlacement, Palette, Popover,
+        Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl,
+        Shadow, Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem,
+        TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput,
+        ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath,
+        VirtualList, VisualStyle,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,

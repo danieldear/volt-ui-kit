@@ -26,7 +26,10 @@
     not(feature = "native"),
     doc = "The guides are in the repository's `docs/` folder, and in the `guide` module when built with the `native` feature."
 )]
-#![forbid(unsafe_code)]
+// Only the Linux native handle bridge opts out locally. All other modules deny
+// unsafe code; non-Linux and non-native builds retain the stronger forbid.
+#![cfg_attr(not(all(target_os = "linux", feature = "native")), forbid(unsafe_code))]
+#![deny(unsafe_code)]
 pub mod card_paint;
 pub mod form_paint;
 pub mod paint;
