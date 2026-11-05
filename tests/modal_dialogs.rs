@@ -501,6 +501,8 @@ fn portal_paint_is_not_clipped_or_faded_by_its_original_parent() {
         let viewport = Viewport::new(600. * scale, 400. * scale, scale).unwrap();
         let mut p = RasterPainter::new(viewport);
         rt.layout(viewport, &Bindings::default(), &mut p).unwrap();
+        // The settled frame: the default entrance starts transparent.
+        rt.settle_animations();
         let card = rt
             .boxes()
             .iter()
