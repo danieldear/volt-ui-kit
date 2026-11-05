@@ -16,6 +16,88 @@ const SCREEN_GAP: f32 = 128.;
 /// available width.
 const COLUMN: f32 = 4096.;
 
+#[cfg(all(test, feature = "native"))]
+mod claims_tests {
+    use super::*;
+    use volt_ui_kit::{
+        declarative::{Bindings, Runtime},
+        native::RasterPainter,
+        Viewport,
+    };
+
+    fn labels(element: El<App>, width: f32) -> Vec<String> {
+        let (document, handlers) = element.build().unwrap().into_parts();
+        let bindings = Bindings::default();
+        let mut runtime = Runtime::new(document, &handlers, &bindings).unwrap();
+        runtime.set_reduced_motion(true);
+        let viewport = Viewport::new(width, 5000., 1.).unwrap();
+        runtime
+            .layout(viewport, &bindings, &mut RasterPainter::new(viewport))
+            .unwrap();
+        runtime
+            .boxes()
+            .iter()
+            .map(|b| b.text().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn landing_claims_do_not_reintroduce_unverified_metrics_or_blanket_guarantees() {
+        let app = App::new();
+        for tier in [Tier::Compact, Tier::Medium, Tier::Full] {
+            let mut text = labels(hero_tier(&app, tier), 1600.);
+            text.extend(labels(features(), 1600.));
+            text.extend(labels(code(&app), 1600.));
+            let copy = text.join("\n");
+            for unsupported in [
+                "3.7",
+                "8K",
+                "no unsafe code",
+                "speaks it to screen readers",
+                "no macros to learn",
+            ] {
+                assert!(!copy.contains(unsupported), "stale claim: {unsupported}");
+            }
+            assert!(copy.contains("MACOS FIRST"));
+            assert!(copy.contains("accessibility semantics"));
+        }
+    }
+
+    #[test]
+    fn landing_counts_are_derived_from_catalog_groups_not_performance_estimates() {
+        let count = |group| {
+            PAGES
+                .iter()
+                .filter(|p| p.group() == group)
+                .count()
+                .to_string()
+        };
+        assert_eq!(
+            labels(numbers(), 1600.),
+            vec![
+                count("Components"),
+                "COMPONENT PAGES".into(),
+                count("Patterns"),
+                "APP PATTERNS".into(),
+                "0".into(),
+                "EMBEDDED WEBVIEWS FOR NATIVE UI".into(),
+                "Rust".into(),
+                "VIEWS, STATE AND CALLBACKS".into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn hero_accent_card_uses_the_current_preset_count_instead_of_a_fake_timing() {
+        let cards = labels(zstack(fragments()).into(), 1600.);
+        assert!(cards.iter().any(|s| s == &THEMES.len().to_string()));
+        assert!(cards.iter().any(|s| s == "presets"));
+        assert!(cards.iter().any(|s| s == "BUILD DEMO"));
+        assert!(!cards.iter().any(|s| s.contains("FRAME TIME") || s == "ms"));
+    }
+}
+
 // Type system: an editorial serif for display, SF for reading and UI, a mono
 // for labels and code. Lists fall back to whatever the machine has installed.
 /// Apple's New York, cut for very large sizes.
@@ -237,7 +319,7 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
         )
     };
     let lead_copy: El<App> = if tier == Tier::Compact {
-        text("Declare your interface as a function of your state. Volt lays it out, draws it on the GPU and speaks it to screen readers.")
+        text("Declare your interface as a function of your state. Volt handles layout, rendering, input and accessibility semantics.")
             .font_size(lead)
             .line_height(1.45)
             .color(ColorToken::Muted)
@@ -252,7 +334,7 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
                     .color(ColorToken::Muted)
             ),
             centered(
-                text("Volt lays it out, draws it on the GPU and speaks it to screen readers.")
+                text("Volt handles layout, rendering, input and accessibility semantics.")
                     .font_size(lead)
                     .color(ColorToken::Muted)
             ),
@@ -329,9 +411,9 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
         gap(28.),
         centered(
             text(if tier == Tier::Compact {
-                "MIT · MACOS · WINDOWS · LINUX"
+                "MIT · MACOS FIRST"
             } else {
-                "OPEN SOURCE · MIT      MACOS · WINDOWS · LINUX      NO WEBVIEW"
+                "OPEN SOURCE · MIT      MACOS FIRST      NO WEBVIEW"
             })
             .font_family(LABEL)
             .font_size(10.)
@@ -389,7 +471,7 @@ fn fragments() -> Vec<El<App>> {
     let build = fragment(
         "fragment-build",
         vstack![
-            hstack![label("CARGO BUILD"), spacer(), label("72%")],
+            hstack![label("BUILD DEMO"), spacer(), label("72%")],
             progress(0.72).key("fragment-build-bar").height(4.),
         ]
         .gap(10., Axis::Vertical)
@@ -397,25 +479,27 @@ fn fragments() -> Vec<El<App>> {
         190.,
         Ambient::float(6., 4.).period_ms(11_000),
     );
-    let metric = fragment(
-        "fragment-metric",
+    let accent = fragment(
+        "fragment-accent",
         vstack![
-            label("SAMPLE FRAME TIME"),
+            label("ACCENT"),
             hstack![
-                text("3.7").font_size(26.).font_weight(600),
-                text("ms").font_size(13.).color(ColorToken::Muted),
+                text(THEMES.len().to_string())
+                    .font_size(26.)
+                    .font_weight(600),
+                text("presets").font_size(13.).color(ColorToken::Muted),
             ]
             .gap(4., Axis::Horizontal)
             .align(Align::End),
             canvas(|c| {
-                let points = [14., 11., 12., 8., 9., 6., 7., 5., 6., 4.];
-                let mut path = VectorPath::new().move_to(0., points[0]);
-                for (i, y) in points.iter().enumerate().skip(1) {
-                    path = path.line_to(i as f32 * 16., *y);
+                for (i, (_, light, dark)) in THEMES.iter().enumerate() {
+                    c.fill(
+                        VectorPath::circle(6. + i as f32 * 20., 9., 6.),
+                        format!("#{light:06X}|#{dark:06X}"),
+                    );
                 }
-                c.stroke(path, ColorToken::Primary, 1.5);
             })
-            .key("fragment-spark")
+            .key("fragment-dots")
             .width(150.)
             .height(18.),
         ]
@@ -462,7 +546,7 @@ fn fragments() -> Vec<El<App>> {
     };
     vec![
         place(build, "fragment-build-layer", Flow::TopLeft, 56., 70.),
-        place(metric, "fragment-metric-layer", Flow::Right, 64., 0.),
+        place(accent, "fragment-accent-layer", Flow::Right, 64., 0.),
         place(status, "fragment-status-layer", Flow::BottomLeft, 96., 64.),
     ]
 }
@@ -688,7 +772,13 @@ fn dot(color: &'static str) -> El<App> {
 // ── 3. Numbers ──────────────────────────────────────────────────────────
 
 fn numbers() -> El<App> {
-    let documented = PAGES.len().to_string();
+    let pages_in = |group: &str| {
+        PAGES
+            .iter()
+            .filter(|p| p.group() == group)
+            .count()
+            .to_string()
+    };
     let figure = |value: String, label: &'static str| -> El<App> {
         vstack![
             text(value)
@@ -709,10 +799,10 @@ fn numbers() -> El<App> {
         .into()
     };
     stack([
-        figure(documented, "documented pages, each with live previews"),
-        figure("8K".into(), "Retina displays rendered on the GPU"),
-        figure("0".into(), "webviews, browsers or JavaScript"),
-        figure("100%".into(), "Rust, with one declarative API"),
+        figure(pages_in("Components"), "component pages"),
+        figure(pages_in("Patterns"), "app patterns"),
+        figure("0".into(), "embedded webviews for native UI"),
+        figure("Rust".into(), "views, state and callbacks"),
     ])
     .key("numbers")
     .direction(responsive(Direction::Vertical).at(Breakpoint::Lg, Direction::Horizontal))
@@ -753,12 +843,12 @@ fn features() -> El<App> {
         opener(
             "02 — WHY VOLT",
             ("Everything a desktop app", "", "needs, built in."),
-            "A small, auditable toolkit: layout, input, text, accessibility and rendering in one Rust crate with no unsafe code."
+            "Layout, input, text, accessibility and rendering in one Rust crate."
         ),
         row([
             feature(Icon::Layers, "Declarative", "Rebuild your view from state on every change; stable keys preserve input state, and software damage tracking limits repaint work."),
-            feature(Icon::Chip, "GPU rendered", "Vector shapes and text drawn by Vello on Metal, Vulkan or DX12, with strips for 8K displays and a software fallback."),
-            feature(Icon::Person, "Accessible", "A real screen-reader tree with roles, values and actions, plus full keyboard focus and reduced motion."),
+            feature(Icon::Chip, "GPU rendered", "Shapes and text drawn by Vello on Metal, Vulkan or DX12, with an automatic software fallback."),
+            feature(Icon::Person, "Accessible", "An AccessKit tree with roles, values and actions, plus keyboard navigation and reduced motion."),
         ]),
         row([
             feature(Icon::Palette, "Themeable", "Semantic colour roles, light and dark palettes and translucent tokens restyle every component at once."),
@@ -789,7 +879,7 @@ fn view(app: &App) -> Element<App> {
 
 fn code(app: &App) -> El<App> {
     let checks = [
-        "Plain functions and structs: no macros to learn, no lifetimes in views",
+        "Plain functions and structs, with no lifetimes in views",
         "Stable keys keep focus, scroll and animation across rebuilds",
         "Every callback receives your state mutably, on the UI thread",
     ]
