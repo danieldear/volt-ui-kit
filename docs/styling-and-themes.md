@@ -233,10 +233,51 @@ rows.build().unwrap();
 - `.offset`, slide and ambient effects move pixels, **not layout or hit targets**.
   No scale/rotation transforms, layout tweening or automatic FLIP are implied.
 
+### Built-in component motion
+
+Overlay and disclosure components animate by default. Timing comes from the
+`tokens::motion` presets: roughly 100–220 ms, ease-out, no overshoot.
+
+| Component | Built-in motion |
+| --- | --- |
+| `dialog` | Backdrop and card fade in while the card rises 8 px; both fade out on close |
+| `command_palette` | Backdrop fades; the card settles 8 px down into place |
+| `popover`, `menu`, `context_menu`, `select` | Fade in while settling 4 px into place; fade out on close |
+| `tooltip`, `hover_card` | Quick fade in; hides instantly |
+| `drawer` | Slides in from its edge and back out |
+| `toaster`, `collapsible`, `accordion`, `carousel` | Toasts rise in, sections slide open, slides cross-fade |
+
+Each of these takes `.motion(false)` to open and close instantly.
+`dialog(..).transition(..)` replaces the card's rise with your own timing.
+Choose the level for the whole app once, usually in `main`:
+
+```rust
+use volt_ui_kit::{native::Application, ui::prelude::*};
+fn view(_: &()) -> Element<()> {
+    dialog(text("Saved"))
+        .key("saved")
+        .open(true)
+        .motion(false) // this dialog alone opens and closes instantly
+        .on_dismiss(|_| {})
+        .into()
+}
+// Motion::None turns every animation off, including the app's own.
+let app = Application::new("My app", (), view).motion(Motion::Default);
+# drop(app);
+```
+
+`Motion::None` is the same switch as `reduced_motion(true)`: it also stops the
+app's own `.transition(..)`, `.animation(..)` and `Ambient` effects.
+`VOLT_UI_REDUCED_MOTION=1` and the macOS Reduce Motion setting win over
+`Motion::Default`. The Linux and Windows system settings are not read yet.
+A closing overlay leaves a paint-only copy that fades out above the window
+like the open overlay, and never takes input. Data charts do not animate yet.
+
 ### Reduced motion and idle
 
-`Application::reduced_motion(true)`, `VOLT_UI_REDUCED_MOTION=1`, or
-`Runtime::set_reduced_motion(true)` settles finite transitions immediately and
+`Application::motion(Motion::None)` (or `reduced_motion(true)`),
+`VOLT_UI_REDUCED_MOTION=1`, or `Runtime::set_reduced_motion(true)` in a custom
+host settles finite transitions immediately and
 stops decorative ambient motion. Delayed-only scenes sleep until the first
 useful update rather than render unchanged frames; custom hosts can use
 `Runtime::animation_wait()` (None for idle, zero for frame pacing, or a positive

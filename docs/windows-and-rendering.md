@@ -56,17 +56,95 @@ Buttons and other controls inside the header still receive clicks.
 | --- | --- |
 | `Opaque` (default) | A solid window. |
 | `Transparent { opacity }` | The window's background is see-through; content stays opaque. |
-| `Blur { opacity }` | macOS: the public system material (`NSVisualEffectView`) blurs the desktop behind the window. Requires `native-gpu` and a decorated window. |
-| `CompositorBlur { opacity }` | A stronger blur through winit's compositor request. On macOS this uses a private API, so it is not App Store safe. |
+| `Blur { opacity }` | macOS: public system material (`NSVisualEffectView`), requiring a decorated window. Linux Wayland: negotiated compositor blur. Both require `native-gpu`. |
+| `CompositorBlur { opacity }` | A raw compositor blur request (Wayland uses the same negotiated adapter). On macOS this uses a private API, so it is not App Store safe. |
 
 - `opacity` applies only to the window background. Text and controls keep their
   own opacity; give your root a translucent or no background to let the blur show.
 - `.background_from_state(|app| WindowBackground::..)` changes the background
   from your state, and `UiTheme::with_background_color(..)` tints it.
-- Blur is a request to the OS. Windows and X11 have no equivalent, and
+- Blur is a request to the OS. The current Windows and X11 adapters do not request it, and
   Reduce Transparency switches the macOS blur to an opaque background.
 - The window blur shows what is behind the window. Blurring the app's own
   content behind a panel is not supported yet.
+
+## Linux desktop blur
+
+On native Wayland windows, the Linux adapter prefers
+`ext-background-effect-v1` when advertised by the compositor,
+then falls back to the older `org_kde_kwin_blur_manager` protocol. It discovers
+capabilities on the existing window connection and updates the request after
+resize, scale changes, capability changes and user toggles. At 125% scale the
+blur region uses **logical surface coordinates**, not framebuffer pixels.
+
+winit 0.30.13 is still the latest stable release at the time of this change.
+The newer 0.31 beta has the modern protocol but is not API-compatible with the
+current AccessKit adapter. A Linux-only compatibility bridge preserves the
+stable winit/desktop interfaces instead of requiring that migration.
+
+```rust,ignore
+Application::new("Glass", app, view)
+    .background(WindowBackground::Blur { opacity: 0.72 })
+    .on_backdrop_status(|app, status| {
+        app.backdrop_status = status.description().to_owned();
+    })
+    .run()?;
+```
+
+`BackdropStatus` distinguishes `Disabled`, `Discovering`, `Requested(protocol)`,
+`Unsupported(reason)` and `Failed`. **Requested is not proof of visible blur**:
+the compositor still controls its blur algorithm, enabled effects and policy.
+Catalog shows this report instead of macOS material instructions on Linux.
+X11, missing protocols, a declined blur capability and opaque software drawing
+are reported explicitly. No desktop capture, compositor configuration changes
+or automatic fallback to a different drawing backend is performed by this adapter.
+
+The dispatcher blocks on socket/command readiness when idle; there is no periodic
+redraw timer. It never attaches buffers or commits the renderer's `wl_surface`.
+After a blur-region change, it requests a normal host redraw so the renderer's
+next surface commit applies the double-buffered effect state.
+
+Existing winit consumers can reuse `native::linux_backdrop::Controller` on Linux,
+passing their `Arc<Window>` and matching `event_loop.owned_display_handle()`.
+Retain the controller, call `update` on size/scale/blur changes and route its
+worker-thread status callback through an event-loop proxy. Do not also enable
+winit's own blur object for that window. Keep only one controller per window;
+duplicate controller creation is rejected before sending protocol requests.
+The native Volt host manages this automatically. An older standalone terminal
+binary using only `Window::set_blur` does **not** inherit this fix automatically.
+
+The native host logs `VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)`
+or the actual unsupported/failure status. Wire-level mock-compositor tests cover
+modern-only/legacy-only servers, missing protocols, capability withdrawal and
+restoration, global removal/rebinding, resize, disable/re-enable, idle behavior,
+disconnect and teardown. These tests and cross-compilation are not a substitute
+for native KDE/COSMIC/NVIDIA visual acceptance on the user's machine.
+
+### Testing on Linux
+
+Run from a terminal in your Wayland desktop session, not from a virtual console
+started with `startx` (which starts X11). Use `native-gpu`; `native-desktop` alone
+does not enable translucent GPU presentation.
+
+```bash
+printf 'Desktop=%s Session=%s Wayland=%s\n' \
+  "$XDG_CURRENT_DESKTOP" "$XDG_SESSION_TYPE" "$WAYLAND_DISPLAY"
+
+VOLT_UI_RENDERER=gpu cargo run --release --locked \
+  --features native-gpu --example catalog -- \
+  --page theming --theme dark --background blur \
+  --window-opacity 0.45 --tint 0
+```
+
+Place a window with text behind the Catalog sidebar. Toggle **Backdrop blur**:
+the text behind the sidebar should soften when enabled, while Catalog text stays
+sharp. Move **Background opacity** between low and high values, resize the window,
+and repeat at 100% and 125% display scale. Repeat with `--theme light`.
+
+Look for `VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)` (modern)
+or `Requested(WaylandKde)` (legacy) in the terminal and the protocol description
+in the sidebar. A request with no visible blur still needs compositor-side
+investigation; an explicit unsupported/failure status identifies a different gate.
 
 ## GPU and software drawing
 

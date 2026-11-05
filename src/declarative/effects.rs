@@ -208,6 +208,22 @@ impl Animation {
             }
     }
 }
+/// App-wide motion level for built-in component animations.
+///
+/// Components such as dialogs, popovers, menus and drawers ship with short
+/// enter/exit motion. `None` settles every animation instantly and stops
+/// looping effects, including ones the app added itself. The
+/// `VOLT_UI_REDUCED_MOTION=1` environment variable and the operating system's
+/// reduce-motion preference (where the host reads it) also win over `Default`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Motion {
+    /// Play each component's built-in motion.
+    #[default]
+    Default,
+    /// No motion: every change appears in its final state immediately.
+    None,
+}
+
 /// Animate a keyed subtree in and out: a fade, optionally sliding from an
 /// offset. Exiting nodes are paint-only, never interactive.
 #[derive(Clone, Copy, Debug, PartialEq)]
