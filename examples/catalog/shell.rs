@@ -60,7 +60,11 @@ pub fn view(app: &App) -> El<App> {
                 SidebarPlace::Column => "side",
                 SidebarPlace::Drawer => "drawer",
             };
-            vstack(page_links(app, prefix))
+            let mut links = page_links(app, prefix);
+            if place == SidebarPlace::Drawer {
+                links.insert(0, chrome_settings(app, "drawer-chrome-mode"));
+            }
+            vstack(links)
                 .accessible_label("Component navigation")
                 .gap(2., Axis::Vertical)
                 .align(Align::Stretch)
@@ -71,14 +75,35 @@ pub fn view(app: &App) -> El<App> {
     .key("shell")
     .title("Volt UI")
     .sidebar_header(brand())
-    .sidebar_footer(glass_controls(app))
+    .sidebar_footer(
+        vstack![
+            chrome_settings(app, "footer-chrome-mode"),
+            glass_controls(app)
+        ]
+        .gap(8., Axis::Vertical),
+    )
+    .titlebar_inset(
+        cfg!(target_os = "macos")
+            && matches!(
+                app.chrome,
+                volt_ui_kit::native::WindowChrome::Overlay
+                    | volt_ui_kit::native::WindowChrome::CompactOverlay
+            ),
+    )
     .toolbar(header(app))
     .drawer_open(app.nav_open)
     .on_drawer_change(|app: &mut App, open| app.nav_open = open)
     .sidebar_width(app.sidebar_width)
     .on_sidebar_resize(|app: &mut App, width| app.sidebar_width = width.round())
     .material(app.glass);
-    let mut layers: Vec<El<App>> = vec![shell.into()];
+    let frame: El<App> = if app.chrome == volt_ui_kit::native::WindowChrome::Custom {
+        vstack![custom_titlebar(app), shell]
+            .gap(0., Axis::Vertical)
+            .into()
+    } else {
+        shell.into()
+    };
+    let mut layers: Vec<El<App>> = vec![frame];
     layers.extend(dialogs(app));
     layers.push(palette(app));
     layers.push(toast(app));
@@ -98,6 +123,142 @@ pub fn view(app: &App) -> El<App> {
             ColorToken::Base200.into()
         })
         .into()
+}
+
+fn chrome_selector(app: &App, key: &'static str) -> El<App> {
+    use volt_ui_kit::native::WindowChrome as W;
+    let mut modes = vec![
+        select_item(0u8, "Native"),
+        select_item(1, "Custom"),
+        select_item(2, "Borderless"),
+    ];
+    if cfg!(target_os = "macos") {
+        modes.push(select_item(3, "Unified"));
+    }
+    select(modes)
+        .key(key)
+        .accessible_label("Window decoration mode")
+        .open(app.chrome_picker == Some(key))
+        .on_open_change(move |app: &mut App, open| {
+            app.chrome_picker = if open { Some(key) } else { None }
+        })
+        .selected(match app.chrome {
+            W::Custom => 1,
+            W::Borderless => 2,
+            W::Overlay | W::CompactOverlay => 3,
+            W::Native => 0,
+        })
+        .enabled(!app.window_state.fullscreen)
+        .width(118.)
+        .height(34.)
+        .on_select(|app: &mut App, mode| {
+            app.chrome_picker = None;
+            app.window_menu = None;
+            app.chrome = match mode {
+                1 => W::Custom,
+                2 => W::Borderless,
+                3 => W::Overlay,
+                _ => W::Native,
+            };
+        })
+        .into()
+}
+fn chrome_settings(app: &App, key: &'static str) -> El<App> {
+    vstack![
+        hstack![
+            text("Window").font_size(12.).color(ColorToken::Muted),
+            spacer(),
+            chrome_selector(app, key)
+        ]
+        .align(Align::Center),
+        text(match app.chrome {
+            volt_ui_kit::native::WindowChrome::Custom =>
+                if cfg!(target_os = "macos") {
+                    "Custom controls · drag / double-click header · native mode for edge resize"
+                } else {
+                    "Custom controls · drag / double-click header · resize edges"
+                },
+            volt_ui_kit::native::WindowChrome::Borderless =>
+                "No controls or resize frame · choose Native to restore",
+            _ => "System window controls and resize frame",
+        })
+        .font_size(10.)
+        .color(ColorToken::Muted),
+    ]
+    .gap(6., Axis::Vertical)
+    .padding(12., Edge::Vertical)
+    .padding(18., Edge::Horizontal)
+    .into()
+}
+fn custom_titlebar(app: &App) -> El<App> {
+    let controls = window_controls(
+        WindowControlsState {
+            maximized: app.window_state.maximized,
+            can_maximize: app.window_state.resizable && !app.window_state.fullscreen,
+            ..Default::default()
+        },
+        |app: &mut App, action| {
+            if let Some(sender) = &app.window_actions {
+                let _ = sender.send(action);
+            }
+        },
+    )
+    .key("native-window-controls");
+    let bar = hstack![
+        mark(18.),
+        text("Volt UI").font_size(12.).font_weight(600),
+        text("/  Component Catalog")
+            .font_size(12.)
+            .color(ColorToken::Muted)
+            .visible(responsive(false).at(Breakpoint::Md, true)),
+        spacer(),
+        controls,
+    ]
+    .key("custom-titlebar")
+    .height(44.)
+    .min_height(44.)
+    .flex(0.)
+    .padding(8., Edge::Horizontal)
+    .gap(8., Axis::Horizontal)
+    .align(Align::Center)
+    .drag_region(true)
+    .background(ColorToken::Base200);
+    context_menu(
+        bar,
+        [
+            menu_item(WindowAction::Minimize, "Minimize"),
+            menu_item(
+                WindowAction::ToggleMaximize,
+                if app.window_state.maximized {
+                    "Restore"
+                } else {
+                    "Maximize"
+                },
+            )
+            .enabled(app.window_state.resizable && !app.window_state.fullscreen),
+            menu_item(WindowAction::Close, "Close window"),
+        ],
+    )
+    .fill()
+    .key("window-header-menu")
+    .height(44.)
+    .min_height(44.)
+    .flex(0.)
+    .open(app.window_menu.is_some())
+    .position(app.window_menu.unwrap_or([0., 44.]))
+    .on_context_open(|app: &mut App, at| app.window_menu = Some(at))
+    .on_open_change(|app: &mut App, open| {
+        if !open {
+            app.window_menu = None;
+        }
+    })
+    .on_action(|app: &mut App, action| {
+        app.window_menu = None;
+        if let Some(sender) = &app.window_actions {
+            let _ = sender.send(action);
+        }
+    })
+    .into()
 }
 
 fn mode_button(app: &App) -> El<App> {
@@ -240,9 +401,12 @@ fn header(app: &App) -> El<App> {
         .flex(1.),
         search,
         search_compact,
+        chrome_selector(app, "header-chrome-mode")
+            .visible(responsive(false).at(Breakpoint::Xl, true)),
         themes,
         mode_button(app),
     ]
+    .drag_region(true)
     .key("site-header")
     .gap(6., Axis::Horizontal)
     .align(Align::Center)
@@ -325,6 +489,7 @@ fn brand() -> El<App> {
         .background(ColorToken::BaseContent.alpha(8))
         .color(ColorToken::Muted),
     ]
+    .drag_region(true)
     .key("brand")
     .height(40.)
     .gap(8., Axis::Horizontal)

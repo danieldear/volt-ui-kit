@@ -85,7 +85,8 @@ the primary supported host.
   can still wake the app.
 - **Desktop integration.** Window chrome and blur, native menus and tray, file
   panels, notifications, commands with shortcuts, close guards and `.app`
-  bundles (macOS first).
+  bundles (macOS first). Optional custom chrome adds themed controls and live
+  Native/Custom/Borderless switching; see [window chrome](docs/windows-and-rendering.md#custom-controls-and-live-mode-switching).
 - **Accessible.** Roles, labels, values and actions go to screen readers
   through AccessKit, with full keyboard navigation.
 - **App-owned navigation.** Typed route links, bounded Back/Forward history and

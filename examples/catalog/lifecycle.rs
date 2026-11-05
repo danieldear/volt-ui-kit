@@ -196,6 +196,34 @@ pub fn doc(app: &App) -> Doc {
     .run()?;
 // Save / Discard: update app state, then enqueue Close(reason).
 // Cancel: dismiss the dialog without closing or clearing the draft."#,
+        }, Section {
+            id: "application-window-chrome",
+            title: "Window decorations and controls",
+            note: "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; the real custom header controls the actual window and honors the unsaved-work close guard.",
+            demo: vstack![
+                hstack![text("Workspace").font_weight(600), spacer(),
+                    window_controls(app.chrome_demo_maximized, |app: &mut App, action| {
+                        if action == WindowAction::ToggleMaximize { app.chrome_demo_maximized = !app.chrome_demo_maximized; }
+                        app.last_action = format!("Window preview: {action:?} (no OS operation)");
+                    }).key("window-preview-controls"),
+                ].height(48.).padding(10., Edge::Horizontal).align(Align::Center)
+                  .background(ColorToken::Base200).rounded(10.),
+                text(&app.last_action).font_size(12.).color(ColorToken::Muted),
+                text("Custom edge resizing is managed by the Linux/Windows host. On macOS use native/unified chrome for edge resizing and public material blur.").font_size(12.).color(ColorToken::Muted),
+            ].max_width(600.).gap(12.,Axis::Vertical).into(),
+            code: r#"Application::new("Workspace", app, view)
+    .chrome_from_state(|app| app.chrome)
+    .custom_resize_border(6.) // logical pixels, Custom mode only
+    .window_actions(|app, sender| app.window_actions = Some(sender))
+    .on_window_state(|app, state| app.window_state = state)
+    .on_close_request(close_guard)
+    .run()?;
+// In your own draggable header:
+window_controls(app.window_state.maximized, |app: &mut App, action| {
+    if let Some(sender) = &app.window_actions { let _ = sender.send(action); }
+});
+// WindowChrome::Custom: no native decorations; edge resizing and header
+// double-click maximize on supported desktop hosts. Native remains default."#,
         }],
         api: vec![
             ("CommandRegistry::new().command(...)", "Up to 256 validated, uniquely named Rust commands."),
@@ -203,6 +231,9 @@ pub fn doc(app: &App) -> Doc {
             ("Shortcut::primary('s')", "Exact Cmd/Ctrl logical letter/digit chord; optional shift/alt."),
             ("registry.entries(&app)", "Metadata for your own palette, buttons or other UI."),
             ("Application::on_close_request(callback)", "Close or KeepOpen; the developer owns dirty state and dialogs."),
+            ("Application::chrome_from_state(f)", "Live Native / Custom / Borderless / macOS Overlay policy; no window replacement."),
+            ("Application::window_actions(f) / on_window_state(f)", "Bounded typed control intents; native maximize/fullscreen/focus snapshots."),
+            ("window_controls(maximized, on_action)", "Accessible vector controls; close goes through the host close guard."),
             ("Application::requests(initialize)", "Bounded, event-driven commands and close requests; no idle polling."),
         ],
     }

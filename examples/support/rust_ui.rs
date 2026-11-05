@@ -181,7 +181,10 @@ fn launch_configured<C: 'static>(
                     Some("native") => WindowChrome::Native,
                     Some("overlay") => WindowChrome::Overlay,
                     Some("borderless") => WindowChrome::Borderless,
-                    _ => return Err("--chrome must be native, overlay or borderless".into()),
+                    Some("custom") => WindowChrome::Custom,
+                    _ => {
+                        return Err("--chrome must be native, overlay, custom or borderless".into())
+                    }
                 };
             }
             "--snapshot" => {
@@ -209,7 +212,7 @@ fn launch_configured<C: 'static>(
                 )
             }
             "--help" => {
-                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; settled warm render timings (GPU mode includes blocking readback)\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_RENDERER  auto / gpu / software (gpu requires native-gpu)\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / borderless\n--reduced-motion settle effects without animation\n--theme MODE     light / dark / system (headless system falls back to dark)\nRust source edits require rebuild; no JSON or F5 source reload.");
+                println!("{title}\n--snapshot PNG    render without opening a window\n--size WIDTHxHEIGHT logical window/snapshot/benchmark size (default 960x760)\n--scale NUMBER    snapshot/benchmark scale (0.25..=4)\n--bench COUNT     simulate actions including Rust composition; settled warm render timings (GPU mode includes blocking readback)\n--bench-target KEY choose an enabled button/checkbox/toggle\nVOLT_UI_RENDERER  auto / gpu / software (gpu requires native-gpu)\nVOLT_UI_TRACE=1   native frame/event-to-present diagnostics\n--chrome MODE    native / overlay / custom / borderless\n--reduced-motion settle effects without animation\n--theme MODE     light / dark / system (headless system falls back to dark)\nRust source edits require rebuild; no JSON or F5 source reload.");
                 return Ok(());
             }
             _ => {

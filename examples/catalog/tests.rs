@@ -2134,3 +2134,72 @@ fn motion_cards_render_inflight_and_reduced_on_gpu_without_fallback() {
         }
     }
 }
+
+#[test]
+fn custom_chrome_modes_preserve_catalog_content_and_header_menu_dispatch() {
+    use volt_ui_kit::native::WindowChrome;
+    for chrome in [
+        WindowChrome::Native,
+        WindowChrome::Custom,
+        WindowChrome::Borderless,
+        WindowChrome::Overlay,
+    ] {
+        for size in [[620., 800.], [1440., 920.]] {
+            let mut app = App::new();
+            app.chrome = chrome;
+            let r = mount(&app, size);
+            assert_eq!(
+                r.boxes().iter().any(|b| b.id == "custom-titlebar"),
+                chrome == WindowChrome::Custom
+            );
+            assert!(r.boxes().iter().any(|b| b.id == "site-header"));
+        }
+    }
+    let mut app = App::new();
+    app.chrome = WindowChrome::Custom;
+    let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let v = Viewport::new(1440., 920., 1.).unwrap();
+    r.layout(v, &Bindings::default(), &mut RasterPainter::new(v))
+        .unwrap();
+    assert!(r.drag_region_hit(400., 20.));
+    let outcome = r
+        .context_menu_at(400., 20., &mut handlers, &mut app)
+        .unwrap();
+    assert!(outcome.activated);
+    assert!(app.window_menu.is_some());
+}
+
+#[test]
+fn custom_chrome_keeps_controls_and_mode_picker_reachable_in_compact_drawer() {
+    let mut app = App::new();
+    app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+    app.nav_open = true;
+    for size in [[560., 460.], [620., 800.], [1440., 920.]] {
+        let mut r = mount(&app, size);
+        let header = r
+            .boxes()
+            .iter()
+            .find(|b| b.id == "custom-titlebar")
+            .unwrap();
+        assert_eq!(header.bounds.bounds()[3], 44.);
+        let picker = r
+            .boxes()
+            .iter()
+            .find(|b| {
+                b.id == if size[0] < 1024. {
+                    "drawer-chrome-mode-trigger"
+                } else {
+                    "footer-chrome-mode-trigger"
+                }
+            })
+            .unwrap();
+        let [x, y, w, h] = picker.bounds.bounds();
+        assert!(
+            h > 0. && y >= 0. && y + h <= size[1],
+            "{size:?}: {:?}",
+            picker.bounds
+        );
+        assert!(r.pointer_down(x + w / 2., y + h / 2.), "{size:?}");
+    }
+}
