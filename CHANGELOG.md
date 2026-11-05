@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Align the native Catalog landing page with current capabilities: remove
+  unmeasured frame-time and 8K claims, describe accessibility semantics and
+  macOS-first validation accurately, and derive component/pattern/accent counts
+  from the Catalog. Preserve the design and replace the timing card with
+  theme-aware accent swatches; scope native webview claims separately from
+  experimental web/mobile host code.
+
 - Add native Linux Wayland backdrop negotiation for `ext-background-effect-v1`,
   retaining the legacy KDE protocol without migrating stable winit/AccessKit to
   a beta. Add UI-thread backdrop status callbacks, truthful Catalog diagnostics,
