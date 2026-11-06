@@ -2372,11 +2372,11 @@
         "width": 1000
       },
       {
-        "code": "Application::new(\"Workspace\", app, view)\n    .chrome_from_state(|app| app.chrome)\n    .custom_resize_border(6.) // logical pixels, Custom mode only\n    .window_actions(|app, sender| app.window_actions = Some(sender))\n    .on_window_state(|app, state| app.window_state = state)\n    .on_close_request(close_guard)\n    .run()?;\n// In your own draggable header:\nwindow_controls(app.window_state.maximized, |app: &mut App, action| {\n    if let Some(sender) = &app.window_actions { let _ = sender.send(action); }\n});\n// WindowChrome::Custom: no native decorations; edge resizing and header\n// double-click maximize on supported desktop hosts. Native remains default.",
+        "code": "Application::new(\"Workspace\", app, view)\n    .chrome_from_state(|app| app.chrome)\n    .custom_resize_border(6.) // logical pixels, Custom mode only\n    .window_actions(|app, sender| app.window_actions = Some(sender))\n    .on_window_state(|app, state| app.window_state = state)\n    .on_close_request(close_guard)\n    .run()?;\n// Linux/Windows: place controls inside your EXISTING draggable toolbar.\n// macOS Custom retains native traffic lights; do not draw duplicate buttons.\nwindow_controls(app.window_state.maximized, |app: &mut App, action| {\n    if let Some(sender) = &app.window_actions { let _ = sender.send(action); }\n});\n// navigation_split_view(...).integrated_header(true).material(true)\n// keeps the backdrop behind the toolbar and fills only page content.\n// The shell default and Application Native default remain unchanged.",
         "height": 200,
         "id": "application-window-chrome",
         "image": "application-lifecycle-application-window-chrome.png",
-        "note": "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; the real custom header controls the actual window and honors the unsaved-work close guard.",
+        "note": "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
         "title": "Window decorations and controls",
         "width": 1000
       }

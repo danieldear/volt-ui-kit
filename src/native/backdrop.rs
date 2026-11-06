@@ -97,7 +97,7 @@ impl BackdropStatus {
             }
             Self::Unsupported(BackdropUnavailable::Platform) => "Blur unavailable on this platform",
             Self::Unsupported(BackdropUnavailable::UndecoratedWindow) => {
-                "Public material needs native/unified macOS chrome; transparency remains available"
+                "Public material needs an AppKit frame; transparency remains available"
             }
             Self::Failed => "Backdrop setup failed; see terminal diagnostics",
         }

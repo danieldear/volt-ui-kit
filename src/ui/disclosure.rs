@@ -241,6 +241,7 @@ pub struct Drawer<C> {
     open: bool,
     on_dismiss: Option<Click<C>>,
     motion: bool,
+    header_leading_inset: f32,
 }
 pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
     Drawer {
@@ -253,6 +254,7 @@ pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
         open: false,
         on_dismiss: None,
         motion: true,
+        header_leading_inset: 0.,
     }
 }
 impl<C> Drawer<C> {
@@ -263,6 +265,13 @@ impl<C> Drawer<C> {
     }
     pub fn title(mut self, value: impl Into<String>) -> Self {
         self.title = Some(value.into());
+        self
+    }
+    /// Extra space before the existing heading only, e.g. for native window
+    /// controls over a left drawer. The body/close button keep their geometry.
+    /// Default 0; expressed in logical pixels, like ordinary padding.
+    pub fn header_leading_inset(mut self, inset: f32) -> Self {
+        self.header_leading_inset = inset;
         self
     }
     pub fn side(mut self, value: DrawerSide) -> Self {
@@ -338,6 +347,7 @@ impl<C: 'static> From<Drawer<C>> for Element<C> {
         let mut card = vstack![
             hstack(head)
                 .key(format!("{key}-head"))
+                .padding(d.header_leading_inset, Edge::Left)
                 .align(Align::Center)
                 .gap(8., Axis::Horizontal),
             vstack![d.content]

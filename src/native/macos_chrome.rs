@@ -97,6 +97,11 @@ pub(super) fn trace_geometry(window: &Window) {
         eprintln!("VOLT_UI_CHROME fullscreen=true geometry=system-managed");
         return;
     }
+    eprintln!(
+        "VOLT_UI_CHROME shadow={} decorated={}",
+        ns_window.hasShadow(),
+        window.is_decorated()
+    );
     for (label, kind) in [
         ("close", NSWindowButton::CloseButton),
         ("minimize", NSWindowButton::MiniaturizeButton),
@@ -125,12 +130,15 @@ pub(super) fn apply_chrome(window: &Window, chrome: super::WindowChrome) -> Resu
     }
     let overlay = matches!(
         chrome,
-        super::WindowChrome::Overlay | super::WindowChrome::CompactOverlay
+        super::WindowChrome::Overlay
+            | super::WindowChrome::CompactOverlay
+            | super::WindowChrome::Custom
+            | super::WindowChrome::Borderless
     );
-    window.set_decorations(!matches!(
-        chrome,
-        super::WindowChrome::Custom | super::WindowChrome::Borderless
-    ));
+    // Both Custom and visually Borderless preserve the native frame. Merely
+    // hide buttons for Borderless; stripping the frame loses material, native
+    // rounding and shadow. No delegate/content-view/layer replacement is needed.
+    window.set_decorations(true);
     let mut mask = ns_window.styleMask();
     mask.set(NSWindowStyleMask::FullSizeContentView, overlay);
     ns_window.setStyleMask(mask);
@@ -140,9 +148,37 @@ pub(super) fn apply_chrome(window: &Window, chrome: super::WindowChrome) -> Resu
     } else {
         NSWindowTitleVisibility::Visible
     });
-    if chrome == super::WindowChrome::Overlay {
+    if matches!(
+        chrome,
+        super::WindowChrome::Overlay
+            | super::WindowChrome::Custom
+            | super::WindowChrome::Borderless
+    ) {
         install_unified_titlebar(window)?;
     }
+    sync_controls_and_shadow(window, chrome)?;
+    Ok(())
+}
+
+/// Preserve native shadow and hide only native controls in visually borderless
+/// mode. Called at creation and after a mode switch, never on an idle timer.
+pub(super) fn sync_controls_and_shadow(
+    window: &Window,
+    chrome: super::WindowChrome,
+) -> Result<(), String> {
+    let mtm = MainThreadMarker::new().ok_or("AppKit chrome requires the main thread")?;
+    let native = app_window(window, mtm)?;
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ] {
+        if let Some(button) = native.standardWindowButton(kind) {
+            button.setHidden(chrome == super::WindowChrome::Borderless);
+        }
+    }
+    native.setHasShadow(true);
+    native.invalidateShadow();
     Ok(())
 }
 

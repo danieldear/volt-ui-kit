@@ -45,8 +45,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `Native` (default) | The platform's standard title bar. |
 | `Overlay` | macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar. |
 | `CompactOverlay` | The same with the shorter, older macOS title bar geometry. |
-| `Borderless` | No system decorations or toolkit resize frame; you own the complete window UI. |
-| `Custom` | No system decorations. Use your own header and `window_controls`; the host adds edge resizing on Linux/Windows and draggable-header double-click maximize/restore. |
+| `Borderless` | No visible title or system controls. macOS keeps an invisible native frame for rounded corners, shadow, resizing and public material blur. Linux/Windows are undecorated; you own the complete window UI. |
+| `Custom` | Content extends into the existing app header; no extra title strip. macOS retains native traffic lights, rounded frame, resizing and material blur. Linux/Windows use inline `window_controls` and toolkit-managed edge resizing. |
 
 Mark your header with `.drag_region(true)` so the window can be dragged by it.
 Buttons and other controls inside the header still receive clicks.
@@ -59,6 +59,22 @@ is live: it does not replace the window, restart workers or clear application
 state. At narrow widths, open the navigation drawer to reach the selector.
 `--chrome native|custom|borderless|overlay` chooses the initial mode.
 
+Custom mode embeds controls in the existing layout, not a new bar. The Catalog
+uses `navigation_split_view(...).integrated_header(true)` so the sidebar brand
+and detail toolbar share their original 56pt row. On macOS its horizontal safe
+area accommodates native traffic lights; no substitute buttons are drawn.
+With `.material(true)`, the sidebar and toolbar reveal the window backdrop,
+while only the page content is filled opaque. Text and controls stay opaque.
+The host's `WindowBackground` still chooses blur/transparency independently.
+The integrated layout does not paint a full-sheet card shadow behind its clear
+header (that would darken the entire toolbar); elevation belongs to the native
+window shadow. The legacy opaque floating sheet retains its existing shadow.
+
+`integrated_header` is opt-in and leaves existing split-view defaults unchanged.
+`.window_controls_inset(100.)` sets the logical horizontal safe area (0–480,
+finite), without repositioning OS buttons. App-owned toolbars may paint their
+own background; neither a specific glass style nor another title row is forced.
+
 ```rust,no_run
 use volt_ui_kit::{native::{Application, WindowChrome, WindowState, UiSender}, ui::prelude::*};
 #[derive(Default)]
@@ -66,22 +82,32 @@ struct State {
     chrome: WindowChrome,
     window: WindowState,
     actions: Option<UiSender<WindowAction>>,
+    sidebar_open: bool,
 }
 fn view(app: &State) -> Element<State> {
-    vstack![
-        hstack![text("My workspace"), spacer(),
-            window_controls(app.window.maximized, |app: &mut State, action| {
-                if let Some(sender) = &app.actions { let _ = sender.send(action); }
-            }),
-        ].height(44.).min_height(44.).padding(8., Edge::Horizontal)
-         .align(Align::Center).drag_region(true),
-        text("Your content"),
-    ].into()
+    let mut items: Vec<Element<State>> = vec![text("Search or workspace actions").into(), spacer().into()];
+    if !cfg!(target_os = "macos") {
+        items.push(window_controls(app.window.maximized, |app: &mut State, action| {
+            if let Some(sender) = &app.actions { let _ = sender.send(action); }
+        }).into());
+    }
+    navigation_split_view(|_| text("Inbox"), text("Your content"))
+        .key("workspace")
+        .sidebar_header(text("My workspace"))
+        .toolbar(hstack(items).align(Align::Center).drag_region(true))
+        .integrated_header(true)
+        .titlebar_inset(cfg!(target_os = "macos") && !app.window.fullscreen)
+        .window_controls_inset(100.)
+        .material(true)
+        .drawer_open(app.sidebar_open)
+        .on_drawer_change(|app: &mut State, open| app.sidebar_open = open)
+        .into()
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = State { chrome: WindowChrome::Custom, ..Default::default() };
     Application::new("Workspace", state, view)
         .chrome_from_state(|app| app.chrome)
+        .background(volt_ui_kit::native::WindowBackground::Blur { opacity: 0.72 })
         .custom_resize_border(6.)
         .window_actions(|app, sender| app.actions = Some(sender))
         .on_window_state(|app, state| app.window = state)
@@ -105,10 +131,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   hits. Reserve that border around interactive content. Header buttons never
   start a window drag. Double-click a blank draggable header to maximize or
   restore. The Catalog's right-click header menu uses the same guarded intents.
-- **macOS:** winit does not implement interactive `drag_resize_window` there.
-  Choose Native or Unified for native edge resizing. The current public material
-  underlay also needs decorated chrome; Custom/Borderless report this limitation
-  and retain transparency without silently enabling private compositor blur.
+- **macOS:** Custom keeps the full-size-content window and native traffic
+  lights, so AppKit retains outer rounded corners, shadow, edge resizing,
+  fullscreen and public material blur. Borderless is visually undecorated:
+  it hides the title/buttons but retains the same invisible frame and material.
+  This is not a raw `NSWindowStyleMask::Borderless` window. Mode switches restore
+  the full-size-content style, button visibility and native shadow. No delegate,
+  content view, native button sizing or Metal layer ownership is replaced.
+  Private compositor blur is never enabled silently.
 - Chrome changes requested while fullscreen are deferred until fullscreen ends;
   the Catalog disables its selector there. Compositor shadows, corner shaping,
   snapping affordances and decoration policy are still platform-owned—custom
