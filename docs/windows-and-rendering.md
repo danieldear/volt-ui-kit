@@ -60,20 +60,26 @@ state. At narrow widths, open the navigation drawer to reach the selector.
 `--chrome native|custom|borderless|overlay` chooses the initial mode.
 
 Custom mode embeds controls in the existing layout, not a new bar. The Catalog
-uses `navigation_split_view(...).integrated_header(true)` so the sidebar brand
-and detail toolbar share their original 56pt row. On macOS its horizontal safe
-area accommodates native traffic lights; no substitute buttons are drawn.
-With `.material(true)`, the sidebar and toolbar reveal the window backdrop,
-while only the page content is filled opaque. Text and controls stay opaque.
-The host's `WindowBackground` still chooses blur/transparency independently.
-The integrated layout does not paint a full-sheet card shadow behind its clear
-header (that would darken the entire toolbar); elevation belongs to the native
-window shadow. The legacy opaque floating sheet retains its existing shadow.
+uses `navigation_split_view(...).integrated_header(true)` to put native traffic
+lights and the brand in the existing sidebar header. Its right panel retains
+exactly the same opaque toolbar/content, 8pt top/right/bottom inset, rounded
+corners and floating-sheet shadow as Unified and Borderless. Chrome selection
+does not change the panel's material styling. The sidebar still reveals the
+window backdrop; text and controls stay opaque.
 
-`integrated_header` is opt-in and leaves existing split-view defaults unchanged.
-`.window_controls_inset(100.)` sets the logical horizontal safe area (0–480,
-finite), without repositioning OS buttons. App-owned toolbars may paint their
-own background; neither a specific glass style nor another title row is forced.
+`integrated_header` controls layout only and is opt-in, preserving the old
+split-view defaults. `.window_controls_inset(100.)` sets the logical horizontal
+safe area (0–480, finite), without repositioning OS buttons.
+
+Toolbar glass is a separate developer choice:
+`navigation_split_view(...).material(true).toolbar_translucent(true)` reveals
+the window backdrop through the existing toolbar while keeping page content
+opaque. It works with or without an integrated header and defaults to **false**.
+For that explicit glass toolbar the sheet shadow is omitted so its interior
+cannot darken the transparent header. The panel keeps its normal top inset.
+The host's `WindowBackground` independently selects blur/transparency; this
+builder never enables native blur or changes foreground opacity. Apps may also
+paint their own toolbar background. Catalog does not opt into toolbar glass.
 
 ```rust,no_run
 use volt_ui_kit::{native::{Application, WindowChrome, WindowState, UiSender}, ui::prelude::*};

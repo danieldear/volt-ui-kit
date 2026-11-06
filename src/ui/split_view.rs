@@ -39,6 +39,7 @@ struct SplitViewOptions<C> {
     collapse_below: Breakpoint,
     titlebar_inset: bool,
     integrated_header: bool,
+    toolbar_translucent: bool,
     controls_inset: f32,
     material: bool,
 }
@@ -75,6 +76,7 @@ where
             collapse_below: Breakpoint::Lg,
             titlebar_inset: cfg!(target_os = "macos"),
             integrated_header: false,
+            toolbar_translucent: false,
             controls_inset: 100.,
             material: false,
         },
@@ -141,11 +143,19 @@ impl<C> NavigationSplitView<C> {
     /// instead of adding a titlebar lane above the sidebar header. When
     /// `titlebar_inset(true)`, reserve 100pt horizontally for native macOS
     /// traffic lights. In narrow windows the existing menu row gets that inset.
-    /// With `material(true)`, the toolbar shows the window backdrop while the
-    /// detail content stays opaque. An app-owned toolbar may paint its own fill.
+    /// This controls layout only: it does not change the detail panel's fill,
+    /// inset, rounding or shadow. Toolbar glass is a separate opt-in.
     /// The default is false, preserving the original shell geometry.
     pub fn integrated_header(mut self, integrated: bool) -> Self {
         self.1.integrated_header = integrated;
+        self
+    }
+    /// Reveal the window backdrop through the toolbar when `material(true)`.
+    /// The page stays opaque; no full-sheet shadow is painted behind a clear
+    /// toolbar. Default false, independently of `integrated_header` and chrome
+    /// mode. This does not enable native blur or fade foreground controls.
+    pub fn toolbar_translucent(mut self, translucent: bool) -> Self {
+        self.1.toolbar_translucent = translucent;
         self
     }
     /// Horizontal native-control safe area for an integrated header (default
@@ -284,8 +294,8 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         if detail_content.node.flex == 0. {
             detail_content.node.flex = 1.;
         }
-        let integrated_material = o.integrated_header && o.material;
-        if integrated_material {
+        let translucent_toolbar = o.toolbar_translucent && o.material;
+        if translucent_toolbar {
             detail_content = vstack([detail_content])
                 .key(format!("{id}-detail-content"))
                 .flex(1.)
@@ -301,7 +311,7 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         .key(format!("{id}-detail"))
         .flex(1.)
         .align(Align::Stretch)
-        .background(if integrated_material {
+        .background(if translucent_toolbar {
             clear()
         } else {
             ColorToken::Base100.into()
@@ -315,12 +325,11 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         // On a material the detail is a sheet inset from every free edge,
         // so it never meets the window's rounded corners.
         let detail: Element<C> = if o.material {
-            // The ordinary floating sheet is opaque and hides its shadow's
-            // interior. An integrated glass toolbar does not: painting the
-            // same full-sheet shadow behind it produces a dark rectangular
-            // band. Let the native window provide elevation in that layout.
+            // Only explicit toolbar glass needs to omit this shadow: its
+            // interior would otherwise show through as a dark band. Integrating
+            // native controls never changes the detail panel's appearance.
             let sheet = detail.rounded(12.);
-            let sheet = if o.integrated_header {
+            let sheet = if translucent_toolbar {
                 sheet
             } else {
                 sheet.shadow(Shadow::new().color("#0000002E").blur(18.).offset(0., 2.))
@@ -328,7 +337,9 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
             vstack([
                 vstack([])
                     .key(format!("{id}-sheet-drag"))
-                    .height(if o.integrated_header { 0. } else { 8. })
+                    .height(8.)
+                    .min_height(8.)
+                    .flex(0.)
                     .drag_region(true)
                     .into(),
                 sheet.into(),
@@ -503,7 +514,7 @@ mod tests {
         assert_eq!(lane(false), Some(8.));
     }
     #[test]
-    fn integrated_header_uses_existing_row_and_keeps_only_the_content_opaque() {
+    fn integrated_header_only_changes_native_control_layout_not_panel_style() {
         fn find<'a>(e: &'a Element<()>, id: &str) -> Option<&'a Element<()>> {
             if e.node.id == id {
                 return Some(e);
@@ -539,7 +550,7 @@ mod tests {
                 .resolve(560.),
             72.
         );
-        assert_eq!(find(&e, "app-sheet-drag").unwrap().node.height, Some(0.));
+        assert_eq!(find(&e, "app-sheet-drag").unwrap().node.height, Some(8.));
         assert!(
             find(&e, "app-detail")
                 .unwrap()
@@ -547,8 +558,8 @@ mod tests {
                 .effects
                 .base
                 .shadow
-                .is_none(),
-            "no full-sheet shadow underneath the transparent toolbar"
+                .is_some(),
+            "integrated controls preserve the same opaque floating sheet and shadow"
         );
         assert_eq!(
             find(&e, "app-detail")
@@ -557,18 +568,52 @@ mod tests {
                 .style
                 .background
                 .as_deref(),
-            Some("@base-content/0")
-        );
-        assert_eq!(
-            find(&e, "app-detail-content")
-                .unwrap()
-                .node
-                .style
-                .background
-                .as_deref(),
             Some("@base-100")
         );
+        assert!(find(&e, "app-detail-content").is_none());
         assert!(e.build().is_ok());
+    }
+    #[test]
+    fn toolbar_glass_is_an_independent_opt_in_and_does_not_restyle_controls() {
+        fn find<'a>(e: &'a Element<()>, id: &str) -> Option<&'a Element<()>> {
+            if e.node.id == id {
+                return Some(e);
+            }
+            e.children.iter().find_map(|child| find(child, id))
+        }
+        for integrated in [false, true] {
+            for material in [false, true] {
+                for glass in [false, true] {
+                    let e: Element<()> = shell()
+                        .integrated_header(integrated)
+                        .material(material)
+                        .toolbar_translucent(glass)
+                        .into();
+                    let translucent = material && glass;
+                    let detail = find(&e, "app-detail").unwrap();
+                    assert_eq!(
+                        detail.node.style.background.as_deref(),
+                        Some(if translucent {
+                            "@base-content/0"
+                        } else {
+                            "@base-100"
+                        })
+                    );
+                    assert_eq!(
+                        detail.node.effects.base.shadow.is_some(),
+                        material && !glass
+                    );
+                    assert_eq!(find(&e, "app-detail-content").is_some(), translucent);
+                    if let Some(body) = find(&e, "app-detail-content") {
+                        assert_eq!(body.node.style.background.as_deref(), Some("@base-100"));
+                    }
+                    if material {
+                        assert_eq!(find(&e, "app-sheet-drag").unwrap().node.height, Some(8.));
+                    }
+                    assert!(e.build().is_ok());
+                }
+            }
+        }
     }
     #[test]
     fn integrated_header_rejects_invalid_safe_areas_without_changing_defaults() {

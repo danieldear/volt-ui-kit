@@ -2158,7 +2158,7 @@ fn custom_chrome_modes_preserve_catalog_content_and_header_menu_dispatch() {
                 .bounds();
             assert!(toolbar[1] <= 8., "no additional title strip: {toolbar:?}");
             if chrome == WindowChrome::Custom {
-                assert_eq!(toolbar[1], 0.);
+                assert_eq!(toolbar[1], if app.glass { 8. } else { 0. });
                 assert_eq!(toolbar[3], 56.);
                 assert_eq!(
                     r.boxes().iter().any(|b| b.id == "inline-window-controls"),
@@ -2193,13 +2193,14 @@ fn custom_chrome_modes_preserve_catalog_content_and_header_menu_dispatch() {
 #[test]
 fn custom_chrome_keeps_controls_and_mode_picker_reachable_in_compact_drawer() {
     let mut app = App::new();
+    app.glass = true;
     app.chrome = volt_ui_kit::native::WindowChrome::Custom;
     app.nav_open = true;
     for size in [[560., 460.], [620., 800.], [1440., 920.]] {
         let mut r = mount(&app, size);
         let header = r.boxes().iter().find(|b| b.id == "shell-toolbar").unwrap();
         assert_eq!(header.bounds.bounds()[3], 56.);
-        assert_eq!(header.bounds.bounds()[1], 0.);
+        assert_eq!(header.bounds.bounds()[1], 8.);
         let picker = r
             .boxes()
             .iter()
@@ -2222,43 +2223,73 @@ fn custom_chrome_keeps_controls_and_mode_picker_reachable_in_compact_drawer() {
 }
 
 #[test]
-fn embedded_glass_header_has_no_dark_sheet_shadow_and_content_stays_opaque() {
+fn custom_panel_matches_unified_and_borderless_with_only_the_sidebar_translucent() {
+    use volt_ui_kit::native::WindowChrome as W;
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
         for scale in [1., 1.25, 2.] {
-            let mut app = App::new();
-            app.chrome = volt_ui_kit::native::WindowChrome::Custom;
-            app.glass = true;
-            app.mode = mode;
-            let v = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
-            let (doc, handlers) = view(&app).build().unwrap().into_parts();
-            let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
-            let mut painter = RasterPainter::new(v);
-            runtime
-                .layout(v, &Bindings::default(), &mut painter)
-                .unwrap();
-            runtime.settle_animations();
-            let ui = theme(&app, mode);
-            let mut clear = ui.legacy_theme().background;
-            clear[3] = app.opacity as f32 / 100.;
-            let batches = runtime.paint_ui(&mut painter, &ui);
-            let pixels = painter.rasterize(&batches, clear).unwrap();
-            let sample = |x: f32, y: f32| {
-                pixels
-                    .pixel((x * scale) as u32, (y * scale) as u32)
-                    .unwrap()
-            };
-            assert_eq!(
-                sample(600., 3.),
-                sample(5., 3.),
-                "{mode:?} {scale}: toolbar must reveal the same backdrop, not a dark shadow"
-            );
-            assert!(
-                sample(600., 3.)
-                    .alpha()
-                    .abs_diff((app.opacity as f32 * 2.55).round() as u8)
-                    <= 1
-            );
-            assert_eq!(sample(1000., 500.).alpha(), 255, "page content is solid");
+            let mut reference = None;
+            let mut geometry = None;
+            for chrome in [W::Overlay, W::Borderless, W::Custom] {
+                let mut app = App::new();
+                app.chrome = chrome;
+                app.glass = true;
+                app.mode = mode;
+                let v = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+                let (doc, handlers) = view(&app).build().unwrap().into_parts();
+                let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+                let mut painter = RasterPainter::new(v);
+                runtime
+                    .layout(v, &Bindings::default(), &mut painter)
+                    .unwrap();
+                runtime.settle_animations();
+                let panel_boxes: Vec<_> = [
+                    "shell-sheet",
+                    "shell-sheet-drag",
+                    "shell-detail",
+                    "shell-toolbar",
+                ]
+                .into_iter()
+                .map(|id| {
+                    let b = runtime.boxes().iter().find(|b| b.id == id).unwrap();
+                    (b.bounds.bounds(), b.clip.bounds())
+                })
+                .collect();
+                if let Some(expected) = &geometry {
+                    assert_eq!(&panel_boxes, expected, "{chrome:?} panel geometry changed");
+                } else {
+                    geometry = Some(panel_boxes);
+                }
+                let ui = theme(&app, mode);
+                let mut clear = ui.legacy_theme().background;
+                clear[3] = app.opacity as f32 / 100.;
+                let batches = runtime.paint_ui(&mut painter, &ui);
+                let pixels = painter.rasterize(&batches, clear).unwrap();
+                let sample = |x: f32, y: f32| {
+                    pixels
+                        .pixel((x * scale) as u32, (y * scale) as u32)
+                        .unwrap()
+                };
+                let samples = [sample(600., 12.), sample(1000., 500.)];
+                assert!(
+                    samples.iter().all(|p| p.alpha() == 255),
+                    "{mode:?} {scale} {chrome:?}: toolbar and page must be opaque"
+                );
+                assert!(
+                    sample(5., 3.)
+                        .alpha()
+                        .abs_diff((app.opacity as f32 * 2.55).round() as u8)
+                        <= 1,
+                    "sidebar keeps its glass backdrop"
+                );
+                if let Some(expected) = reference {
+                    assert_eq!(
+                        samples, expected,
+                        "{mode:?} {scale}: chrome mode must not restyle the panel"
+                    );
+                } else {
+                    reference = Some(samples);
+                }
+            }
         }
     }
 }

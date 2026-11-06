@@ -224,7 +224,8 @@ window_controls(app.window_state.maximized, |app: &mut App, action| {
     if let Some(sender) = &app.window_actions { let _ = sender.send(action); }
 });
 // navigation_split_view(...).integrated_header(true).material(true)
-// keeps the backdrop behind the toolbar and fills only page content.
+// embeds controls without restyling the opaque, inset detail panel.
+// .toolbar_translucent(true) separately opts into header glass (default false).
 // The shell default and Application Native default remain unchanged."#,
         }],
         api: vec![
