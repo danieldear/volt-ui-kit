@@ -74,7 +74,8 @@ pub fn view(app: &App) -> El<App> {
     )
     .key("shell")
     .title("Volt UI")
-    .sidebar_header(brand())
+    .sidebar_header(brand(app))
+    .integrated_header(app.chrome == volt_ui_kit::native::WindowChrome::Custom)
     .sidebar_footer(
         vstack![
             chrome_settings(app, "footer-chrome-mode"),
@@ -88,7 +89,9 @@ pub fn view(app: &App) -> El<App> {
                 app.chrome,
                 volt_ui_kit::native::WindowChrome::Overlay
                     | volt_ui_kit::native::WindowChrome::CompactOverlay
-            ),
+                    | volt_ui_kit::native::WindowChrome::Custom
+            )
+            && !app.window_state.fullscreen,
     )
     .toolbar(header(app))
     .drawer_open(app.nav_open)
@@ -96,14 +99,7 @@ pub fn view(app: &App) -> El<App> {
     .sidebar_width(app.sidebar_width)
     .on_sidebar_resize(|app: &mut App, width| app.sidebar_width = width.round())
     .material(app.glass);
-    let frame: El<App> = if app.chrome == volt_ui_kit::native::WindowChrome::Custom {
-        vstack![custom_titlebar(app), shell]
-            .gap(0., Axis::Vertical)
-            .into()
-    } else {
-        shell.into()
-    };
-    let mut layers: Vec<El<App>> = vec![frame];
+    let mut layers: Vec<El<App>> = vec![shell.into()];
     layers.extend(dialogs(app));
     layers.push(palette(app));
     layers.push(toast(app));
@@ -174,12 +170,16 @@ fn chrome_settings(app: &App, key: &'static str) -> El<App> {
         text(match app.chrome {
             volt_ui_kit::native::WindowChrome::Custom =>
                 if cfg!(target_os = "macos") {
-                    "Custom controls · drag / double-click header · native mode for edge resize"
+                    "Native traffic lights in app content · rounded frame · material blur"
                 } else {
-                    "Custom controls · drag / double-click header · resize edges"
+                    "Inline controls · drag / double-click existing header · resize edges"
                 },
             volt_ui_kit::native::WindowChrome::Borderless =>
-                "No controls or resize frame · choose Native to restore",
+                if cfg!(target_os = "macos") {
+                    "Hidden controls · native rounded frame, shadow and material blur"
+                } else {
+                    "No controls or resize frame · choose Native to restore"
+                },
             _ => "System window controls and resize frame",
         })
         .font_size(10.)
@@ -190,39 +190,7 @@ fn chrome_settings(app: &App, key: &'static str) -> El<App> {
     .padding(18., Edge::Horizontal)
     .into()
 }
-fn custom_titlebar(app: &App) -> El<App> {
-    let controls = window_controls(
-        WindowControlsState {
-            maximized: app.window_state.maximized,
-            can_maximize: app.window_state.resizable && !app.window_state.fullscreen,
-            ..Default::default()
-        },
-        |app: &mut App, action| {
-            if let Some(sender) = &app.window_actions {
-                let _ = sender.send(action);
-            }
-        },
-    )
-    .key("native-window-controls");
-    let bar = hstack![
-        mark(18.),
-        text("Volt UI").font_size(12.).font_weight(600),
-        text("/  Component Catalog")
-            .font_size(12.)
-            .color(ColorToken::Muted)
-            .visible(responsive(false).at(Breakpoint::Md, true)),
-        spacer(),
-        controls,
-    ]
-    .key("custom-titlebar")
-    .height(44.)
-    .min_height(44.)
-    .flex(0.)
-    .padding(8., Edge::Horizontal)
-    .gap(8., Axis::Horizontal)
-    .align(Align::Center)
-    .drag_region(true)
-    .background(ColorToken::Base200);
+fn window_header_menu(app: &App, bar: El<App>) -> El<App> {
     context_menu(
         bar,
         [
@@ -241,11 +209,11 @@ fn custom_titlebar(app: &App) -> El<App> {
     )
     .fill()
     .key("window-header-menu")
-    .height(44.)
-    .min_height(44.)
-    .flex(0.)
+    .height(36.)
+    .min_height(36.)
+    .flex(1.)
     .open(app.window_menu.is_some())
-    .position(app.window_menu.unwrap_or([0., 44.]))
+    .position(app.window_menu.unwrap_or([0., 56.]))
     .on_context_open(|app: &mut App, at| app.window_menu = Some(at))
     .on_open_change(|app: &mut App, open| {
         if !open {
@@ -383,8 +351,36 @@ fn header(app: &App) -> El<App> {
         app.custom_palettes = None;
     })
     .on_open_change(|app: &mut App, open| app.theme_menu_open = open);
-    // The shell adds the menu button, height, padding and drag region.
-    hstack![
+    // Controls are ordinary content in the existing toolbar, never another row.
+    let custom_controls: El<App> =
+        if app.chrome == volt_ui_kit::native::WindowChrome::Custom && !cfg!(target_os = "macos") {
+            window_controls(
+                WindowControlsState {
+                    maximized: app.window_state.maximized,
+                    can_maximize: app.window_state.resizable && !app.window_state.fullscreen,
+                    ..Default::default()
+                },
+                |app: &mut App, action| {
+                    if let Some(sender) = &app.window_actions {
+                        let _ = sender.send(action);
+                    }
+                },
+            )
+            .key("inline-window-controls")
+            .into()
+        } else {
+            spacer().width(0.).flex(0.).into()
+        };
+    let themes: El<App> =
+        if app.chrome == volt_ui_kit::native::WindowChrome::Custom && !cfg!(target_os = "macos") {
+            themes
+                .visible(responsive(false).at(Breakpoint::Sm, true))
+                .into()
+        } else {
+            themes.into()
+        };
+    // The shell owns the original toolbar's geometry and drag region.
+    let bar: El<App> = hstack![
         hstack![
             nav("Docs", Page::Introduction),
             nav("Components", Page::Button),
@@ -405,12 +401,18 @@ fn header(app: &App) -> El<App> {
             .visible(responsive(false).at(Breakpoint::Xl, true)),
         themes,
         mode_button(app),
+        custom_controls,
     ]
     .drag_region(true)
     .key("site-header")
     .gap(6., Axis::Horizontal)
     .align(Align::Center)
-    .into()
+    .into();
+    if app.chrome == volt_ui_kit::native::WindowChrome::Custom {
+        window_header_menu(app, bar)
+    } else {
+        bar
+    }
 }
 
 /// The filter field and grouped page links. `prefix` keeps the sidebar's
@@ -475,10 +477,13 @@ fn page_links(app: &App, prefix: &str) -> Vec<El<App>> {
 }
 
 /// The brand row at the top of the sidebar, under the macOS window controls.
-fn brand() -> El<App> {
+fn brand(app: &App) -> El<App> {
+    let embedded = app.chrome == volt_ui_kit::native::WindowChrome::Custom;
     hstack![
-        mark(24.),
-        text("Volt UI").font_size(15.).font_weight(700),
+        mark(if embedded { 18. } else { 24. }),
+        text("Volt UI")
+            .font_size(if embedded { 14. } else { 15. })
+            .font_weight(700),
         badge(concat!(
             env!("CARGO_PKG_VERSION_MAJOR"),
             ".",
@@ -487,14 +492,15 @@ fn brand() -> El<App> {
         .font_size(10.)
         .rounded(Rounding::Full)
         .background(ColorToken::BaseContent.alpha(8))
-        .color(ColorToken::Muted),
+        .color(ColorToken::Muted)
+        .visible(!embedded),
     ]
     .drag_region(true)
     .key("brand")
     .height(40.)
     .gap(8., Axis::Horizontal)
     .align(Align::Center)
-    .padding(18., Edge::Horizontal)
+    .padding(if embedded { 8. } else { 18. }, Edge::Horizontal)
     .into()
 }
 

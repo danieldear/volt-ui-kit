@@ -2148,10 +2148,23 @@ fn custom_chrome_modes_preserve_catalog_content_and_header_menu_dispatch() {
             let mut app = App::new();
             app.chrome = chrome;
             let r = mount(&app, size);
-            assert_eq!(
-                r.boxes().iter().any(|b| b.id == "custom-titlebar"),
-                chrome == WindowChrome::Custom
-            );
+            assert!(!r.boxes().iter().any(|b| b.id == "custom-titlebar"));
+            let toolbar = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == "shell-toolbar")
+                .unwrap()
+                .bounds
+                .bounds();
+            assert!(toolbar[1] <= 8., "no additional title strip: {toolbar:?}");
+            if chrome == WindowChrome::Custom {
+                assert_eq!(toolbar[1], 0.);
+                assert_eq!(toolbar[3], 56.);
+                assert_eq!(
+                    r.boxes().iter().any(|b| b.id == "inline-window-controls"),
+                    !cfg!(target_os = "macos")
+                );
+            }
             assert!(r.boxes().iter().any(|b| b.id == "site-header"));
         }
     }
@@ -2162,9 +2175,16 @@ fn custom_chrome_modes_preserve_catalog_content_and_header_menu_dispatch() {
     let v = Viewport::new(1440., 920., 1.).unwrap();
     r.layout(v, &Bindings::default(), &mut RasterPainter::new(v))
         .unwrap();
-    assert!(r.drag_region_hit(400., 20.));
+    let [x, y, w, h] = r
+        .boxes()
+        .iter()
+        .find(|b| b.id == "window-header-menu")
+        .unwrap()
+        .bounds
+        .bounds();
+    assert!(r.drag_region_hit(x + w / 2., y + h - 2.));
     let outcome = r
-        .context_menu_at(400., 20., &mut handlers, &mut app)
+        .context_menu_at(x + w / 2., y + h / 2., &mut handlers, &mut app)
         .unwrap();
     assert!(outcome.activated);
     assert!(app.window_menu.is_some());
@@ -2177,12 +2197,9 @@ fn custom_chrome_keeps_controls_and_mode_picker_reachable_in_compact_drawer() {
     app.nav_open = true;
     for size in [[560., 460.], [620., 800.], [1440., 920.]] {
         let mut r = mount(&app, size);
-        let header = r
-            .boxes()
-            .iter()
-            .find(|b| b.id == "custom-titlebar")
-            .unwrap();
-        assert_eq!(header.bounds.bounds()[3], 44.);
+        let header = r.boxes().iter().find(|b| b.id == "shell-toolbar").unwrap();
+        assert_eq!(header.bounds.bounds()[3], 56.);
+        assert_eq!(header.bounds.bounds()[1], 0.);
         let picker = r
             .boxes()
             .iter()
@@ -2201,5 +2218,47 @@ fn custom_chrome_keeps_controls_and_mode_picker_reachable_in_compact_drawer() {
             picker.bounds
         );
         assert!(r.pointer_down(x + w / 2., y + h / 2.), "{size:?}");
+    }
+}
+
+#[test]
+fn embedded_glass_header_has_no_dark_sheet_shadow_and_content_stays_opaque() {
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 1.25, 2.] {
+            let mut app = App::new();
+            app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+            app.glass = true;
+            app.mode = mode;
+            let v = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+            let (doc, handlers) = view(&app).build().unwrap().into_parts();
+            let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let mut painter = RasterPainter::new(v);
+            runtime
+                .layout(v, &Bindings::default(), &mut painter)
+                .unwrap();
+            runtime.settle_animations();
+            let ui = theme(&app, mode);
+            let mut clear = ui.legacy_theme().background;
+            clear[3] = app.opacity as f32 / 100.;
+            let batches = runtime.paint_ui(&mut painter, &ui);
+            let pixels = painter.rasterize(&batches, clear).unwrap();
+            let sample = |x: f32, y: f32| {
+                pixels
+                    .pixel((x * scale) as u32, (y * scale) as u32)
+                    .unwrap()
+            };
+            assert_eq!(
+                sample(600., 3.),
+                sample(5., 3.),
+                "{mode:?} {scale}: toolbar must reveal the same backdrop, not a dark shadow"
+            );
+            assert!(
+                sample(600., 3.)
+                    .alpha()
+                    .abs_diff((app.opacity as f32 * 2.55).round() as u8)
+                    <= 1
+            );
+            assert_eq!(sample(1000., 500.).alpha(), 255, "page content is solid");
+        }
     }
 }

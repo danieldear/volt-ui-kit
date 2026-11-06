@@ -199,7 +199,7 @@ pub fn doc(app: &App) -> Doc {
         }, Section {
             id: "application-window-chrome",
             title: "Window decorations and controls",
-            note: "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; the real custom header controls the actual window and honors the unsaved-work close guard.",
+            note: "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
             demo: vstack![
                 hstack![text("Workspace").font_weight(600), spacer(),
                     window_controls(app.chrome_demo_maximized, |app: &mut App, action| {
@@ -209,7 +209,7 @@ pub fn doc(app: &App) -> Doc {
                 ].height(48.).padding(10., Edge::Horizontal).align(Align::Center)
                   .background(ColorToken::Base200).rounded(10.),
                 text(&app.last_action).font_size(12.).color(ColorToken::Muted),
-                text("Custom edge resizing is managed by the Linux/Windows host. On macOS use native/unified chrome for edge resizing and public material blur.").font_size(12.).color(ColorToken::Muted),
+                text("Custom uses native traffic lights, rounded corners and material blur on macOS; Linux/Windows controls live inline in the existing toolbar.").font_size(12.).color(ColorToken::Muted),
             ].max_width(600.).gap(12.,Axis::Vertical).into(),
             code: r#"Application::new("Workspace", app, view)
     .chrome_from_state(|app| app.chrome)
@@ -218,12 +218,14 @@ pub fn doc(app: &App) -> Doc {
     .on_window_state(|app, state| app.window_state = state)
     .on_close_request(close_guard)
     .run()?;
-// In your own draggable header:
+// Linux/Windows: place controls inside your EXISTING draggable toolbar.
+// macOS Custom retains native traffic lights; do not draw duplicate buttons.
 window_controls(app.window_state.maximized, |app: &mut App, action| {
     if let Some(sender) = &app.window_actions { let _ = sender.send(action); }
 });
-// WindowChrome::Custom: no native decorations; edge resizing and header
-// double-click maximize on supported desktop hosts. Native remains default."#,
+// navigation_split_view(...).integrated_header(true).material(true)
+// keeps the backdrop behind the toolbar and fills only page content.
+// The shell default and Application Native default remain unchanged."#,
         }],
         api: vec![
             ("CommandRegistry::new().command(...)", "Up to 256 validated, uniquely named Rust commands."),

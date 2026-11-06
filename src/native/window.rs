@@ -122,10 +122,14 @@ pub enum WindowChrome {
     /// Original compact macOS overlay geometry, for applications with short headers.
     /// Other platforms retain their native decorated title bar.
     CompactOverlay,
-    /// No system decorations. Applications must supply their own window controls.
+    /// No visible system title or controls. macOS retains an invisible native
+    /// frame for rounded corners, shadow, resizing and public material blur.
+    /// Linux/Windows are undecorated; applications own any window controls.
     Borderless,
-    /// Toolkit-managed edge resizing and header double-click behavior, with no
-    /// system decorations. Compose `ui::window_controls` in your own header.
+    /// App content owns the header layout, without an additional title strip.
+    /// macOS retains native traffic lights, corners, resizing and material over
+    /// full-size content. Linux/Windows use inline `ui::window_controls` and
+    /// toolkit-managed edge resizing. No header UI is inserted by this host.
     Custom,
 }
 
@@ -2306,6 +2310,8 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if unified_titlebar_policy(self.options.chrome, true) {
                 super::macos_chrome::install_unified_titlebar(&w)?;
             }
+            #[cfg(target_os = "macos")]
+            super::macos_chrome::sync_controls_and_shadow(&w, self.options.chrome)?;
             self.access = Some(accesskit_winit::Adapter::with_event_loop_proxy(
                 event_loop,
                 &w,
@@ -3084,12 +3090,17 @@ fn chrome_policy(chrome: WindowChrome, macos: bool) -> (bool, bool) {
     match chrome {
         WindowChrome::Native => (true, false),
         WindowChrome::Overlay | WindowChrome::CompactOverlay => (true, macos),
-        WindowChrome::Borderless | WindowChrome::Custom => (false, false),
+        WindowChrome::Custom => (macos, macos),
+        WindowChrome::Borderless => (macos, macos),
     }
 }
 #[cfg(any(test, target_os = "macos"))]
 fn unified_titlebar_policy(chrome: WindowChrome, macos: bool) -> bool {
-    macos && chrome == WindowChrome::Overlay
+    macos
+        && matches!(
+            chrome,
+            WindowChrome::Overlay | WindowChrome::Custom | WindowChrome::Borderless
+        )
 }
 fn root_clear(theme: &Theme, background: WindowBackground, alpha_active: bool) -> [f32; 4] {
     let mut clear = theme.background;
@@ -3139,6 +3150,7 @@ fn window_attributes(options: &WindowOptions) -> WindowAttributes {
                 .with_titlebar_transparent(true)
                 .with_fullsize_content_view(true)
                 .with_title_hidden(true)
+                .with_titlebar_buttons_hidden(options.chrome == WindowChrome::Borderless)
         } else {
             attributes
         }
@@ -3356,17 +3368,16 @@ mod tests {
         assert_eq!(chrome_policy(WindowChrome::Native, true), (true, false));
         assert_eq!(chrome_policy(WindowChrome::Overlay, true), (true, true));
         assert_eq!(chrome_policy(WindowChrome::Overlay, false), (true, false));
-        assert_eq!(
-            chrome_policy(WindowChrome::Borderless, true),
-            (false, false)
-        );
+        assert_eq!(chrome_policy(WindowChrome::Custom, true), (true, true));
+        assert_eq!(chrome_policy(WindowChrome::Custom, false), (false, false));
+        assert_eq!(chrome_policy(WindowChrome::Borderless, true), (true, true));
         assert_eq!(
             chrome_policy(WindowChrome::Borderless, false),
             (false, false)
         );
         let borderless =
             window_attributes(&NativeOptions::default().with_chrome(WindowChrome::Borderless));
-        assert!(!borderless.decorations);
+        assert_eq!(borderless.decorations, cfg!(target_os = "macos"));
         let overlay =
             window_attributes(&NativeOptions::default().with_chrome(WindowChrome::Overlay));
         assert!(overlay.decorations);
@@ -3374,12 +3385,11 @@ mod tests {
     #[test]
     fn unified_titlebar_policy_keeps_native_and_compact_chrome_unchanged() {
         assert!(unified_titlebar_policy(WindowChrome::Overlay, true));
-        for chrome in [
-            WindowChrome::Native,
-            WindowChrome::CompactOverlay,
-            WindowChrome::Borderless,
-            WindowChrome::Custom,
-        ] {
+        assert!(unified_titlebar_policy(WindowChrome::Custom, true));
+        assert!(!unified_titlebar_policy(WindowChrome::Custom, false));
+        assert!(unified_titlebar_policy(WindowChrome::Borderless, true));
+        assert!(!unified_titlebar_policy(WindowChrome::Borderless, false));
+        for chrome in [WindowChrome::Native, WindowChrome::CompactOverlay] {
             assert!(!unified_titlebar_policy(chrome, true));
         }
         assert!(!unified_titlebar_policy(WindowChrome::Overlay, false));

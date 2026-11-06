@@ -38,6 +38,8 @@ struct SplitViewOptions<C> {
     on_resize: Option<Resize<C>>,
     collapse_below: Breakpoint,
     titlebar_inset: bool,
+    integrated_header: bool,
+    controls_inset: f32,
     material: bool,
 }
 /// A sidebar beside a detail column. `sidebar` is called once for the
@@ -72,6 +74,8 @@ where
             on_resize: None,
             collapse_below: Breakpoint::Lg,
             titlebar_inset: cfg!(target_os = "macos"),
+            integrated_header: false,
+            controls_inset: 100.,
             material: false,
         },
     )
@@ -133,6 +137,24 @@ impl<C> NavigationSplitView<C> {
         self.1.titlebar_inset = inset;
         self
     }
+    /// Use the existing 56pt sidebar header/toolbar row for window controls,
+    /// instead of adding a titlebar lane above the sidebar header. When
+    /// `titlebar_inset(true)`, reserve 100pt horizontally for native macOS
+    /// traffic lights. In narrow windows the existing menu row gets that inset.
+    /// With `material(true)`, the toolbar shows the window backdrop while the
+    /// detail content stays opaque. An app-owned toolbar may paint its own fill.
+    /// The default is false, preserving the original shell geometry.
+    pub fn integrated_header(mut self, integrated: bool) -> Self {
+        self.1.integrated_header = integrated;
+        self
+    }
+    /// Horizontal native-control safe area for an integrated header (default
+    /// 100 logical pixels). Match this to the host's native controls; this does
+    /// not move or resize OS buttons. Ignored when `titlebar_inset(false)`.
+    pub fn window_controls_inset(mut self, logical_pixels: f32) -> Self {
+        self.1.controls_inset = logical_pixels;
+        self
+    }
     /// Let a translucent window background show through the sidebar; the
     /// detail floats on it as an inset, shadowed sheet.
     pub fn material(mut self, material: bool) -> Self {
@@ -149,18 +171,45 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         }
         let id = view.0.node.id.clone();
         let o = view.1;
+        if !o.controls_inset.is_finite() || !(0. ..=480.).contains(&o.controls_inset) {
+            view.0.validation_error =
+                Some("window controls inset must be finite and between 0 and 480".into());
+            return view.0;
+        }
         let wide = responsive(false).at(o.collapse_below, true);
         let narrow = responsive(true).at(o.collapse_below, false);
         let clear = || ColorToken::BaseContent.alpha(0);
 
         // The sidebar column: window-control lane, header, scrolling
         // content, footer.
-        let mut column = vec![vstack([])
-            .key(format!("{id}-titlebar"))
-            .height(if o.titlebar_inset { 48. } else { 8. })
+        let mut column: Vec<Element<C>> = if o.integrated_header {
+            vec![hstack([
+                spacer()
+                    .width(if o.titlebar_inset {
+                        o.controls_inset
+                    } else {
+                        0.
+                    })
+                    .flex(0.)
+                    .into(),
+                o.header.unwrap_or_else(|| spacer().into()),
+            ])
+            .key(format!("{id}-integrated-header"))
+            .height(56.)
+            .min_height(56.)
+            .flex(0.)
+            .align(Align::Center)
             .drag_region(true)
-            .into()];
-        column.extend(o.header);
+            .into()]
+        } else {
+            let mut legacy: Vec<Element<C>> = vec![vstack([])
+                .key(format!("{id}-titlebar"))
+                .height(if o.titlebar_inset { 48. } else { 8. })
+                .drag_region(true)
+                .into()];
+            legacy.extend(o.header);
+            legacy
+        };
         column.push(
             vstack([o.column])
                 .key(format!("{id}-sidebar"))
@@ -183,7 +232,15 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         // window controls, opens the drawer.
         let mut bar: Vec<Element<C>> = vec![];
         if let Some(change) = o.on_drawer.clone() {
-            let lane = if o.titlebar_inset { 64. } else { 0. };
+            let lane = if o.titlebar_inset {
+                if o.integrated_header {
+                    (o.controls_inset - 16.).max(0.)
+                } else {
+                    64.
+                }
+            } else {
+                0.
+            };
             bar.push(
                 hstack([
                     spacer().width(lane).flex(0.).into(),
@@ -227,6 +284,15 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         if detail_content.node.flex == 0. {
             detail_content.node.flex = 1.;
         }
+        let integrated_material = o.integrated_header && o.material;
+        if integrated_material {
+            detail_content = vstack([detail_content])
+                .key(format!("{id}-detail-content"))
+                .flex(1.)
+                .align(Align::Stretch)
+                .background(ColorToken::Base100)
+                .into();
+        }
         let detail = vstack([
             toolbar.into(),
             divider().background(ColorToken::Border).into(),
@@ -235,7 +301,11 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         .key(format!("{id}-detail"))
         .flex(1.)
         .align(Align::Stretch)
-        .background(ColorToken::Base100)
+        .background(if integrated_material {
+            clear()
+        } else {
+            ColorToken::Base100.into()
+        })
         .border_color(if o.material {
             ColorToken::BaseContent.alpha(9)
         } else {
@@ -245,16 +315,23 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
         // On a material the detail is a sheet inset from every free edge,
         // so it never meets the window's rounded corners.
         let detail: Element<C> = if o.material {
+            // The ordinary floating sheet is opaque and hides its shadow's
+            // interior. An integrated glass toolbar does not: painting the
+            // same full-sheet shadow behind it produces a dark rectangular
+            // band. Let the native window provide elevation in that layout.
+            let sheet = detail.rounded(12.);
+            let sheet = if o.integrated_header {
+                sheet
+            } else {
+                sheet.shadow(Shadow::new().color("#0000002E").blur(18.).offset(0., 2.))
+            };
             vstack([
                 vstack([])
                     .key(format!("{id}-sheet-drag"))
-                    .height(8.)
+                    .height(if o.integrated_header { 0. } else { 8. })
                     .drag_region(true)
                     .into(),
-                detail
-                    .rounded(12.)
-                    .shadow(Shadow::new().color("#0000002E").blur(18.).offset(0., 2.))
-                    .into(),
+                sheet.into(),
             ])
             .key(format!("{id}-sheet"))
             .flex(1.)
@@ -315,6 +392,11 @@ impl<C: 'static> From<NavigationSplitView<C>> for Element<C> {
                 .size(280.)
                 .open(o.drawer_open)
                 .on_dismiss(move |app: &mut C| (change.borrow_mut())(app, false));
+            if o.integrated_header && o.titlebar_inset {
+                // Reserve native buttons in the existing drawer heading, not
+                // a new row or the body (which needs its full usable width).
+                panel = panel.header_leading_inset((o.controls_inset - 20.).max(0.));
+            }
             if let Some(title) = o.title {
                 panel = panel.title(title);
             }
@@ -419,5 +501,87 @@ mod tests {
         };
         assert_eq!(lane(true), Some(48.));
         assert_eq!(lane(false), Some(8.));
+    }
+    #[test]
+    fn integrated_header_uses_existing_row_and_keeps_only_the_content_opaque() {
+        fn find<'a>(e: &'a Element<()>, id: &str) -> Option<&'a Element<()>> {
+            if e.node.id == id {
+                return Some(e);
+            }
+            e.children.iter().find_map(|child| find(child, id))
+        }
+        let e: Element<()> = shell()
+            .sidebar_header(text("Workspace").key("brand"))
+            .toolbar(text("Search").key("search"))
+            .integrated_header(true)
+            .titlebar_inset(true)
+            .window_controls_inset(92.)
+            .material(true)
+            .on_drawer_change(|_: &mut (), _| {})
+            .drawer_open(true)
+            .into();
+        assert!(
+            find(&e, "app-titlebar").is_none(),
+            "no extra native-control row"
+        );
+        let header = find(&e, "app-integrated-header").unwrap();
+        assert_eq!(header.node.height, Some(56.));
+        assert_eq!(header.children[0].node.width, Some(92.));
+        assert_eq!(find(&e, "app-toolbar").unwrap().node.height, Some(56.));
+        assert_eq!(
+            find(&e, "app-menu-lane").unwrap().children[0].node.width,
+            Some(76.)
+        );
+        assert_eq!(
+            *find(&e, "app-drawer-head").unwrap().node.responsive.padding[3]
+                .as_ref()
+                .unwrap()
+                .resolve(560.),
+            72.
+        );
+        assert_eq!(find(&e, "app-sheet-drag").unwrap().node.height, Some(0.));
+        assert!(
+            find(&e, "app-detail")
+                .unwrap()
+                .node
+                .effects
+                .base
+                .shadow
+                .is_none(),
+            "no full-sheet shadow underneath the transparent toolbar"
+        );
+        assert_eq!(
+            find(&e, "app-detail")
+                .unwrap()
+                .node
+                .style
+                .background
+                .as_deref(),
+            Some("@base-content/0")
+        );
+        assert_eq!(
+            find(&e, "app-detail-content")
+                .unwrap()
+                .node
+                .style
+                .background
+                .as_deref(),
+            Some("@base-100")
+        );
+        assert!(e.build().is_ok());
+    }
+    #[test]
+    fn integrated_header_rejects_invalid_safe_areas_without_changing_defaults() {
+        for inset in [f32::NAN, f32::INFINITY, -1., 481.] {
+            let e: Element<()> = shell()
+                .integrated_header(true)
+                .window_controls_inset(inset)
+                .into();
+            assert!(e.build().is_err());
+        }
+        let e: Element<()> = shell().material(true).into();
+        assert!(all(&e).iter().any(|id| id == "app-titlebar"));
+        assert!(!all(&e).iter().any(|id| id == "app-detail-content"));
+        assert!(e.build().is_ok());
     }
 }
