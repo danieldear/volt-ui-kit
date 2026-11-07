@@ -969,7 +969,7 @@ fn toolbar_doc() -> Doc {
             .enabled(false)
             .on_click(noop),
         spacer(),
-        badge("Draft"),
+        badge("Draft").font_size(12.),
         button("Share")
             .key("tb-share")
             .variant(ButtonVariant::Outline)
@@ -994,7 +994,7 @@ fn toolbar_doc() -> Doc {
             r#"toolbar![
     button("Back").variant(ButtonVariant::Ghost).size(ControlSize::Small).on_click(back),
     spacer(),
-    badge("Draft"),
+    badge("Draft").font_size(12.),
     button("Publish").variant(ButtonVariant::Primary).on_click(publish),
 ]"#,
         )],

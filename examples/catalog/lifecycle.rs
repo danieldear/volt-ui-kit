@@ -255,7 +255,7 @@ pub fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
             [255, 255, 255, if stroke { 255 } else { 0 }]
         })
         .collect();
-    DesktopConfig::new("Volt UI")
+    DesktopConfig::new("Volt UI Kit")
         .tray(TrayConfig {
             tooltip: "Volt Catalog desktop services".into(),
             rgba,

@@ -272,7 +272,7 @@ pub fn doc(app: &App) -> Doc {
     } else {
         spacer().height(0.).into()
     };
-    Doc {sections:vec![Section {id:"document-files",title:"A real notes document",note:"Native macOS file panels and worker-thread UTF-8 I/O. 8 KiB maximum; failed/cancelled operations retain your draft. No automatic saving or hidden path selection.",
+    Doc {sections:vec![Section {id:"document-files",title:"A real notes document",note:"Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KB. If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
         demo:vstack![
             hstack![text(name).font_family("SF Mono").font_size(13.),spacer(),badge(if state.busy {"Working…"} else if state.dirty(){"Unsaved"} else {"No unsaved changes"})],
             hstack![
@@ -281,8 +281,8 @@ pub fn doc(app: &App) -> Doc {
                 button("Save As…").key("files-save-as").variant(ButtonVariant::Outline).enabled(!state.busy).on_click(|app:&mut App|lifecycle::request(app,ApplicationRequest::Command("save-as-file".into()))),
             ].gap(8.,Axis::Horizontal),
             text_area(&state.text).key("files-editor").accessible_label("File document editor").height(240.).soft_wrap(true).read_only(state.busy).font_family("SF Mono").font_size(13.).on_change(|app:&mut App,text|app.documents.text=text),
-            text(if state.status.is_empty(){"Choose a file or write a new note. Cmd+O opens; Cmd+S saves the active notes document."} else {&state.status}).font_size(12.).color(ColorToken::Muted),error,
-            text("Matching saves detect ordinary external edits. This is not a hostile-directory sandbox or a multi-process transaction; ACLs/xattrs are not preserved.").font_size(12.).color(ColorToken::Muted),
+            text(if state.status.is_empty(){"Write a note, or open one with Cmd+O. Cmd+S saves it."} else {&state.status}).font_size(12.).color(ColorToken::Muted),error,
+            text("If another app changed the file after you opened it, saving stops and tells you instead of overwriting it. This guards against ordinary edits, not against other programs deliberately racing the save. Saving doesn't keep the file's extended attributes or access-control lists.").font_size(12.).color(ColorToken::Muted),
         ].width(640.).gap(14.,Axis::Vertical).into(),
         code:r#"// Application owns document state and paths.
 // Native panels choose a path; read/write on a worker.
@@ -300,7 +300,7 @@ pub fn overlay(app: &App) -> El<App> {
         spacer().height(0.).into()
     };
     dialog(vstack![
-        text(if app.documents.busy {"A file operation is running. Keep the window open until it completes; Cancel cancels the pending close/open action, not the disk operation."} else {"This notes document has unsaved changes. Save writes to disk; Discard restores the last saved text; Cancel keeps editing."}).font_size(14.),
+        text(if app.documents.busy {"A file is still being opened or saved. Keep the window open until it finishes. Cancel stops the close or open you asked for, not the file operation itself."} else {"This notes document has unsaved changes. Save writes to disk; Discard restores the last saved text; Cancel keeps editing."}).font_size(14.),
         error,
         hstack![spacer(),button("Cancel").key("files-close-cancel").variant(ButtonVariant::Outline).on_click(cancel),
             button("Discard").key("files-close-discard").variant(ButtonVariant::Danger).enabled(!app.documents.busy).on_click(discard),

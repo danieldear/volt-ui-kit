@@ -91,7 +91,7 @@ pub fn history_section(app: &App) -> Section {
             ]
             .gap(4., Axis::Horizontal)
             .fill_width(),
-            text(current.path())
+            text(format!("Route: {}", current.path()))
                 .font_family("SF Mono")
                 .font_size(11.)
                 .color(ColorToken::Muted),
@@ -168,7 +168,7 @@ pub fn links_section(app: &App) -> Section {
         text("Links that behave like links.").font_size(24.).font_weight(600),
         muted("Tab to a link and press Enter, or click. A Rust callback decides what happens next."),
         vstack![
-            link("Explore Volt UI on GitHub ↗", "https://github.com/danieldear/volt-ui-kit").key("link-repository").on_open(capture),
+            link("Explore Volt UI Kit on GitHub ↗", "https://github.com/danieldear/volt-ui-kit").key("link-repository").on_open(capture),
             link("Read the documentation ↗", "https://danieldear.github.io/volt-ui-kit/").key("link-documentation").on_open(capture),
             link("Unavailable resource", "https://example.com").key("link-disabled").enabled(false).on_open(capture),
         ].gap(4.,Axis::Vertical),
