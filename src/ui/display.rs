@@ -166,41 +166,48 @@ impl<C> From<Avatar> for Element<C> {
 pub fn avatar_group<C>(avatars: impl IntoIterator<Item = Avatar>, max: usize) -> Element<C> {
     let all: Vec<Avatar> = avatars.into_iter().collect();
     let size = all.first().map_or(32., |a| a.size);
+    // Each avatar sits on a ring of the page colour, so overlapped avatars
+    // stay distinct; a 22% overlap keeps most of every face or initial in view.
+    let ring = 2.;
+    let outer = size + ring * 2.;
+    let step = outer * 0.78;
     let extra = all.len().saturating_sub(max);
-    let step = size * 0.68;
+    let ringed = |child: Element<C>| -> Element<C> {
+        vstack![child]
+            .padding(ring, Edge::All)
+            .rounded(Rounding::Full)
+            .background(ColorToken::Base100)
+            .into()
+    };
     let mut layers: Vec<Element<C>> = Vec::new();
     let shown = all.len().min(max);
     for (i, a) in all.into_iter().take(max).enumerate() {
         layers.push(
-            hstack![vstack![Element::from(a)]
-                .rounded(Rounding::Full)
-                .border_color(ColorToken::Base100)
-                .border_width(2.)]
-            .padding(i as f32 * step, Edge::Left)
-            .into(),
+            hstack![ringed(Element::from(a))]
+                .padding(i as f32 * step, Edge::Left)
+                .into(),
         );
     }
     if extra > 0 {
+        let more = vstack![text(format!("+{extra}"))
+            .font_size((size * 0.36).round())
+            .font_weight(600)]
+        .width(size)
+        .height(size)
+        .flow(Flow::Center)
+        .rounded(Rounding::Full)
+        .background(ColorToken::Base300);
         layers.push(
-            hstack![vstack![text(format!("+{extra}"))
-                .font_size((size * 0.36).round())
-                .font_weight(600)]
-            .width(size)
-            .height(size)
-            .flow(Flow::Center)
-            .rounded(Rounding::Full)
-            .background(ColorToken::Base300)
-            .border_color(ColorToken::Base100)
-            .border_width(2.)]
-            .padding(shown as f32 * step, Edge::Left)
-            .into(),
+            hstack![ringed(more.into())]
+                .padding(shown as f32 * step, Edge::Left)
+                .into(),
         );
     }
     let count = shown + usize::from(extra > 0);
     zstack(layers)
         .flow(Flow::TopLeft)
-        .width(size + count.saturating_sub(1) as f32 * step)
-        .height(size)
+        .width(outer + count.saturating_sub(1) as f32 * step)
+        .height(outer)
         .into()
 }
 

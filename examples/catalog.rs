@@ -1,4 +1,4 @@
-//! Volt UI catalog: every component, documented with live previews, code,
+//! Volt UI Kit Catalog: every component, documented with live previews, code,
 //! variations and API tables, in a shadcn/ui-style documentation shell.
 //!
 //! ./scripts/run_catalog.sh  # full Catalog, automatically bundled on macOS
@@ -144,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(_) => return Err("VOLT_UI_RENDERER must be auto, gpu or software".into()),
     };
     support::launch_themed_with_application(
-        "Volt UI",
+        "Volt UI Kit",
         app,
         catalog::view,
         catalog::theme,

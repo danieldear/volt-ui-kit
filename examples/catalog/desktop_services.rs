@@ -39,7 +39,7 @@ impl Default for State {
             title: "Volt desktop test".into(),
             body: "A local notification from the Catalog. No network or personal content.".into(),
             status:
-                "No permission requested. Authorization is explicit and belongs to this bundle ID."
+                "Permission hasn't been requested yet. macOS remembers your choice for this app."
                     .into(),
             error: None,
             generation: 0,
@@ -53,7 +53,7 @@ fn begin(app: &mut App) -> Option<(u64, Mailbox, UiSender<Message>)> {
     }
     let Some(sender) = app.sender.clone() else {
         app.services.error =
-            Some("Run the native Catalog; snapshots never call OS services.".into());
+            Some("Open the Catalog app to try this; previews never contact macOS.".into());
         return None;
     };
     app.services.generation = app.services.generation.wrapping_add(1);
@@ -102,8 +102,7 @@ fn notification_plan(app: &App) -> (LocalNotification, Duration) {
 }
 pub fn send(app: &mut App) {
     if app.services.authorization != Some(Authorization::Granted) {
-        app.services.error =
-            Some("Request alert permission explicitly before sending this example.".into());
+        app.services.error = Some("Allow notifications first, then send.".into());
         return;
     }
     let Some((generation, mailbox, sender)) = begin(app) else {
@@ -125,13 +124,13 @@ pub fn remove(app: &mut App) {
     }
     if app.sender.is_none() {
         app.services.error =
-            Some("Run the native Catalog; snapshots never call OS services.".into());
+            Some("Open the Catalog app to try this; previews never contact macOS.".into());
         return;
     }
     app.services.error = None;
     match notifications::remove(ID) {
         Ok(()) => app.services.status =
-            "Removal requested for this ID (pending and delivered); no visual-completion receipt."
+            "Asked macOS to remove this notification, whether it's waiting or already shown. macOS doesn't confirm when it's gone."
                 .into(),
         Err(e) => app.services.error = Some(e.to_string()),
     }
@@ -146,7 +145,7 @@ pub fn reset(app: &mut App) {
     app.services.mailbox = Arc::default();
     app.services.busy = false;
     app.services.status =
-        "Witness reset; OS permission and submitted requests were not changed.".into();
+        "Status cleared. Your notification permission and any notifications already sent are unchanged.".into();
 }
 pub fn drain(app: &mut App) {
     let completion = app
@@ -167,16 +166,16 @@ pub fn drain(app: &mut App) {
             app.services.authorization = Some(value);
             app.services.status = match value {
                 Authorization::Granted =>
-                    "Alert authorization granted at request time; settings/Focus can still suppress display.",
+                    "Notifications allowed. Focus modes or System Settings can still hide them.",
                 Authorization::Denied =>
-                    "Alert authorization denied. Change it yourself in System Settings if desired; nothing was sent.",
+                    "Notifications not allowed, so nothing was sent. You can change this in System Settings.",
             }.into();
         }
         Completion::Submitted(Ok(()), delay) => {
-            app.services.status = format!("OS accepted the request ({} seconds requested delay). This is NOT a delivery receipt. For pending cancellation, remove now, then hide Catalog and check Notification Center after the delay. Foreground banners/actions are not implemented.", delay.as_secs());
+            app.services.status = format!("macOS accepted the notification, due in {} seconds. That doesn't guarantee it will be shown. To test cancelling, remove it now, switch to another app, and check Notification Center after the delay. Banners while the Catalog is in front, and notification actions, aren't supported yet.", delay.as_secs());
         }
         Completion::Authorization(Err(e)) | Completion::Submitted(Err(e), _) => {
-            app.services.status = "OS operation failed; see the error below.".into();
+            app.services.status = "macOS reported an error; see below.".into();
             app.services.error = Some(e.to_string());
         }
     }
@@ -190,18 +189,18 @@ pub fn can_send(app: &App) -> bool {
 /// Explain build/platform prerequisites without requesting OS permission.
 pub(super) fn notification_setup_help() -> &'static str {
     if !cfg!(target_os = "macos") {
-        "Local notifications currently require macOS; this platform has no notification adapter."
+        "Notifications are available on macOS only for now."
     } else if !cfg!(feature = "native-notifications") {
-        "Notifications are not compiled in. native-desktop enables menus and tray, not notifications. Run ./scripts/run_catalog.sh from the repository to build and open the full, bundled Catalog."
+        "This build doesn't include notifications. To try them, run ./scripts/run_catalog.sh from the repository; it builds and opens the full Catalog app."
     } else {
-        "The notification adapter is compiled. Use ./scripts/run_catalog.sh to launch the identified Catalog .app, not cargo run. Request alert permission here, then send and switch to another app before the delay expires. OS acceptance does not guarantee presentation. See docs/app-services.md: Testing Catalog notifications."
+        "Notifications are built in. Launch the Catalog with ./scripts/run_catalog.sh, not cargo run, so macOS can identify the app. Allow notifications, send one, then switch to another app before the delay ends. See “Testing Catalog notifications” in the Application services guide."
     }
 }
 
 pub fn doc(app: &App) -> Doc {
     let caps = notifications::capabilities();
     Doc {sections:vec![Section {
-        id:"desktop-notifications",title:"Local notifications",note:"An explicit, opt-in OS service—not an in-app toast. No permission or notification is requested on launch.",
+        id:"desktop-notifications",title:"Local notifications",note:"System notifications that appear in Notification Center, unlike in-app toasts. Nothing is requested until you ask.",
         demo:vstack![
             hstack![badge(if caps.local_requests {"macOS adapter compiled"} else {"Adapter unavailable"}),
                 badge(match app.services.authorization {Some(Authorization::Granted)=>"Last decision: granted",Some(Authorization::Denied)=>"Last decision: denied",None=>"Permission not requested"})],
@@ -219,10 +218,10 @@ pub fn doc(app: &App) -> Doc {
                 button(if app.services.cancellation_test { "Send in 60 seconds" } else { "Send in 8 seconds" }).key("notification-send").enabled(caps.local_requests&&!app.services.busy&&app.services.authorization==Some(Authorization::Granted)).on_click(send),
             ].gap(8.,Axis::Horizontal),
             hstack![button("Remove test notification").key("notification-remove").variant(ButtonVariant::Outline).enabled(caps.removal&&!app.services.busy).on_click(remove),
-                button("Reset witness").key("notification-reset").variant(ButtonVariant::Ghost).enabled(!app.services.busy).on_click(reset)].gap(8.,Axis::Horizontal),
+                button("Clear status").key("notification-reset").variant(ButtonVariant::Ghost).enabled(!app.services.busy).on_click(reset)].gap(8.,Axis::Horizontal),
             text(&app.services.status).font_size(13.).color(ColorToken::Muted),
             text(app.services.error.as_deref().unwrap_or("")).font_size(13.).color(ColorToken::Error),
-            text("The full Catalog launcher handles build features and macOS packaging. Permission is always your choice. Unsupported platforms and native errors stay visible; sound, badge, action-click callbacks and forced foreground presentation are not supplied.").font_size(12.).color(ColorToken::Muted),
+            text("The Catalog launcher builds the right features and packages the app for macOS. You always decide on permission. Errors and unsupported platforms are shown, not hidden. Sounds, badges, click actions and banners while the app is in front aren't supported yet.").font_size(12.).color(ColorToken::Muted),
         ].width(620.).gap(14.,Axis::Vertical).into(),
         code:r#"// Build with native-notifications, then package the executable.
 // Only a deliberate user action calls request_authorization.
@@ -237,7 +236,7 @@ notifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;
         id:"desktop-tray",title:"One command registry, multiple surfaces",note:"The optional native-desktop tray reuses these command IDs. Menu/toolbar/palette/tray commands all pass current enablement and modal guards.",
         demo:vstack![text(format!("Command executions: {}",app.command_probe)).font_size(24.).font_weight(700),
             button("Count command execution").key("desktop-command-probe").on_click(|app:&mut App|super::lifecycle::request(app,volt_ui_kit::native::ApplicationRequest::Command("command-probe".into()))),
-            text("Find the V-shaped Volt Catalog status item in the macOS menu bar. Its Count command execution item increments this same witness. It does not promise window restore, background-only or multi-window behavior.").font_size(13.).color(ColorToken::Muted),
+            text("The Catalog also puts a Volt icon in the macOS menu bar. Its “Count command execution” item adds to this same counter. It doesn't reopen the window, keep running in the background or manage several windows.").font_size(13.).color(ColorToken::Muted),
         ].width(620.).gap(14.,Axis::Vertical).into(),
         code:r#"DesktopConfig::new("My app")
     .tray(TrayConfig { tooltip: "My app".into(), rgba, width: 18, height: 18,
@@ -280,7 +279,10 @@ mod tests {
             Some((0, Completion::Submitted(Ok(()), Duration::from_secs(60))));
         drain(&mut app);
         assert!(app.services.status.contains("60 seconds"));
-        assert!(app.services.status.contains("NOT a delivery receipt"));
+        assert!(app
+            .services
+            .status
+            .contains("doesn't guarantee it will be shown"));
         assert!(!app.services.busy);
     }
     #[test]
@@ -348,7 +350,10 @@ mod tests {
         *app.services.mailbox.lock().unwrap() =
             Some((0, Completion::Submitted(Ok(()), Duration::from_secs(8))));
         drain(&mut app);
-        assert!(app.services.status.contains("NOT a delivery receipt"));
+        assert!(app
+            .services
+            .status
+            .contains("doesn't guarantee it will be shown"));
         let mut headless = App::new();
         request_authorization(&mut headless);
         assert!(headless
@@ -356,14 +361,14 @@ mod tests {
             .error
             .as_deref()
             .unwrap()
-            .contains("native Catalog"));
+            .contains("Open the Catalog app"));
         remove(&mut headless);
         assert!(headless
             .services
             .error
             .as_deref()
             .unwrap()
-            .contains("native Catalog"));
+            .contains("Open the Catalog app"));
         // No sender: pure headless errors, no OS service calls.
     }
 }
