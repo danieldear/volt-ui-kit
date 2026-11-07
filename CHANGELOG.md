@@ -4,7 +4,9 @@
 
 - Fix Linux client chrome: Catalog and Northbound now default to Custom;
   Northbound connects existing-header minimize/maximize/close to native actions, preserving
-  the channel across sample resets. Linux GPU Custom/Borderless windows use an
+  the channel across sample resets. Northbound's client controls are centered
+  26 logical pixels below the top edge without moving the title/search/day row
+  or adding a title bar; hit targets move with the controls. Linux GPU Custom/Borderless windows use an
   antialiased outer corner mask with matching Wayland blur regions at fractional
   scale; maximized/fullscreen frames stay rectangular. Native frames remain
   compositor-owned; software fallback remains opaque/rectangular. No winit

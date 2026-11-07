@@ -221,7 +221,57 @@ fn rail(app: &App) -> Element<App> {
         .into()
 }
 
+// Keep the title/search/day row unchanged. Only client window controls occupy
+// a separate positioning lane *inside* the same 92px header, not a title bar.
 pub(super) fn top_bar(app: &App, macos: bool) -> Element<App> {
+    if macos
+        || app.chrome != volt_ui_kit::native::WindowChrome::Custom
+        || app.window_state.fullscreen
+    {
+        return header_row(app, None);
+    }
+    let controls = window_controls(
+        WindowControlsState {
+            maximized: app.window_state.maximized,
+            can_maximize: app.window_state.resizable,
+            ..Default::default()
+        },
+        |app: &mut App, action| {
+            if let Some(sender) = &app.window_actions {
+                let _ = sender.send(action);
+            }
+        },
+    )
+    .key("northbound-window-controls");
+    zstack![
+        header_row(
+            app,
+            Some(
+                spacer()
+                    .key("window-controls-slot")
+                    .width(112.)
+                    .height(30.)
+                    .flex(0.)
+                    .into()
+            )
+        ),
+        hstack![spacer().scroll_passthrough(true), controls]
+            .key("window-controls-lane")
+            .height(52.)
+            .align(Align::Center)
+            .padding(responsive(18.).at(Breakpoint::Lg, 32.), Edge::Horizontal)
+            .scroll_passthrough(true),
+    ]
+    .key("northbound-header")
+    .flow(Flow::TopLeft)
+    .height(92.)
+    .align(Align::Stretch)
+    .into()
+}
+
+// The trailing slot keeps the previous horizontal allocation exactly: moving
+// controls must not shift the page title, search field, day chip or content.
+pub(super) fn header_row(app: &App, trailing: Option<Element<App>>) -> Element<App> {
     let (eyebrow, title) = match app.screen {
         Screen::Route => ("Two weeks, Lofoten to the North Cape", "Your route north"),
         Screen::Days => ("Fourteen days, four regions", "Day by day"),
@@ -265,28 +315,8 @@ pub(super) fn top_bar(app: &App, macos: bool) -> Element<App> {
         .visible(responsive(false).at(Breakpoint::Md, true))
         .into(),
     );
-    // Use the existing header, never an extra title strip. Native/overlay modes
-    // retain OS controls; macOS Custom also retains real AppKit traffic lights.
-    if !macos
-        && app.chrome == volt_ui_kit::native::WindowChrome::Custom
-        && !app.window_state.fullscreen
-    {
-        bar.push(
-            window_controls(
-                WindowControlsState {
-                    maximized: app.window_state.maximized,
-                    can_maximize: app.window_state.resizable,
-                    ..Default::default()
-                },
-                |app: &mut App, action| {
-                    if let Some(sender) = &app.window_actions {
-                        let _ = sender.send(action);
-                    }
-                },
-            )
-            .key("northbound-window-controls")
-            .into(),
-        );
+    if let Some(trailing) = trailing {
+        bar.push(trailing);
     }
     toolbar(bar)
         .key("top-bar")
