@@ -209,6 +209,9 @@ pub struct Toast {
 }
 
 pub struct App {
+    pub chrome: volt_ui_kit::native::WindowChrome,
+    pub window_state: volt_ui_kit::native::WindowState,
+    pub window_actions: Option<volt_ui_kit::native::UiSender<volt_ui_kit::ui::WindowAction>>,
     pub screen: Screen,
     pub mode: ThemeMode,
     pub accent: usize,
@@ -264,6 +267,15 @@ impl App {
     /// Sample itinerary state around already-rendered photographs.
     fn sample(photos: Vec<Image>, thumbs: Vec<Image>) -> Self {
         Self {
+            chrome: if cfg!(target_os = "macos") {
+                volt_ui_kit::native::WindowChrome::Overlay
+            } else if cfg!(target_os = "linux") {
+                volt_ui_kit::native::WindowChrome::Custom
+            } else {
+                volt_ui_kit::native::WindowChrome::Native
+            },
+            window_state: Default::default(),
+            window_actions: None,
             screen: Screen::Route,
             mode: ThemeMode::Dark,
             accent: 0,
@@ -370,7 +382,13 @@ impl App {
         let thumbs = std::mem::take(&mut self.thumbs);
         let (mode, accent, units) = (self.mode, self.accent, self.units);
         // Rebuild the sample data without regenerating the photographs.
+        let chrome = self.chrome;
+        let window_state = self.window_state;
+        let window_actions = self.window_actions.take();
         *self = Self::sample(photos, thumbs);
+        self.chrome = chrome;
+        self.window_state = window_state;
+        self.window_actions = window_actions;
         (self.mode, self.accent, self.units) = (mode, accent, units);
         self.screen = Screen::Settings;
         self.notify("Trip reset to the sample itinerary");

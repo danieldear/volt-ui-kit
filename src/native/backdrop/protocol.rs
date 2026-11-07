@@ -29,6 +29,31 @@ pub(crate) struct Desired {
     pub enabled: bool,
     pub width: i32,
     pub height: i32,
+    /// Surface-local corner radius, zero for a compositor-owned frame.
+    pub radius: i32,
+}
+// Integer wl_regions cannot antialias. Inset each corner scanline conservatively
+// so blur never leaks into the fully transparent client corner. Work stays O(r),
+// bounded to 257 rectangles even for malformed internal input (never O(window)).
+fn rounded_region(d: Desired) -> Vec<[i32; 4]> {
+    let r = d.radius.clamp(0, 128).min(d.width / 2).min(d.height / 2);
+    if r <= 0 {
+        return vec![[0, 0, d.width, d.height]];
+    }
+    let mut rects = Vec::with_capacity(2 * r as usize + 1);
+    for y in 0..r {
+        let dy = f64::from(r - y) - 0.5;
+        let inset = (f64::from(r) - (f64::from(r * r) - dy * dy).sqrt()).ceil() as i32;
+        let width = d.width - 2 * inset;
+        if width > 0 {
+            rects.push([inset, y, width, 1]);
+            rects.push([inset, d.height - 1 - y, width, 1]);
+        }
+    }
+    if d.height > 2 * r {
+        rects.push([0, r, d.width, d.height - 2 * r]);
+    }
+    rects
 }
 pub(crate) struct Shared {
     pub desired: Mutex<Desired>,
@@ -168,7 +193,9 @@ impl Engine {
                         .as_ref()
                         .ok_or("missing Wayland compositor")?;
                     let region = compositor.create_region(&self.queue.handle(), ());
-                    region.add(0, 0, desired.width, desired.height);
+                    for [x, y, width, height] in rounded_region(desired) {
+                        region.add(x, y, width, height);
+                    }
                     if modern {
                         self.state
                             .effect

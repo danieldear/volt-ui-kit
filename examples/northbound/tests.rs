@@ -363,3 +363,71 @@ fn incremental_hover_cost_at_retina() {
         full
     );
 }
+
+#[test]
+fn custom_window_controls_fit_existing_header_and_reset_preserves_host_state() {
+    use volt_ui_kit::native::{WindowChrome, WindowState};
+    let mut app = App::new();
+    app.chrome = WindowChrome::Custom;
+    app.window_state.resizable = true;
+    for macos in [false, true] {
+        for size in [[560., 460.], [760., 900.], [1320., 900.]] {
+            // Exercise the Linux/Windows header geometry on every test host.
+            let viewport = Viewport::new(size[0] - 84., size[1], 1.).unwrap();
+            let ui: volt_ui_kit::ui::Element<App> =
+                volt_ui_kit::vstack![screens::top_bar(&app, macos), volt_ui_kit::ui::spacer()]
+                    .into();
+            let (document, handlers) = ui.build().unwrap().into_parts();
+            let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+            runtime
+                .layout(
+                    viewport,
+                    &Bindings::default(),
+                    &mut RasterPainter::new(viewport),
+                )
+                .unwrap();
+            let labels: Vec<_> = runtime
+                .accessibility_nodes()
+                .into_iter()
+                .filter(|n| {
+                    ["Minimize window", "Maximize window", "Close window"]
+                        .contains(&n.label.as_str())
+                })
+                .collect();
+            assert_eq!(labels.len(), if macos { 0 } else { 3 });
+            for n in labels {
+                let [x, y, w, h] = runtime
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == n.id)
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert!(
+                    x >= 0. && x + w <= viewport.width && y >= 0. && y + h <= 92.,
+                    "{} outside header at {size:?}: {x},{y},{w},{h}",
+                    n.label
+                );
+                assert!(!runtime.drag_region_hit(x + w / 2., y + h / 2.));
+            }
+        }
+    }
+    app.window_state.maximized = true;
+    let before = app.window_state;
+    app.reset();
+    assert_eq!(app.chrome, WindowChrome::Custom);
+    assert_eq!(app.window_state, before);
+    app.window_state.fullscreen = true;
+    let runtime = mount(&app, [1320., 900.]);
+    assert!(!runtime
+        .accessibility_nodes()
+        .iter()
+        .any(|n| n.label == "Close window"));
+    app.window_state = WindowState::default();
+    app.chrome = WindowChrome::Native;
+    let runtime = mount(&app, [1320., 900.]);
+    assert!(!runtime
+        .accessibility_nodes()
+        .iter()
+        .any(|n| n.label == "Close window"));
+}

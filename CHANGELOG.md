@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix Linux client chrome: Catalog and Northbound now default to Custom;
+  Northbound connects existing-header minimize/maximize/close to native actions, preserving
+  the channel across sample resets. Linux GPU Custom/Borderless windows use an
+  antialiased outer corner mask with matching Wayland blur regions at fractional
+  scale; maximized/fullscreen frames stay rectangular. Native frames remain
+  compositor-owned; software fallback remains opaque/rectangular. No winit
+  upgrade or additional dependencies are required.
+
 - Add optional embedded window chrome and live Catalog Native/Custom/Borderless
   selection (plus macOS Unified), typed accessible window controls, a separate
   bounded native action queue, native state reporting, and Linux/Windows edge

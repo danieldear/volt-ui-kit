@@ -113,7 +113,7 @@ pub fn view(app: &App) -> Element<App> {
         Screen::Settings => settings(app),
     };
     let main = vstack![
-        top_bar(app),
+        top_bar(app, cfg!(target_os = "macos")),
         vstack![page]
             .key(format!("page-{}", app.screen.slug()))
             .transition(Transition::fade().duration_ms(240))
@@ -221,7 +221,7 @@ fn rail(app: &App) -> Element<App> {
         .into()
 }
 
-fn top_bar(app: &App) -> Element<App> {
+pub(super) fn top_bar(app: &App, macos: bool) -> Element<App> {
     let (eyebrow, title) = match app.screen {
         Screen::Route => ("Two weeks, Lofoten to the North Cape", "Your route north"),
         Screen::Days => ("Fourteen days, four regions", "Day by day"),
@@ -235,6 +235,9 @@ fn top_bar(app: &App) -> Element<App> {
         vstack![small(eyebrow), display(title, 26.)]
             .flow(Flow::Left)
             .gap(2., Axis::Vertical)
+            .flex(1.)
+            .min_width(0.)
+            .clip(Clip::Bounds)
             .into(),
         spacer().into(),
     ];
@@ -248,6 +251,7 @@ fn top_bar(app: &App) -> Element<App> {
                 .rounded(10.)
                 .background(ColorToken::Base200)
                 .border_color(ColorToken::Border)
+                .visible(responsive(false).at(Breakpoint::Lg, true))
                 .on_change(|app: &mut App, value| app.query = value),]
             .into(),
         );
@@ -258,8 +262,32 @@ fn top_bar(app: &App) -> Element<App> {
             ColorToken::Base300,
             ColorToken::BaseContent,
         )
+        .visible(responsive(false).at(Breakpoint::Md, true))
         .into(),
     );
+    // Use the existing header, never an extra title strip. Native/overlay modes
+    // retain OS controls; macOS Custom also retains real AppKit traffic lights.
+    if !macos
+        && app.chrome == volt_ui_kit::native::WindowChrome::Custom
+        && !app.window_state.fullscreen
+    {
+        bar.push(
+            window_controls(
+                WindowControlsState {
+                    maximized: app.window_state.maximized,
+                    can_maximize: app.window_state.resizable,
+                    ..Default::default()
+                },
+                |app: &mut App, action| {
+                    if let Some(sender) = &app.window_actions {
+                        let _ = sender.send(action);
+                    }
+                },
+            )
+            .key("northbound-window-controls")
+            .into(),
+        );
+    }
     toolbar(bar)
         .key("top-bar")
         .height(92.)

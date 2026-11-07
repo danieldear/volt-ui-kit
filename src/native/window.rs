@@ -913,11 +913,17 @@ impl<C: 'static> App<C> {
         let size = w.inner_size();
         #[cfg(all(target_os = "linux", feature = "native-gpu"))]
         if let Some(backdrop) = &self.linux_backdrop {
-            backdrop.update(
+            backdrop.update_rounded(
                 w,
                 matches!(
                     self.options.background,
                     WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ),
+                super::chrome::client_corner_radius(
+                    self.options.chrome,
+                    true,
+                    w.is_maximized(),
+                    w.fullscreen().is_some(),
                 ),
             );
         }
@@ -1047,15 +1053,30 @@ impl<C: 'static> App<C> {
                 WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
             );
             if let Some(backdrop) = &self.linux_backdrop {
-                backdrop.update(window, enabled);
+                backdrop.update_rounded(
+                    window,
+                    enabled,
+                    super::chrome::client_corner_radius(
+                        self.options.chrome,
+                        true,
+                        window.is_maximized(),
+                        window.fullscreen().is_some(),
+                    ),
+                );
             } else if enabled {
                 self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
                 let generation = self.backdrop_generation;
                 let proxy = self.proxy.clone();
-                match super::linux_backdrop::Controller::new(
+                match super::linux_backdrop::Controller::new_rounded(
                     window.clone(),
                     self.backdrop_display.clone(),
                     true,
+                    super::chrome::client_corner_radius(
+                        self.options.chrome,
+                        true,
+                        window.is_maximized(),
+                        window.fullscreen().is_some(),
+                    ),
                     move |status| {
                         let _ = proxy.send_event(HostEvent::Backdrop { generation, status });
                     },
@@ -1182,6 +1203,12 @@ impl<C: 'static> App<C> {
         w.set_cursor(winit::window::CursorIcon::Default);
         #[cfg(feature = "native-gpu")]
         if self.gpu.is_some() {
+            #[cfg(target_os = "linux")]
+            if let Some(gpu) = self.gpu.as_mut() {
+                let transparent = surface_transparency(self.options.background, desired);
+                w.set_transparent(transparent);
+                gpu.set_transparent(transparent)?;
+            }
             self.sync_native_backdrop(&w);
         }
         Ok(())
@@ -1205,12 +1232,12 @@ impl<C: 'static> App<C> {
         #[cfg(feature = "native-gpu")]
         if self.gpu.is_some() {
             if let Some(window) = self.window.clone() {
-                if (previous == WindowBackground::Opaque)
-                    != (background == WindowBackground::Opaque)
+                if surface_transparency(previous, self.options.chrome)
+                    != surface_transparency(background, self.options.chrome)
                 {
                     // Reconfigure in place: a new surface would leave the old
                     // one's layer (and its last frame) behind the window.
-                    let transparent = background != WindowBackground::Opaque;
+                    let transparent = surface_transparency(background, self.options.chrome);
                     window.set_transparent(transparent);
                     if let Some(gpu) = self.gpu.as_mut() {
                         gpu.set_transparent(transparent)?;
@@ -1925,7 +1952,27 @@ impl<C: 'static> App<C> {
             alpha_active
         };
         #[cfg(feature = "native-gpu")]
-        let background = root_clear(&theme, self.options.background, alpha_active);
+        let (batches, background) = {
+            let mut batches = batches;
+            let background = root_clear(&theme, self.options.background, alpha_active);
+            let radius = if alpha_active && cfg!(target_os = "linux") {
+                super::chrome::client_corner_radius(
+                    self.options.chrome,
+                    cfg!(target_os = "linux"),
+                    Self::window_maximized(w),
+                    w.fullscreen().is_some(),
+                )
+            } else {
+                0
+            };
+            let background = super::chrome::round_frame(
+                &mut batches,
+                self.painter.gpu_viewport(),
+                radius,
+                background,
+            );
+            (batches, background)
+        };
         #[cfg(not(feature = "native-gpu"))]
         let _ = alpha_active;
         let mut raster_done = paint_done;
@@ -1945,7 +1992,8 @@ impl<C: 'static> App<C> {
             }
             Some(Ok(super::gpu::PresentStatus::Lost)) => {
                 // A fresh device and renderer on the window's existing surface.
-                let transparent = self.options.background != WindowBackground::Opaque;
+                let transparent =
+                    surface_transparency(self.options.background, self.options.chrome);
                 let Some(old) = self.gpu.take() else {
                     return Ok(());
                 };
@@ -2348,7 +2396,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             let (try_gpu, require_gpu) = self.renderer;
             #[cfg(feature = "native-gpu")]
             if try_gpu {
-                match super::gpu::GpuPresenter::new(w.clone(), self.options.background != WindowBackground::Opaque) {
+                match super::gpu::GpuPresenter::new(w.clone(), surface_transparency(self.options.background, self.options.chrome)) {
                     Ok(gpu)=>{
                         // Match winit's native startup ordering (and Volt
                         // Terminal): prepare blur/material before first show.
@@ -3111,6 +3159,11 @@ fn root_clear(theme: &Theme, background: WindowBackground, alpha_active: bool) -
     };
     clear
 }
+fn surface_transparency(background: WindowBackground, chrome: WindowChrome) -> bool {
+    background != WindowBackground::Opaque
+        || (cfg!(target_os = "linux")
+            && matches!(chrome, WindowChrome::Custom | WindowChrome::Borderless))
+}
 fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
     let theme = match options.theme {
         ThemeMode::Light => Some(winit::window::Theme::Light),
@@ -3120,7 +3173,8 @@ fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
     window_attributes(&options.window)
         .with_theme(theme)
         .with_transparent(
-            cfg!(feature = "native-gpu") && options.background != WindowBackground::Opaque,
+            cfg!(feature = "native-gpu")
+                && surface_transparency(options.background, options.chrome),
         )
         .with_blur(
             !cfg!(any(target_os = "macos", target_os = "linux"))
@@ -3872,6 +3926,31 @@ mod rust_view_tests {
 #[cfg(test)]
 mod surface_option_tests {
     use super::*;
+    #[test]
+    fn linux_client_frames_keep_alpha_even_when_the_app_background_is_opaque() {
+        for chrome in [
+            WindowChrome::Native,
+            WindowChrome::Overlay,
+            WindowChrome::CompactOverlay,
+            WindowChrome::Custom,
+            WindowChrome::Borderless,
+        ] {
+            for background in [
+                WindowBackground::Opaque,
+                WindowBackground::Transparent { opacity: 0.5 },
+            ] {
+                let options = SurfaceOptions::from(NativeOptions::default())
+                    .with_chrome(chrome)
+                    .with_background(background);
+                let attrs = surface_window_attributes(&options);
+                let expected = cfg!(feature = "native-gpu")
+                    && (background != WindowBackground::Opaque
+                        || (cfg!(target_os = "linux")
+                            && matches!(chrome, WindowChrome::Custom | WindowChrome::Borderless)));
+                assert_eq!(attrs.transparent, expected);
+            }
+        }
+    }
     #[cfg(feature = "native-gpu")]
     #[test]
     fn gpu_surface_retries_back_off_and_return_to_event_driven_idle() {
