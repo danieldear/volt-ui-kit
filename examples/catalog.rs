@@ -19,6 +19,8 @@ fn parse_args(
     let mut forwarded = vec!["--size".to_owned(), "1440x920".to_owned()];
     let mut chrome = if cfg!(target_os = "macos") {
         WindowChrome::Overlay
+    } else if cfg!(target_os = "linux") {
+        WindowChrome::Custom
     } else {
         WindowChrome::Native
     };

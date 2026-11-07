@@ -239,6 +239,8 @@ fn launch_options_are_order_independent_and_glass_follows_the_renderer() {
         options.chrome,
         if cfg!(target_os = "macos") {
             volt_ui_kit::native::WindowChrome::Overlay
+        } else if cfg!(target_os = "linux") {
+            volt_ui_kit::native::WindowChrome::Custom
         } else {
             volt_ui_kit::native::WindowChrome::Native
         }
@@ -2288,6 +2290,101 @@ fn custom_panel_matches_unified_and_borderless_with_only_the_sidebar_translucent
                     );
                 } else {
                     reference = Some(samples);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+fn linux_rounded_frame_keeps_catalog_pages_inside_gpu_budgets() {
+    check_rounded_frame_budgets(None);
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires an actual GPU; rounded client-frame readback acceptance"]
+fn actual_gpu_rounded_catalog_frame() {
+    check_rounded_frame_budgets(Some(
+        volt_ui_kit::native::GpuOffscreenRenderer::new().unwrap(),
+    ));
+}
+
+#[cfg(feature = "native-gpu")]
+fn check_rounded_frame_budgets(mut gpu: Option<volt_ui_kit::native::GpuOffscreenRenderer>) {
+    use volt_ui_kit::{
+        declarative::{DocumentPainter, PaintBatch},
+        graphics::ClipRegion,
+        Painter, Rect,
+    };
+    for scale in [1., 1.25, 2.] {
+        let vp = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+        let mut painter = RasterPainter::new(vp);
+        for page in [
+            Page::Introduction,
+            Page::Table,
+            Page::ThemeEditor,
+            Page::Effects,
+        ] {
+            let mut app = App::new();
+            app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+            app.go(page);
+            let (document, handlers) = view(&app).build().unwrap().into_parts();
+            let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+            runtime
+                .layout(vp, &Bindings::default(), &mut painter)
+                .unwrap();
+            runtime.settle_animations();
+            let ui = theme(&app, ThemeMode::Dark);
+            let mut batches = runtime.paint_ui(&mut painter, &ui);
+            // Model the native host's extra frame clip through public painter
+            // primitives. It must not push dense pages into software fallback.
+            let mut begin = vec![];
+            painter.ui_clip_begin(
+                &mut begin,
+                ClipRegion::Rounded {
+                    bounds: [0., 0., vp.width, vp.height],
+                    radii: [12. * scale; 4],
+                },
+            );
+            painter.draw_rect(&mut begin, 0., 0., vp.width, vp.height, ui.palette.base[0]);
+            let clip = Rect::new(0., 0., vp.width, vp.height).unwrap();
+            batches.insert(
+                0,
+                PaintBatch {
+                    clip,
+                    shapes: begin,
+                    glyphs: vec![],
+                },
+            );
+            let mut end = vec![];
+            painter.ui_clip_end(&mut end);
+            batches.push(PaintBatch {
+                clip,
+                shapes: end,
+                glyphs: vec![],
+            });
+            let estimate = volt_ui_kit::native::estimate_gpu_scene(&mut painter, &batches).unwrap();
+            assert_eq!(estimate.over_budget, None, "{page:?} at {scale}x");
+            if let Some(gpu) = &mut gpu {
+                let pixels = gpu.render(&mut painter, &batches, [0.; 4]).unwrap();
+                assert_eq!(
+                    gpu.last_over_budget(),
+                    None,
+                    "{page:?} at {scale}x fell back"
+                );
+                for [x, y] in [
+                    [0, 0],
+                    [pixels.width() - 1, 0],
+                    [0, pixels.height() - 1],
+                    [pixels.width() - 1, pixels.height() - 1],
+                ] {
+                    assert_eq!(
+                        pixels.pixel(x, y).unwrap().alpha(),
+                        0,
+                        "{page:?} at {scale}x: corner is opaque"
+                    );
                 }
             }
         }

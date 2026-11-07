@@ -145,11 +145,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   the full-size-content style, button visibility and native shadow. No delegate,
   content view, native button sizing or Metal layer ownership is replaced.
   Private compositor blur is never enabled silently.
+- **Linux GPU client frames:** Custom and Borderless clip the *outer window*
+  to antialiased 12-logical-pixel corners, including its background clear and
+  all content. A translucent swapchain is used even for an opaque background;
+  only the corners become transparent, not text or controls. The Wayland blur
+  region follows the rounded shape, resize and scale changes. Maximized and
+  fullscreen windows become rectangular; restoring them brings the corners back.
+  Software fallback remains opaque/rectangular. Native/Overlay mode still uses
+  the desktop's decorations, whose corner shape and buttons are compositor-owned.
 - Chrome changes requested while fullscreen are deferred until fullscreen ends;
-  the Catalog disables its selector there. Compositor shadows, corner shaping,
-  snapping affordances and decoration policy are still platform-owned—custom
+  the Catalog disables its selector there. Compositor shadows, native frame
+  shaping, snapping affordances and decoration policy are still platform-owned—custom
   painting does not promise identical OS behavior everywhere.
-- Native remains the default. `WindowChrome` gains `Custom`; downstream exhaustive
+- Native remains the host default. Northbound and Catalog default to Custom
+  on Linux, placing minimize/maximize/close in their existing headers; use
+  `--chrome native` to request desktop decorations instead. Catalog also has
+  a live Window selector. Borderless deliberately has no window buttons.
+  `WindowChrome` gains `Custom`; downstream exhaustive
   matches on that enum need to handle the new variant. Existing option structs,
   core painters, application request variants and rendering defaults are unchanged.
 

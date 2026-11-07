@@ -46,6 +46,22 @@ The launcher takes only `--check` or `--help`; it does not forward the direct
 example flags above. It requires Cargo and Python 3 (plus macOS command-line
 tools for bundling), and exists only in the repository, not the published crate.
 
+## Linux window controls and corners
+
+Northbound and Catalog default to **Custom** on Linux: minimize, maximize/restore and close
+are integrated into their existing headers, without another title bar. Use
+`--chrome native` for desktop-owned decorations. Borderless intentionally omits
+window buttons. Resetting the sample itinerary preserves its host connection.
+
+For rounded outer corners in Custom/Borderless, use GPU rendering. The software
+fallback is opaque/rectangular. Maximizing removes the corners until restored;
+Native mode's frame and buttons remain the desktop compositor's responsibility.
+
+```sh
+cargo run --release --locked --features native-gpu --example northbound
+cargo run --release --locked --features native-gpu --example catalog -- --chrome custom
+```
+
 ## Apps
 
 | Example | What it is |
