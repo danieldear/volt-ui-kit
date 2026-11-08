@@ -511,7 +511,7 @@ fn article(app: &App) -> El<App> {
             // after a space, so ".a / .b" would only split mid-word; a
             // zero-width space before each method marks a clean break.
             let name = name.replace(" .", " \u{200B}.");
-            table_row(i, [name.as_str(), *about]).key(format!("api-{i}"))
+            table_row(i, [name, (*about).to_owned()]).key(format!("api-{i}"))
         });
         parts.push(text("API reference").font_size(20.).font_weight(600).into());
         parts.push(
