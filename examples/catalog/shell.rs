@@ -69,7 +69,7 @@ pub fn view(app: &App) -> El<App> {
         content,
     )
     .key("shell")
-    .title("Volt UI")
+    .title("Volt UI Kit")
     .sidebar_header(brand())
     .sidebar_footer(glass_controls(app))
     .toolbar(header(app))
@@ -314,7 +314,7 @@ fn page_links(app: &App, prefix: &str) -> Vec<El<App>> {
 fn brand() -> El<App> {
     hstack![
         mark(24.),
-        text("Volt UI").font_size(15.).font_weight(700),
+        text("Volt UI Kit").font_size(15.).font_weight(700),
         badge(concat!(
             env!("CARGO_PKG_VERSION_MAJOR"),
             ".",
@@ -506,17 +506,19 @@ fn article(app: &App) -> El<App> {
         );
     }
     if !content.api.is_empty() {
-        let rows = content
-            .api
-            .iter()
-            .enumerate()
-            .map(|(i, (name, about))| table_row(i, [*name, *about]).key(format!("api-{i}")));
+        let rows = content.api.iter().enumerate().map(|(i, (name, about))| {
+            // Unicode line breaking never breaks before "." or "/", even
+            // after a space, so ".a / .b" would only split mid-word; a
+            // zero-width space before each method marks a clean break.
+            let name = name.replace(" .", " \u{200B}.");
+            table_row(i, [name, (*about).to_owned()]).key(format!("api-{i}"))
+        });
         parts.push(text("API reference").font_size(20.).font_weight(600).into());
         parts.push(
             table(
                 [
-                    table_column(0u8, "Method").width(340.).sortable(false),
-                    table_column(1, "Description").width(400.).sortable(false),
+                    table_column(0u8, "Method").width(380.).sortable(false),
+                    table_column(1, "Description").width(420.).sortable(false),
                 ],
                 rows,
             )
