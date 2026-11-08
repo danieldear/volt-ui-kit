@@ -889,11 +889,19 @@ impl<C: 'static, T: Clone + PartialEq + 'static, K: Clone + PartialEq + 'static>
 pub struct TreeNode<T> {
     item: DataItem<T>,
     children: Vec<TreeNode<T>>,
+    icon: Option<IconElement>,
+    marker: Option<IconElement>,
+    trailing: Vec<IconElement>,
+    muted: bool,
 }
 pub fn tree_node<T>(value: T, label: impl Into<String>) -> TreeNode<T> {
     TreeNode {
         item: data_item(value, label),
         children: vec![],
+        icon: None,
+        marker: None,
+        trailing: vec![],
+        muted: false,
     }
 }
 impl<T> TreeNode<T> {
@@ -909,6 +917,30 @@ impl<T> TreeNode<T> {
         self.children = children.into_iter().take(129).collect();
         self
     }
+    /// An icon before the label (14–16 points suit compact rows), such as
+    /// the kind of layer a row stands for.
+    pub fn icon(mut self, icon: IconElement) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+    /// A small icon in the disclosure slot of a row without children, such
+    /// as a hook marking a layer clipped by the one below it.
+    pub fn marker(mut self, icon: IconElement) -> Self {
+        self.marker = Some(icon);
+        self
+    }
+    /// A status icon after the label (locked, hidden); up to three, in
+    /// order. They are decorative: give the row's state in its label or
+    /// elsewhere for screen readers.
+    pub fn trailing(mut self, icon: IconElement) -> Self {
+        self.trailing.push(icon);
+        self
+    }
+    /// Dim the row's label, as for a hidden layer.
+    pub fn muted(mut self, value: bool) -> Self {
+        self.muted = value;
+        self
+    }
 }
 type ExpandFn<C, T> = Rc<RefCell<dyn FnMut(&mut C, T, bool)>>;
 pub struct TreeView<C, T>(pub(super) Element<C>, TreeOptions<C, T>);
@@ -918,6 +950,8 @@ struct TreeOptions<C, T> {
     roots: Vec<TreeNode<T>>,
     expanded: Vec<T>,
     selected: Option<T>,
+    /// Further rows shown selected (a multiple selection).
+    also_selected: Vec<T>,
     enabled: bool,
     on_select: Option<SelectFn<C, T>>,
     on_expand: Option<ExpandFn<C, T>>,
@@ -943,6 +977,7 @@ pub fn tree_view<C, T>(roots: impl IntoIterator<Item = TreeNode<T>>) -> TreeView
             roots: roots.into_iter().take(129).collect(),
             expanded: vec![],
             selected: None,
+            also_selected: vec![],
             enabled: true,
             on_select: None,
             on_expand: None,
@@ -967,6 +1002,13 @@ impl<C, T> TreeView<C, T> {
     }
     pub fn selected(mut self, value: Option<T>) -> Self {
         self.1.selected = value;
+        self
+    }
+    /// Show every row of a multiple selection as selected. The row given to
+    /// `selected` stays the current one; clicking another selected row
+    /// still reports it, so the app can narrow the selection to it.
+    pub fn selected_many(mut self, values: impl IntoIterator<Item = T>) -> Self {
+        self.1.also_selected = values.into_iter().take(129).collect();
         self
     }
     pub fn enabled(mut self, value: bool) -> Self {
@@ -1004,6 +1046,11 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             }
             true
         }
+        fn trailing_over<T>(nodes: &[TreeNode<T>]) -> bool {
+            nodes
+                .iter()
+                .any(|n| n.trailing.len() > 3 || trailing_over(&n.children))
+        }
         let mut seen = vec![];
         // Report the first specific problem rather than a combined message.
         let error = if tree.0.auto_id {
@@ -1014,8 +1061,12 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             || !tree.1.expanded.iter().all(|id| seen.contains(&id))
         {
             Some("expanded(...) names a value that is not a node in the tree")
-        } else if !tree.1.selected.as_ref().is_none_or(|id| seen.contains(&id)) {
-            Some("selected(...) is not a node in the tree")
+        } else if !tree.1.selected.as_ref().is_none_or(|id| seen.contains(&id))
+            || !tree.1.also_selected.iter().all(|id| seen.contains(&id))
+        {
+            Some("selected(...) or selected_many(...) names a value that is not a node in the tree")
+        } else if trailing_over(&tree.1.roots) {
+            Some("a tree_node has at most 3 trailing icons")
         } else if tree.1.on_select.is_none() || tree.1.on_expand.is_none() {
             Some("tree_view requires on_select and on_expand")
         } else {
@@ -1044,6 +1095,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             indent_width: f32,
             expanded: &'a [T],
             selected: Option<&'a T>,
+            also_selected: &'a [T],
             enabled: bool,
             width: f32,
             on_select: &'a SelectFn<C, T>,
@@ -1063,6 +1115,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                 let item = node.item;
                 let open = context.expanded.contains(&item.value);
                 let active = context.selected == Some(&item.value);
+                let shown = active || context.also_selected.contains(&item.value);
                 let key = item.key.unwrap();
                 let has_children = !node.children.is_empty();
                 let value = item.value.clone();
@@ -1071,7 +1124,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                 let mut row: Element<C> = button("")
                     .accessible_label(bounded_semantic_name(&item.label, "Tree item"))
                     .key(&key)
-                    .variant(if active {
+                    .variant(if shown {
                         ButtonVariant::Soft
                     } else {
                         ButtonVariant::Ghost
@@ -1096,15 +1149,19 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                 contents.node.height = Some(context.row_height);
                 contents.node.align = Align::Center;
                 row.node.access_role = Some(AccessRole::TreeItem);
-                row.node.access_selected = Some(active);
+                row.node.access_selected = Some(shown);
                 row.node.access_expanded = has_children.then_some(open);
                 row.node.access_level = Some(depth);
                 row.node.access_position = Some(position);
                 row.node.access_set_size = has_children.then_some(node.children.len());
                 row.node.access_parent = parent.map(str::to_owned);
+                // Fixed slots keep their width even when a long or
+                // truncating label asks for the whole row.
+                let indent = depth as f32 * context.indent_width;
                 contents.children.push(
                     spacer()
-                        .width(depth as f32 * context.indent_width)
+                        .width(indent)
+                        .min_width(indent)
                         .height(context.row_height)
                         .flex(0.)
                         .into(),
@@ -1124,6 +1181,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                         .key(format!("{key}-expand"))
                         .variant(ButtonVariant::Ghost)
                         .width(24.)
+                        .min_width(24.)
                         .height(28.)
                         .rounded(4.)
                         .enabled(enabled)
@@ -1136,23 +1194,49 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
                     // Stroke geometry is independent of font fallback/text insets.
                     disclosure.children.push(data_chevron(open, 12.));
                     contents.children.push(disclosure);
+                } else if let Some(marker) = node.marker {
+                    let mut slot: Element<C> = zstack![marker]
+                        .width(24.)
+                        .min_width(24.)
+                        .height(28.)
+                        .flex(0.)
+                        .into();
+                    slot.node.flow = Some(Flow::Center);
+                    contents.children.push(slot);
                 } else {
-                    contents
-                        .children
-                        .push(spacer().width(24.).height(28.).flex(0.).into());
+                    contents.children.push(
+                        spacer()
+                            .width(24.)
+                            .min_width(24.)
+                            .height(28.)
+                            .flex(0.)
+                            .into(),
+                    );
                 }
                 let mut label = text(item.label);
                 if active {
                     label = label.color(ColorToken::Primary).font_weight(500);
+                } else if node.muted {
+                    label = label.color(ColorToken::Muted);
                 }
                 let mut content = Element::new(Kind::Row);
                 content.node.height = Some(context.row_height);
                 content.node.flex = 1.;
                 content.node.align = Align::Center;
+                content.node.gap = 6.;
                 content.node.padding = 6.;
                 content.node.padding_top = Some(0.);
                 content.node.padding_bottom = Some(0.);
-                content.children.push(label.into());
+                content.children.extend(node.icon.map(Element::from));
+                let trailing = !node.trailing.is_empty();
+                content.children.push(if trailing {
+                    label.truncate().flex(1.).into()
+                } else {
+                    label.into()
+                });
+                content
+                    .children
+                    .extend(node.trailing.into_iter().map(Element::from));
                 contents.children.push(content);
                 row.children.push(contents);
                 out.push(row);
@@ -1167,6 +1251,7 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<TreeView<C, T>> for Elemen
             indent_width: tree.1.indent_width,
             expanded: &tree.1.expanded,
             selected: tree.1.selected.as_ref(),
+            also_selected: &tree.1.also_selected,
             enabled: tree.1.enabled,
             width,
             on_select: &on_select,

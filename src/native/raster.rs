@@ -1,4 +1,4 @@
-use crate::graphics::{BackgroundImage, ClipRegion, ImageFit, PathCommand, VectorPath};
+use crate::graphics::{BackgroundImage, ClipRegion, ImageFit, MaskMode, PathCommand, VectorPath};
 use crate::{
     declarative::{DocumentPainter, PaintBatch, TextMetrics, TextRun, TextStyle},
     Painter, Viewport,
@@ -7,7 +7,7 @@ use cosmic_text::{
     Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight, Wrap,
 };
 use std::collections::BTreeMap;
-use tiny_skia::{FillRule, Mask, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{FillRule, Mask, MaskType, Paint, PathBuilder, Pixmap, Stroke, Transform};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, PartialEq)]
@@ -19,8 +19,15 @@ pub enum Shape {
     Corners([f32; 4], [f32; 4], [f32; 4]),
     Outline([f32; 4], [f32; 4], f32, [f32; 4]),
     Shadow([f32; 4], [f32; 4], f32, f32, [f32; 2], [f32; 4]),
+    /// An inner shadow inside a rounded rectangle: bounds, radii, blur,
+    /// spread (inward), offset and colour.
+    InnerShadow([f32; 4], [f32; 4], f32, f32, [f32; 2], [f32; 4]),
     LayerBegin(f32),
     LayerEnd,
+    /// Inside a layer: what follows until `MaskEnd` is a mask applied to
+    /// what the layer drew before it.
+    MaskBegin(MaskMode),
+    MaskEnd,
     ClipBegin(ClipRegion),
     ClipEnd,
     Image([f32; 4], BackgroundImage, f32),
@@ -105,6 +112,17 @@ fn tiled_opacity_needed(
             Shape::LayerEnd => {
                 depth = depth.checked_sub(1).ok_or("unbalanced opacity layer end")?;
             }
+            // A mask is drawn on a layer of its own.
+            Shape::MaskBegin(_) => {
+                depth += 1;
+                if depth > MAX_LAYER_DEPTH {
+                    return Err("mask layer depth exceeds limit".into());
+                }
+                peak = peak.max(depth);
+            }
+            Shape::MaskEnd => {
+                depth = depth.checked_sub(1).ok_or("unbalanced mask end")?;
+            }
             _ => {}
         }
     }
@@ -137,6 +155,7 @@ fn translated_batch(
             | Shape::Corners(b, _, _)
             | Shape::Outline(b, _, _, _)
             | Shape::Shadow(b, _, _, _, _, _)
+            | Shape::InnerShadow(b, _, _, _, _, _)
             | Shape::Gradient(b, _, _, _)
             | Shape::Image(b, _, _) => bounds(b),
             Shape::Triangle(points, _) => points.iter_mut().for_each(point),
@@ -149,7 +168,11 @@ fn translated_batch(
             }
             Shape::ClipBegin(ClipRegion::Rounded { bounds: b, .. })
             | Shape::ClipBegin(ClipRegion::Circle { bounds: b }) => bounds(b),
-            Shape::LayerBegin(_) | Shape::LayerEnd | Shape::ClipEnd => {}
+            Shape::LayerBegin(_)
+            | Shape::LayerEnd
+            | Shape::MaskBegin(_)
+            | Shape::MaskEnd
+            | Shape::ClipEnd => {}
         }
     }
     for glyph in &mut result.glyphs {
@@ -459,9 +482,14 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
             [b[0] + offset[0], b[1] + offset[1], b[2], b[3]],
             spread.max(0.) + blur * 2. + 2.,
         ),
-        Shape::ClipBegin(_) | Shape::ClipEnd | Shape::LayerBegin(_) | Shape::LayerEnd => {
-            return None
-        }
+        // Drawn only inside its own bounds.
+        Shape::InnerShadow(b, ..) => pad(*b, 1.),
+        Shape::ClipBegin(_)
+        | Shape::ClipEnd
+        | Shape::LayerBegin(_)
+        | Shape::LayerEnd
+        | Shape::MaskBegin(_)
+        | Shape::MaskEnd => return None,
     })
 }
 
@@ -1358,6 +1386,110 @@ impl RasterPainter {
         }
         Ok(())
     }
+    /// The colour inside the rounded rectangle, minus a blurred copy of it
+    /// moved by `offset` and shrunk by `spread`: what is left falls from the
+    /// edges inward.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_inner_shadow(
+        &mut self,
+        pixmap: &mut Pixmap,
+        clip_mask: &Mask,
+        clip: [f32; 4],
+        bounds: [f32; 4],
+        radii: [f32; 4],
+        blur: f32,
+        spread: f32,
+        offset: [f32; 2],
+        color: [f32; 4],
+        frame_pixels: &mut u64,
+    ) -> Result<(), String> {
+        if !bounds.into_iter().all(f32::is_finite)
+            || radii.into_iter().any(|r| !r.is_finite() || r < 0.)
+            || ![blur, spread, offset[0], offset[1]]
+                .into_iter()
+                .all(f32::is_finite)
+            || !(0. ..=384.).contains(&blur)
+            || spread.abs() > 384.
+            || color.into_iter().any(|v| !v.is_finite())
+        {
+            return Err("invalid or over-limit inner shadow geometry".into());
+        }
+        if color[3] <= 0. || bounds[2] <= 0. || bounds[3] <= 0. {
+            return Ok(());
+        }
+        let left = bounds[0].floor();
+        let top = bounds[1].floor();
+        let width = (bounds[0] + bounds[2]).ceil() - left;
+        let height = (bounds[1] + bounds[3]).ceil() - top;
+        if left >= clip[0] + clip[2]
+            || top >= clip[1] + clip[3]
+            || left + width <= clip[0]
+            || top + height <= clip[1]
+        {
+            return Ok(());
+        }
+        if width * height > MAX_EFFECT_PIXELS as f32 {
+            self.effects_skipped += 1;
+            return Ok(());
+        }
+        let (w, h) = (width as u32, height as u32);
+        let local = [bounds[0] - left, bounds[1] - top, bounds[2], bounds[3]];
+        let shape = rounded_corners(local, radii).ok_or("invalid inner shadow path")?;
+        let mut layer = Pixmap::new(w, h).ok_or("invalid inner shadow layer")?;
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(
+            byte(color[0]),
+            byte(color[1]),
+            byte(color[2]),
+            byte(color[3]),
+        );
+        paint.anti_alias = true;
+        layer.fill_path(
+            &shape,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+        let mut hole = Pixmap::new(w, h).ok_or("invalid inner shadow mask")?;
+        let mut whole = Mask::new(w, h).ok_or("invalid inner shadow mask")?;
+        let all = PathBuilder::from_rect(
+            tiny_skia::Rect::from_xywh(0., 0., width, height).ok_or("invalid inner shadow")?,
+        );
+        whole.fill_path(&all, FillRule::Winding, false, Transform::identity());
+        self.draw_shadow(
+            &mut hole,
+            &whole,
+            [0., 0., width, height],
+            local,
+            radii,
+            blur,
+            -spread,
+            offset,
+            [0., 0., 0., 1.],
+            frame_pixels,
+        )?;
+        layer.draw_pixmap(
+            0,
+            0,
+            hole.as_ref(),
+            &tiny_skia::PixmapPaint {
+                blend_mode: tiny_skia::BlendMode::DestinationOut,
+                ..Default::default()
+            },
+            Transform::identity(),
+            None,
+        );
+        pixmap.draw_pixmap(
+            left as i32,
+            top as i32,
+            layer.as_ref(),
+            &tiny_skia::PixmapPaint::default(),
+            Transform::identity(),
+            Some(clip_mask),
+        );
+        Ok(())
+    }
     /// Blur uses three separable box passes approximating a Gaussian with
     /// sigma=blur/2. Coverage masks are color independent and bounded by an LRU.
     #[allow(clippy::too_many_arguments)]
@@ -1666,7 +1798,9 @@ impl RasterPainter {
         let mut plain_mask = true;
         let mut clips = Vec::<ClipRegion>::new();
 
-        let mut layers: Vec<(Pixmap, f32)> = Vec::new();
+        // Open layers: the pixmap underneath and, for an opacity layer, its
+        // opacity, or for a mask, its mode (the open pixmap is the mask).
+        let mut layers: Vec<(Pixmap, Result<f32, MaskMode>)> = Vec::new();
         let mut effect_pixels = 0_u64;
         for batch in batches {
             let [x, y, cw, ch] = batch.clip.bounds();
@@ -1776,18 +1910,71 @@ impl RasterPainter {
                             self.layer_allocations += 1;
                             Pixmap::new(w, h).ok_or("invalid opacity layer")?
                         };
-                        layers.push((std::mem::replace(&mut pixmap, next), *opacity));
+                        layers.push((std::mem::replace(&mut pixmap, next), Ok(*opacity)));
                         continue;
                     }
                     Shape::LayerEnd => {
-                        let (mut parent, opacity) =
-                            layers.pop().ok_or("unbalanced opacity layer end")?;
+                        let (mut parent, Ok(opacity)) =
+                            layers.pop().ok_or("unbalanced opacity layer end")?
+                        else {
+                            return Err("opacity layer end inside a mask".into());
+                        };
                         composite_layer(&mut parent, &pixmap, byte(opacity));
                         self.layer_pool.push(std::mem::replace(&mut pixmap, parent));
                         continue;
                     }
+                    Shape::MaskBegin(mode) => {
+                        if layers.is_empty() {
+                            return Err("a mask needs a layer to mask".into());
+                        }
+                        if layers.len() >= MAX_LAYER_DEPTH
+                            || u64::from(w) * u64::from(h) * 4 * (layers.len() as u64 + 2)
+                                > MAX_LAYER_BYTES
+                        {
+                            return Err("mask layer depth/memory budget exceeded".into());
+                        }
+                        let next = if let Some(mut reusable) = self.layer_pool.pop() {
+                            reusable.data_mut().fill(0);
+                            reusable
+                        } else {
+                            self.layer_allocations += 1;
+                            Pixmap::new(w, h).ok_or("invalid mask layer")?
+                        };
+                        layers.push((std::mem::replace(&mut pixmap, next), Err(*mode)));
+                        continue;
+                    }
+                    Shape::MaskEnd => {
+                        let (mut content, Err(mode)) = layers.pop().ok_or("unbalanced mask end")?
+                        else {
+                            return Err("mask end inside an opacity layer".into());
+                        };
+                        let kind = match mode {
+                            MaskMode::Alpha => MaskType::Alpha,
+                            MaskMode::Luminance => MaskType::Luminance,
+                        };
+                        content.apply_mask(&Mask::from_pixmap(pixmap.as_ref(), kind));
+                        self.layer_pool
+                            .push(std::mem::replace(&mut pixmap, content));
+                        continue;
+                    }
                     Shape::Shadow(bounds, radii, blur, spread, offset, color) => {
                         self.draw_shadow(
+                            &mut pixmap,
+                            mask,
+                            [x, y, cw, ch],
+                            *bounds,
+                            *radii,
+                            *blur,
+                            *spread,
+                            *offset,
+                            *color,
+                            &mut effect_pixels,
+                        )?;
+                        self.shape_draw_calls += 1;
+                        continue;
+                    }
+                    Shape::InnerShadow(bounds, radii, blur, spread, offset, color) => {
+                        self.draw_inner_shadow(
                             &mut pixmap,
                             mask,
                             [x, y, cw, ch],
@@ -1942,8 +2129,11 @@ impl RasterPainter {
                     Shape::Outline(..)
                     | Shape::Gradient(..)
                     | Shape::Shadow(..)
+                    | Shape::InnerShadow(..)
                     | Shape::LayerBegin(..)
                     | Shape::LayerEnd
+                    | Shape::MaskBegin(..)
+                    | Shape::MaskEnd
                     | Shape::ClipBegin(..)
                     | Shape::ClipEnd
                     | Shape::Image(..)
@@ -2602,6 +2792,18 @@ impl Painter for RasterPainter {
     ) {
         out.push(Shape::Shadow(rect, radii, blur, spread, offset, color));
     }
+    fn card_inner_shadow(
+        &self,
+        out: &mut Vec<Shape>,
+        rect: [f32; 4],
+        radii: [f32; 4],
+        blur: f32,
+        spread: f32,
+        offset: [f32; 2],
+        color: [f32; 4],
+    ) {
+        out.push(Shape::InnerShadow(rect, radii, blur, spread, offset, color));
+    }
     fn card_line(
         &self,
         out: &mut Vec<Shape>,
@@ -2682,6 +2884,12 @@ impl DocumentPainter for RasterPainter {
     }
     fn ui_layer_end(&mut self, out: &mut Vec<Shape>) {
         out.push(Shape::LayerEnd);
+    }
+    fn ui_mask_begin(&mut self, out: &mut Vec<Shape>, mode: MaskMode) {
+        out.push(Shape::MaskBegin(mode));
+    }
+    fn ui_mask_end(&mut self, out: &mut Vec<Shape>) {
+        out.push(Shape::MaskEnd);
     }
     fn ui_text(
         &mut self,
@@ -3487,6 +3695,50 @@ mod tests {
         assert_eq!(pixel(25, 25).red(), 255);
         assert_eq!(pixel(40, 25).red(), 0);
     }
+    #[test]
+    fn inner_shadow_darkens_the_edges_inside_and_nothing_outside() {
+        let mut p = RasterPainter::new(Viewport::new(80., 80., 1.).unwrap());
+        let mut shapes = vec![];
+        p.card_corners(&mut shapes, [20., 20., 40., 40.], [6.; 4], [1., 1., 1., 1.]);
+        p.card_inner_shadow(
+            &mut shapes,
+            [20., 20., 40., 40.],
+            [6.; 4],
+            8.,
+            0.,
+            [0., 4.],
+            [0., 0., 0., 1.],
+        );
+        let frame = p
+            .rasterize(
+                &[PaintBatch {
+                    clip: Rect::new(0., 0., 80., 80.).unwrap(),
+                    shapes,
+                    glyphs: vec![],
+                }],
+                [1., 0., 0., 1.],
+            )
+            .unwrap();
+        let px = |x: usize, y: usize| frame.pixels()[y * 80 + x];
+        // Offset down: the top inside edge is darkest; the middle stays white.
+        assert!(
+            px(40, 21).green() < 140,
+            "top edge shadowed: {:?}",
+            px(40, 21)
+        );
+        assert!(
+            px(40, 40).green() > 245,
+            "centre untouched: {:?}",
+            px(40, 40)
+        );
+        assert!(
+            px(40, 58).green() > px(40, 21).green(),
+            "bottom lighter than top"
+        );
+        // Outside the shape the red background is untouched.
+        assert_eq!((px(40, 16).red(), px(40, 16).green()), (255, 0));
+    }
+
     #[test]
     fn selected_corners_fill_outline_and_blurred_shadow() {
         let mut p = RasterPainter::new(Viewport::new(80., 80., 1.).unwrap());

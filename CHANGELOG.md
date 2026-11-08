@@ -2,6 +2,76 @@
 
 ## Unreleased
 
+- Add `Container::mask(element, MaskMode)`: the container's content shows
+  only where the mask element is opaque (`MaskMode::Alpha`, so a gradient
+  mask fades it and a shape cuts it out) or bright (`MaskMode::Luminance`).
+  The mask is laid out like the container's other children but never painted
+  on its own; it must be the container's last child. The container is drawn
+  in a layer of its own, with the mask applied as it closes, in both the
+  software renderer (tiny-skia alpha and luminance masks) and the GPU
+  renderer (Vello DestIn and luminance mask layers), so it works on the
+  desktop and in the browser. Painters get `ui_mask_begin` and `ui_mask_end`
+  hooks (no-ops by default).
+- Fix GPU gradients whose first stop is after 0% or last stop before 100%:
+  Vello ramps from the first stop as if it sat at 0, so a scrim clear until
+  40% darkened from the top on the GPU while the software renderer was
+  right. The end colours are now held out to 0% and 100%, as CSS does.
+- `tree_node` rows can carry an `.icon(..)` before the label, a `.marker(..)`
+  in the disclosure slot of a row without children (such as a hook for a
+  layer a mask clips), up to three decorative `.trailing(..)` status icons
+  (locked, hidden) and a dimmed `.muted(true)` label; `tree_view` takes
+  `.selected_many(..)` to show every row of a multiple selection as
+  selected. A row's indent and disclosure slot no longer shrink when its
+  label asks for the whole width.
+- Add `popup_width` to `menu` and `context_menu`, so a compact trigger can
+  open a list wide enough for its rows, and `label_inset` to `menu` for its
+  trigger's label.
+- Add `on_key_press` for application keys: a container hears a key press
+  that no text editor, menu, dialog, application command, focused control or
+  text selection used, as a `KeyPress` (a `PressedKey` — a lower-case layout
+  character, Backspace, Delete, Enter, Space, the arrows, Home/End or
+  PageUp/PageDown — plus modifiers and repeat). The nearest such container
+  around the focused control hears it first, else the last one in the
+  document; returning false leaves the key to the window's defaults. This
+  gives canvases and editors Delete, arrow nudges, single-letter tools and
+  Cmd/Ctrl+Z, C, V and X when no text field is being edited, which
+  application commands cannot claim. Tab and Escape keep their focus and
+  dismiss roles (Escape still goes to `on_escape`), and Enter and Space stay
+  with a focused control. Both the native and the browser host route it; the
+  browser host's canvas now takes focus on a press (it is never a Tab stop)
+  so keys reach Rust when no control is focused, and its Escape now reaches
+  `on_escape` as it already did on the desktop. A press on an `on_drag` grip
+  now counts as a press on blank space: it ends text editing and clears
+  focus, so a canvas's keys work again right after typing in a field.
+- Add `on_pointer` for surfaces that do their own hit testing, such as a
+  drawing canvas. A press on the container (not on a control inside it)
+  arrives as a `Pointer` with its position in the surface, the modifiers held
+  and the click count (1, 2 or 3); the pointer is then captured, so drags
+  arrive with the offset and the modifiers held now (hosts re-send on a
+  modifier change, so Shift mid-drag applies at once), and the release
+  arrives wherever it happens. With no button held, moves over the surface
+  arrive as `Hover` and then `Leave`, and a scroll wheel, two-finger scroll or
+  trackpad pinch over it arrives as `Wheel` (with the delta) or `Pinch` (with
+  the change in magnification) instead of scrolling the content under it.
+  New runtime entry points `set_pointer_modifiers`, `pinch_outcome`,
+  `pointer_leave_outcome` and `pointer_dragging` let hosts report these; the
+  native host routes macOS trackpad pinch, and the browser host now sends
+  pointer modifiers and click counts, and a Ctrl+wheel pinch as `Pinch`.
+  `on_drag` on the same container keeps working.
+- Add a design-tool layout to `color_picker`: `.area(true)` shows a
+  saturation/brightness square, a hue strip and (with `.alpha(true)`) an
+  opacity strip, each dragged directly, with hex and opacity fields and the
+  swatches below; `.alpha(true)` makes `on_change` report `#RRGGBBAA`. A new
+  `Hsva` colour (with `#RRGGBB`/`#RRGGBBAA` parsing) can be passed with
+  `.hsva(..)` and received with `.on_hsva(..)`, so an app keeps the hue while
+  a colour is grey or black. `.width(..)` sizes the picker. The default
+  picker is unchanged.
+- Add inner shadows and several shadows per element: `Shadow::inset(true)`
+  draws inside the element, above its fill and below its children, on both
+  the GPU and the software renderer; `.shadows([..])` adds up to eight drop or
+  inner shadows after any `.shadow(..)` (these are not animated). Painters get
+  a `card_inner_shadow` command whose renderer-independent fallback draws
+  nothing.
 - Align the native Catalog landing page with current capabilities: remove
   unmeasured frame-time and 8K claims, describe accessibility semantics and
   macOS-first validation accurately, and derive component/pattern/accent counts

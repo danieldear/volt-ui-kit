@@ -129,7 +129,8 @@ pub use crate::declarative::{
 };
 
 pub use crate::graphics::{
-    BackgroundImage, Canvas, CanvasFrames, Clip, Image, ImageFit, ImagePosition, VectorPath,
+    BackgroundImage, Canvas, CanvasFrames, Clip, Image, ImageFit, ImagePosition, MaskMode,
+    VectorPath,
 };
 pub use crate::{ColorToken, Palette, ThemeMode, UiTheme};
 
@@ -255,6 +256,8 @@ pub enum FontStyle {
 type Click<C> = Box<dyn FnMut(&mut C)>;
 type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation, u8)>;
 type InputKeyCallback<C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool>;
+type KeyPressCallback<C> = Box<dyn FnMut(&mut C, KeyPress) -> bool>;
+type PointerCallback<C> = Box<dyn FnMut(&mut C, Pointer)>;
 type Change<C> = Box<dyn FnMut(&mut C, bool)>;
 type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
 type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
@@ -373,7 +376,8 @@ mod hierarchy;
 mod selection;
 mod sunburst;
 pub use crate::declarative::{
-    InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation,
+    InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
+    PointerPhase, PressedKey,
 };
 pub use hierarchy::{
     icicle_chart, icicle_layout, treemap_chart, treemap_layout, HierarchyChart, HierarchyNode,
@@ -427,7 +431,7 @@ pub use dates::{
 };
 pub use forms::{
     color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group, rating,
-    tag_input, ColorPicker, Combobox, ComboboxState, DropZone, FormField, Hsl, NumberInput,
+    tag_input, ColorPicker, Combobox, ComboboxState, DropZone, FormField, Hsl, Hsva, NumberInput,
     OtpInput, RadioGroup, Rating, TagInput, TagInputState,
 };
 pub use icons::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon, ALL_ICONS};
@@ -478,6 +482,10 @@ pub struct Element<C> {
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
+    /// Containers: application keys nothing else used.
+    key_press: Option<KeyPressCallback<C>>,
+    /// Containers: pointer surface events.
+    pointer: Option<PointerCallback<C>>,
     /// Containers: a drag began on them; the offset from the press.
     drag: Option<DragCallback<C>>,
     drag_start: Option<Click<C>>,
@@ -514,6 +522,8 @@ impl<C> Element<C> {
             validation_error: None,
             input_activation: None,
             input_key: None,
+            key_press: None,
+            pointer: None,
             drag: None,
             drag_start: None,
             drag_from: None,
@@ -562,6 +572,8 @@ impl<C: 'static> Element<C> {
                 validation_error,
                 input_activation,
                 input_key,
+                key_press,
+                pointer,
                 drag,
                 drag_start,
                 drag_from,
@@ -656,6 +668,20 @@ impl<C: 'static> Element<C> {
                     .on_input_key(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_input_key = Some(name);
+            }
+            if let Some(f) = key_press {
+                let name = format!("rust-key-press-{}", *count);
+                handlers
+                    .on_key_press(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_key_press = Some(name);
+            }
+            if let Some(f) = pointer {
+                let name = format!("rust-pointer-{}", *count);
+                handlers
+                    .on_pointer(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_pointer = Some(name);
             }
             if let Some(callback) = callback {
                 let name = format!("rust-action-{}", *count);
@@ -820,6 +846,22 @@ pub struct Spacer<C>(Element<C>);
 pub struct Button<C>(Element<C>);
 pub struct Checkable<C>(Element<C>);
 pub struct Container<C>(Element<C>);
+impl<C> Container<C> {
+    /// Mask the container's content with `mask`: content shows only where
+    /// the mask is opaque (`MaskMode::Alpha`) or bright
+    /// (`MaskMode::Luminance`), so a gradient mask fades it and an image
+    /// mask cuts it out. The mask is laid out like the container's other
+    /// children (in a `zstack`, over them; place it with `.offset`), is
+    /// never painted on its own, and takes no pointer input. Call it after
+    /// the container has all its children: the mask must stay the last.
+    /// For a plain outline, `.clip(Clip::Path(..))` is cheaper.
+    pub fn mask(mut self, mask: impl Into<Element<C>>, mode: MaskMode) -> Self {
+        let mut mask = mask.into();
+        mask.node.ext.mask = Some(mode);
+        self.0.children.push(mask);
+        self
+    }
+}
 /// A stack whose horizontal/vertical direction can change at viewport breakpoints.
 pub struct Stack<C>(Element<C>);
 macro_rules! element_from {
@@ -915,6 +957,9 @@ macro_rules! modifiers {
             /// Subtree group opacity. Does not disable pointer/keyboard interaction.
             pub fn opacity(mut self, value:f32) -> Self { self.$($field)*.effects.base.opacity=Some(value); self }
             pub fn shadow(mut self, value:Shadow) -> Self { self.$($field)*.effects.base.shadow=Some(value); self }
+            /// Several drop and inner (`Shadow::inset`) shadows, drawn in
+            /// order after any `.shadow`; at most 8. These are not animated.
+            pub fn shadows(mut self, values: impl IntoIterator<Item = Shadow>) -> Self { self.$($field)*.effects.shadows = values.into_iter().collect(); self }
             pub fn glow(mut self, value:Glow) -> Self { self.$($field)*.effects.base.glow=Some(value); self }
             /// Share paint-only hover with enabled, mounted peers having this key.
             /// Does not dispatch callbacks, select, focus, scroll or open tooltips
@@ -1385,6 +1430,37 @@ macro_rules! container_modifiers {
             /// the container is shown. The last such container in the
             /// document (the topmost) gets it: for dismissing a non-modal
             /// floating surface.
+            /// Application keys: called with a key press nothing else used
+            /// while the container is shown — no text editor has focus, no
+            /// menu or dialog is open, and no application command or focused
+            /// control took it. The nearest such container around the
+            /// focused control hears it first, else the last one in the
+            /// document (the topmost). Return true when you used the key;
+            /// false leaves it to the window (arrow scrolling, Enter on a
+            /// focused button). For canvases and editors: Delete, arrow
+            /// nudges, single-letter tools and Cmd/Ctrl+Z, C, V or X when no
+            /// text field is being edited. Tab and Escape never arrive (see
+            /// `on_escape`); Cmd/Ctrl+C with text selected and Cmd/Ctrl+A
+            /// over selectable text still copy and select that text.
+            pub fn on_key_press(mut self, f: impl FnMut(&mut C, KeyPress) -> bool + 'static) -> Self {
+                self.0.key_press = Some(Box::new(f));
+                self
+            }
+            /// Make the container a pointer surface that does its own hit
+            /// testing, like a drawing canvas. A press on it (not on a
+            /// control inside) arrives with its modifiers and click count;
+            /// the pointer is then captured, so drags arrive with the offset
+            /// and the modifiers held now, and the release arrives wherever
+            /// it happens. With no button held, moves over the surface
+            /// arrive as `Hover` (then `Leave`), and a scroll wheel,
+            /// two-finger scroll or trackpad pinch over it arrives as
+            /// `Wheel` or `Pinch` instead of scrolling what is under it.
+            /// Positions are logical points inside the surface. Works with
+            /// `on_drag` on the same container, which still gets its calls.
+            pub fn on_pointer(mut self, f: impl FnMut(&mut C, Pointer) + 'static) -> Self {
+                self.0.pointer = Some(Box::new(f));
+                self
+            }
             pub fn on_escape(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
                 self.0.escape = Some(Box::new(f));
                 self
@@ -1565,8 +1641,8 @@ pub mod prelude {
         Axes, Axis, BackgroundImage, BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas,
         Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem,
         Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient,
-        GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, Menu,
-        MenuItem, Motion, Navigation, NavigationItem, NavigationPlacement, Palette, Popover,
+        GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, MaskMode,
+        Menu, MenuItem, Motion, Navigation, NavigationItem, NavigationPlacement, Palette, Popover,
         Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl,
         Shadow, Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem,
         TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput,
@@ -1580,7 +1656,7 @@ pub mod prelude {
     pub use super::{code_view, CodeView};
     pub use super::{
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
-        rating, tag_input, ComboboxState, Hsl, TagInputState,
+        rating, tag_input, ComboboxState, Hsl, Hsva, TagInputState,
     };
     pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
@@ -1595,5 +1671,8 @@ pub mod prelude {
         SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
     };
     pub use super::{sunburst_chart, SunburstChart};
-    pub use super::{InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation};
+    pub use super::{
+        InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
+        PointerPhase, PressedKey,
+    };
 }

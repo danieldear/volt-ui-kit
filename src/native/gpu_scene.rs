@@ -11,7 +11,7 @@ use super::raster::{self, Glyph, Shape};
 use super::RasterPainter;
 use crate::{
     declarative::PaintBatch,
-    graphics::{BackgroundImage, ClipRegion, Image, ImageFit},
+    graphics::{BackgroundImage, ClipRegion, Image, ImageFit, MaskMode},
 };
 use cosmic_text::{CacheKey, SwashContent};
 use std::{
@@ -218,6 +218,55 @@ impl GpuSceneEncoder {
         }
     }
 }
+/// A rounded rectangle blurred by `blur` (physical pixels), on the GPU.
+fn blurred_rounded(
+    scene: &mut vello::Scene,
+    b: [f32; 4],
+    r: [f32; 4],
+    blur: f32,
+    c: Color,
+) -> Result<(), String> {
+    if blur == 0. {
+        scene.fill(Fill::NonZero, Affine::IDENTITY, c, None, &corners(b, r)?);
+    } else if r.iter().all(|v| *v == r[0]) {
+        scene.draw_blurred_rounded_rect(
+            Affine::translate((-0.5, -0.5)),
+            rect(b),
+            c,
+            r[0] as f64,
+            blur as f64 * 0.5,
+        );
+    } else {
+        let outer = rect([
+            b[0] - blur * 3.,
+            b[1] - blur * 3.,
+            b[2] + blur * 6.,
+            b[3] + blur * 6.,
+        ]);
+        let mx = (b[0] + b[2] * 0.5) as f64;
+        let my = (b[1] + b[3] * 0.5) as f64;
+        for (i, q) in [
+            Rect::new(outer.x0, outer.y0, mx, my),
+            Rect::new(mx, outer.y0, outer.x1, my),
+            Rect::new(mx, my, outer.x1, outer.y1),
+            Rect::new(outer.x0, my, mx, outer.y1),
+        ]
+        .iter()
+        .enumerate()
+        {
+            scene.draw_blurred_rounded_rect_in(
+                q,
+                Affine::translate((-0.5, -0.5)),
+                rect(b),
+                c,
+                r[i] as f64,
+                blur as f64 * 0.5,
+            );
+        }
+    }
+    Ok(())
+}
+
 fn rect([x, y, w, h]: [f32; 4]) -> Rect {
     Rect::new(x as f64, y as f64, (x + w) as f64, (y + h) as f64)
 }
@@ -282,6 +331,7 @@ fn shape_bounds(s: &Shape) -> Option<Rect> {
             rect([b[0] + offset[0], b[1] + offset[1], b[2], b[3]]),
             spread.max(0.) + blur * 1.5,
         ),
+        Shape::InnerShadow(b, ..) => rect(*b),
         _ => return None,
     })
 }
@@ -502,6 +552,33 @@ impl GpuSceneEncoder {
             shape,
         );
     }
+    /// A luminance mask layer over `area`, with the same tile accounting as
+    /// [`Self::layer`].
+    fn luminance_layer(&mut self, area: &Rect) {
+        let [tw, th] = self.tiles;
+        let tile = |v: f64, max: usize| ((v / 16.).floor().max(0.) as usize).min(max);
+        let r = [
+            tile(area.x0, tw),
+            tile(area.y0, th),
+            tile((area.x1 / 16.).ceil() * 16., tw),
+            tile((area.y1 / 16.).ceil() * 16., th),
+        ];
+        for y in r[1]..r[3] {
+            for i in y * tw + r[0]..y * tw + r[2] {
+                self.depth[i] = self.depth[i].saturating_add(1);
+                self.peak[i] = self.peak[i].max(self.depth[i]);
+            }
+        }
+        self.open_tiles.push(r);
+        self.note(*area);
+        self.note(*area);
+        self.scene.push_luminance_mask_layer(
+            vello::peniko::Fill::NonZero,
+            1.,
+            Affine::IDENTITY,
+            area,
+        );
+    }
     fn pop_layer(&mut self) {
         if let Some(r) = self.open_tiles.pop() {
             let tw = self.tiles[0];
@@ -561,7 +638,14 @@ impl GpuSceneEncoder {
         self.viewport_height = vp.height as u32;
         self.viewport_width = vp.width as u32;
         self.open_tiles.clear();
-        let mut stack = Vec::<bool>::new();
+        // What each structural begin opened, innermost last.
+        #[derive(Clone, Copy, PartialEq)]
+        enum Open {
+            Clip,
+            Layer,
+            Mask,
+        }
+        let mut stack = Vec::<Open>::new();
         // Pixel bounds of the innermost structural clip. Opacity layers and
         // path-clip layers use it instead of the whole window: Vello spills
         // every tile of a layer nested deeper than its on-chip blend stack into
@@ -582,7 +666,12 @@ impl GpuSceneEncoder {
             for s in &batch.shapes {
                 if matches!(
                     s,
-                    Shape::LayerBegin(_) | Shape::LayerEnd | Shape::ClipBegin(_) | Shape::ClipEnd
+                    Shape::LayerBegin(_)
+                        | Shape::LayerEnd
+                        | Shape::MaskBegin(_)
+                        | Shape::MaskEnd
+                        | Shape::ClipBegin(_)
+                        | Shape::ClipEnd
                 ) {
                     if open.take().is_some_and(|(_, pushed)| pushed) {
                         self.pop_layer();
@@ -597,9 +686,34 @@ impl GpuSceneEncoder {
                             let area = bounds.last().unwrap().intersect(content);
                             self.layer(Mix::Normal, *alpha, &area);
                             bounds.push(area);
-                            stack.push(true);
+                            stack.push(Open::Layer);
                             layers += 1;
                             self.stats.layers += 1;
+                        }
+                        // The mask is drawn on a layer that, when popped,
+                        // keeps what is under it only where the mask is
+                        // opaque (DestIn) or bright (a luminance mask).
+                        Shape::MaskBegin(mode) => {
+                            if layers >= 24 || !stack.contains(&Open::Layer) {
+                                return Err("invalid GPU mask depth or placement".into());
+                            }
+                            let area = *bounds.last().unwrap();
+                            match mode {
+                                MaskMode::Alpha => self.layer(Compose::DestIn, 1., &area),
+                                MaskMode::Luminance => self.luminance_layer(&area),
+                            }
+                            bounds.push(area);
+                            stack.push(Open::Mask);
+                            layers += 1;
+                            self.stats.layers += 1;
+                        }
+                        Shape::MaskEnd => {
+                            if stack.pop() != Some(Open::Mask) {
+                                return Err("unbalanced GPU mask stream".into());
+                            }
+                            bounds.pop();
+                            layers -= 1;
+                            self.pop_layer();
                         }
                         Shape::ClipBegin(region) => {
                             if clips >= 48 {
@@ -656,12 +770,13 @@ impl GpuSceneEncoder {
                             } else {
                                 None
                             });
-                            stack.push(false);
+                            stack.push(Open::Clip);
                             clips += 1;
                         }
                         Shape::LayerEnd | Shape::ClipEnd => {
                             let layer = matches!(s, Shape::LayerEnd);
-                            if stack.pop() != Some(layer) {
+                            let expected = if layer { Open::Layer } else { Open::Clip };
+                            if stack.pop() != Some(expected) {
                                 return Err("unbalanced GPU clip/opacity stream".into());
                             }
                             bounds.pop();
@@ -876,10 +991,52 @@ impl GpuSceneEncoder {
                     }
                 }
             }
+            Shape::InnerShadow(b, r, blur, spread, offset, c) => {
+                if ![blur, spread, &offset[0], &offset[1]]
+                    .into_iter()
+                    .all(|v| v.is_finite())
+                    || !(0. ..=384.).contains(blur)
+                    || spread.abs() > 384.
+                    || r.iter().any(|v| !v.is_finite() || *v < 0.)
+                {
+                    return Err("invalid GPU inner shadow".into());
+                }
+                if c[3] <= 0. || b[2] <= 0. || b[3] <= 0. {
+                    return Ok(());
+                }
+                // Fill the shape with the colour, then cut out a blurred copy
+                // moved by the offset and shrunk by the spread.
+                let outline = corners(*b, *r)?;
+                self.layer(Mix::Normal, 1., &outline);
+                self.scene
+                    .fill(Fill::NonZero, Affine::IDENTITY, color(*c), None, &outline);
+                self.layer(Compose::DestOut, 1., &outline);
+                let hole = [
+                    b[0] + offset[0] + spread,
+                    b[1] + offset[1] + spread,
+                    b[2] - 2. * spread,
+                    b[3] - 2. * spread,
+                ];
+                if hole[2] > 0. && hole[3] > 0. {
+                    let radii = r.map(|v| (v - spread).max(0.).min(hole[2].min(hole[3]) * 0.5));
+                    blurred_rounded(&mut self.scene, hole, radii, *blur, Color::BLACK)?;
+                }
+                self.pop_layer();
+                self.pop_layer();
+            }
             Shape::Image(b, image, scale) => self.image(*b, image, *scale, images)?,
             Shape::Gradient(b, r, geometry, stops) => {
-                let stops: Vec<(f32, Color)> =
+                let mut stops: Vec<(f32, Color)> =
                     stops.iter().map(|(at, c)| (*at, color(*c))).collect();
+                // Vello's ramp starts from the first stop as if it were at 0
+                // and stops at the last as if at 1, so a first stop at 40%
+                // would fade from the top. Pin the ends, as CSS pads them.
+                if let Some(&(_, c)) = stops.first().filter(|s| s.0 > 0.) {
+                    stops.insert(0, (0., c));
+                }
+                if let Some(&(_, c)) = stops.last().filter(|s| s.0 < 1.) {
+                    stops.push((1., c));
+                }
                 let gradient = match *geometry {
                     raster::GradientGeometry::Linear { start, end } => {
                         vello::peniko::Gradient::new_linear(

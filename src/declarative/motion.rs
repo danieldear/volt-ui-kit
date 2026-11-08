@@ -14,6 +14,7 @@ pub(crate) struct ResolvedShadow {
     pub blur: f32,
     pub spread: f32,
     pub offset: [f32; 2],
+    pub inset: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Visual {
