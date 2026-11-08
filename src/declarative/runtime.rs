@@ -1,4 +1,7 @@
 use super::document::{parse_color, FontSlant};
+#[cfg(feature = "rust-ui")]
+#[cfg(feature = "rust-ui")]
+use super::KeyPress;
 use super::{
     effects::{Effects, Shadow, VisualStyle},
     motion::{Motion, ResolvedShadow, Visual},
@@ -6,9 +9,10 @@ use super::{
 use super::{
     Align, Bindings, Document, DocumentError, Event, Handlers, Kind, Node, Rounding, Tone, Value,
 };
-#[cfg(feature = "rust-ui")]
 use super::{InputKeyEvent, InputModifiers, InputSource, PointerActivation};
-use crate::graphics::{BackgroundImage, Canvas, Clip, ClipRegion, VectorPath};
+#[cfg(feature = "rust-ui")]
+use super::{Pointer, PointerPhase};
+use crate::graphics::{BackgroundImage, Canvas, Clip, ClipRegion, MaskMode, VectorPath};
 use crate::{Button, ButtonColors, Painter, Panel, Rect, SurfaceStyle, Theme, UiTheme, Viewport};
 use std::{
     cell::RefCell,
@@ -144,6 +148,12 @@ pub trait DocumentPainter: Painter + TextMetrics {
     /// Optional surface capabilities; old adapters remain source compatible.
     fn ui_clip_begin(&mut self, _out: &mut Vec<Self::Shape>, _clip: ClipRegion) {}
     fn ui_clip_end(&mut self, _out: &mut Vec<Self::Shape>) {}
+    /// Masks (`Container::mask`): inside a layer opened for the masked
+    /// container, the shapes between `ui_mask_begin` and `ui_mask_end` are
+    /// the mask, applied to what the layer drew before them. Adapters
+    /// without masks ignore both, and the mask then paints like content.
+    fn ui_mask_begin(&mut self, _out: &mut Vec<Self::Shape>, _mode: MaskMode) {}
+    fn ui_mask_end(&mut self, _out: &mut Vec<Self::Shape>) {}
     fn ui_image(
         &mut self,
         _out: &mut Vec<Self::Shape>,
@@ -267,6 +277,10 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) on_input_key: Option<String>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) on_key_press: Option<String>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) on_pointer: Option<String>,
+    #[cfg(feature = "rust-ui")]
     pub(crate) on_width: Option<String>,
     #[cfg(feature = "rust-ui")]
     pub(crate) on_height: Option<String>,
@@ -347,6 +361,9 @@ pub(crate) struct BoxExtras {
     /// Ambient pulse opacity for this frame (multiplies the visual opacity).
     pub pulse: Option<f32>,
     pub label_inset: Option<f32>,
+    /// This box is its parent's mask; `masked`: this box has a mask child.
+    pub mask: Option<MaskMode>,
+    pub masked: bool,
     /// Split dividers: painted only on hover/drag/focus (Rust UI builds).
     #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
     pub reveal_handle: bool,
@@ -413,7 +430,10 @@ fn scrollbar_geometry(b: &LayoutBox, s: f32, axis: usize) -> Option<ScrollbarGeo
 struct DragCapture {
     id: String,
     kind: Kind,
-    action: String,
+    /// The grip's `on_drag`, if it has one.
+    action: Option<String>,
+    /// The surface's `on_pointer`, if it has one.
+    pointer: Option<String>,
     origin: [f32; 2],
     end: Option<String>,
 }
@@ -452,6 +472,18 @@ pub struct Runtime {
     capture_modifiers: InputModifiers,
     #[cfg(feature = "rust-ui")]
     capture_clicks: u8,
+    /// Modifiers and click count of the press being handled, for pointer
+    /// surfaces; reset after each press.
+    #[cfg(feature = "rust-ui")]
+    press_modifiers: InputModifiers,
+    #[cfg(feature = "rust-ui")]
+    press_clicks: u8,
+    /// Modifiers held now, as hosts last reported them.
+    #[cfg(feature = "rust-ui")]
+    pointer_modifiers: InputModifiers,
+    /// The pointer surface being hovered, to tell it when the pointer leaves.
+    #[cfg(feature = "rust-ui")]
+    hover_surface: Option<String>,
     #[cfg(feature = "rust-ui")]
     last_pointer_activation: Option<(String, Kind, InputModifiers)>,
     #[cfg(feature = "rust-ui")]
@@ -551,6 +583,14 @@ impl Runtime {
             capture_modifiers: InputModifiers::default(),
             #[cfg(feature = "rust-ui")]
             capture_clicks: 1,
+            #[cfg(feature = "rust-ui")]
+            press_modifiers: InputModifiers::default(),
+            #[cfg(feature = "rust-ui")]
+            press_clicks: 1,
+            #[cfg(feature = "rust-ui")]
+            pointer_modifiers: InputModifiers::default(),
+            #[cfg(feature = "rust-ui")]
+            hover_surface: None,
             #[cfg(feature = "rust-ui")]
             last_pointer_activation: None,
             #[cfg(feature = "rust-ui")]
@@ -983,10 +1023,11 @@ impl Runtime {
             if let Some(node) = target(self.document.root(), &capture.id, values, width)
                 .filter(|n| n.kind == capture.kind && self.scope_allows_id(&capture.id))
             {
-                if let Some(action) = &node.on_drag {
+                if node.on_drag.is_some() || node.on_pointer.is_some() {
                     // Rebind by node identity, never by the old numeric callback
                     // name (streaming content can insert handlers before a grip).
-                    capture.action = action.clone();
+                    capture.action = node.on_drag.clone();
+                    capture.pointer = node.on_pointer.clone();
                     capture.end = node.on_drag_end.clone();
                     self.drag_capture = Some(capture);
                 }
@@ -1399,6 +1440,12 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
+        #[cfg(feature = "rust-ui")]
+        if let Some(outcome) =
+            self.surface_gesture(x, y, PointerPhase::Wheel, delta, 0., handlers, context)?
+        {
+            return Ok(outcome);
+        }
         let changed = self.scroll_at(x, y, delta);
         let activated = if changed {
             self.dispatch_virtual_windows(handlers, context)?
@@ -1664,7 +1711,7 @@ impl Runtime {
             return true;
         }
         #[cfg(feature = "rust-ui")]
-        if b.on_drag.is_some() {
+        if b.on_drag.is_some() || b.on_pointer.is_some() {
             return true;
         }
         let theme = self.input_theme.borrow();
@@ -1681,7 +1728,7 @@ impl Runtime {
     /// Ancestor clips still constrain it in the callers, as for other input.
     fn input_contains(&self, b: &LayoutBox, x: f32, y: f32) -> bool {
         #[cfg(feature = "rust-ui")]
-        if b.on_drag.is_some() {
+        if b.on_drag.is_some() || b.on_pointer.is_some() {
             return b.bounds.contains(x, y);
         }
         b.bounds.contains_corners(b.radii(self.scale), x, y)
@@ -1847,10 +1894,17 @@ impl Runtime {
                 (x - capture.origin[0]) / self.scale,
                 (y - capture.origin[1]) / self.scale,
             ];
-            let valid = self.scope_allows_id(&capture.id)
-                && self.boxes.iter().any(|b| {
-                    b.id == capture.id && b.enabled && b.on_drag.as_ref() == Some(&capture.action)
-                });
+            let surface = self
+                .boxes
+                .iter()
+                .find(|b| {
+                    b.id == capture.id
+                        && b.enabled
+                        && b.on_drag == capture.action
+                        && b.on_pointer == capture.pointer
+                })
+                .map(|b| b.bounds.bounds());
+            let valid = self.scope_allows_id(&capture.id) && surface.is_some();
             if !valid || !offset.iter().all(|v| v.is_finite()) {
                 self.drag_capture = None;
                 return Ok(InputOutcome {
@@ -1858,16 +1912,26 @@ impl Runtime {
                     activated: false,
                 });
             }
-            handlers
-                .dispatch(
-                    &capture.action,
-                    Event::ContextRequested {
-                        x_bits: offset[0].to_bits(),
-                        y_bits: offset[1].to_bits(),
-                    },
-                    context,
-                )
-                .map_err(|e| DocumentError(e.to_string()))?;
+            if let Some(action) = &capture.action {
+                handlers
+                    .dispatch(
+                        action,
+                        Event::ContextRequested {
+                            x_bits: offset[0].to_bits(),
+                            y_bits: offset[1].to_bits(),
+                        },
+                        context,
+                    )
+                    .map_err(|e| DocumentError(e.to_string()))?;
+            }
+            if let (Some(pointer), Some([bx, by, _, _])) = (&capture.pointer, surface) {
+                let at = [(x - bx) / self.scale, (y - by) / self.scale];
+                let mut event = Pointer::new(PointerPhase::Drag, at, self.pointer_modifiers);
+                event.offset = offset;
+                handlers
+                    .dispatch_pointer(pointer, event, context)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+            }
             return Ok(InputOutcome {
                 changed: true,
                 activated: true,
@@ -1879,9 +1943,11 @@ impl Runtime {
         if let Some(outcome) = self.slider_pointer_move(x, y, handlers, context)? {
             return Ok(outcome);
         }
+        let changed = self.pointer_move(x, y);
+        let activated = self.pointer_hover(Some([x, y]), handlers, context)?;
         Ok(InputOutcome {
-            changed: self.pointer_move(x, y),
-            activated: false,
+            changed: changed || activated,
+            activated,
         })
     }
     #[cfg(feature = "rust-ui")]
@@ -1918,7 +1984,7 @@ impl Runtime {
         // drags, unless a control inside it takes the press.
         if self.hit(x, y).is_none() {
             let grip = self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
-                (b.on_drag.is_some()
+                ((b.on_drag.is_some() || b.on_pointer.is_some())
                     && b.enabled
                     && self.scope_allows_id(&b.id)
                     && !self.portal_passthrough(&b.id)
@@ -1933,7 +1999,8 @@ impl Runtime {
                 let capture = DragCapture {
                     id: b.id.clone(),
                     kind: b.kind,
-                    action: b.on_drag.clone().unwrap(),
+                    action: b.on_drag.clone(),
+                    pointer: b.on_pointer.clone(),
                     origin: [x, y],
                     end: b.on_drag_end.clone(),
                 };
@@ -1955,17 +2022,37 @@ impl Runtime {
                         )
                         .map_err(|e| DocumentError(e.to_string()))?;
                 }
-                handlers
-                    .dispatch(
-                        &capture.action,
-                        Event::ContextRequested {
-                            x_bits: 0f32.to_bits(),
-                            y_bits: 0f32.to_bits(),
-                        },
-                        context,
-                    )
-                    .map_err(|e| DocumentError(e.to_string()))?;
+                if let Some(pointer) = &b.on_pointer {
+                    let [bx, by, _, _] = b.bounds.bounds();
+                    let at = [(x - bx) / self.scale, (y - by) / self.scale];
+                    let mut event = Pointer::new(PointerPhase::Press, at, self.press_modifiers);
+                    event.clicks = self.press_clicks;
+                    handlers
+                        .dispatch_pointer(pointer, event, context)
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                }
+                if let Some(action) = &capture.action {
+                    handlers
+                        .dispatch(
+                            action,
+                            Event::ContextRequested {
+                                x_bits: 0f32.to_bits(),
+                                y_bits: 0f32.to_bits(),
+                            },
+                            context,
+                        )
+                        .map_err(|e| DocumentError(e.to_string()))?;
+                }
+                // The surface owns the pointer now; it is not hovered.
+                self.hover_surface = None;
                 self.drag_capture = Some(capture);
+                // A press on a grip is a press on blank space: it ends text
+                // editing and moves focus off any control, so application
+                // keys (`on_key_press`) reach a canvas again at once.
+                self.ime_cancel();
+                self.focused = None;
+                self.focus_visible = false;
+                self.keyboard = None;
                 return Ok(InputOutcome {
                     changed: true,
                     activated: true,
@@ -2002,6 +2089,150 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         let changed = self.tooltip_pointer(Some([x, y])) || changed;
         changed
+    }
+    /// Hosts report the modifiers held now, so a pointer surface's drags,
+    /// wheel and pinch events carry them. Re-send the pointer position while
+    /// a surface is captured to tell it a modifier changed mid-drag.
+    #[cfg(feature = "rust-ui")]
+    pub fn set_pointer_modifiers(&mut self, modifiers: InputModifiers) {
+        self.pointer_modifiers = modifiers;
+    }
+    /// A pointer surface or drag grip has the pointer captured.
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_dragging(&self) -> bool {
+        self.drag_capture.is_some()
+    }
+    /// The topmost pointer surface under a point, as the input rules for
+    /// grips decide it (clipping, modal scope, later siblings covering it).
+    #[cfg(feature = "rust-ui")]
+    fn pointer_surface_at(&self, x: f32, y: f32) -> Option<(String, String, [f32; 4])> {
+        self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
+            let name = b.on_pointer.as_ref()?;
+            (b.enabled
+                && self.scope_allows_id(&b.id)
+                && !self.portal_passthrough(&b.id)
+                && b.clip.contains(x, y)
+                && b.clip_regions.iter().all(|r| r.contains(x, y))
+                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && self.input_contains(b, x, y)
+                && !self.input_occluded(index, x, y))
+            .then(|| (b.id.clone(), name.clone(), b.bounds.bounds()))
+        })
+    }
+    /// Tell the surface under the pointer it is hovered (or the one left
+    /// behind that it no longer is). Controls inside a surface keep their
+    /// own hover; the surface hears nothing while one is under the pointer.
+    #[cfg(feature = "rust-ui")]
+    fn pointer_hover<C>(
+        &mut self,
+        at: Option<[f32; 2]>,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        if self.drag_capture.is_some() {
+            return Ok(false);
+        }
+        let target = at.and_then(|[x, y]| {
+            if self.hit(x, y).is_some() {
+                return None;
+            }
+            self.pointer_surface_at(x, y)
+        });
+        let mut activated = false;
+        if let Some(old) = self.hover_surface.clone() {
+            if target.as_ref().map(|t| &t.0) != Some(&old) {
+                self.hover_surface = None;
+                if let Some(b) = self.boxes.iter().find(|b| b.id == old) {
+                    if let Some(name) = b.on_pointer.clone() {
+                        let [bx, by, _, _] = b.bounds.bounds();
+                        let local = at.map_or([0.; 2], |[x, y]| {
+                            [(x - bx) / self.scale, (y - by) / self.scale]
+                        });
+                        let event =
+                            Pointer::new(PointerPhase::Leave, local, self.pointer_modifiers);
+                        handlers
+                            .dispatch_pointer(&name, event, context)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        activated = true;
+                    }
+                }
+            }
+        }
+        if let (Some((id, name, [bx, by, _, _])), Some([x, y])) = (target, at) {
+            let local = [(x - bx) / self.scale, (y - by) / self.scale];
+            let event = Pointer::new(PointerPhase::Hover, local, self.pointer_modifiers);
+            handlers
+                .dispatch_pointer(&name, event, context)
+                .map_err(|e| DocumentError(e.to_string()))?;
+            self.hover_surface = Some(id);
+            activated = true;
+        }
+        Ok(activated)
+    }
+    /// A wheel or pinch over a pointer surface goes to it; None when there
+    /// is no surface under the point, so the content scrolls as usual.
+    #[cfg(feature = "rust-ui")]
+    #[allow(clippy::too_many_arguments)]
+    fn surface_gesture<C>(
+        &mut self,
+        x: f32,
+        y: f32,
+        phase: PointerPhase,
+        delta: [f32; 2],
+        zoom: f32,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<Option<InputOutcome>, DocumentError> {
+        if self.overlay_active() {
+            return Ok(None);
+        }
+        let Some((_, name, [bx, by, _, _])) = self.pointer_surface_at(x, y) else {
+            return Ok(None);
+        };
+        let at = [(x - bx) / self.scale, (y - by) / self.scale];
+        let mut event = Pointer::new(phase, at, self.pointer_modifiers);
+        event.delta = delta;
+        event.zoom = zoom;
+        handlers
+            .dispatch_pointer(&name, event, context)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        Ok(Some(InputOutcome {
+            changed: true,
+            activated: true,
+        }))
+    }
+    /// A trackpad pinch at a physical point: `zoom` is the change in
+    /// magnification (0.1 for 10% larger). Only pointer surfaces use it.
+    #[cfg(feature = "rust-ui")]
+    pub fn pinch_outcome<C>(
+        &mut self,
+        x: f32,
+        y: f32,
+        zoom: f32,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        if !zoom.is_finite() {
+            return Ok(InputOutcome::default());
+        }
+        Ok(self
+            .surface_gesture(x, y, PointerPhase::Pinch, [0.; 2], zoom, handlers, context)?
+            .unwrap_or_default())
+    }
+    /// The pointer left the window: clear hover and tell a hovered pointer
+    /// surface it was left.
+    #[cfg(feature = "rust-ui")]
+    pub fn pointer_leave_outcome<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<InputOutcome, DocumentError> {
+        let changed = self.pointer_leave();
+        let activated = self.pointer_hover(None, handlers, context)?;
+        Ok(InputOutcome {
+            changed: changed || activated,
+            activated,
+        })
     }
     pub fn pointer_leave(&mut self) -> bool {
         // Do not short-circuit takes: physical link and linked peer states must
@@ -2077,7 +2308,12 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
-        let outcome = self.pointer_down_outcome(x, y, handlers, context)?;
+        self.press_modifiers = modifiers;
+        self.pointer_modifiers = modifiers;
+        let outcome = self.pointer_down_outcome(x, y, handlers, context);
+        self.press_modifiers = InputModifiers::default();
+        self.press_clicks = 1;
+        let outcome = outcome?;
         self.capture_modifiers = modifiers;
         Ok(outcome)
     }
@@ -2093,6 +2329,7 @@ impl Runtime {
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<InputOutcome, DocumentError> {
+        self.press_clicks = clicks.clamp(1, 3);
         let outcome =
             self.pointer_down_outcome_with_modifiers(x, y, modifiers, handlers, context)?;
         self.capture_clicks = clicks.clamp(1, 3);
@@ -2119,6 +2356,27 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             if let Some(capture) = self.drag_capture.take() {
+                let surface = self
+                    .boxes
+                    .iter()
+                    .find(|b| b.id == capture.id)
+                    .map(|b| b.bounds.bounds());
+                let released = match (&capture.pointer, surface) {
+                    (Some(pointer), Some([bx, by, _, _])) if self.scope_allows_id(&capture.id) => {
+                        let at = [(x - bx) / self.scale, (y - by) / self.scale];
+                        let mut event =
+                            Pointer::new(PointerPhase::Release, at, self.pointer_modifiers);
+                        event.offset = [
+                            (x - capture.origin[0]) / self.scale,
+                            (y - capture.origin[1]) / self.scale,
+                        ];
+                        handlers
+                            .dispatch_pointer(pointer, event, context)
+                            .map_err(|e| DocumentError(e.to_string()))?;
+                        true
+                    }
+                    _ => false,
+                };
                 if let Some(end) = capture.end.filter(|_| self.scope_allows_id(&capture.id)) {
                     handlers
                         .dispatch(&end, Event::Activate, context)
@@ -2130,7 +2388,7 @@ impl Runtime {
                 }
                 return Ok(InputOutcome {
                     changed: true,
-                    activated: false,
+                    activated: released,
                 });
             }
             if let Some(outcome) = self.overlay_pointer_up(x, y, handlers, context)? {
@@ -2542,6 +2800,65 @@ impl Runtime {
         let changed = activated && self.cancel_pointer_captures();
         Ok(InputOutcome { changed, activated })
     }
+    /// Hosts call this for a key press nothing else used: after application
+    /// commands, editors, value controls, focused-control keys and text
+    /// selection, and before the window's own defaults. Nothing is
+    /// delivered while a text field is being edited or a menu or dialog is
+    /// open. The nearest `on_key_press` container around the focused control
+    /// gets it, else the last one in the document. Returns whether a handler
+    /// used the key; the container never becomes focusable for this. Enter
+    /// and Space go to the app only when no control has focus.
+    #[cfg(feature = "rust-ui")]
+    pub fn key_press<C>(
+        &mut self,
+        event: KeyPress,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        if self.overlay_active() || self.editing_focus() {
+            return Ok(false);
+        }
+        // Enter and Space stay with a focused control: they activate it.
+        if matches!(
+            event.key,
+            super::PressedKey::Enter | super::PressedKey::Space
+        ) && self.focused.is_some()
+        {
+            return Ok(false);
+        }
+        let usable = |b: &LayoutBox| b.enabled && !b.departing && self.scope_allows_id(&b.id);
+        let around_focus = self.focused.as_deref().and_then(|id| {
+            let mut index = self.layout_boxes.iter().position(|b| b.id == id)?;
+            loop {
+                let b = &self.layout_boxes[index];
+                if usable(b) {
+                    if let Some(action) = &b.on_key_press {
+                        return Some(action.clone());
+                    }
+                }
+                if b.depth == 0 {
+                    return None;
+                }
+                let depth = b.depth - 1;
+                index = self.layout_boxes[..index]
+                    .iter()
+                    .rposition(|p| p.depth == depth)?;
+            }
+        });
+        let action = around_focus.or_else(|| {
+            self.layout_boxes
+                .iter()
+                .rev()
+                .find(|b| b.on_key_press.is_some() && usable(b))
+                .and_then(|b| b.on_key_press.clone())
+        });
+        let Some(action) = action else {
+            return Ok(false);
+        };
+        handlers
+            .dispatch_key_press(&action, event, context)
+            .map_err(|e| DocumentError(e.to_string()))
+    }
     #[cfg(feature = "rust-ui")]
     fn activate_with_input<C>(
         &self,
@@ -2748,13 +3065,25 @@ impl Runtime {
         motion: &mut Motion,
         out: &mut Vec<PaintBatch<P::Shape, P::Glyph>>,
     ) {
-        let mut groups: Vec<(usize, bool, bool, Option<LayoutBox>)> = Vec::new();
+        // (depth, clip, layer, scroll, mask begun): what to close when the
+        // traversal leaves a box's subtree.
+        let mut groups: Vec<(usize, bool, bool, Option<LayoutBox>, bool)> = Vec::new();
         for source in boxes {
             let mut themed = source.clone();
             themed.style.resolve_colors(ui);
             let original = &themed;
             while groups.last().is_some_and(|g| g.0 >= original.depth) {
-                let (_, clip, layer, scroll) = groups.pop().unwrap();
+                let (_, clip, layer, scroll, mask) = groups.pop().unwrap();
+                // Close the mask first: scrollbars are not part of it.
+                if mask {
+                    let mut shapes = vec![];
+                    p.ui_mask_end(&mut shapes);
+                    out.push(PaintBatch {
+                        clip: original.effect_clip,
+                        shapes,
+                        glyphs: vec![],
+                    });
+                }
                 if let Some(b) = scroll {
                     let mut shapes = vec![];
                     paint_scrollbars(p, &mut shapes, &b, ui, self.scale);
@@ -2777,6 +3106,23 @@ impl Runtime {
                     glyphs: vec![],
                 });
             }
+            // A mask paints into the mask layer of the container it masks,
+            // opened here and closed when that container's subtree ends.
+            if let Some(mode) = original.ext.mask {
+                let parent = groups
+                    .last_mut()
+                    .filter(|g| g.0 + 1 == original.depth && g.2 && !g.4);
+                if let Some(g) = parent {
+                    g.4 = true;
+                    let mut shapes = vec![];
+                    p.ui_mask_begin(&mut shapes, mode);
+                    out.push(PaintBatch {
+                        clip: original.effect_clip,
+                        shapes,
+                        glyphs: vec![],
+                    });
+                }
+            }
             let state = self.state_for_box(original);
             let target = visual_target(original, state, ui, self.scale);
             let flags = [
@@ -2798,7 +3144,10 @@ impl Runtime {
             if let Some(pulse) = original.ext.pulse {
                 visual.opacity *= pulse;
             }
-            if visual.opacity < 1. {
+            // A masked container draws into a layer of its own, so the mask
+            // cuts only its content.
+            let layered = visual.opacity < 1. || original.ext.masked;
+            if layered {
                 let mut shapes = vec![];
                 p.ui_layer_begin(&mut shapes, visual.opacity);
                 out.push(PaintBatch {
@@ -2808,7 +3157,25 @@ impl Runtime {
                 });
             }
             let mut shapes = vec![];
-            for shadow in [visual.shadow, visual.glow].into_iter().flatten() {
+            let extra: Vec<ResolvedShadow> = original
+                .effects
+                .shadows
+                .iter()
+                .filter(|s| ui.resolve(&s.color).is_some())
+                .map(|s| resolved_shadow(s, self.scale, ui))
+                .collect();
+            let inner: Vec<ResolvedShadow> = visual
+                .shadow
+                .into_iter()
+                .chain(extra.iter().copied())
+                .filter(|s| s.inset && s.color[3] > 0.)
+                .collect();
+            for shadow in [visual.shadow, visual.glow]
+                .into_iter()
+                .flatten()
+                .chain(extra.iter().copied())
+                .filter(|s| !s.inset)
+            {
                 if shadow.color[3] > 0. {
                     p.card_shadow(
                         &mut shapes,
@@ -2837,12 +3204,13 @@ impl Runtime {
                     glyphs: vec![],
                 });
             }
-            if visual.opacity < 1. || original.content_clip.is_some() {
+            if layered || original.content_clip.is_some() {
                 groups.push((
                     original.depth,
                     original.content_clip.is_some(),
-                    visual.opacity < 1.,
+                    layered,
                     original.scroll.map(|_| original.clone()),
+                    false,
                 ));
             }
             let treatment = has_visual_patch(&original.effects)
@@ -2869,6 +3237,29 @@ impl Runtime {
                 continue;
             }
             let batch = self.paint_one(p, ui, b, treatment.then_some(visual));
+            // Inner shadows sit on the element's own fill, under its children.
+            let batch = if inner.is_empty() {
+                batch
+            } else {
+                let mut shapes = vec![];
+                for s in &inner {
+                    p.card_inner_shadow(
+                        &mut shapes,
+                        original.bounds.bounds(),
+                        original.radii(self.scale),
+                        s.blur,
+                        s.spread,
+                        s.offset,
+                        s.color,
+                    );
+                }
+                out.push(batch);
+                PaintBatch {
+                    clip: original.clip,
+                    shapes,
+                    glyphs: vec![],
+                }
+            };
             #[cfg(feature = "rust-ui")]
             let mut batch = batch;
             #[cfg(feature = "rust-ui")]
@@ -2894,7 +3285,17 @@ impl Runtime {
             out.push(batch);
         }
         if let Some(b) = boxes.last() {
-            for (_, clip, layer, scroll) in groups.into_iter().rev() {
+            for (_, clip, layer, scroll, mask) in groups.into_iter().rev() {
+                // Close the mask first: scrollbars are not part of it.
+                if mask {
+                    let mut shapes = vec![];
+                    p.ui_mask_end(&mut shapes);
+                    out.push(PaintBatch {
+                        clip: b.ancestor_clip,
+                        shapes,
+                        glyphs: vec![],
+                    });
+                }
                 if let Some(b) = scroll {
                     let mut shapes = vec![];
                     paint_scrollbars(p, &mut shapes, &b, ui, self.scale);
@@ -3465,6 +3866,7 @@ fn resolved_shadow(shadow: &Shadow, scale: f32, ui: &UiTheme) -> ResolvedShadow 
         blur: shadow.blur * scale,
         spread: shadow.spread * scale,
         offset: shadow.offset.map(|v| v * scale),
+        inset: shadow.inset,
     }
 }
 fn apply_patch(v: &mut Visual, patch: &VisualStyle, scale: f32, ui: &UiTheme) {
@@ -4984,6 +5386,10 @@ fn place(
         #[cfg(feature = "rust-ui")]
         on_input_key: n.on_input_key.clone(),
         #[cfg(feature = "rust-ui")]
+        on_key_press: n.on_key_press.clone(),
+        #[cfg(feature = "rust-ui")]
+        on_pointer: n.on_pointer.clone(),
+        #[cfg(feature = "rust-ui")]
         on_width: n.on_width.clone(),
         #[cfg(feature = "rust-ui")]
         on_height: n.on_height.clone(),
@@ -5059,6 +5465,8 @@ fn place(
             gradient: n.ext.gradient.clone(),
             pulse: None,
             label_inset: n.ext.label_inset,
+            mask: n.ext.mask,
+            masked: n.children.iter().any(|c| c.ext.mask.is_some()),
             reveal_handle: n.ext.reveal_handle,
             spans: n.ext.spans.clone(),
             on_link: n.ext.on_link.clone(),

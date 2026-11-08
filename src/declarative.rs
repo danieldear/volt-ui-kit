@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 #[cfg(feature = "rust-ui")]
 mod input;
 #[cfg(feature = "rust-ui")]
-pub use input::{InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation};
+pub use input::{
+    InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
+    PointerPhase, PressedKey,
+};
 
 /// Event signatures accepted by the initial component contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

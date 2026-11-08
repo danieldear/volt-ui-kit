@@ -803,14 +803,105 @@ impl Hsl {
         Some(Self::from_rgb([c(0)?, c(2)?, c(4)?]))
     }
 }
+/// Hue in degrees, then saturation, value (brightness) and alpha from 0 to
+/// 1: the colour model design tools edit in. Keep one in app state while a
+/// picker is open, because `#RRGGBB` alone forgets the hue of greys and black.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hsva {
+    pub hue: f32,
+    pub saturation: f32,
+    pub value: f32,
+    pub alpha: f32,
+}
+impl Hsva {
+    pub fn to_rgb(self) -> [f32; 3] {
+        let h = self.hue.rem_euclid(360.) / 60.;
+        let (s, v) = (self.saturation.clamp(0., 1.), self.value.clamp(0., 1.));
+        let c = v * s;
+        let x = c * (1. - (h.rem_euclid(2.) - 1.).abs());
+        let (r, g, b) = match h as u32 {
+            0 => (c, x, 0.),
+            1 => (x, c, 0.),
+            2 => (0., c, x),
+            3 => (0., x, c),
+            4 => (x, 0., c),
+            _ => (c, 0., x),
+        };
+        let m = v - c;
+        [r + m, g + m, b + m]
+    }
+    /// From RGB (0..=1); `hue` is kept when the colour has none (a grey).
+    pub fn from_rgb([r, g, b]: [f32; 3], alpha: f32, hue: f32) -> Self {
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let d = max - min;
+        let h = if d <= 1e-6 {
+            hue
+        } else if max == r {
+            60. * ((g - b) / d).rem_euclid(6.)
+        } else if max == g {
+            60. * ((b - r) / d + 2.)
+        } else {
+            60. * ((r - g) / d + 4.)
+        };
+        Self {
+            hue: h,
+            saturation: if max <= 0. { 0. } else { d / max },
+            value: max,
+            alpha: alpha.clamp(0., 1.),
+        }
+    }
+    /// `#RRGGBB` (opaque) or `#RRGGBBAA`.
+    pub fn parse(hex: &str) -> Option<Self> {
+        let h = hex.trim().trim_start_matches('#');
+        if !(h.len() == 6 || h.len() == 8) || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let c = |i: usize| {
+            u8::from_str_radix(&h[i..i + 2], 16)
+                .ok()
+                .map(|v| f32::from(v) / 255.)
+        };
+        let alpha = if h.len() == 8 { c(6)? } else { 1. };
+        Some(Self::from_rgb([c(0)?, c(2)?, c(4)?], alpha, 0.))
+    }
+    /// `#RRGGBB`, ignoring alpha.
+    pub fn hex(self) -> String {
+        let [r, g, b] = self
+            .to_rgb()
+            .map(|v| (v.clamp(0., 1.) * 255.).round() as u8);
+        format!("#{r:02X}{g:02X}{b:02X}")
+    }
+    /// `#RRGGBBAA`.
+    pub fn hex_alpha(self) -> String {
+        let a = (self.alpha.clamp(0., 1.) * 255.).round() as u8;
+        format!("{}{a:02X}", self.hex())
+    }
+    /// A typed colour, keeping this one's hue (and alpha, for `#RRGGBB`).
+    pub fn with_hex(self, hex: &str) -> Option<Self> {
+        let h = hex.trim().trim_start_matches('#');
+        let next = Self::parse(hex)?;
+        let rgb = next.to_rgb();
+        let alpha = if h.len() == 8 { next.alpha } else { self.alpha };
+        Some(Self::from_rgb(rgb, alpha, self.hue))
+    }
+}
 type Colour<C> = Rc<RefCell<dyn FnMut(&mut C, String)>>;
-/// Preset swatches, hue/saturation/lightness sliders and a hex field.
+type ColourValue<C> = Rc<RefCell<dyn FnMut(&mut C, Hsva)>>;
+type EmitColour<C> = Rc<dyn Fn(&mut C, Hsva)>;
+/// Preset swatches, hue/saturation/lightness sliders and a hex field; or,
+/// with `area(true)`, a saturation/brightness square with hue and opacity
+/// strips as in design tools.
 pub struct ColorPicker<C> {
     spacing: RootSpacing,
     key: Option<String>,
     value: String,
     swatches: Vec<String>,
     on_change: Option<Colour<C>>,
+    area: bool,
+    alpha: bool,
+    hsva: Option<Hsva>,
+    on_hsva: Option<ColourValue<C>>,
+    width: Option<f32>,
 }
 pub fn color_picker<C>(hex: impl Into<String>) -> ColorPicker<C> {
     ColorPicker {
@@ -825,9 +916,42 @@ pub fn color_picker<C>(hex: impl Into<String>) -> ColorPicker<C> {
         .map(String::from)
         .into(),
         on_change: None,
+        area: false,
+        alpha: false,
+        hsva: None,
+        on_hsva: None,
+        width: None,
     }
 }
 impl<C> ColorPicker<C> {
+    /// A saturation/brightness square, hue strip and (with `alpha`) an
+    /// opacity strip, each dragged directly, in place of the HSL sliders.
+    pub fn area(mut self, value: bool) -> Self {
+        self.area = value;
+        self
+    }
+    /// Edit opacity too: `on_change` then gets `#RRGGBBAA`, and the value
+    /// may be `#RRGGBBAA`.
+    pub fn alpha(mut self, value: bool) -> Self {
+        self.alpha = value;
+        self
+    }
+    /// The exact current colour, taking precedence over the hex value, so
+    /// the hue holds while the colour is grey or black.
+    pub fn hsva(mut self, value: Hsva) -> Self {
+        self.hsva = Some(value);
+        self
+    }
+    /// Called with the full colour on every change (with `on_change`).
+    pub fn on_hsva(mut self, f: impl FnMut(&mut C, Hsva) + 'static) -> Self {
+        self.on_hsva = Some(Rc::new(RefCell::new(f)));
+        self
+    }
+    /// Width in logical points (default 300; 240 with `area`).
+    pub fn width(mut self, value: f32) -> Self {
+        self.width = Some(value);
+        self
+    }
     root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
@@ -852,6 +976,22 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
         let Some(change) = p.on_change else {
             return invalid("color_picker requires on_change");
         };
+        if p.area {
+            let width = p.width.unwrap_or(240.);
+            if !width.is_finite() || !(160. ..=640.).contains(&width) {
+                return invalid("color_picker width must be 160..=640");
+            }
+            let current = p.hsva.unwrap_or_else(|| {
+                Hsva::parse(&p.value).unwrap_or(Hsva {
+                    hue: 220.,
+                    saturation: 0.7,
+                    value: 0.9,
+                    alpha: 1.,
+                })
+            });
+            let element = area_picker(key, width, current, p.alpha, &p.swatches, change, p.on_hsva);
+            return p.spacing.apply(element);
+        }
         let hsl = Hsl::parse(&p.value).unwrap_or(Hsl {
             hue: 220.,
             saturation: 0.8,
@@ -962,6 +1102,296 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
         .gap(12., Axis::Vertical);
         p.spacing.apply(card.into())
     }
+}
+
+/// White and grey squares behind translucent colour.
+fn checkerboard<C>(width: f32, height: f32, cell: f32) -> Element<C> {
+    canvas(move |c| {
+        c.fill(VectorPath::rectangle(0., 0., width, height), "#FFFFFF");
+        let (cols, rows) = ((width / cell).ceil() as i32, (height / cell).ceil() as i32);
+        for j in 0..rows {
+            for i in 0..cols {
+                if (i + j) % 2 == 0 {
+                    let (x, y) = (i as f32 * cell, j as f32 * cell);
+                    let (w, h) = (cell.min(width - x), cell.min(height - y));
+                    c.fill(VectorPath::rectangle(x, y, w, h), "#D4D4D8");
+                }
+            }
+        }
+    })
+    .width(width)
+    .height(height)
+}
+
+/// A round drag handle showing `colour`.
+fn picker_handle<C>(colour: String) -> Element<C> {
+    vstack(Vec::<Element<C>>::new())
+        .width(14.)
+        .height(14.)
+        .rounded(Rounding::Full)
+        .background(colour)
+        .border_width(2.)
+        .border_color("#FFFFFF")
+        .shadow(Shadow::new().color("#00000066").blur(3.).offset(0., 0.5))
+        .into()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn area_picker<C: 'static>(
+    key: String,
+    width: f32,
+    current: Hsva,
+    alpha: bool,
+    swatches: &[String],
+    change: Colour<C>,
+    on_hsva: Option<ColourValue<C>>,
+) -> Element<C> {
+    let emit: EmitColour<C> = Rc::new(move |app: &mut C, next: Hsva| {
+        if let Some(f) = &on_hsva {
+            (f.borrow_mut())(app, next);
+        }
+        let hex = if alpha { next.hex_alpha() } else { next.hex() };
+        (change.borrow_mut())(app, hex);
+    });
+    let dragged = |phase: PointerPhase| matches!(phase, PointerPhase::Press | PointerPhase::Drag);
+    let opaque = Hsva {
+        alpha: 1.,
+        ..current
+    }
+    .hex();
+    let pure = Hsva {
+        saturation: 1.,
+        value: 1.,
+        alpha: 1.,
+        ..current
+    }
+    .hex();
+    // Saturation runs left to right, brightness bottom to top.
+    let height = (width * 0.66).round();
+    let set = emit.clone();
+    let square = zstack![
+        vstack(Vec::<Element<C>>::new())
+            .width(width)
+            .height(height)
+            .rounded(6.)
+            .background(pure.clone()),
+        vstack(Vec::<Element<C>>::new())
+            .width(width)
+            .height(height)
+            .rounded(6.)
+            .background_gradient(Gradient::linear(
+                90.,
+                [(0., "#FFFFFFFF"), (1., "#FFFFFF00")]
+            )),
+        vstack(Vec::<Element<C>>::new())
+            .width(width)
+            .height(height)
+            .rounded(6.)
+            .background_gradient(Gradient::linear(0., [(0., "#000000FF"), (1., "#00000000")])),
+        picker_handle(opaque.clone()).offset(
+            current.saturation.clamp(0., 1.) * width - 7.,
+            (1. - current.value.clamp(0., 1.)) * height - 7.,
+        ),
+    ]
+    .key(format!("{key}-area"))
+    .accessible_label("Saturation and brightness")
+    .flow(Flow::TopLeft)
+    .width(width)
+    .height(height)
+    .on_pointer(move |app: &mut C, p| {
+        if dragged(p.phase) {
+            let next = Hsva {
+                saturation: (p.at[0] / width).clamp(0., 1.),
+                value: 1. - (p.at[1] / height).clamp(0., 1.),
+                ..current
+            };
+            set(app, next);
+        }
+    });
+    // Strips sit beside a preview of the colour.
+    let strip = width - 44.;
+    let set = emit.clone();
+    let hue = zstack![
+        vstack(Vec::<Element<C>>::new())
+            .width(strip)
+            .height(10.)
+            .rounded(5.)
+            .background_gradient(Gradient::linear(
+                90.,
+                [
+                    (0., "#FF0000"),
+                    (1. / 6., "#FFFF00"),
+                    (2. / 6., "#00FF00"),
+                    (3. / 6., "#00FFFF"),
+                    (4. / 6., "#0000FF"),
+                    (5. / 6., "#FF00FF"),
+                    (1., "#FF0000"),
+                ],
+            ))
+            .offset(0., 2.),
+        picker_handle(pure).offset(current.hue.rem_euclid(360.) / 360. * strip - 7., 0.),
+    ]
+    .key(format!("{key}-hue"))
+    .accessible_label("Hue")
+    .flow(Flow::TopLeft)
+    .width(strip)
+    .height(14.)
+    .on_pointer(move |app: &mut C, p| {
+        if dragged(p.phase) {
+            let hue = (p.at[0] / strip).clamp(0., 1.) * 359.9;
+            set(app, Hsva { hue, ..current });
+        }
+    });
+    let mut strips: Vec<Element<C>> = vec![hue.into()];
+    if alpha {
+        let set = emit.clone();
+        let opacity = zstack![
+            zstack![
+                checkerboard(strip, 10., 5.),
+                vstack(Vec::<Element<C>>::new())
+                    .width(strip)
+                    .height(10.)
+                    .background_gradient(Gradient::linear(
+                        90.,
+                        [(0., format!("{opaque}00")), (1., format!("{opaque}FF"))],
+                    )),
+            ]
+            .key(format!("{key}-alpha-track"))
+            .flow(Flow::TopLeft)
+            .width(strip)
+            .height(10.)
+            .rounded(5.)
+            .clip_contents(true)
+            .offset(0., 2.),
+            picker_handle(current.hex_alpha()).offset(current.alpha.clamp(0., 1.) * strip - 7., 0.),
+        ]
+        .key(format!("{key}-alpha"))
+        .accessible_label("Opacity")
+        .flow(Flow::TopLeft)
+        .width(strip)
+        .height(14.)
+        .on_pointer(move |app: &mut C, p| {
+            if dragged(p.phase) {
+                let alpha = (p.at[0] / strip).clamp(0., 1.);
+                set(app, Hsva { alpha, ..current });
+            }
+        });
+        strips.push(opacity.into());
+    }
+    let preview = zstack![
+        checkerboard(32., 32., 8.),
+        vstack(Vec::<Element<C>>::new())
+            .width(32.)
+            .height(32.)
+            .background(current.hex_alpha()),
+    ]
+    .key(format!("{key}-preview"))
+    .flow(Flow::TopLeft)
+    .width(32.)
+    .height(32.)
+    .rounded(8.)
+    .clip_contents(true)
+    .border_width(1.)
+    .border_color(ColorToken::Border);
+    let set = emit.clone();
+    let mut fields: Vec<Element<C>> = vec![text_field(current.hex().trim_start_matches('#'))
+        .key(format!("{key}-hex"))
+        .accessible_label("Hex colour")
+        .font_family("SF Mono, monospace")
+        .height(30.)
+        .flex(1.)
+        .on_change(move |app: &mut C, text| {
+            let t = text.trim();
+            if t.trim_start_matches('#').len() == 6 {
+                if let Some(next) = current.with_hex(t) {
+                    set(app, next);
+                }
+            }
+        })
+        .into()];
+    if alpha {
+        let set = emit.clone();
+        fields.push(
+            text_field(format!("{}%", (current.alpha * 100.).round()))
+                .key(format!("{key}-opacity"))
+                .accessible_label("Opacity percent")
+                .height(30.)
+                .width(76.)
+                .on_change(move |app: &mut C, text| {
+                    if let Ok(v) = text.trim().trim_end_matches('%').trim().parse::<f32>() {
+                        if v.is_finite() {
+                            let alpha = (v / 100.).clamp(0., 1.);
+                            set(app, Hsva { alpha, ..current });
+                        }
+                    }
+                })
+                .into(),
+        );
+    }
+    let columns = (((width + 6.) / 30.).floor() as u16).max(1);
+    let chips: Vec<Element<C>> = swatches
+        .iter()
+        .filter_map(|c| Hsva::parse(c).map(|h| (c.to_uppercase(), h)))
+        .enumerate()
+        .map(|(i, (colour, value))| {
+            let set = emit.clone();
+            let chosen = colour.trim_start_matches('#')[..6] == current.hex()[1..];
+            button("")
+                .key(format!("{key}-swatch-{i}"))
+                .accessible_label(colour.clone())
+                .width(24.)
+                .height(24.)
+                .rounded(6.)
+                .background(colour)
+                .border_color(if chosen {
+                    ColorToken::BaseContent.into()
+                } else {
+                    String::from("#00000022")
+                })
+                .border_width(if chosen { 2. } else { 1. })
+                .on_click(move |app: &mut C| {
+                    let alpha = if value.alpha < 1. {
+                        value.alpha
+                    } else {
+                        current.alpha
+                    };
+                    set(app, Hsva { alpha, ..value })
+                })
+                .into()
+        })
+        .collect();
+    let mut parts: Vec<Element<C>> = vec![
+        square.into(),
+        hstack![
+            preview,
+            vstack(strips)
+                .key(format!("{key}-strips"))
+                .gap(8., Axis::Vertical)
+                .flex(1.),
+        ]
+        .key(format!("{key}-row"))
+        .gap(12., Axis::Horizontal)
+        .align(Align::Center)
+        .into(),
+        hstack(fields)
+            .key(format!("{key}-fields"))
+            .gap(8., Axis::Horizontal)
+            .into(),
+    ];
+    if !chips.is_empty() {
+        parts.push(
+            grid(chips)
+                .key(format!("{key}-swatches"))
+                .columns(columns)
+                .gap(6., Axis::Both)
+                .into(),
+        );
+    }
+    vstack(parts)
+        .key(key)
+        .width(width)
+        .gap(12., Axis::Vertical)
+        .into()
 }
 
 // ── One-time code ───────────────────────────────────────────────────────

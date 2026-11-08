@@ -265,6 +265,7 @@ pub struct Shadow {
     pub(crate) blur: f32,
     pub(crate) spread: f32,
     pub(crate) offset: [f32; 2],
+    pub(crate) inset: bool,
 }
 impl Default for Shadow {
     fn default() -> Self {
@@ -273,6 +274,7 @@ impl Default for Shadow {
             blur: 8.,
             spread: 0.,
             offset: [0., 2.],
+            inset: false,
         }
     }
 }
@@ -295,6 +297,22 @@ impl Shadow {
     pub fn offset(mut self, x: f32, y: f32) -> Self {
         self.offset = [x, y];
         self
+    }
+    /// An inner shadow: drawn inside the element, above its fill and below
+    /// its contents, falling from the edges (`spread` grows it inward).
+    pub fn inset(mut self, value: bool) -> Self {
+        self.inset = value;
+        self
+    }
+    pub(crate) fn valid(&self) -> bool {
+        self.blur.is_finite()
+            && (0. ..=384.).contains(&self.blur)
+            && self.spread.is_finite()
+            && self.spread.abs() <= 384.
+            && self
+                .offset
+                .iter()
+                .all(|v| v.is_finite() && v.abs() <= 4096.)
     }
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -447,10 +465,18 @@ pub(crate) struct Effects {
     pub transition_revision: u64,
     pub ambient: Option<Ambient>,
     pub drag_region: bool,
+    /// Further drop and inner shadows (`.shadows`), drawn in order; not
+    /// animated.
+    pub shadows: Vec<Shadow>,
 }
 impl Effects {
     pub fn validate(&self, path: &str) -> Result<(), DocumentError> {
         let invalid = || DocumentError(format!("{path}: invalid effect value"));
+        if self.shadows.len() > 8 || self.shadows.iter().any(|s| !s.valid()) {
+            return Err(DocumentError(format!(
+                "{path}: at most 8 shadows, each with finite blur 0..=384, spread and offset"
+            )));
+        }
         if self.ambient.is_some_and(|a| !a.valid()) {
             return Err(invalid());
         }

@@ -366,6 +366,65 @@ fn actual_gpu_readback_matches_software_shapes_text_images_clips_and_opacity() {
             [1., 0., 0., 0.8],
         )])];
         gpu.render(&mut painter, &corners, [0.; 4]).unwrap();
+        // An inner shadow on white: dark at the top inside edge, white in the
+        // middle, nothing outside.
+        let inner = [batch(vec![
+            Shape::Corners([20., 20., 24., 24.], [4.; 4], [1., 1., 1., 1.]),
+            Shape::InnerShadow(
+                [20., 20., 24., 24.],
+                [4.; 4],
+                6.,
+                0.,
+                [0., 3.],
+                [0., 0., 0., 1.],
+            ),
+        ])];
+        let result = gpu.render(&mut painter, &inner, [0.; 4]).unwrap();
+        let px = |x: usize, y: usize| {
+            let i = (y * result.width() as usize + x) * 4;
+            [result.data()[i], result.data()[i + 3]]
+        };
+        assert!(px(32, 21)[0] < px(32, 32)[0], "top edge darker than centre");
+        assert_eq!(px(32, 12)[1], 0, "nothing drawn outside");
+        // Masks: white content in a layer, then a mask that is opaque
+        // (alpha) or white (luminance) on the left half and clear or black
+        // on the right. Only the left half keeps the content.
+        for (mode, keep, cut) in [
+            (
+                crate::graphics::MaskMode::Alpha,
+                [1., 0., 0., 1.],
+                [1., 0., 0., 0.],
+            ),
+            (
+                crate::graphics::MaskMode::Luminance,
+                [1., 1., 1., 1.],
+                [0., 0., 0., 1.],
+            ),
+        ] {
+            let masked = [batch(vec![
+                Shape::LayerBegin(1.),
+                Shape::Rectangle([0., 0., 64., 64.], [1., 1., 1., 1.]),
+                Shape::MaskBegin(mode),
+                Shape::Rectangle([0., 0., 32., 64.], keep),
+                Shape::Rectangle([32., 0., 32., 64.], cut),
+                Shape::MaskEnd,
+                Shape::LayerEnd,
+            ])];
+            let result = gpu.render(&mut painter, &masked, [0., 0., 0., 1.]).unwrap();
+            let px = |x: usize, y: usize| {
+                let i = (y * result.width() as usize + x) * 4;
+                [result.data()[i], result.data()[i + 1], result.data()[i + 2]]
+            };
+            eprintln!("{mode:?} mask: kept {:?} cut {:?}", px(16, 32), px(48, 32));
+            assert!(
+                px(16, 32).iter().all(|v| *v > 240),
+                "{mode:?}: kept half is white"
+            );
+            assert!(
+                px(48, 32).iter().all(|v| *v < 15),
+                "{mode:?}: cut half is black"
+            );
+        }
     }
 }
 
@@ -768,5 +827,73 @@ fn actual_gpu_rich_text_runs_keep_their_colours_and_backgrounds() {
             red[1] < green[1] && green[0] < blue[0],
             "{name}: runs out of order {extents:?}"
         );
+    }
+}
+
+/// Vello builds a gradient's ramp from its first stop as if it sat at 0:
+/// stops starting later (a scrim clear until 40%) must still be clear before
+/// it, filled and as a mask, with or without nested layers in the content.
+#[test]
+#[ignore = "requires an actual GPU; run with --ignored --nocapture"]
+fn actual_gpu_gradients_stay_clear_before_their_first_stop() {
+    use super::raster::GradientGeometry;
+    use super::GpuOffscreenRenderer;
+    let mut gpu = GpuOffscreenRenderer::new().expect("GPU required");
+    let mut painter = RasterPainter::new(Viewport::new(64., 64., 1.).unwrap());
+    let batch = |shapes| PaintBatch {
+        clip: Rect::new(0., 0., 64., 64.).unwrap(),
+        glyphs: vec![],
+        shapes,
+    };
+    let scrim = || {
+        Shape::Gradient(
+            [0., 0., 64., 64.],
+            [0.; 4],
+            GradientGeometry::Linear {
+                start: [32., 0.],
+                end: [32., 64.],
+            },
+            vec![(0.4, [0.1, 0.1, 0.1, 0.]), (0.8, [0.1, 0.1, 0.1, 0.75])],
+        )
+    };
+    // As a fill over white: untouched above 40%, darkest below 80%.
+    let fill = [batch(vec![
+        Shape::Rectangle([0., 0., 64., 64.], [1., 1., 1., 1.]),
+        scrim(),
+    ])];
+    let result = gpu.render(&mut painter, &fill, [0., 0., 0., 1.]).unwrap();
+    let px = |r: &tiny_skia::Pixmap, y: usize| r.data()[(y * r.width() as usize + 32) * 4];
+    assert_eq!(px(&result, 8), 255, "clear before the first stop");
+    let bottom = px(&result, 60);
+    // 25% of white plus 75% of 10% grey.
+    assert!(
+        (78..90).contains(&bottom),
+        "last colour held to the end: {bottom}"
+    );
+    // As an alpha mask, with a nested opacity layer in the content.
+    for nested in [false, true] {
+        let mut shapes = vec![
+            Shape::LayerBegin(1.),
+            Shape::Rectangle([0., 0., 64., 64.], [1., 1., 1., 1.]),
+        ];
+        if nested {
+            shapes.push(Shape::LayerBegin(0.92));
+            shapes.push(Shape::Rectangle([40., 4., 20., 10.], [1., 1., 1., 1.]));
+            shapes.push(Shape::LayerEnd);
+        }
+        shapes.extend([
+            Shape::MaskBegin(crate::graphics::MaskMode::Alpha),
+            scrim(),
+            Shape::MaskEnd,
+            Shape::LayerEnd,
+        ]);
+        let result = gpu
+            .render(&mut painter, &[batch(shapes)], [0., 0., 0., 1.])
+            .unwrap();
+        let at = |x: usize, y: usize| result.data()[(y * result.width() as usize + x) * 4];
+        eprintln!("nested={nested}: top {} bottom {}", at(32, 8), at(32, 60));
+        assert_eq!(at(32, 8), 0, "masked out before the first stop");
+        assert_eq!(at(50, 8), 0, "nested layer masked out too");
+        assert!((180..200).contains(&at(32, 60)), "75% mask keeps 75%");
     }
 }

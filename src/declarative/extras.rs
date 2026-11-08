@@ -223,6 +223,9 @@ pub(crate) struct NodeExtras {
     pub gradient: Option<Gradient>,
     /// Buttons: logical inset of the label from the leading edge.
     pub label_inset: Option<f32>,
+    /// This element is a mask for the rest of its parent's content: it is
+    /// painted only into the mask, never on its own, and is not a target.
+    pub mask: Option<crate::graphics::MaskMode>,
     /// Split dividers: drawn only while hovered, dragged or focused.
     pub reveal_handle: bool,
     /// Rich text: styled byte ranges of the node's text.
