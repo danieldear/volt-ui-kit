@@ -1,4 +1,4 @@
-//! Volt UI catalog: a documentation-style showcase of every component, in the
+//! Volt UI Kit Catalog: a documentation-style showcase of every component, in the
 //! spirit of shadcn/ui and daisyUI docs. Each page shows live previews, the
 //! Rust that produced them, variations and an API reference.
 pub mod art;

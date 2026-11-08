@@ -127,4 +127,9 @@ regression comparison but are not published as component previews.</p>
 python3 scripts/build_docs_site.py target/pages-with-web --web-assets docs/live/pkg</code></pre></div><p>The stager accepts exactly the two expected wasm-bindgen outputs plus the
 canonical event and editing adapters. Generated WASM/JS are ignored, not committed. The manual
 GitHub Pages workflow builds and stages those assets before publishing.</p>
+<p>GitHub Pages must use <strong>GitHub Actions</strong> as its deployment source. Publishing
+raw <code>/docs</code> from a branch will omit the ignored WASM binary and will not run
+these previews. Merge the source changes, switch <strong>Settings → Pages → Source</strong>
+to <strong>GitHub Actions</strong>, then manually run <strong>Documentation site</strong> on <code>main</code>.
+The browser downloads a compiled module, not Rust source or a compiler.</p>
 </article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/web-prototype.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#architecture">Architecture</a><a href="#build-and-run-locally">Build and run locally</a><a href="#rust-application-code">Rust application code</a><a href="#fonts-and-lifecycle">Fonts and lifecycle</a><a href="#editing-and-password-boundaries">Editing and password boundaries</a><a href="#validation-and-remaining-acceptance">Validation and remaining acceptance</a><a href="#publishing-the-documentation">Publishing the documentation</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

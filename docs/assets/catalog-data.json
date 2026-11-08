@@ -661,7 +661,7 @@
     "group": "Components",
     "sections": [
       {
-        "code": "toolbar![\n    button(\"Back\").variant(ButtonVariant::Ghost).size(ControlSize::Small).on_click(back),\n    spacer(),\n    badge(\"Draft\"),\n    button(\"Publish\").variant(ButtonVariant::Primary).on_click(publish),\n]",
+        "code": "toolbar![\n    button(\"Back\").variant(ButtonVariant::Ghost).size(ControlSize::Small).on_click(back),\n    spacer(),\n    badge(\"Draft\").font_size(12.),\n    button(\"Publish\").variant(ButtonVariant::Primary).on_click(publish),\n]",
         "height": 200,
         "id": "toolbar",
         "image": "toolbar-toolbar.png",
@@ -1477,7 +1477,7 @@
     "group": "Components",
     "sections": [
       {
-        "code": "collapsible(\"What is Volt UI?\", body).key(\"about\").open(app.open)\n    .on_toggle(|app: &mut App, open| app.open = open)",
+        "code": "collapsible(\"What is Volt UI Kit?\", body).key(\"about\").open(app.open)\n    .on_toggle(|app: &mut App, open| app.open = open)",
         "height": 200,
         "id": "disc-collapsible",
         "image": "overlays-disc-collapsible.png",
@@ -2390,7 +2390,7 @@
         "height": 1600,
         "id": "document-files",
         "image": "documents-document-files.png",
-        "note": "Native macOS file panels and worker-thread UTF-8 I/O. 8 KiB maximum; failed/cancelled operations retain your draft. No automatic saving or hidden path selection.",
+        "note": "Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KiB (8,192 bytes). If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
         "title": "A real notes document",
         "width": 1000
       }
@@ -2429,7 +2429,7 @@
         "height": 589,
         "id": "desktop-notifications",
         "image": "desktop-services-desktop-notifications.png",
-        "note": "An explicit, opt-in OS service—not an in-app toast. No permission or notification is requested on launch.",
+        "note": "System notifications that appear in Notification Center, unlike in-app toasts. Nothing is requested until you ask.",
         "title": "Local notifications",
         "width": 1000
       },

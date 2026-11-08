@@ -722,7 +722,7 @@ fn product(app: &App) -> El<App> {
             dot("#FEBC2E"),
             dot("#28C840"),
             spacer(),
-            text("northwind — Volt UI")
+            text("northwind — Volt UI Kit")
                 .font_size(12.)
                 .color(ColorToken::Muted),
             spacer(),

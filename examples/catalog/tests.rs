@@ -1805,13 +1805,13 @@ fn catalog_context_menu_opens_from_the_preview_surface() {
 fn notification_setup_help_explains_feature_and_bundle_requirements() {
     let help = desktop_services::notification_setup_help();
     if !cfg!(target_os = "macos") {
-        assert!(help.contains("no notification adapter"));
+        assert!(help.contains("macOS only"));
     } else if !cfg!(feature = "native-notifications") {
         assert!(help.contains("./scripts/run_catalog.sh"));
-        assert!(help.contains("bundled Catalog"));
+        assert!(help.contains("full Catalog app"));
     } else {
         assert!(help.contains("not cargo run"));
-        assert!(help.contains("Request alert permission"));
+        assert!(help.contains("Allow notifications"));
     }
 }
 
