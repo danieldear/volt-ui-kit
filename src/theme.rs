@@ -732,7 +732,11 @@ mod tests {
                 assert!(contrast_ratio(text, page) >= 4.5, "{role:?} on the page");
                 assert!(contrast_ratio(text, tint) >= 4.5, "{role:?} on its tint");
                 let accented = p.clone().with_accent(violet);
-                assert_eq!(accented.color(role), text, "{role:?} follows the accent");
+                assert_eq!(
+                    accented.color(role),
+                    text,
+                    "{role:?} is unchanged by the accent"
+                );
             }
         }
         let accented = light.clone().with_accent(violet);

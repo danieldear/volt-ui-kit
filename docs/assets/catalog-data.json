@@ -2390,7 +2390,7 @@
         "height": 1600,
         "id": "document-files",
         "image": "documents-document-files.png",
-        "note": "Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KB. If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
+        "note": "Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KiB (8,192 bytes). If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
         "title": "A real notes document",
         "width": 1000
       }

@@ -272,7 +272,7 @@ pub fn doc(app: &App) -> Doc {
     } else {
         spacer().height(0.).into()
     };
-    Doc {sections:vec![Section {id:"document-files",title:"A real notes document",note:"Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KB. If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
+    Doc {sections:vec![Section {id:"document-files",title:"A real notes document",note:"Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KiB (8,192 bytes). If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
         demo:vstack![
             hstack![text(name).font_family("SF Mono").font_size(13.),spacer(),badge(if state.busy {"Working…"} else if state.dirty(){"Unsaved"} else {"No unsaved changes"})],
             hstack![
