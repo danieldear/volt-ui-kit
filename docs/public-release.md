@@ -20,7 +20,7 @@ registry availability can change; verify them again before each release.
 | Automatic Dependabot security updates | Disabled in repository settings; scheduled dependency PRs are configured separately |
 | Delete merged branches | Enabled |
 | GitHub Pages | API reports `built`, with legacy deployment source; not the manual Actions source described below |
-| crates.io | No `volt-ui-kit` entry returned by the registry API; 0.5.0 is prepared, not published |
+| crates.io | No `volt-ui-kit` entry returned by the registry API; 0.6.0 is prepared, not published |
 
 The Pages URL is <https://danieldear.github.io/volt-ui-kit/>. The API build state
 alone does not establish which revision is deployed. Review the actual site

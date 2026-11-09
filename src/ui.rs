@@ -296,6 +296,64 @@ enum Callback<C> {
         fold: Option<CodeFoldCallback<C>>,
     },
 }
+// `Element::map_state` re-targets every callback at a part of a larger state.
+type Access<P, C> = std::rc::Rc<dyn Fn(&mut P) -> &mut C>;
+type Handler1<S, A, R> = Box<dyn FnMut(&mut S, A) -> R>;
+type Handler2<S, A, B> = Box<dyn FnMut(&mut S, A, B)>;
+fn lift0<P: 'static, C: 'static>(mut f: Click<C>, access: &Access<P, C>) -> Click<P> {
+    let access = access.clone();
+    Box::new(move |parent| f(access(parent)))
+}
+fn lift1<P: 'static, C: 'static, A: 'static, R: 'static>(
+    mut f: Handler1<C, A, R>,
+    access: &Access<P, C>,
+) -> Handler1<P, A, R> {
+    let access = access.clone();
+    Box::new(move |parent, a| f(access(parent), a))
+}
+fn lift2<P: 'static, C: 'static, A: 'static, B: 'static>(
+    mut f: Handler2<C, A, B>,
+    access: &Access<P, C>,
+) -> Handler2<P, A, B> {
+    let access = access.clone();
+    Box::new(move |parent, a, b| f(access(parent), a, b))
+}
+impl<C: 'static> Callback<C> {
+    fn map_state<P: 'static>(self, a: &Access<P, C>) -> Callback<P> {
+        match self {
+            Callback::Click(f) => Callback::Click(lift0(f, a)),
+            Callback::Change(f) => Callback::Change(lift1(f, a)),
+            Callback::Text {
+                change,
+                submit,
+                cancel,
+                selection,
+                key,
+            } => Callback::Text {
+                change: change.map(|f| lift1(f, a)),
+                submit: submit.map(|f| lift0(f, a)),
+                cancel: cancel.map(|f| lift0(f, a)),
+                selection: selection.map(|f| lift1(f, a)),
+                key: key.map(|f| lift1(f, a)),
+            },
+            Callback::Number(f) => Callback::Number(lift1(f, a)),
+            Callback::Range { lower, upper } => Callback::Range {
+                lower: lift1(lower, a),
+                upper: lift1(upper, a),
+            },
+            Callback::Dismiss(f) => Callback::Dismiss(lift0(f, a)),
+            Callback::Context(f) => Callback::Context(lift1(f, a)),
+            Callback::Window(f) => Callback::Window(lift1(f, a)),
+            Callback::Files(f) => Callback::Files(lift1(f, a)),
+            Callback::Link(f) => Callback::Link(lift1(f, a)),
+            Callback::Code { input, caret, fold } => Callback::Code {
+                input: lift1(input, a),
+                caret: caret.map(|f| lift1(f, a)),
+                fold: fold.map(|f| lift1(f, a)),
+            },
+        }
+    }
+}
 // Opt-in spacing for composites whose public builder is not an Element wrapper.
 // Empty overrides leave every constructor default intact.
 #[derive(Clone, Default)]
@@ -542,6 +600,68 @@ impl<C> BuiltUi<C> {
     }
 }
 impl<C: 'static> Element<C> {
+    /// Embed a view written for its own state inside a larger app.
+    ///
+    /// `access` finds the view's state inside the parent state; every callback
+    /// in the tree then runs against that part. A self-contained screen, or a
+    /// whole example program's `view`, can be reused without rewriting its
+    /// callbacks:
+    ///
+    /// ```
+    /// use volt_ui_kit::ui::prelude::*;
+    ///
+    /// #[derive(Default)]
+    /// struct Counter { count: u32 }
+    /// fn counter(state: &Counter, key: &str) -> Element<Counter> {
+    ///     button(format!("Clicked {}", state.count))
+    ///         .key(key)
+    ///         .on_click(|state: &mut Counter| state.count += 1)
+    ///         .into()
+    /// }
+    ///
+    /// #[derive(Default)]
+    /// struct App { left: Counter, right: Counter }
+    /// fn view(app: &App) -> Element<App> {
+    ///     hstack![
+    ///         counter(&app.left, "left").map_state(|app: &mut App| &mut app.left),
+    ///         counter(&app.right, "right").map_state(|app: &mut App| &mut app.right),
+    ///     ]
+    ///     .into()
+    /// }
+    /// # view(&App::default()).build().unwrap();
+    /// ```
+    ///
+    /// Keys are not renamed and are unique across the whole window, so each
+    /// copy of a view needs keys of its own.
+    pub fn map_state<P: 'static>(self, access: impl Fn(&mut P) -> &mut C + 'static) -> Element<P> {
+        let access: Access<P, C> = std::rc::Rc::new(access);
+        self.map_state_with(&access)
+    }
+    fn map_state_with<P: 'static>(self, a: &Access<P, C>) -> Element<P> {
+        Element {
+            node: self.node,
+            auto_id: self.auto_id,
+            children: self
+                .children
+                .into_iter()
+                .map(|child| child.map_state_with(a))
+                .collect(),
+            callback: self.callback.map(|f| f.map_state(a)),
+            select_text: self.select_text.map(|f| lift1(f, a)),
+            width: self.width.map(|f| lift1(f, a)),
+            height: self.height.map(|f| lift1(f, a)),
+            hover: self.hover.map(|f| lift1(f, a)),
+            focus_within: self.focus_within.map(|f| lift1(f, a)),
+            escape: self.escape.map(|f| lift0(f, a)),
+            validation_error: self.validation_error,
+            input_activation: self.input_activation.map(|f| lift2(f, a)),
+            input_key: self.input_key.map(|f| lift1(f, a)),
+            drag: self.drag.map(|f| lift1(f, a)),
+            drag_start: self.drag_start.map(|f| lift0(f, a)),
+            drag_from: self.drag_from.map(|f| lift1(f, a)),
+            drag_end: self.drag_end.map(|f| lift0(f, a)),
+        }
+    }
     /// Lower to the shared runtime directly; no JSON serialization or parsing.
     /// Rejects missing callbacks, duplicate keys and invalid geometry/styles.
     pub fn build(self) -> Result<BuiltUi<C>, DocumentError> {

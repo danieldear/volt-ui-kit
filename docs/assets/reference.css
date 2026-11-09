@@ -1,14 +1,8 @@
 @import url("../live/live.css");
 /* Documentation shell: quiet navigation, generous examples, source within reach. */
 .reference-page { --doc-accent: #684bb5; }
-.reference-header { position: sticky; top: 0; z-index: 8; height: 76px; padding: 0 32px; display: flex; align-items: center; gap: 30px; background: var(--canvas); border-bottom: 1px solid var(--line); }
-.reference-brand { display: inline-flex; gap: 10px; align-items: center; font-family: var(--display); font-size: 29px; font-weight: 750; letter-spacing: -.04em; text-decoration: none; flex: none; }
-.reference-brand img { width: 30px; height: 30px; border-radius: 8px; }
-.reference-brand > span { font-family: var(--body); font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--secondary); border-left: 1px solid var(--line); padding-left: 12px; margin-left: 3px; }
-.reference-header nav { margin-left: auto; }
-.reference-version { font-size: 11px; color: var(--secondary); border-left: 1px solid var(--line); padding-left: 25px; }
 .reference-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr) 186px; max-width: 1600px; margin: auto; }
-.reference-sidebar { position: sticky; top: 76px; height: calc(100dvh - 76px); overflow: auto; padding: 32px 20px 48px 26px; border-right: 1px solid var(--line); scrollbar-width: thin; scrollbar-color: var(--boundary) transparent; }
+.reference-sidebar { position: sticky; top: 64px; height: calc(100dvh - 64px); overflow: auto; padding: 32px 20px 48px 26px; border-right: 1px solid var(--line); scrollbar-width: thin; scrollbar-color: var(--boundary) transparent; }
 .reference-nav { display: block; font-size: 12px; line-height: 1.4; }
 .reference-nav a { display: flex; align-items: center; min-height: 36px; padding: 7px 10px; border-radius: 6px; text-decoration: none; color: var(--secondary); }
 .reference-nav a:hover { color: var(--ink); background: var(--wash); }
@@ -47,7 +41,7 @@
 .usage-source .reference-code { margin: 0; border-radius: 0; border-inline: 0; }
 .snippet-note { font-size: 11px; color: var(--secondary); padding: 14px 17px; }
 .snippet-note code, .guide-article :not(pre) > code { font-size: .87em; border-radius: 4px; padding: 2px 5px; background: var(--wash); color: var(--ink); overflow-wrap: anywhere; }
-.reference-toc { position: sticky; top: 76px; align-self: start; max-height: calc(100dvh - 76px); overflow: auto; padding: 40px 22px 30px 0; font-size: 11px; }
+.reference-toc { position: sticky; top: 64px; align-self: start; max-height: calc(100dvh - 64px); overflow: auto; padding: 40px 22px 30px 0; font-size: 11px; }
 .reference-toc > p { font-weight: 600; margin-bottom: 13px; }
 .reference-toc > a { display: block; color: var(--secondary); text-decoration: none; border-left: 1px solid var(--line); padding: 8px 0 8px 14px; line-height: 1.5; }
 .reference-toc > a:hover { color: var(--ink); border-color: var(--boundary); }
@@ -69,6 +63,11 @@
 .library-stats { display: flex; gap: 30px; border-block: 1px solid var(--line); padding: 22px 0; margin-top: 30px; }
 .library-stats > span { display: flex; flex-direction: column; font-size: 10px; color: var(--secondary); }
 .library-stats strong { color: var(--ink); font-family: var(--display); font-size: 24px; font-weight: 550; line-height: 1.5; }
+.catalog-showcase { margin-top: 36px; }
+/* The dashboard lays out at 1200 × 680 and scales to the column. */
+.catalog-showcase .volt-preview .volt-root { height: auto; aspect-ratio: 1200 / 680; }
+.catalog-showcase figcaption { margin-top: 12px; font-size: 13px; line-height: 1.6; color: var(--secondary); max-width: 70ch; }
+.catalog-showcase figcaption code { font-family: var(--mono); font-size: .9em; padding: 1px 6px; border-radius: 4px; background: var(--wash); border: 1px solid var(--line); }
 .index-jump { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 25px; }
 .index-jump > a { display: inline-flex; align-items: center; min-height: 44px; font-size: 12px; text-decoration: none; border: 1px solid var(--line); border-radius: 7px; padding: 7px 14px; }
 .index-jump > a:hover { border-color: var(--boundary); }
@@ -104,12 +103,6 @@
  .reference-sidebar { padding-left: 18px; }
 }
 @media (max-width: 760px) {
- .reference-header { height: 68px; padding: 0 20px; gap: 12px; }
- .reference-header nav { gap: 18px; font-size: 11px; }
- .reference-header nav > a:last-child, .reference-version { display: none; }
- .reference-brand { font-size: 26px; gap: 8px; }
- .reference-brand > span { font-size: 10px; margin-left: 0; padding-left: 8px; }
- .reference-brand img { width: 28px; height: 28px; }
  .reference-layout { display: block; }
  .reference-sidebar { display: none; }
  .mobile-doc-nav { display: block; border-bottom: 1px solid var(--line); padding: 0 20px; }
@@ -137,8 +130,6 @@
 @media (max-width: 480px) {
  .component-directory { grid-template-columns: 1fr; }
  .directory-preview, .directory-type { height: 170px; }
- .reference-header nav { gap: 12px; }
- .reference-brand > span { display: none; }
  .library-stats { justify-content: space-between; gap: 12px; }
  .reference-title h1 { font-size: 41px; }
 }
