@@ -210,8 +210,10 @@ pub struct App {
     /// the milliseconds to wait before it.
     #[cfg(not(feature = "native"))]
     scheduled: std::collections::VecDeque<(u64, Event)>,
+    /// Time waited towards the next event. A `Cell`, so the frame clock can
+    /// move it without rebuilding the app (see `elapse`).
     #[cfg(not(feature = "native"))]
-    clock: f64,
+    clock: std::cell::Cell<f64>,
     run: Option<Run>,
     next_run: u64,
 }
@@ -247,7 +249,7 @@ impl App {
             #[cfg(not(feature = "native"))]
             scheduled: Default::default(),
             #[cfg(not(feature = "native"))]
-            clock: 0.,
+            clock: Default::default(),
             run: None,
             next_run: 0,
         }
@@ -445,29 +447,38 @@ impl App {
                 .into_iter()
                 .map(|(wait, kind)| (wait, Event { run, kind }))
                 .collect();
-            self.clock = 0.;
+            self.clock.set(0.);
         }
     }
     /// Browser builds have no worker thread, so the host plays the reply from
     /// its frame clock. Returns whether anything changed.
     #[cfg(not(feature = "native"))]
     pub fn advance(&mut self, milliseconds: f64) -> bool {
-        self.clock += milliseconds;
+        let mut clock = self.clock.get() + milliseconds;
         let mut changed = false;
         while let Some(&(wait, _)) = self.scheduled.front() {
-            if self.clock < wait as f64 {
+            if clock < wait as f64 {
                 break;
             }
-            self.clock -= wait as f64;
+            clock -= wait as f64;
             if let Some((_, event)) = self.scheduled.pop_front() {
                 update(self, event);
                 changed = true;
             }
         }
-        if self.scheduled.is_empty() {
-            self.clock = 0.;
-        }
+        self.clock
+            .set(if self.scheduled.is_empty() { 0. } else { clock });
         changed
+    }
+    /// Let time pass on the frame clock without changing anything on screen;
+    /// true once the next event is due, which `advance(0.)` then plays. A
+    /// host calls this every frame and rebuilds the app only when it's true.
+    #[cfg(not(feature = "native"))]
+    pub fn elapse(&self, milliseconds: f64) -> bool {
+        self.clock.set(self.clock.get() + milliseconds);
+        self.scheduled
+            .front()
+            .is_some_and(|&(wait, _)| self.clock.get() >= wait as f64)
     }
     /// Whether a browser build still has reply events to play.
     #[cfg(not(feature = "native"))]
