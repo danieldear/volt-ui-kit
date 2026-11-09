@@ -216,7 +216,7 @@ html:has(.landing) { scroll-padding-top: 88px; }
 .showcase figcaption { margin-top: 20px; display: grid; gap: 28px; }
 .showcase-note { font-size: 15px; color: var(--secondary); }
 .showcase-note .text-link { font-size: 15px; min-height: 0; }
-.showcase-apps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 48px; }
+.showcase-apps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 40px; }
 .showcase-apps > div { display: grid; gap: 8px; align-content: start; padding-top: 20px; border-top: 1px solid var(--line); }
 .showcase-apps h3 { font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
 .showcase-apps p { font-size: 15px; line-height: 1.55; color: var(--secondary); }
