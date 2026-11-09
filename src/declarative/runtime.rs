@@ -922,6 +922,13 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         let composition = self.editor_composition_snapshot(&next);
         let scrollbar_capture = self.scrollbar_capture.clone();
+        // A pressed control, with its kind, to keep pressed if it survives.
+        let press = self
+            .capture
+            .clone()
+            .and_then(|id| find(self.document.root(), &id).map(|n| (id, n.kind)));
+        #[cfg(feature = "rust-ui")]
+        let press_clicks = self.capture_clicks;
         #[cfg(feature = "rust-ui")]
         let autofocus = Self::autofocus_target(Some(self.document.root()), next.root());
         #[cfg(feature = "rust-ui")]
@@ -976,6 +983,21 @@ impl Runtime {
             }) && self.scope_allows_id(&capture.id)
             {
                 self.scrollbar_capture = Some(capture);
+            }
+        }
+        // Apps recompose on timers and background results all the time; a
+        // press that spans one must still click when it is released over
+        // the same control. Presses on controls that went away end here.
+        if let Some((id, kind)) = press {
+            if find(self.document.root(), &id)
+                .is_some_and(|n| n.kind == kind && interactive_node(n) && enabled(n, values))
+                && self.scope_allows_id(&id)
+            {
+                self.capture = Some(id);
+                #[cfg(feature = "rust-ui")]
+                {
+                    self.capture_clicks = press_clicks;
+                }
             }
         }
         #[cfg(feature = "rust-ui")]
