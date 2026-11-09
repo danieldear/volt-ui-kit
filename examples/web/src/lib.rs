@@ -5,6 +5,26 @@ use volt_ui_kit::{ui::prelude::*, ColorToken};
 #[path = "../../catalog/mod.rs"]
 mod catalog;
 mod editor;
+// Whole example apps for the landing-page gallery, also shared with native.
+#[allow(dead_code)]
+#[path = "../../northbound/mod.rs"]
+mod northbound;
+#[allow(dead_code)]
+#[path = "../../relay/mod.rs"]
+mod relay;
+pub mod showcase;
+
+/// Gallery apps start from their own state and follow the page's appearance.
+pub fn gallery_northbound() -> northbound::App {
+    let mut app = northbound::App::new();
+    app.mode = volt_ui_kit::ThemeMode::System;
+    app
+}
+pub fn gallery_relay() -> relay::App {
+    let mut app = relay::App::new();
+    app.mode = volt_ui_kit::ThemeMode::System;
+    app
+}
 
 #[derive(Default)]
 pub struct Demo {
@@ -338,6 +358,93 @@ mod wasm {
             self.host.resume(canvas, gpu).await
         }
     }
+
+    /// The landing page's live apps: Relay and Northbound as slides of the
+    /// kit's carousel, running the same modules as the native examples.
+    #[wasm_bindgen]
+    pub struct GalleryApp {
+        host: BrowserHost<showcase::Showcase>,
+        system_dark: bool,
+        last_ms: Option<f64>,
+    }
+    #[wasm_bindgen]
+    impl GalleryApp {
+        pub async fn mount(
+            canvas: web_sys::HtmlCanvasElement,
+            gpu: bool,
+            dark: bool,
+            name: &str,
+        ) -> Result<GalleryApp, JsValue> {
+            browser_diagnostics();
+            FONT.get_or_init(register_browser_fonts)
+                .clone()
+                .map_err(|e| JsValue::from_str(&e))?;
+            let error = |e: String| JsValue::from_str(&e);
+            let view = match name {
+                "apps" => WebView::new(showcase::Showcase::new(), showcase::view),
+                _ => return Err(JsValue::from_str("unknown gallery")),
+            };
+            Ok(Self {
+                host: BrowserHost::new(canvas, view.map_err(error)?, gpu).await?,
+                system_dark: dark,
+                last_ms: None,
+            })
+        }
+        pub fn dispatch(&mut self, json: &str) -> Result<bool, JsValue> {
+            let event = WebEvent::decode(json.as_bytes()).map_err(|e| JsValue::from_str(&e))?;
+            self.host
+                .view
+                .dispatch(event)
+                .map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn clipboard(&mut self, cut: bool) -> Result<Option<String>, JsValue> {
+            self.host
+                .view
+                .clipboard(cut)
+                .map_err(|e| JsValue::from_str(&e))
+        }
+        pub fn snapshot(&self) -> String {
+            self.host.snapshot()
+        }
+        pub fn frame(&mut self, ms: f64) -> Result<bool, JsValue> {
+            let elapsed = self.last_ms.map_or(0., |last| (ms - last).max(0.));
+            self.last_ms = Some(ms);
+            let system = if self.system_dark {
+                volt_ui_kit::ThemeMode::Dark
+            } else {
+                volt_ui_kit::ThemeMode::Light
+            };
+            let error = |e: String| JsValue::from_str(&e);
+            let view = &mut self.host.view;
+            // Relay's scripted agent plays its reply from this clock, on
+            // either slide, and keeps frames coming while it does.
+            if view.context().relay.busy() {
+                view.update(|s| {
+                    s.relay.advance(elapsed);
+                })
+                .map_err(error)?;
+            }
+            let busy = view.context().relay.busy();
+            view.set_busy(busy);
+            view.advance(ms).map_err(error)?;
+            let theme = view.context().theme(system);
+            self.host.render(&theme)
+        }
+        pub fn appearance(&mut self, dark: bool) {
+            self.system_dark = dark;
+        }
+        pub fn pause(&mut self) {
+            self.last_ms = None;
+            self.host.pause()
+        }
+        pub async fn resume(
+            &mut self,
+            canvas: web_sys::HtmlCanvasElement,
+            gpu: bool,
+        ) -> Result<(), JsValue> {
+            self.host.resume(canvas, gpu).await
+        }
+    }
 }
 
 #[cfg(test)]
@@ -399,6 +506,79 @@ mod tests {
             1,
             "read-only cut is copy, never a mutation"
         );
+    }
+    #[test]
+    fn showcase_carousel_switches_apps_and_relay_plays_from_the_frame_clock() {
+        use showcase::{Showcase, APP_HEIGHT, HEIGHT, WIDTH};
+        let mut host = WebView::new(Showcase::new(), showcase::view).unwrap();
+        host.dispatch(WebEvent::Resize {
+            width: WIDTH,
+            height: HEIGHT,
+            scale: 1.,
+        })
+        .unwrap();
+        let bounds = |host: &WebView<Showcase>, id: &str| {
+            host.runtime()
+                .boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap_or_else(|| panic!("no {id}"))
+                .bounds
+                .bounds()
+        };
+        // The app fills the canvas width; the named controls fit underneath.
+        let [x, y, w, h] = bounds(&host, "showcase-stage");
+        assert_eq!([x, y, w, h], [0., 0., WIDTH, APP_HEIGHT]);
+        let [_, cy, _, ch] = bounds(&host, "showcase-controls");
+        assert!(
+            cy >= APP_HEIGHT && cy + ch <= HEIGHT,
+            "controls at {cy}+{ch}"
+        );
+
+        // A named slide button brings in Northbound, built only when shown.
+        assert!(host
+            .runtime()
+            .boxes()
+            .iter()
+            .all(|b| b.id != "showcase-slide-1"));
+        host.dispatch(WebEvent::Activate {
+            id: "showcase-dot-1".into(),
+        })
+        .unwrap();
+        assert_eq!(host.context().slide, 1);
+        assert!(host
+            .runtime()
+            .boxes()
+            .iter()
+            .any(|b| b.id == "showcase-slide-1"));
+        host.dispatch(WebEvent::Activate {
+            id: "showcase-prev".into(),
+        })
+        .unwrap();
+        assert_eq!(host.context().slide, 0);
+
+        // Relay's callbacks run against its part of the showcase, and its
+        // scripted reply plays from the frame clock.
+        host.update(|s| s.relay.send(Some("Run the tests".into())))
+            .unwrap();
+        assert!(host.context().relay.busy() && host.context().relay.running());
+        let mut frames = 0;
+        while host.context().relay.busy() {
+            host.update(|s| {
+                s.relay.advance(16.);
+            })
+            .unwrap();
+            frames += 1;
+            assert!(frames < 2_000, "the scripted reply never finished");
+        }
+        let reply = host.context().relay.thread().messages.last().unwrap();
+        assert!(!reply.streaming && reply.text.starts_with("All green."));
+        assert!(!host.context().relay.running());
+        // Stopping a reply clears what was left to play.
+        host.update(|s| s.relay.send(Some("Run the tests".into())))
+            .unwrap();
+        host.update(|s| s.relay.stop()).unwrap();
+        assert!(!host.context().relay.busy());
     }
     #[test]
     fn every_demo_page_builds_and_form_callbacks_keep_unicode() {

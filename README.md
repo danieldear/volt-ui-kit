@@ -127,7 +127,7 @@ See [examples](examples/README.md#catalog-launch-modes) for the launch modes.
 
 ## Use it
 
-Version **0.5.0** is prepared in this repository but is **not published on
+Version **0.6.0** is prepared in this repository but is **not published on
 crates.io**. Until publication, depend on it from Git:
 
 ```toml
@@ -163,9 +163,8 @@ Rust 1.89 or newer.
 
 ## Status
 
-Version 0.5.0, pre-1.0. macOS is the primary platform and is tested on Apple
-silicon. Windows and Linux have local cross-compilation checks and a configured
-headless CI matrix; their native runtime has not been validated yet. Check
+Version 0.6.0, pre-1.0. Tested on macOS on Apple silicon. Windows and Linux
+have local cross-compilation checks and a configured headless CI matrix; their native runtime has not been validated yet. Check
 [Actions](https://github.com/danieldear/volt-ui-kit/actions) for actual remote
 results; configured jobs are not evidence of a passing run. The core compiles to
 WebAssembly; an [experimental browser host](docs/web-prototype.md) now renders the original Catalog components directly in the documentation, with WebGPU/software rendering. This is not full web parity. Expect API changes before 1.0.
