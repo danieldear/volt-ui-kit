@@ -112,3 +112,27 @@ fn hsva_round_trips_and_keeps_hue_for_greys() {
     assert_eq!(grey.saturation, 0.);
     assert_eq!(grey.alpha, 1.);
 }
+
+#[test]
+fn the_plain_picker_takes_its_width_too() {
+    let picker = |width: f32| -> Element<App> {
+        color_picker("#336699")
+            .key("plain")
+            .width(width)
+            .on_change(|a: &mut App, hex| a.hex = hex)
+            .into()
+    };
+    let (d, h) = picker(400.).build().unwrap().into_parts();
+    let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(600., 600., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    assert_eq!(bounds(&r, "plain")[2], 400.);
+    assert!(
+        picker(100.).build().is_err(),
+        "widths outside 160..=640 are refused"
+    );
+}

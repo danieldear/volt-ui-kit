@@ -180,7 +180,7 @@ export function attachVolt(root, canvas, driver, { onStatus = () => {}, passive 
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? state.height : 1;
     // Browsers report a trackpad pinch as a wheel with ctrlKey set.
     const changed = e.ctrlKey && !e.metaKey
-      ? send({ op: 'pinch', ...point(e), zoom: Math.max(-1, Math.min(1, -e.deltaY * unit * 0.01)) })
+      ? send({ op: 'pinch', ...point(e), ...mods(e), control: e.metaKey, zoom: Math.max(-1, Math.min(1, -e.deltaY * unit * 0.01)) })
       : send({ op: 'wheel', ...point(e), ...mods(e), dx: Math.max(-4096, Math.min(4096, e.deltaX * unit)), dy: Math.max(-4096, Math.min(4096, e.deltaY * unit)) });
     if (changed) e.preventDefault(); // At the scroll boundary, let the page scroll.
   }, { passive: false });

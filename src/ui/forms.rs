@@ -1023,6 +1023,10 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
                     .into()
             })
             .collect();
+        let width = p.width.unwrap_or(300.);
+        if !width.is_finite() || !(160. ..=640.).contains(&width) {
+            return invalid("color_picker width must be 160..=640");
+        }
         let padded = p.spacing.padding.iter().any(Option::is_some);
         let channel = |name: &'static str,
                        value: f32,
@@ -1047,7 +1051,7 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
                     .on_change(move |app: &mut C, v| (pick.borrow_mut())(app, set(hsl, v).hex())),
             ]
             .key(format!("{key}-{name}-row"))
-            .width(300.)
+            .width(width)
             .gap(8., Axis::Horizontal)
             .align(Align::Center);
             // Default measurements remain unchanged. Explicit root padding
@@ -1098,7 +1102,7 @@ impl<C: 'static> From<ColorPicker<C>> for Element<C> {
             }),
         ]
         .key(key)
-        .width(300.)
+        .width(width)
         .gap(12., Axis::Vertical);
         p.spacing.apply(card.into())
     }

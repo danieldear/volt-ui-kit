@@ -82,11 +82,20 @@ pub enum WebEvent {
         meta: bool,
     },
     /// A trackpad pinch (browsers send it as a Ctrl+wheel): the change in
-    /// magnification, e.g. 0.1 for 10% larger.
+    /// magnification, e.g. 0.1 for 10% larger, with the modifiers held. The
+    /// browser's Ctrl is its pinch marker, so `control` is only Cmd here.
     Pinch {
         x: f32,
         y: f32,
         zoom: f32,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        control: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
     },
     Context {
         x: f32,
@@ -196,7 +205,7 @@ impl WebEvent {
                 finite_point(*x, *y)
             }
             Self::Wheel { x, y, dx, dy, .. } => finite_point(*x, *y) && finite_point(*dx, *dy),
-            Self::Pinch { x, y, zoom } => finite_point(*x, *y) && zoom.is_finite(),
+            Self::Pinch { x, y, zoom, .. } => finite_point(*x, *y) && zoom.is_finite(),
             Self::Number { value, .. } => value.is_finite(),
             _ => true,
         };
@@ -418,6 +427,13 @@ impl<C: 'static> WebView<C> {
                 alt,
                 meta,
                 ..
+            }
+            | WebEvent::Pinch {
+                shift,
+                control,
+                alt,
+                meta,
+                ..
             } => self.runtime.set_pointer_modifiers(InputModifiers {
                 shift: *shift,
                 control: *control,
@@ -515,7 +531,7 @@ impl<C: 'static> WebView<C> {
                 outcome.changed |= code;
                 Ok(outcome)
             }
-            WebEvent::Pinch { x, y, zoom } => self.runtime.pinch_outcome(
+            WebEvent::Pinch { x, y, zoom, .. } => self.runtime.pinch_outcome(
                 x * scale,
                 y * scale,
                 zoom.clamp(-1., 1.),
@@ -1169,6 +1185,64 @@ mod tests {
         h.dispatch(WebEvent::Suspend { value: false }).unwrap();
         h.dispatch(WebEvent::Activate { id: "add".into() }).unwrap();
         assert_eq!(h.context().count, 1);
+    }
+    #[test]
+    fn a_pinch_reports_its_own_modifiers_not_the_last_events() {
+        use volt_ui_kit::declarative::PointerPhase;
+        #[derive(Default)]
+        struct Board {
+            seen: Vec<(PointerPhase, InputModifiers)>,
+        }
+        fn surface(_: &Board) -> Element<Board> {
+            zstack(Vec::<Element<Board>>::new())
+                .key("surface")
+                .width(200.)
+                .height(200.)
+                .on_pointer(|b: &mut Board, p| b.seen.push((p.phase, p.modifiers)))
+                .into()
+        }
+        let mut h = WebView::new(Board::default(), surface).unwrap();
+        h.dispatch(WebEvent::Resize {
+            width: 200.,
+            height: 200.,
+            scale: 1.,
+        })
+        .unwrap();
+        // A Shift-click, then a pinch with nothing held.
+        h.dispatch(WebEvent::Down {
+            x: 50.,
+            y: 50.,
+            shift: true,
+            control: false,
+            alt: false,
+            meta: false,
+            clicks: 1,
+        })
+        .unwrap();
+        h.dispatch(WebEvent::Up {
+            x: 50.,
+            y: 50.,
+            shift: true,
+            control: false,
+            alt: false,
+            meta: false,
+        })
+        .unwrap();
+        let pinch = |alt| WebEvent::Pinch {
+            x: 50.,
+            y: 50.,
+            zoom: 0.1,
+            shift: false,
+            control: false,
+            alt,
+            meta: false,
+        };
+        h.dispatch(pinch(false)).unwrap();
+        let (phase, held) = h.context().seen.last().unwrap();
+        assert!(matches!(phase, PointerPhase::Pinch));
+        assert!(!held.shift, "the pinch inherited Shift from the click");
+        h.dispatch(pinch(true)).unwrap();
+        assert!(h.context().seen.last().unwrap().1.alt, "Option held while pinching");
     }
     #[test]
     fn physical_pointer_mapping_scroll_and_bounded_resize_match_shared_runtime() {
