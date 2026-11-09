@@ -98,8 +98,63 @@ pub struct Scene {
     pub seed: u32,
 }
 
+/// The parts of a range that depend only on the column.
+#[derive(Clone, Copy)]
+struct RangeColumn {
+    top: f32,
+    form: f32,
+    light: f32,
+    snow_line: f32,
+}
+/// Everything in one image column that doesn't depend on height. Ridge noise
+/// and aurora shape are by far the costliest terms, so `render` works them
+/// out once per column instead of once per pixel.
+struct Column {
+    ranges: Vec<RangeColumn>,
+    /// Per aurora band: centre line and streak strength.
+    aurora: [(f32, f32); 2],
+}
+
+const AURORA_BANDS: [(u32, f32); 2] = [(0, 0.0), (1, 0.11)];
+
 impl Scene {
-    fn sky_at(&self, u: f32, v: f32) -> Rgb {
+    fn column(&self, u: f32) -> Column {
+        let ranges = self
+            .ranges
+            .iter()
+            .map(|range| {
+                // Shade and snow follow the broad mountain form (two octaves), so
+                // detail noise roughens the skyline without striping the faces.
+                let x = u * range.freq;
+                let slope = ridge_octaves(x + 0.03, range.seed, range.sharp, 2)
+                    - ridge_octaves(x - 0.03, range.seed, range.sharp, 2);
+                RangeColumn {
+                    top: range.base - range.lift * ridge(x, range.seed, range.sharp),
+                    form: ridge_octaves(x, range.seed, range.sharp, 2),
+                    light: smooth(-0.1, 0.1, slope),
+                    snow_line: range.snow * 0.45 * (0.6 + 0.4 * noise(x * 9., range.seed + 5)),
+                }
+            })
+            .collect();
+        let mut aurora = [(0., 0.); 2];
+        if self.aurora.is_some() {
+            for (slot, (band, offset)) in aurora.iter_mut().zip(AURORA_BANDS) {
+                let seed = self.seed + band * 7;
+                let center = 0.30
+                    + offset
+                    + 0.07 * (u * 5.1 + seed as f32).sin()
+                    + 0.035 * (u * 11.3 + seed as f32 * 0.7).sin()
+                    + 0.03 * (noise(u * 6., seed) - 0.5);
+                let streak = 0.55
+                    + 0.45
+                        * (u * 140. + 3. * (u * 9.).sin()).sin().abs().powf(0.6)
+                        * noise(u * 40., seed + 3);
+                *slot = (center, streak);
+            }
+        }
+        Column { ranges, aurora }
+    }
+    fn sky_at(&self, u: f32, v: f32, column: &Column) -> Rgb {
         let t = v / self.horizon.max(0.01);
         let mut c = if t < 0.55 {
             mix(self.sky[0], self.sky[1], t / 0.55)
@@ -112,17 +167,7 @@ impl Scene {
             c = mix(c, hex(0xFFF4DE), 1. - smooth(r * 0.92, r, d));
         }
         if let Some((low, high, strength)) = self.aurora {
-            for (band, offset) in [(0_u32, 0.0_f32), (1, 0.11)] {
-                let seed = self.seed + band * 7;
-                let center = 0.30
-                    + offset
-                    + 0.07 * (u * 5.1 + seed as f32).sin()
-                    + 0.035 * (u * 11.3 + seed as f32 * 0.7).sin()
-                    + 0.03 * (noise(u * 6., seed) - 0.5);
-                let streak = 0.55
-                    + 0.45
-                        * (u * 140. + 3. * (u * 9.).sin()).sin().abs().powf(0.6)
-                        * noise(u * 40., seed + 3);
+            for ((band, _), &(center, streak)) in AURORA_BANDS.iter().zip(&column.aurora) {
                 let above = (center - v).max(0.);
                 let below = (v - center).max(0.);
                 let body = if v < center {
@@ -134,7 +179,7 @@ impl Scene {
                 c = add(
                     c,
                     color,
-                    body * streak * strength * if band == 0 { 1. } else { 0.55 },
+                    body * streak * strength * if *band == 0 { 1. } else { 0.55 },
                 );
             }
         }
@@ -150,25 +195,17 @@ impl Scene {
         c
     }
     /// Sky, mountains and shore above the waterline.
-    fn land_at(&self, u: f32, v: f32) -> Rgb {
-        let mut c = self.sky_at(u, v);
-        for range in &self.ranges {
-            let h = ridge(u * range.freq, range.seed, range.sharp);
-            let top = range.base - range.lift * h;
+    fn land_at(&self, u: f32, v: f32, column: &Column) -> Rgb {
+        let mut c = self.sky_at(u, v, column);
+        for (range, at) in self.ranges.iter().zip(&column.ranges) {
+            let (top, light) = (at.top, at.light);
             if v >= top {
-                // Shade and snow follow the broad mountain form (two octaves), so
-                // detail noise roughens the skyline without striping the faces.
-                let x = u * range.freq;
-                let form = ridge_octaves(x, range.seed, range.sharp, 2);
-                let slope = ridge_octaves(x + 0.03, range.seed, range.sharp, 2)
-                    - ridge_octaves(x - 0.03, range.seed, range.sharp, 2);
-                let light = smooth(-0.1, 0.1, slope);
                 let mut rock = scale(range.color, 0.8 + 0.4 * light);
                 let below_peak = (v - top) / range.lift.max(0.01);
                 if range.snow > 0. {
-                    let line = range.snow * 0.45 * (0.6 + 0.4 * noise(x * 9., range.seed + 5));
+                    let line = at.snow_line;
                     let cover =
-                        (1. - smooth(line * 0.7, line, below_peak)) * smooth(0.2, 0.55, form);
+                        (1. - smooth(line * 0.7, line, below_peak)) * smooth(0.2, 0.55, at.form);
                     rock = mix(rock, scale(hex(0xF2F6FA), 0.68 + 0.3 * light), cover);
                 }
                 c = mix(rock, self.sky[2], range.haze);
@@ -201,17 +238,22 @@ impl Scene {
         }
         c
     }
-    fn color(&self, u: f32, v: f32) -> Rgb {
+    fn color(&self, u: f32, v: f32, columns: &[Column]) -> Rgb {
+        // The column under a (possibly rippled) horizontal position.
+        let at = |u: f32| {
+            let i = (u * columns.len() as f32).floor().max(0.) as usize;
+            &columns[i.min(columns.len() - 1)]
+        };
         let mut c = match self.water {
             Some(water) if v > self.horizon => {
                 let depth = (v - self.horizon) / (1. - self.horizon);
                 let ripple = 0.004 * (v * 520.).sin() + 0.002 * (u * 90. + v * 300.).sin();
-                let mirrored = self.land_at(u + ripple, 2. * self.horizon - v);
+                let mirrored = self.land_at(u + ripple, 2. * self.horizon - v, at(u + ripple));
                 let reflect = mix(scale(mirrored, 0.78), water, 0.25 + depth * 0.6);
                 let glint = if (v * 900.).sin() > 0.93 { 0.05 } else { 0. };
                 add(reflect, [1., 1., 1.], glint * (1. - depth))
             }
-            _ => self.land_at(u, v),
+            _ => self.land_at(u, v, at(u)),
         };
         if self.fog > 0. {
             let band = (-((v - self.horizon) / 0.05).powi(2)).exp();
@@ -226,11 +268,14 @@ impl Scene {
     }
     pub fn render(&self, width: u32, height: u32) -> Image {
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        let columns: Vec<Column> = (0..width)
+            .map(|x| self.column((x as f32 + 0.5) / width as f32))
+            .collect();
         for y in 0..height {
             for x in 0..width {
                 let u = (x as f32 + 0.5) / width as f32;
                 let v = (y as f32 + 0.5) / height as f32;
-                let c = self.color(u, v);
+                let c = self.color(u, v, &columns);
                 let grain = (hash2(x, y, self.seed ^ 0xA5A5) - 0.5) * 0.035;
                 for channel in c {
                     // Gamma-friendly quantization plus film grain to avoid banding.

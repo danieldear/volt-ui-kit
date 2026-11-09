@@ -1,5 +1,5 @@
 .live-page{max-width:1000px;margin:auto;padding:48px 24px;color:var(--ink,#161616)}
-.live-page h1{font-size:clamp(36px,6vw,64px);letter-spacing:-.055em;line-height:1.05;margin:24px 0}
+.live-page h1{font-family:var(--display);font-size:clamp(36px,6vw,64px);letter-spacing:-.04em;line-height:1.05;margin:24px 0}
 .live-page .lead{max-width:650px;font-size:18px;color:var(--muted,#777);line-height:1.65}
 .live-toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:24px 0 12px;font:13px system-ui}
 .live-toolbar button,.live-toolbar select{font:inherit;background:transparent;border:1px solid #8886;border-radius:7px;padding:8px 12px;color:inherit}
@@ -16,7 +16,7 @@
 .live-note{font-size:14px;line-height:1.6;color:var(--muted,#777);max-width:740px}
 @media(max-width:520px){.live-page{padding:24px 12px}.volt-root{height:570px}.live-toolbar{font-size:12px}}
 html[data-embed=true] .live-page{padding:0;max-width:none}
-html[data-embed=true] .live-intro,html[data-embed=true] .live-note,html[data-embed=true] .live-back{display:none}
+html[data-embed=true] .live-intro,html[data-embed=true] .live-note,html[data-embed=true] .topbar{display:none}
 html[data-embed=true] .volt-root{border:0;border-radius:0}
 html[data-embed=true] .live-toolbar{margin:8px 12px}
 

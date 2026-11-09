@@ -12,7 +12,7 @@ root. It handles build features and macOS packaging; direct Cargo commands in
 profiling/snapshot guides intentionally exercise a narrower path. See the
 [launch modes](../examples/README.md#catalog-launch-modes).
 
-The current repository version is **0.5.0**; it is not a crates.io publication.
+The current repository version is **0.6.0**; it is not a crates.io publication.
 Installation instructions remain Git/path based until publication is verified.
 
 1. [Getting started](getting-started.md): install, features, your first window, templates and platform support.

@@ -4,7 +4,7 @@ pub mod art;
 pub mod icons;
 mod kit;
 mod screens;
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests;
 
 pub use screens::view;

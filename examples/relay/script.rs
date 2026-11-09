@@ -92,7 +92,7 @@ pub fn reply_for(prompt: &str, effort: Effort) -> Reply {
             ],
             files: vec![],
             answer: format!(
-                "Here's the short version of \"{}\".\n\nVolt UI is a declarative Rust UI toolkit. Your view is an ordinary function of your state; the runtime diffs, lays out and paints it with either a CPU rasterizer or a GPU renderer.\n\n- Components: buttons, inputs, menus, dialogs, tables, trees\n- Accessibility through the platform screen reader\n- Native windows on macOS, Windows and Linux\n\nAsk me to fix something, run the tests or polish the design.",
+                "Here's the short version of \"{}\".\n\nVolt UI Kit is a declarative Rust UI toolkit. Your view is an ordinary function of your state; the runtime diffs, lays out and paints it with either a CPU rasterizer or a GPU renderer.\n\n- Components: buttons, inputs, menus, dialogs, tables, trees\n- Accessibility through the platform screen reader\n- Native desktop windows, and the same app on the web\n\nAsk me to fix something, run the tests or polish the design.",
                 title_for(prompt)
             ),
         }
@@ -154,12 +154,12 @@ pub fn sample_threads() -> Vec<Thread> {
     };
     let mut tab = Message::agent("Tab strip layout is now cached per window width; dragging a tab no longer re-measures every title.");
     tab.worked = Some(18);
-    let mut scanner = Message::agent("The scanner view is wired to the camera session; barcodes resolve against the local food database first.");
-    scanner.worked = Some(33);
+    let mut forecast = Message::agent("The today screen now has an hourly chart for the next 24 hours. It draws from the cached forecast, so it appears instantly and updates when fresh data arrives.");
+    forecast.worked = Some(33);
     let mut frosted = Message::agent("The sidebar now sits on the window's blurred material and the content is a solid sheet. Pass --background opaque for the previous look.");
     frosted.worked = Some(52);
-    let mut compare = Message::agent("Closest peers are iced and Slint. Volt is smaller, but its accessibility, damage tracking and GPU text are already competitive; the gaps are text shaping breadth, platform packaging and mobile.");
-    compare.worked = Some(12);
+    let mut plan = Message::agent("Three areas are left: broader text shaping, packaging for Windows and Linux, and testing the iOS and Android hosts on real devices.");
+    plan.worked = Some(12);
     vec![
         thread(
             1,
@@ -185,7 +185,7 @@ pub fn sample_threads() -> Vec<Thread> {
         ),
         thread(
             3,
-            "glass-browser",
+            "reader-app",
             "Review tab strip performance",
             true,
             vec![
@@ -195,23 +195,20 @@ pub fn sample_threads() -> Vec<Thread> {
         ),
         thread(
             4,
-            "mealfit-app",
-            "Add barcode scanner",
+            "weather-app",
+            "Add an hourly forecast",
             false,
             vec![
-                Message::user("Add a barcode scanner to the food log"),
-                scanner,
+                Message::user("Add an hourly forecast chart to the today screen"),
+                forecast,
             ],
         ),
         thread(
             5,
             "volt-ui-kit",
-            "Compare Rust UI toolkits",
+            "Plan the 1.0 release",
             false,
-            vec![
-                Message::user("Where do we stand against other Rust UI toolkits?"),
-                compare,
-            ],
+            vec![Message::user("What is left before a 1.0 release?"), plan],
         ),
     ]
 }
