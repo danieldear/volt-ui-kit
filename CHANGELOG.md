@@ -7,6 +7,9 @@
   the press, which made controls need several clicks. The press survives
   when the same control, of the same kind, is still there, enabled and in
   scope; a press on a control that went away ends.
+- An app that registers Inter gets it as its default ("system") face on
+  every platform, instead of Avenir Next on macOS and the platform's
+  sans-serif elsewhere.
 - Add `Container::mask(element, MaskMode)`: the container's content shows
   only where the mask element is opaque (`MaskMode::Alpha`, so a gradient
   mask fades it and a shape cuts it out) or bright (`MaskMode::Luminance`).
