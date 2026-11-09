@@ -1349,6 +1349,65 @@ impl<C: 'static> App<C> {
         self.after_input(outcome)?;
         Ok(consumed)
     }
+    /// Application keys (`on_key_press`): what no command, editor, value
+    /// control, focused control or text selection used. Tab and Escape keep
+    /// their focus and dismiss roles and never arrive here.
+    fn app_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
+        use crate::declarative::{KeyPress, PressedKey};
+        let key = match &event.logical_key {
+            Key::Named(NamedKey::Backspace) => PressedKey::Backspace,
+            Key::Named(NamedKey::Delete) => PressedKey::Delete,
+            Key::Named(NamedKey::Enter) => PressedKey::Enter,
+            Key::Named(NamedKey::Space) => PressedKey::Space,
+            Key::Named(NamedKey::ArrowUp) => PressedKey::ArrowUp,
+            Key::Named(NamedKey::ArrowDown) => PressedKey::ArrowDown,
+            Key::Named(NamedKey::ArrowLeft) => PressedKey::ArrowLeft,
+            Key::Named(NamedKey::ArrowRight) => PressedKey::ArrowRight,
+            Key::Named(NamedKey::Home) => PressedKey::Home,
+            Key::Named(NamedKey::End) => PressedKey::End,
+            Key::Named(NamedKey::PageUp) => PressedKey::PageUp,
+            Key::Named(NamedKey::PageDown) => PressedKey::PageDown,
+            Key::Character(_) => {
+                // The key as the layout names it without modifiers, so
+                // Shift+Cmd+Z is `z` with shift and Option+R is `r`.
+                #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+                let unmodified = {
+                    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+                    event.key_without_modifiers()
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+                let unmodified = event.logical_key.clone();
+                let Key::Character(text) = unmodified else {
+                    return Ok(false);
+                };
+                let mut chars = text.chars();
+                let Some(c) = chars.next().filter(|c| !c.is_control()) else {
+                    return Ok(false);
+                };
+                if chars.next().is_some() {
+                    return Ok(false);
+                }
+                PressedKey::Character(c.to_lowercase().next().unwrap_or(c))
+            }
+            _ => return Ok(false),
+        };
+        let press = KeyPress {
+            key,
+            modifiers: self.input_modifiers(),
+            repeat: event.repeat,
+        };
+        let handled = self
+            .runtime
+            .key_press(press, &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if handled {
+            self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            })?;
+        }
+        Ok(handled)
+    }
     fn selection_keyboard(&mut self, event: &winit::event::KeyEvent) -> Result<bool, String> {
         if self.runtime.editing_focus() {
             return Ok(false);
@@ -2364,6 +2423,25 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         }
                     }
                 }
+                WindowEvent::PinchGesture { delta, .. } => {
+                    self.last_click = None;
+                    self.layout()?;
+                    if let Some([x, y]) = self.pointer {
+                        let outcome = self
+                            .runtime
+                            .pinch_outcome(
+                                x,
+                                y,
+                                delta as f32,
+                                &mut self.handlers,
+                                &mut self.context,
+                            )
+                            .map_err(|e| e.to_string())?;
+                        if outcome.activated {
+                            self.after_input(outcome)?;
+                        }
+                    }
+                }
                 WindowEvent::HoveredFile(_) => {
                     self.layout()?;
                     if self.runtime.file_hover(self.pointer) {
@@ -2379,7 +2457,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 WindowEvent::CursorLeft { .. } => {
                     self.last_click = None;
                     self.pointer = None;
-                    if self.runtime.pointer_leave() {
+                    let outcome = self
+                        .runtime
+                        .pointer_leave_outcome(&mut self.handlers, &mut self.context)
+                        .map_err(|e| e.to_string())?;
+                    if outcome.activated {
+                        self.after_input(outcome)?;
+                    } else if outcome.changed {
                         self.redraw();
                     }
                     self.hover_regions(None)?;
@@ -2550,7 +2634,21 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         }
                     }
                 },
-                WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+                WindowEvent::ModifiersChanged(modifiers) => {
+                    self.modifiers = modifiers.state();
+                    self.runtime.set_pointer_modifiers(self.input_modifiers());
+                    // A pointer surface mid-drag hears the change at once, so
+                    // holding Shift constrains without waiting for a move.
+                    if let (true, Some([x, y])) = (self.runtime.pointer_dragging(), self.pointer) {
+                        let outcome = self
+                            .runtime
+                            .pointer_move_outcome(x, y, &mut self.handlers, &mut self.context)
+                            .map_err(|e| e.to_string())?;
+                        if outcome.activated {
+                            self.after_input(outcome)?;
+                        }
+                    }
+                }
                 WindowEvent::KeyboardInput { event, .. } => {
                     if event.state == ElementState::Pressed {
                         self.last_click = None;
@@ -2593,6 +2691,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         return Ok(());
                     }
                     if event.state == ElementState::Pressed && self.selection_keyboard(&event)? {
+                        return Ok(());
+                    }
+                    if event.state == ElementState::Pressed && self.app_keyboard(&event)? {
+                        self.activation_key = None;
                         return Ok(());
                     }
                     if let Key::Named(key) = event.logical_key {

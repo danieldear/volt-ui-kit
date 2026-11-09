@@ -7,7 +7,7 @@ use std::time::Duration;
 use volt_ui_kit::{
     declarative::{
         AccessRole, AccessValue, Bindings, CodeInput, CodeKey, EditKey, Handlers, InputKey,
-        InputKeyEvent, InputModifiers, InputOutcome, Runtime, SelectionKey,
+        InputKeyEvent, InputModifiers, InputOutcome, KeyPress, PressedKey, Runtime, SelectionKey,
     },
     rendering::RasterPainter,
     ui::Element,
@@ -26,23 +26,76 @@ pub enum WebEvent {
         height: f32,
         scale: f32,
     },
+    /// Pointer events carry the modifiers held (`control` is the platform's
+    /// primary key, as for editor keys) so pointer surfaces get them.
     Down {
         x: f32,
         y: f32,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        control: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
+        /// 1, 2 or 3 for a single, double or triple click.
+        #[serde(default)]
+        clicks: u8,
     },
     Move {
         x: f32,
         y: f32,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        control: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
     },
     Up {
         x: f32,
         y: f32,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        control: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
     },
     Wheel {
         x: f32,
         y: f32,
         dx: f32,
         dy: f32,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        control: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
+    },
+    /// A trackpad pinch (browsers send it as a Ctrl+wheel): the change in
+    /// magnification, e.g. 0.1 for 10% larger, with the modifiers held. The
+    /// browser's Ctrl is its pinch marker, so `control` is only Cmd here.
+    Pinch {
+        x: f32,
+        y: f32,
+        zoom: f32,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        control: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
     },
     Context {
         x: f32,
@@ -109,6 +162,24 @@ pub enum WebEvent {
         key: String,
     },
     Escape {},
+    /// A key press the page's own controls did not use, for the app's
+    /// `on_key_press`. `control` is the platform's primary chord (Ctrl or
+    /// Cmd), as for editor keys.
+    Key {
+        key: String,
+        #[serde(default)]
+        code: String,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        control: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
+        #[serde(default)]
+        repeat: bool,
+    },
     Suspend {
         value: bool,
     },
@@ -129,11 +200,12 @@ impl WebEvent {
                 height,
                 scale,
             } => viewport(*width, *height, *scale).is_ok(),
-            Self::Down { x, y }
-            | Self::Move { x, y }
-            | Self::Up { x, y }
-            | Self::Context { x, y } => finite_point(*x, *y),
-            Self::Wheel { x, y, dx, dy } => finite_point(*x, *y) && finite_point(*dx, *dy),
+            Self::Down { x, y, clicks, .. } => finite_point(*x, *y) && *clicks <= 3,
+            Self::Move { x, y, .. } | Self::Up { x, y, .. } | Self::Context { x, y } => {
+                finite_point(*x, *y)
+            }
+            Self::Wheel { x, y, dx, dy, .. } => finite_point(*x, *y) && finite_point(*dx, *dy),
+            Self::Pinch { x, y, zoom, .. } => finite_point(*x, *y) && zoom.is_finite(),
             Self::Number { value, .. } => value.is_finite(),
             _ => true,
         };
@@ -316,9 +388,58 @@ impl<C: 'static> WebView<C> {
         }
         let scale = self.viewport.scale;
         match &event {
-            WebEvent::Down { x, y } | WebEvent::Move { x, y } | WebEvent::Up { x, y } => {
-                self.pointer = Some([x * scale, y * scale])
+            WebEvent::Down {
+                x,
+                y,
+                shift,
+                control,
+                alt,
+                meta,
+                ..
             }
+            | WebEvent::Move {
+                x,
+                y,
+                shift,
+                control,
+                alt,
+                meta,
+            }
+            | WebEvent::Up {
+                x,
+                y,
+                shift,
+                control,
+                alt,
+                meta,
+            } => {
+                self.pointer = Some([x * scale, y * scale]);
+                self.runtime.set_pointer_modifiers(InputModifiers {
+                    shift: *shift,
+                    control: *control,
+                    alt: *alt,
+                    meta: *meta,
+                });
+            }
+            WebEvent::Wheel {
+                shift,
+                control,
+                alt,
+                meta,
+                ..
+            }
+            | WebEvent::Pinch {
+                shift,
+                control,
+                alt,
+                meta,
+                ..
+            } => self.runtime.set_pointer_modifiers(InputModifiers {
+                shift: *shift,
+                control: *control,
+                alt: *alt,
+                meta: *meta,
+            }),
             WebEvent::Leave {} | WebEvent::Cancel {} => self.pointer = None,
             _ => {}
         }
@@ -334,7 +455,15 @@ impl<C: 'static> WebView<C> {
                 self.layout()?;
                 return Ok(true);
             }
-            WebEvent::Down { x, y } => {
+            WebEvent::Down {
+                x,
+                y,
+                shift,
+                control,
+                alt,
+                meta,
+                clicks,
+            } => {
                 if let Some(outcome) = self
                     .runtime
                     .code_pointer_down(
@@ -357,15 +486,22 @@ impl<C: 'static> WebView<C> {
                         activated: false,
                     })
                 } else {
-                    self.runtime.pointer_down_outcome(
+                    self.runtime.pointer_down_outcome_with_clicks(
                         x * scale,
                         y * scale,
+                        InputModifiers {
+                            shift,
+                            control,
+                            alt,
+                            meta,
+                        },
+                        clicks.max(1),
                         &mut self.handlers,
                         &mut self.context,
                     )
                 }
             }
-            WebEvent::Move { x, y } => {
+            WebEvent::Move { x, y, .. } => {
                 if let Some(outcome) = self
                     .runtime
                     .code_pointer_drag(x * scale, y * scale, &mut self.handlers, &mut self.context)
@@ -386,7 +522,7 @@ impl<C: 'static> WebView<C> {
                     )
                 }
             }
-            WebEvent::Up { x, y } => {
+            WebEvent::Up { x, y, .. } => {
                 let code = self.runtime.code_pointer_up();
                 let mut outcome = self
                     .runtime
@@ -395,7 +531,14 @@ impl<C: 'static> WebView<C> {
                 outcome.changed |= code;
                 Ok(outcome)
             }
-            WebEvent::Wheel { x, y, dx, dy } => self.runtime.scroll_outcome(
+            WebEvent::Pinch { x, y, zoom, .. } => self.runtime.pinch_outcome(
+                x * scale,
+                y * scale,
+                zoom.clamp(-1., 1.),
+                &mut self.handlers,
+                &mut self.context,
+            ),
+            WebEvent::Wheel { x, y, dx, dy, .. } => self.runtime.scroll_outcome(
                 x * scale,
                 y * scale,
                 [dx, dy],
@@ -639,9 +782,50 @@ impl<C: 'static> WebView<C> {
                     }
                 }
             }
-            WebEvent::Escape {} => self
+            // As on the desktop: close the topmost menu or dialog, else the
+            // last `on_escape` container hears it.
+            WebEvent::Escape {} => match self
                 .runtime
-                .dismiss_overlay(&mut self.handlers, &mut self.context),
+                .dismiss_overlay(&mut self.handlers, &mut self.context)
+            {
+                Ok(outcome) if !outcome.activated => self
+                    .runtime
+                    .dispatch_escape(&mut self.handlers, &mut self.context)
+                    .map(|escaped| InputOutcome {
+                        changed: escaped || outcome.changed,
+                        activated: escaped,
+                    }),
+                other => other,
+            },
+            WebEvent::Key {
+                key,
+                code,
+                shift,
+                control,
+                alt,
+                meta,
+                repeat,
+            } => {
+                let Some(key) = pressed_key(&key, &code, alt) else {
+                    return Ok(false);
+                };
+                let press = KeyPress {
+                    key,
+                    modifiers: InputModifiers {
+                        shift,
+                        control,
+                        alt,
+                        meta,
+                    },
+                    repeat,
+                };
+                self.runtime
+                    .key_press(press, &mut self.handlers, &mut self.context)
+                    .map(|handled| InputOutcome {
+                        changed: handled,
+                        activated: handled,
+                    })
+            }
             WebEvent::Cancel {} => return Ok(self.runtime.cancel_input()),
             WebEvent::Context { x, y } => self.runtime.context_menu_at(
                 x * scale,
@@ -649,10 +833,9 @@ impl<C: 'static> WebView<C> {
                 &mut self.handlers,
                 &mut self.context,
             ),
-            WebEvent::Leave {} => Ok(InputOutcome {
-                changed: self.runtime.pointer_leave(),
-                activated: false,
-            }),
+            WebEvent::Leave {} => self
+                .runtime
+                .pointer_leave_outcome(&mut self.handlers, &mut self.context),
             WebEvent::Motion { reduced } => {
                 self.runtime.set_reduced_motion(reduced);
                 return Ok(true);
@@ -741,6 +924,41 @@ impl<C: 'static> WebView<C> {
         let batches = self.runtime.paint_ui(&mut self.painter, theme);
         renderer.present(&batches, &mut self.painter, theme.palette.base[0])
     }
+}
+
+/// A browser `KeyboardEvent.key` / `.code` pair as an application key.
+/// Characters use the layout's key in lower case; with Alt (which composes
+/// other characters on macOS layouts) the physical letter or digit is used.
+/// Tab, Escape, modifiers alone and dead keys give `None`.
+fn pressed_key(key: &str, code: &str, alt: bool) -> Option<PressedKey> {
+    Some(match key {
+        "Backspace" => PressedKey::Backspace,
+        "Delete" => PressedKey::Delete,
+        "Enter" => PressedKey::Enter,
+        " " | "Spacebar" => PressedKey::Space,
+        "ArrowUp" => PressedKey::ArrowUp,
+        "ArrowDown" => PressedKey::ArrowDown,
+        "ArrowLeft" => PressedKey::ArrowLeft,
+        "ArrowRight" => PressedKey::ArrowRight,
+        "Home" => PressedKey::Home,
+        "End" => PressedKey::End,
+        "PageUp" => PressedKey::PageUp,
+        "PageDown" => PressedKey::PageDown,
+        _ => {
+            let mut chars = key.chars();
+            let single = chars.next().filter(|_| chars.next().is_none());
+            if let Some(c) = single.filter(|c| !alt && !c.is_control() && !c.is_whitespace()) {
+                return Some(PressedKey::Character(c.to_lowercase().next().unwrap_or(c)));
+            }
+            let physical = code
+                .strip_prefix("Key")
+                .or_else(|| code.strip_prefix("Digit"))
+                .filter(|rest| rest.len() == 1)
+                .and_then(|rest| rest.chars().next())
+                .filter(char::is_ascii_alphanumeric)?;
+            PressedKey::Character(physical.to_ascii_lowercase())
+        }
+    })
 }
 
 #[cfg(test)]
@@ -969,6 +1187,64 @@ mod tests {
         assert_eq!(h.context().count, 1);
     }
     #[test]
+    fn a_pinch_reports_its_own_modifiers_not_the_last_events() {
+        use volt_ui_kit::declarative::PointerPhase;
+        #[derive(Default)]
+        struct Board {
+            seen: Vec<(PointerPhase, InputModifiers)>,
+        }
+        fn surface(_: &Board) -> Element<Board> {
+            zstack(Vec::<Element<Board>>::new())
+                .key("surface")
+                .width(200.)
+                .height(200.)
+                .on_pointer(|b: &mut Board, p| b.seen.push((p.phase, p.modifiers)))
+                .into()
+        }
+        let mut h = WebView::new(Board::default(), surface).unwrap();
+        h.dispatch(WebEvent::Resize {
+            width: 200.,
+            height: 200.,
+            scale: 1.,
+        })
+        .unwrap();
+        // A Shift-click, then a pinch with nothing held.
+        h.dispatch(WebEvent::Down {
+            x: 50.,
+            y: 50.,
+            shift: true,
+            control: false,
+            alt: false,
+            meta: false,
+            clicks: 1,
+        })
+        .unwrap();
+        h.dispatch(WebEvent::Up {
+            x: 50.,
+            y: 50.,
+            shift: true,
+            control: false,
+            alt: false,
+            meta: false,
+        })
+        .unwrap();
+        let pinch = |alt| WebEvent::Pinch {
+            x: 50.,
+            y: 50.,
+            zoom: 0.1,
+            shift: false,
+            control: false,
+            alt,
+            meta: false,
+        };
+        h.dispatch(pinch(false)).unwrap();
+        let (phase, held) = h.context().seen.last().unwrap();
+        assert!(matches!(phase, PointerPhase::Pinch));
+        assert!(!held.shift, "the pinch inherited Shift from the click");
+        h.dispatch(pinch(true)).unwrap();
+        assert!(h.context().seen.last().unwrap().1.alt, "Option held while pinching");
+    }
+    #[test]
     fn physical_pointer_mapping_scroll_and_bounded_resize_match_shared_runtime() {
         let mut h = host();
         h.dispatch(WebEvent::Resize {
@@ -985,8 +1261,25 @@ mod tests {
             .unwrap();
         let [x, y, w, hh] = node.bounds;
         let (x, y) = ((x + w / 2.) / 2., (y + hh / 2.) / 2.);
-        h.dispatch(WebEvent::Down { x, y }).unwrap();
-        h.dispatch(WebEvent::Up { x, y }).unwrap();
+        h.dispatch(WebEvent::Down {
+            x,
+            y,
+            shift: false,
+            control: false,
+            alt: false,
+            meta: false,
+            clicks: 1,
+        })
+        .unwrap();
+        h.dispatch(WebEvent::Up {
+            x,
+            y,
+            shift: false,
+            control: false,
+            alt: false,
+            meta: false,
+        })
+        .unwrap();
         assert_eq!(h.context().count, 1);
         let node = h
             .runtime
@@ -1000,7 +1293,11 @@ mod tests {
                 x: (x + w / 2.) / 2.,
                 y: (y + hh / 2.) / 2.,
                 dx: 0.,
-                dy: 80.
+                dy: 80.,
+                shift: false,
+                control: false,
+                alt: false,
+                meta: false,
             })
             .unwrap());
         assert!(h.runtime.scroll_offset("list")[1] > 0.);
@@ -1026,5 +1323,96 @@ mod tests {
         assert_eq!((w, hh), (320, 400));
         assert_eq!(pixels.len(), 320 * 400 * 4);
         assert!(pixels.as_chunks::<4>().0.iter().any(|p| p[0] < 240));
+    }
+    #[derive(Default)]
+    struct Keys {
+        heard: Vec<String>,
+        escapes: usize,
+        field: String,
+    }
+    fn keys_view(a: &Keys) -> Element<Keys> {
+        vstack![text_field(&a.field)
+            .key("field")
+            .accessible_label("Field")
+            .on_change(|a: &mut Keys, v| a.field = v)]
+        .key("keys-root")
+        .on_key_press(|a: &mut Keys, k| match k.key {
+            PressedKey::Character('z') if k.primary() => {
+                a.heard
+                    .push(if k.modifiers.shift { "redo" } else { "undo" }.into());
+                true
+            }
+            PressedKey::Delete => {
+                a.heard.push("delete".into());
+                true
+            }
+            _ => false,
+        })
+        .on_escape(|a: &mut Keys| a.escapes += 1)
+        .into()
+    }
+    fn key(key: &str, code: &str, primary: bool, shift: bool) -> WebEvent {
+        // The page sends Cmd or Ctrl as `control`; `meta` is the Cmd key.
+        WebEvent::Key {
+            key: key.into(),
+            code: code.into(),
+            shift,
+            control: primary,
+            alt: false,
+            meta: primary,
+            repeat: false,
+        }
+    }
+    #[test]
+    fn application_keys_and_escape_reach_the_view_unless_a_field_is_edited() {
+        let mut h = WebView::new(Keys::default(), keys_view).unwrap();
+        assert!(h.dispatch(key("z", "KeyZ", true, false)).unwrap());
+        assert!(h.dispatch(key("Z", "KeyZ", true, true)).unwrap());
+        assert!(h.dispatch(key("Delete", "Delete", false, false)).unwrap());
+        assert!(!h.dispatch(key("q", "KeyQ", false, false)).unwrap());
+        assert!(!h.dispatch(key("Tab", "Tab", false, false)).unwrap());
+        assert_eq!(h.context().heard, ["undo", "redo", "delete"]);
+        assert!(h.dispatch(WebEvent::Escape {}).unwrap());
+        assert_eq!(h.context().escapes, 1);
+        h.dispatch(WebEvent::Focus { id: "field".into() }).unwrap();
+        assert!(!h.dispatch(key("Delete", "Delete", false, false)).unwrap());
+        assert_eq!(h.context().heard.len(), 3);
+        assert!(WebEvent::decode(
+            br#"{"op":"key","key":"z","code":"KeyZ","control":true,"shift":true,"repeat":true}"#
+        )
+        .is_ok());
+        assert!(WebEvent::decode(br#"{"op":"key","key":"z","extra":1}"#).is_err());
+    }
+    #[test]
+    fn browser_keys_map_to_layout_characters_or_physical_keys_under_alt() {
+        assert_eq!(
+            pressed_key("Z", "KeyZ", false),
+            Some(PressedKey::Character('z'))
+        );
+        assert_eq!(
+            pressed_key("Ω", "KeyZ", true),
+            Some(PressedKey::Character('z'))
+        );
+        assert_eq!(
+            pressed_key("¡", "Digit1", true),
+            Some(PressedKey::Character('1'))
+        );
+        assert_eq!(
+            pressed_key("ü", "BracketLeft", false),
+            Some(PressedKey::Character('ü'))
+        );
+        assert_eq!(pressed_key(" ", "Space", false), Some(PressedKey::Space));
+        assert_eq!(
+            pressed_key("Backspace", "Backspace", false),
+            Some(PressedKey::Backspace)
+        );
+        for (k, c) in [
+            ("Tab", "Tab"),
+            ("Escape", "Escape"),
+            ("Shift", "ShiftLeft"),
+            ("Dead", "Quote"),
+        ] {
+            assert_eq!(pressed_key(k, c, false), None, "{k}");
+        }
     }
 }

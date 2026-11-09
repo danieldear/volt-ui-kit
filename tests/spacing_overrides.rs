@@ -145,6 +145,25 @@ fn menu_popup_spacing_has_real_geometry_and_preserves_legacy_defaults() {
     }
 }
 #[test]
+fn a_compact_trigger_can_open_a_wider_popup() {
+    let r = mount(
+        make_menu().width(72.).height(22.).popup_width(160.).into(),
+        1.,
+        700.,
+    );
+    let trigger = b(&r, "menu-trigger");
+    let card = b(&r, "menu-popup-content");
+    assert!((trigger[2] - 72.).abs() < 0.01, "trigger={trigger:?}");
+    assert!((card[2] - 160.).abs() < 0.01, "card={card:?}");
+    // Without it the popup keeps matching the trigger.
+    let r = mount(make_menu().width(120.).into(), 1., 700.);
+    assert!((b(&r, "menu-popup-content")[2] - 120.).abs() < 0.01);
+    for v in [f32::NAN, 10., 5000.] {
+        let e: Element<usize> = make_menu().popup_width(v).into();
+        assert!(e.build().is_err());
+    }
+}
+#[test]
 fn invalid_spacing_is_rejected_instead_of_clamped_or_hidden() {
     for v in [f32::NAN, f32::INFINITY, -1.] {
         let e: Element<usize> = make_menu().item_gap(v).into();
