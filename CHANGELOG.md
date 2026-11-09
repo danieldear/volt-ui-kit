@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix presses lost to recomposition: an app that rebuilds its document while
+  a button is held (on a timer, or when a download arrives) no longer drops
+  the press, which made controls need several clicks. The press survives
+  when the same control, of the same kind, is still there, enabled and in
+  scope; a press on a control that went away ends.
 - Add `Container::mask(element, MaskMode)`: the container's content shows
   only where the mask element is opaque (`MaskMode::Alpha`, so a gradient
   mask fades it and a shape cuts it out) or bright (`MaskMode::Luminance`).
