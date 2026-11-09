@@ -12,6 +12,11 @@ mod northbound;
 #[allow(dead_code)]
 #[path = "../../relay/mod.rs"]
 mod relay;
+// The maps app with the free providers only: OpenFreeMap tiles, Photon and
+// Nominatim search, OSRM routes. The page fetches what it asks for.
+#[allow(dead_code)]
+#[path = "../../maps/mod.rs"]
+pub mod maps;
 pub mod showcase;
 
 /// Gallery apps start from their own state and follow the page's appearance.
@@ -359,13 +364,53 @@ mod wasm {
         }
     }
 
-    /// The landing page's live apps: Relay and Northbound as slides of the
-    /// kit's carousel, running the same modules as the native examples.
+    /// Downloads the maps slide asked for. Each runs as the browser's own
+    /// fetch; its result waits here for the next frame, which hands it to the
+    /// app.
+    #[derive(Clone, Default)]
+    struct Downloads {
+        done: std::rc::Rc<std::cell::RefCell<Vec<maps::net::Msg>>>,
+        running: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    /// One job over the browser's fetch: the HTTP status and body.
+    async fn fetch(job: &maps::net::Job) -> Result<(u16, Vec<u8>), String> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+        let said = |e: JsValue| e.as_string().unwrap_or_else(|| format!("{e:?}"));
+        let (url, body, headers) = job.request();
+        let init = web_sys::RequestInit::new();
+        if let Some(body) = body {
+            init.set_method("POST");
+            init.set_body(&JsValue::from_str(body));
+        }
+        let request = web_sys::Request::new_with_str_and_init(url, &init).map_err(said)?;
+        if body.is_some() {
+            request.headers().set("Content-Type", "application/json").map_err(said)?;
+        }
+        for (name, value) in headers {
+            request.headers().set(name, value).map_err(said)?;
+        }
+        let window = web_sys::window().ok_or("This page has no window to fetch from.")?;
+        let response: web_sys::Response = JsFuture::from(window.fetch_with_request(&request))
+            .await
+            .map_err(|_| "The map service could not be reached.".to_owned())?
+            .dyn_into()
+            .map_err(said)?;
+        let buffer = JsFuture::from(response.array_buffer().map_err(said)?)
+            .await
+            .map_err(said)?;
+        Ok((response.status(), js_sys::Uint8Array::new(&buffer).to_vec()))
+    }
+
+    /// The landing page's live apps: Relay, Northbound and Maps as slides of
+    /// the kit's carousel, running the same modules as the native examples.
     #[wasm_bindgen]
     pub struct GalleryApp {
         host: BrowserHost<showcase::Showcase>,
         system_dark: bool,
         last_ms: Option<f64>,
+        downloads: Downloads,
     }
     #[wasm_bindgen]
     impl GalleryApp {
@@ -381,13 +426,19 @@ mod wasm {
                 .map_err(|e| JsValue::from_str(&e))?;
             let error = |e: String| JsValue::from_str(&e);
             let view = match name {
-                "apps" => WebView::new(showcase::Showcase::new(), showcase::view),
+                "apps" => {
+                    let mut apps = showcase::Showcase::new();
+                    apps.maps.dark = dark;
+                    apps.maps.appearance.set(dark);
+                    WebView::new(apps, showcase::view)
+                }
                 _ => return Err(JsValue::from_str("unknown gallery")),
             };
             Ok(Self {
                 host: BrowserHost::new(canvas, view.map_err(error)?, gpu).await?,
                 system_dark: dark,
                 last_ms: None,
+                downloads: Downloads::default(),
             })
         }
         pub fn dispatch(&mut self, json: &str) -> Result<bool, JsValue> {
@@ -417,21 +468,64 @@ mod wasm {
             let error = |e: String| JsValue::from_str(&e);
             let view = &mut self.host.view;
             // Relay's scripted agent plays its reply from this clock, on
-            // either slide, and keeps frames coming while it does.
-            if view.context().relay.busy() {
+            // either slide, and keeps frames coming while it does. Time
+            // passes without a rebuild; the app is rebuilt only when an
+            // event is due.
+            if view.context().relay.elapse(elapsed) {
                 view.update(|s| {
-                    s.relay.advance(elapsed);
+                    s.relay.advance(0.);
                 })
                 .map_err(error)?;
             }
-            let busy = view.context().relay.busy();
+            // Maps: hand over what downloaded, deliver due timers and move
+            // the camera; then fetch what it asked for since.
+            maps::platform::set_now(ms);
+            let started = view.context().maps.net.is_some();
+            let finished: Vec<_> = self.downloads.done.borrow_mut().drain(..).collect();
+            // Rebuild only when something changes: downloads arrived, a
+            // timer is due, the camera moves or the page changed mode.
+            if !finished.is_empty() || (started && view.context().maps.wants_frame()) {
+                view.update(|s| {
+                    for message in finished {
+                        s.maps.update(message);
+                    }
+                    s.maps.tick();
+                })
+                .map_err(error)?;
+            }
+            if let Some(net) = view.context().maps.net.clone() {
+                while let Some((generation, job)) = net.next() {
+                    let downloads = self.downloads.clone();
+                    downloads.running.set(downloads.running.get() + 1);
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let response = fetch(&job).await;
+                        let message = maps::net::finish(generation, job, response);
+                        downloads.done.borrow_mut().push(message);
+                        downloads.running.set(downloads.running.get() - 1);
+                    });
+                }
+            }
+            let busy = view.context().relay.busy()
+                || (started && view.context().maps.busy())
+                || self.downloads.running.get() > 0
+                || !self.downloads.done.borrow().is_empty();
             view.set_busy(busy);
             view.advance(ms).map_err(error)?;
             let theme = view.context().theme(system);
             self.host.render(&theme)
         }
-        pub fn appearance(&mut self, dark: bool) {
+        pub fn appearance(&mut self, dark: bool) -> Result<(), JsValue> {
             self.system_dark = dark;
+            // The map follows the page: a started map reloads its style.
+            self.host
+                .view
+                .update(|s| {
+                    s.maps.appearance.set(dark);
+                    if s.maps.net.is_some() {
+                        s.maps.tick();
+                    }
+                })
+                .map_err(|e| JsValue::from_str(&e))
         }
         pub fn pause(&mut self) {
             self.last_ms = None;
@@ -562,15 +656,24 @@ mod tests {
         host.update(|s| s.relay.send(Some("Run the tests".into())))
             .unwrap();
         assert!(host.context().relay.busy() && host.context().relay.running());
-        let mut frames = 0;
+        // As the page does: time passes every frame, and the app is rebuilt
+        // only on the frames where an event is due.
+        let (mut frames, mut rebuilds) = (0, 0);
         while host.context().relay.busy() {
-            host.update(|s| {
-                s.relay.advance(16.);
-            })
-            .unwrap();
+            if host.context().relay.elapse(16.) {
+                host.update(|s| {
+                    s.relay.advance(0.);
+                })
+                .unwrap();
+                rebuilds += 1;
+            }
             frames += 1;
             assert!(frames < 2_000, "the scripted reply never finished");
         }
+        assert!(
+            rebuilds < frames,
+            "{rebuilds} rebuilds in {frames} frames: idle frames rebuilt the app"
+        );
         let reply = host.context().relay.thread().messages.last().unwrap();
         assert!(!reply.streaming && reply.text.starts_with("All green."));
         assert!(!host.context().relay.running());
