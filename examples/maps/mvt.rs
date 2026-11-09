@@ -200,8 +200,8 @@ fn decode_feature(
         _ => return Ok(None),
     };
     let mut properties = HashMap::with_capacity(tags.len() / 2);
-    for pair in tags.chunks_exact(2) {
-        if let (Some(k), Some(v)) = (keys.get(pair[0] as usize), values.get(pair[1] as usize)) {
+    for &[k, v] in tags.as_chunks::<2>().0 {
+        if let (Some(k), Some(v)) = (keys.get(k as usize), values.get(v as usize)) {
             properties.insert(k.clone(), v.clone());
         }
     }

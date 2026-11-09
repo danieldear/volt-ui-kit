@@ -389,8 +389,10 @@ fn op(a: &[Json], ctx: &Ctx) -> V {
             };
             let input = arg(2).num().unwrap_or(0.);
             let stops: Vec<(f64, V)> = a[3..]
-                .chunks_exact(2)
-                .map(|p| (p[0].as_f64().unwrap_or(0.), eval(&p[1], ctx)))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|[at, value]| (at.as_f64().unwrap_or(0.), eval(value, ctx)))
                 .collect();
             interpolate(&stops, input, base)
         }
