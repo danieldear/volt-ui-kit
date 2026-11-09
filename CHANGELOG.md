@@ -10,6 +10,13 @@
 - An app that registers Inter gets it as its default ("system") face on
   every platform, instead of Avenir Next on macOS and the platform's
   sans-serif elsewhere.
+- Add the `maps` example: maps drawn by Volt from OpenFreeMap and
+  OpenStreetMap, Mapbox and Google (with a key), and Apple Maps through
+  MapKit on macOS. It has search, directions, your location, light and dark
+  maps, smooth camera moves, rotating and tilting with 3D buildings, and
+  settings for units and provider keys. `examples/maps/run.sh` builds and
+  opens it as an app bundle on macOS.
+
 - Add `Container::mask(element, MaskMode)`: the container's content shows
   only where the mask element is opaque (`MaskMode::Alpha`, so a gradient
   mask fades it and a shape cuts it out) or bright (`MaskMode::Luminance`).
