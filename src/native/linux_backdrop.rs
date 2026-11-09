@@ -43,6 +43,7 @@ fn desired_for_window(window: &Window, enabled: bool) -> Desired {
         enabled,
         width: logical_extent(size.width, scale),
         height: logical_extent(size.height, scale),
+        radius: 0,
     }
 }
 /// A per-window compositor-blur controller reusable by winit 0.30 consumers.
@@ -72,10 +73,22 @@ impl Controller {
         enabled: bool,
         notify: impl Fn(BackdropStatus) + Send + Sync + 'static,
     ) -> Result<Self, BackdropStatus> {
+        Self::new_rounded(window, display, enabled, 0, notify)
+    }
+    pub(crate) fn new_rounded(
+        window: Arc<Window>,
+        display: OwnedDisplayHandle,
+        enabled: bool,
+        radius: u32,
+        notify: impl Fn(BackdropStatus) + Send + Sync + 'static,
+    ) -> Result<Self, BackdropStatus> {
         let lease = Lease::new(window.id())?;
         let worker_state = Imported::new(window, display)?;
         let window = &worker_state.window;
-        let desired = desired_for_window(window, enabled);
+        let mut desired = desired_for_window(window, enabled);
+        // Set the initial shape before the dispatcher starts, not as a second
+        // command that could briefly expose rectangular blur on the first frame.
+        desired.radius = radius.min(128) as i32;
         let shared = Arc::new(Shared {
             desired: Mutex::new(desired),
             stopped: AtomicBool::new(false),
@@ -123,7 +136,11 @@ impl Controller {
     }
     /// Coalesce changes; ordinary opacity/color updates do not wake the worker.
     pub fn update(&self, window: &Window, enabled: bool) {
-        let desired = desired_for_window(window, enabled);
+        self.update_rounded(window, enabled, 0);
+    }
+    pub(crate) fn update_rounded(&self, window: &Window, enabled: bool, radius: u32) {
+        let mut desired = desired_for_window(window, enabled);
+        desired.radius = radius.min(128) as i32;
         if let Ok(mut current) = self.shared.desired.lock() {
             if *current == desired {
                 return;

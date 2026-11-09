@@ -341,6 +341,7 @@ impl Fixture {
         connection.flush().unwrap();
         let shared = Arc::new(Shared {
             desired: Mutex::new(Desired {
+                radius: 0,
                 enabled: true,
                 width: 1440,
                 height: 864,
@@ -442,6 +443,7 @@ fn modern_only_wire_requests_resize_disable_reenable_and_no_idle_redraw() {
     f.wait(on);
     f.until(|a| a.regions == vec![vec![[0, 0, 1440, 864]]]);
     f.update(Desired {
+        radius: 0,
         enabled: true,
         width: 1000,
         height: 500,
@@ -453,6 +455,7 @@ fn modern_only_wire_requests_resize_disable_reenable_and_no_idle_redraw() {
     // after dispatch_clients returns (which races the server's request handler).
     let audit = f.audit.lock().unwrap().clone();
     f.update(Desired {
+        radius: 0,
         enabled: true,
         width: 1000,
         height: 500,
@@ -463,6 +466,7 @@ fn modern_only_wire_requests_resize_disable_reenable_and_no_idle_redraw() {
     ));
     assert_eq!(*f.audit.lock().unwrap(), audit);
     f.update(Desired {
+        radius: 0,
         enabled: false,
         width: 1000,
         height: 500,
@@ -470,6 +474,7 @@ fn modern_only_wire_requests_resize_disable_reenable_and_no_idle_redraw() {
     f.wait(BackdropStatus::Disabled);
     f.until(|a| a.destroys == 1);
     f.update(Desired {
+        radius: 0,
         enabled: true,
         width: 1000,
         height: 500,
@@ -543,6 +548,7 @@ fn zero_extent_waits_for_a_visible_surface_without_sending_invalid_regions() {
     let on = BackdropStatus::Requested(BackdropProtocol::WaylandBackgroundEffect);
     f.wait(on);
     f.update(Desired {
+        radius: 0,
         enabled: true,
         width: 0,
         height: 0,
@@ -558,6 +564,7 @@ fn zero_extent_waits_for_a_visible_surface_without_sending_invalid_regions() {
         .flatten()
         .all(|r| r[2] > 0 && r[3] > 0));
     f.update(Desired {
+        radius: 0,
         enabled: true,
         width: 1000,
         height: 500,
@@ -602,5 +609,61 @@ fn missing_capabilities_fall_back_without_failing_and_a_late_event_recovers() {
             f.until(|a| a.legacy_unsets == 1 && a.legacy_releases == 1);
         }
         f.stop();
+    }
+}
+
+#[test]
+fn rounded_blur_regions_follow_client_frame_and_restore_to_rectangular() {
+    for modern in [true, false] {
+        let f = Fixture::new(modern, !modern);
+        let status = BackdropStatus::Requested(if modern {
+            BackdropProtocol::WaylandBackgroundEffect
+        } else {
+            BackdropProtocol::WaylandKde
+        });
+        f.wait(status);
+        let rounded = Desired {
+            enabled: true,
+            width: 640,
+            height: 400,
+            radius: 12,
+        };
+        let expected = rounded_region(rounded);
+        assert!(expected.len() <= 25);
+        assert!(!expected
+            .iter()
+            .any(|[x, y, w, h]| *x == 0 && *y == 0 && *w > 0 && *h > 0));
+        f.update(rounded);
+        f.until(|a| if modern { a.regions.last() } else { a.legacy_regions.last() } == Some(&expected));
+        // Maximize/fullscreen/native-mode switches remove the corner radius,
+        // without destroying/recreating the live effect or needing a timer.
+        let square = Desired {
+            radius: 0,
+            ..rounded
+        };
+        f.update(square);
+        let expected = rounded_region(square);
+        f.until(|a| if modern { a.regions.last() } else { a.legacy_regions.last() } == Some(&expected));
+    }
+}
+
+#[test]
+fn rounded_regions_are_bounded_symmetric_and_contained_in_surface() {
+    for [width, height] in [[1, 1], [4, 3], [640, 400], [i32::MAX, i32::MAX]] {
+        for radius in [0, 12, 128, i32::MAX] {
+            let rects = rounded_region(Desired {
+                enabled: true,
+                width,
+                height,
+                radius,
+            });
+            assert!(!rects.is_empty());
+            assert!(rects.len() <= 257);
+            for [x, y, w, h] in &rects {
+                assert!(*x >= 0 && *y >= 0 && *w > 0 && *h > 0);
+                assert!(*x <= width - *w && *y <= height - *h);
+                assert!(rects.contains(&[*x, height - *y - *h, *w, *h]));
+            }
+        }
     }
 }

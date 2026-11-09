@@ -239,6 +239,8 @@ fn launch_options_are_order_independent_and_glass_follows_the_renderer() {
         options.chrome,
         if cfg!(target_os = "macos") {
             volt_ui_kit::native::WindowChrome::Overlay
+        } else if cfg!(target_os = "linux") {
+            volt_ui_kit::native::WindowChrome::Custom
         } else {
             volt_ui_kit::native::WindowChrome::Native
         }
@@ -2130,6 +2132,260 @@ fn motion_cards_render_inflight_and_reduced_on_gpu_without_fallback() {
                     .unwrap();
                 assert_eq!(gpu.last_over_budget(), None, "{id} reduced motion");
                 assert!(!r.is_animating());
+            }
+        }
+    }
+}
+
+#[test]
+fn custom_chrome_modes_preserve_catalog_content_and_header_menu_dispatch() {
+    use volt_ui_kit::native::WindowChrome;
+    for chrome in [
+        WindowChrome::Native,
+        WindowChrome::Custom,
+        WindowChrome::Borderless,
+        WindowChrome::Overlay,
+    ] {
+        for size in [[620., 800.], [1440., 920.]] {
+            let mut app = App::new();
+            app.chrome = chrome;
+            let r = mount(&app, size);
+            assert!(!r.boxes().iter().any(|b| b.id == "custom-titlebar"));
+            let toolbar = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == "shell-toolbar")
+                .unwrap()
+                .bounds
+                .bounds();
+            assert!(toolbar[1] <= 8., "no additional title strip: {toolbar:?}");
+            if chrome == WindowChrome::Custom {
+                assert_eq!(toolbar[1], if app.glass { 8. } else { 0. });
+                assert_eq!(toolbar[3], 56.);
+                assert_eq!(
+                    r.boxes().iter().any(|b| b.id == "inline-window-controls"),
+                    !cfg!(target_os = "macos")
+                );
+            }
+            assert!(r.boxes().iter().any(|b| b.id == "site-header"));
+        }
+    }
+    let mut app = App::new();
+    app.chrome = WindowChrome::Custom;
+    let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let v = Viewport::new(1440., 920., 1.).unwrap();
+    r.layout(v, &Bindings::default(), &mut RasterPainter::new(v))
+        .unwrap();
+    let [x, y, w, h] = r
+        .boxes()
+        .iter()
+        .find(|b| b.id == "window-header-menu")
+        .unwrap()
+        .bounds
+        .bounds();
+    assert!(r.drag_region_hit(x + w / 2., y + h - 2.));
+    let outcome = r
+        .context_menu_at(x + w / 2., y + h / 2., &mut handlers, &mut app)
+        .unwrap();
+    assert!(outcome.activated);
+    assert!(app.window_menu.is_some());
+}
+
+#[test]
+fn custom_chrome_keeps_controls_and_mode_picker_reachable_in_compact_drawer() {
+    let mut app = App::new();
+    app.glass = true;
+    app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+    app.nav_open = true;
+    for size in [[560., 460.], [620., 800.], [1440., 920.]] {
+        let mut r = mount(&app, size);
+        let header = r.boxes().iter().find(|b| b.id == "shell-toolbar").unwrap();
+        assert_eq!(header.bounds.bounds()[3], 56.);
+        assert_eq!(header.bounds.bounds()[1], 8.);
+        let picker = r
+            .boxes()
+            .iter()
+            .find(|b| {
+                b.id == if size[0] < 1024. {
+                    "drawer-chrome-mode-trigger"
+                } else {
+                    "footer-chrome-mode-trigger"
+                }
+            })
+            .unwrap();
+        let [x, y, w, h] = picker.bounds.bounds();
+        assert!(
+            h > 0. && y >= 0. && y + h <= size[1],
+            "{size:?}: {:?}",
+            picker.bounds
+        );
+        assert!(r.pointer_down(x + w / 2., y + h / 2.), "{size:?}");
+    }
+}
+
+#[test]
+fn custom_panel_matches_unified_and_borderless_with_only_the_sidebar_translucent() {
+    use volt_ui_kit::native::WindowChrome as W;
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 1.25, 2.] {
+            let mut reference = None;
+            let mut geometry = None;
+            for chrome in [W::Overlay, W::Borderless, W::Custom] {
+                let mut app = App::new();
+                app.chrome = chrome;
+                app.glass = true;
+                app.mode = mode;
+                let v = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+                let (doc, handlers) = view(&app).build().unwrap().into_parts();
+                let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+                let mut painter = RasterPainter::new(v);
+                runtime
+                    .layout(v, &Bindings::default(), &mut painter)
+                    .unwrap();
+                runtime.settle_animations();
+                let panel_boxes: Vec<_> = [
+                    "shell-sheet",
+                    "shell-sheet-drag",
+                    "shell-detail",
+                    "shell-toolbar",
+                ]
+                .into_iter()
+                .map(|id| {
+                    let b = runtime.boxes().iter().find(|b| b.id == id).unwrap();
+                    (b.bounds.bounds(), b.clip.bounds())
+                })
+                .collect();
+                if let Some(expected) = &geometry {
+                    assert_eq!(&panel_boxes, expected, "{chrome:?} panel geometry changed");
+                } else {
+                    geometry = Some(panel_boxes);
+                }
+                let ui = theme(&app, mode);
+                let mut clear = ui.legacy_theme().background;
+                clear[3] = app.opacity as f32 / 100.;
+                let batches = runtime.paint_ui(&mut painter, &ui);
+                let pixels = painter.rasterize(&batches, clear).unwrap();
+                let sample = |x: f32, y: f32| {
+                    pixels
+                        .pixel((x * scale) as u32, (y * scale) as u32)
+                        .unwrap()
+                };
+                let samples = [sample(600., 12.), sample(1000., 500.)];
+                assert!(
+                    samples.iter().all(|p| p.alpha() == 255),
+                    "{mode:?} {scale} {chrome:?}: toolbar and page must be opaque"
+                );
+                assert!(
+                    sample(5., 3.)
+                        .alpha()
+                        .abs_diff((app.opacity as f32 * 2.55).round() as u8)
+                        <= 1,
+                    "sidebar keeps its glass backdrop"
+                );
+                if let Some(expected) = reference {
+                    assert_eq!(
+                        samples, expected,
+                        "{mode:?} {scale}: chrome mode must not restyle the panel"
+                    );
+                } else {
+                    reference = Some(samples);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+fn linux_rounded_frame_keeps_catalog_pages_inside_gpu_budgets() {
+    check_rounded_frame_budgets(None);
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires an actual GPU; rounded client-frame readback acceptance"]
+fn actual_gpu_rounded_catalog_frame() {
+    check_rounded_frame_budgets(Some(
+        volt_ui_kit::native::GpuOffscreenRenderer::new().unwrap(),
+    ));
+}
+
+#[cfg(feature = "native-gpu")]
+fn check_rounded_frame_budgets(mut gpu: Option<volt_ui_kit::native::GpuOffscreenRenderer>) {
+    use volt_ui_kit::{
+        declarative::{DocumentPainter, PaintBatch},
+        graphics::ClipRegion,
+        Painter, Rect,
+    };
+    for scale in [1., 1.25, 2.] {
+        let vp = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+        let mut painter = RasterPainter::new(vp);
+        for page in [
+            Page::Introduction,
+            Page::Table,
+            Page::ThemeEditor,
+            Page::Effects,
+        ] {
+            let mut app = App::new();
+            app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+            app.go(page);
+            let (document, handlers) = view(&app).build().unwrap().into_parts();
+            let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+            runtime
+                .layout(vp, &Bindings::default(), &mut painter)
+                .unwrap();
+            runtime.settle_animations();
+            let ui = theme(&app, ThemeMode::Dark);
+            let mut batches = runtime.paint_ui(&mut painter, &ui);
+            // Model the native host's extra frame clip through public painter
+            // primitives. It must not push dense pages into software fallback.
+            let mut begin = vec![];
+            painter.ui_clip_begin(
+                &mut begin,
+                ClipRegion::Rounded {
+                    bounds: [0., 0., vp.width, vp.height],
+                    radii: [12. * scale; 4],
+                },
+            );
+            painter.draw_rect(&mut begin, 0., 0., vp.width, vp.height, ui.palette.base[0]);
+            let clip = Rect::new(0., 0., vp.width, vp.height).unwrap();
+            batches.insert(
+                0,
+                PaintBatch {
+                    clip,
+                    shapes: begin,
+                    glyphs: vec![],
+                },
+            );
+            let mut end = vec![];
+            painter.ui_clip_end(&mut end);
+            batches.push(PaintBatch {
+                clip,
+                shapes: end,
+                glyphs: vec![],
+            });
+            let estimate = volt_ui_kit::native::estimate_gpu_scene(&mut painter, &batches).unwrap();
+            assert_eq!(estimate.over_budget, None, "{page:?} at {scale}x");
+            if let Some(gpu) = &mut gpu {
+                let pixels = gpu.render(&mut painter, &batches, [0.; 4]).unwrap();
+                assert_eq!(
+                    gpu.last_over_budget(),
+                    None,
+                    "{page:?} at {scale}x fell back"
+                );
+                for [x, y] in [
+                    [0, 0],
+                    [pixels.width() - 1, 0],
+                    [0, pixels.height() - 1],
+                    [pixels.width() - 1, pixels.height() - 1],
+                ] {
+                    assert_eq!(
+                        pixels.pixel(x, y).unwrap().alpha(),
+                        0,
+                        "{page:?} at {scale}x: corner is opaque"
+                    );
+                }
             }
         }
     }

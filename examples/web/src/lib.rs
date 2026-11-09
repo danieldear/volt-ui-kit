@@ -615,6 +615,19 @@ mod tests {
     use super::*;
     use volt_ui_kit_web::{WebEvent, WebView};
     #[test]
+    fn shared_northbound_keeps_browser_header_and_reset_without_native_controls() {
+        let mut host = WebView::new(gallery_northbound(), northbound::view).unwrap();
+        host.dispatch(WebEvent::Resize { width: 1200., height: 800., scale: 1.25 }).unwrap();
+        let no_window_controls = |host: &WebView<northbound::App>| {
+            assert!(!host.runtime().boxes().iter().any(|b| b.id.contains("window-controls")));
+        };
+        no_window_controls(&host);
+        host.update(|app| app.reset()).unwrap();
+        assert_eq!(host.context().screen, northbound::Screen::Settings);
+        no_window_controls(&host);
+    }
+
+    #[test]
     fn code_ime_is_application_owned_and_read_only_blocks_mutations() {
         use volt_ui_kit::declarative::CodeInput;
         let mut host = WebView::new(

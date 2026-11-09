@@ -113,7 +113,7 @@ pub fn view(app: &App) -> Element<App> {
         Screen::Settings => settings(app),
     };
     let main = vstack![
-        top_bar(app),
+        top_bar(app, cfg!(target_os = "macos")),
         vstack![page]
             .key(format!("page-{}", app.screen.slug()))
             .transition(Transition::fade().duration_ms(240))
@@ -221,7 +221,64 @@ fn rail(app: &App) -> Element<App> {
         .into()
 }
 
-fn top_bar(app: &App) -> Element<App> {
+// A browser canvas has no OS window actions and must not depend on the native host.
+#[cfg(not(feature = "native"))]
+pub(super) fn top_bar(app: &App, _macos: bool) -> Element<App> {
+    header_row(app, None)
+}
+
+// Keep the title/search/day row unchanged. Only client window controls occupy
+// a separate positioning lane *inside* the same 92px header, not a title bar.
+#[cfg(feature = "native")]
+pub(super) fn top_bar(app: &App, macos: bool) -> Element<App> {
+    if macos
+        || app.chrome != volt_ui_kit::native::WindowChrome::Custom
+        || app.window_state.fullscreen
+    {
+        return header_row(app, None);
+    }
+    let controls = window_controls(
+        WindowControlsState {
+            maximized: app.window_state.maximized,
+            can_maximize: app.window_state.resizable,
+            ..Default::default()
+        },
+        |app: &mut App, action| {
+            if let Some(sender) = &app.window_actions {
+                let _ = sender.send(action);
+            }
+        },
+    )
+    .key("northbound-window-controls");
+    zstack![
+        header_row(
+            app,
+            Some(
+                spacer()
+                    .key("window-controls-slot")
+                    .width(112.)
+                    .height(30.)
+                    .flex(0.)
+                    .into()
+            )
+        ),
+        hstack![spacer().scroll_passthrough(true), controls]
+            .key("window-controls-lane")
+            .height(52.)
+            .align(Align::Center)
+            .padding(responsive(18.).at(Breakpoint::Lg, 32.), Edge::Horizontal)
+            .scroll_passthrough(true),
+    ]
+    .key("northbound-header")
+    .flow(Flow::TopLeft)
+    .height(92.)
+    .align(Align::Stretch)
+    .into()
+}
+
+// The trailing slot keeps the previous horizontal allocation exactly: moving
+// controls must not shift the page title, search field, day chip or content.
+pub(super) fn header_row(app: &App, trailing: Option<Element<App>>) -> Element<App> {
     let (eyebrow, title) = match app.screen {
         Screen::Route => ("Two weeks, Lofoten to the North Cape", "Your route north"),
         Screen::Days => ("Fourteen days, four regions", "Day by day"),
@@ -235,6 +292,9 @@ fn top_bar(app: &App) -> Element<App> {
         vstack![small(eyebrow), display(title, 26.)]
             .flow(Flow::Left)
             .gap(2., Axis::Vertical)
+            .flex(1.)
+            .min_width(0.)
+            .clip(Clip::Bounds)
             .into(),
         spacer().into(),
     ];
@@ -248,6 +308,7 @@ fn top_bar(app: &App) -> Element<App> {
                 .rounded(10.)
                 .background(ColorToken::Base200)
                 .border_color(ColorToken::Border)
+                .visible(responsive(false).at(Breakpoint::Lg, true))
                 .on_change(|app: &mut App, value| app.query = value),]
             .into(),
         );
@@ -258,8 +319,12 @@ fn top_bar(app: &App) -> Element<App> {
             ColorToken::Base300,
             ColorToken::BaseContent,
         )
+        .visible(responsive(false).at(Breakpoint::Md, true))
         .into(),
     );
+    if let Some(trailing) = trailing {
+        bar.push(trailing);
+    }
     toolbar(bar)
         .key("top-bar")
         .height(92.)

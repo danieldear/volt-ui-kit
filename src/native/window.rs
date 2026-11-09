@@ -122,8 +122,15 @@ pub enum WindowChrome {
     /// Original compact macOS overlay geometry, for applications with short headers.
     /// Other platforms retain their native decorated title bar.
     CompactOverlay,
-    /// No system decorations. Applications must supply their own window controls.
+    /// No visible system title or controls. macOS retains an invisible native
+    /// frame for rounded corners, shadow, resizing and public material blur.
+    /// Linux/Windows are undecorated; applications own any window controls.
     Borderless,
+    /// App content owns the header layout, without an additional title strip.
+    /// macOS retains native traffic lights, corners, resizing and material over
+    /// full-size content. Linux/Windows use inline `ui::window_controls` and
+    /// toolkit-managed edge resizing. No header UI is inserted by this host.
+    Custom,
 }
 
 /// Additive host configuration for effects and custom chrome.
@@ -432,7 +439,7 @@ pub(super) fn run_ui_extended<C: 'static>(
 }
 #[allow(clippy::too_many_arguments)]
 fn run_host<C: 'static>(
-    options: SurfaceOptions,
+    mut options: SurfaceOptions,
     mut runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
@@ -442,6 +449,12 @@ fn run_host<C: 'static>(
     mut messages: Option<Box<dyn Messages<C>>>,
     mut extensions: super::application::HostExtensions<C>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(chrome) = &extensions.chrome {
+        options.window.chrome = chrome(&context);
+    }
+    if !extensions.resize_border.is_finite() || !(0. ..=24.).contains(&extensions.resize_border) {
+        return Err("custom resize border must be finite and between 0 and 24".into());
+    }
     validate_options(&options)?;
     let renderer = if let Some(preference) = extensions.renderer {
         preference.policy(cfg!(feature = "native-gpu"))?
@@ -497,11 +510,23 @@ fn run_host<C: 'static>(
         setup(&mut context);
     }
     let proxy = event_loop.create_proxy();
+    if let Some(actions) = extensions.window_actions.as_mut() {
+        let proxy = event_loop.create_proxy();
+        actions.connect(Arc::new(move || {
+            proxy.send_event(HostEvent::WindowActions).is_ok()
+        }));
+    }
     let mut app = App {
         options,
         renderer,
         extensions,
         requests: vec![],
+        window_actions: vec![],
+        last_window_state: None,
+        chrome_cursor: None,
+        header_drag_start: None,
+        #[cfg(target_os = "macos")]
+        custom_zoom: Default::default(),
         #[cfg(all(feature = "native-desktop", target_os = "macos"))]
         desktop_host: None,
         proxy,
@@ -601,6 +626,7 @@ impl<C: 'static> Content<C> {
 enum HostEvent {
     Messages,
     Requests,
+    WindowActions,
     Backdrop {
         generation: u64,
         status: super::BackdropStatus,
@@ -626,6 +652,12 @@ struct App<C> {
     #[allow(dead_code)]
     extensions: super::application::HostExtensions<C>,
     requests: Vec<ApplicationRequest>,
+    window_actions: Vec<crate::ui::WindowAction>,
+    last_window_state: Option<super::WindowState>,
+    chrome_cursor: Option<winit::window::CursorIcon>,
+    header_drag_start: Option<[f32; 2]>,
+    #[cfg(target_os = "macos")]
+    custom_zoom: super::macos_chrome::CustomZoom,
     #[cfg(all(feature = "native-desktop", target_os = "macos"))]
     desktop_host: Option<super::system::macos::DesktopHost>,
     /// Delivers AccessKit events into the event loop.
@@ -721,6 +753,9 @@ impl<C: 'static> App<C> {
         if let Some(requests) = self.extensions.requests.as_mut() {
             requests.close();
         }
+        if let Some(actions) = self.extensions.window_actions.as_mut() {
+            actions.close();
+        }
         self.error = Some(error.to_string());
         event_loop.exit();
     }
@@ -788,7 +823,18 @@ impl<C: 'static> App<C> {
         use crate::declarative::Cursor;
         use winit::window::CursorIcon;
         let cursor = self.runtime.cursor_at(x, y);
-        if cursor == self.cursor {
+        if let Some(direction) = self.resize_direction() {
+            let icon = super::chrome::resize_cursor(direction);
+            if self.chrome_cursor != Some(icon) {
+                if let Some(w) = &self.window {
+                    w.set_cursor(icon);
+                }
+                self.chrome_cursor = Some(icon);
+            }
+            return;
+        }
+        let restore = self.chrome_cursor.take().is_some();
+        if !restore && cursor == self.cursor {
             return;
         }
         self.cursor = cursor;
@@ -865,11 +911,17 @@ impl<C: 'static> App<C> {
         let size = w.inner_size();
         #[cfg(all(target_os = "linux", feature = "native-gpu"))]
         if let Some(backdrop) = &self.linux_backdrop {
-            backdrop.update(
+            backdrop.update_rounded(
                 w,
                 matches!(
                     self.options.background,
                     WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
+                ),
+                super::chrome::client_corner_radius(
+                    self.options.chrome,
+                    true,
+                    w.is_maximized(),
+                    w.fullscreen().is_some(),
                 ),
             );
         }
@@ -940,7 +992,8 @@ impl<C: 'static> App<C> {
     fn sync_native_backdrop(&mut self, window: &Arc<Window>) {
         #[cfg(target_os = "macos")]
         {
-            let public = matches!(self.options.background, WindowBackground::Blur { .. });
+            let public = matches!(self.options.background, WindowBackground::Blur { .. })
+                && window.is_decorated();
             let raw = matches!(
                 self.options.background,
                 WindowBackground::CompositorBlur { .. }
@@ -977,6 +1030,9 @@ impl<C: 'static> App<C> {
         {
             use super::{BackdropProtocol as P, BackdropStatus as S, BackdropUnavailable as U};
             self.report_backdrop_status(match self.options.background {
+                WindowBackground::Blur { .. } if !window.is_decorated() => {
+                    S::Unsupported(U::UndecoratedWindow)
+                }
                 WindowBackground::Blur { .. } if self.material.is_some() => {
                     S::Requested(P::AppKitMaterial)
                 }
@@ -995,15 +1051,30 @@ impl<C: 'static> App<C> {
                 WindowBackground::Blur { .. } | WindowBackground::CompositorBlur { .. }
             );
             if let Some(backdrop) = &self.linux_backdrop {
-                backdrop.update(window, enabled);
+                backdrop.update_rounded(
+                    window,
+                    enabled,
+                    super::chrome::client_corner_radius(
+                        self.options.chrome,
+                        true,
+                        window.is_maximized(),
+                        window.fullscreen().is_some(),
+                    ),
+                );
             } else if enabled {
                 self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
                 let generation = self.backdrop_generation;
                 let proxy = self.proxy.clone();
-                match super::linux_backdrop::Controller::new(
+                match super::linux_backdrop::Controller::new_rounded(
                     window.clone(),
                     self.backdrop_display.clone(),
                     true,
+                    super::chrome::client_corner_radius(
+                        self.options.chrome,
+                        true,
+                        window.is_maximized(),
+                        window.fullscreen().is_some(),
+                    ),
                     move |status| {
                         let _ = proxy.send_event(HostEvent::Backdrop { generation, status });
                     },
@@ -1030,6 +1101,114 @@ impl<C: 'static> App<C> {
             );
         }
     }
+    fn resize_direction(&self) -> Option<winit::window::ResizeDirection> {
+        let w = self.window.as_ref()?;
+        let size = w.inner_size();
+        super::chrome::resize_hit(
+            [size.width, size.height],
+            self.pointer?,
+            w.scale_factor(),
+            self.extensions.resize_border,
+            cfg!(not(target_os = "macos"))
+                && self.options.chrome == WindowChrome::Custom
+                && w.is_resizable()
+                && !w.is_maximized()
+                && w.fullscreen().is_none(),
+        )
+    }
+    fn window_maximized(window: &Window) -> bool {
+        // winit 0.30's macOS borderless is_maximized temporarily changes the
+        // style mask. Querying it on every event creates an endless resize loop.
+        #[cfg(target_os = "macos")]
+        {
+            super::macos_chrome::maximized(window).unwrap_or(false)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            window.is_maximized()
+        }
+    }
+    fn toggle_maximize(&mut self) {
+        self.header_drag_start = None;
+        let Some(w) = self.window.clone() else {
+            return;
+        };
+        if !w.is_resizable() || w.fullscreen().is_some() {
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if !w.is_decorated() {
+            if let Err(e) = super::macos_chrome::toggle_custom_zoom(&w, &mut self.custom_zoom) {
+                eprintln!("Custom window zoom unavailable: {e}");
+            }
+            return;
+        }
+        w.set_maximized(!Self::window_maximized(&w));
+    }
+    fn publish_window_state(&mut self) -> bool {
+        let Some(w) = &self.window else {
+            return false;
+        };
+        let state = super::WindowState {
+            maximized: Self::window_maximized(w),
+            fullscreen: w.fullscreen().is_some(),
+            focused: w.has_focus(),
+            resizable: w.is_resizable(),
+            chrome: self.options.chrome,
+        };
+        if self.last_window_state == Some(state) {
+            return false;
+        }
+        self.last_window_state = Some(state);
+        if let Some(changed) = &mut self.extensions.window_state {
+            changed(&mut self.context, state);
+            return true;
+        }
+        false
+    }
+    fn sync_state_chrome(&mut self) -> Result<(), String> {
+        let desired = self
+            .extensions
+            .chrome
+            .as_ref()
+            .map(|f| f(&self.context))
+            .unwrap_or(self.options.chrome);
+        if desired == self.options.chrome {
+            return Ok(());
+        }
+        let Some(w) = self.window.clone() else {
+            self.options.window.chrome = desired;
+            return Ok(());
+        };
+        if w.fullscreen().is_some() {
+            return Ok(());
+        } // defer until normal window geometry returns
+        #[cfg(all(target_os = "macos", feature = "native-gpu"))]
+        {
+            self.material = None;
+        }
+        #[cfg(target_os = "macos")]
+        super::macos_chrome::apply_chrome(&w, desired)?;
+        #[cfg(not(target_os = "macos"))]
+        w.set_decorations(chrome_policy(desired, false).0);
+        self.options.window.chrome = desired;
+        self.last_click = None;
+        self.header_drag_start = None;
+        self.runtime.cancel_input();
+        self.chrome_cursor = None;
+        w.set_cursor(winit::window::CursorIcon::Default);
+        #[cfg(feature = "native-gpu")]
+        if self.gpu.is_some() {
+            #[cfg(target_os = "linux")]
+            if let Some(gpu) = self.gpu.as_mut() {
+                let transparent = surface_transparency(self.options.background, desired);
+                w.set_transparent(transparent);
+                gpu.set_transparent(transparent)?;
+            }
+            self.sync_native_backdrop(&w);
+        }
+        Ok(())
+    }
     fn sync_state_background(&mut self) -> Result<(), String> {
         let Some(callback) = &self.extensions.background else {
             return Ok(());
@@ -1049,12 +1228,12 @@ impl<C: 'static> App<C> {
         #[cfg(feature = "native-gpu")]
         if self.gpu.is_some() {
             if let Some(window) = self.window.clone() {
-                if (previous == WindowBackground::Opaque)
-                    != (background == WindowBackground::Opaque)
+                if surface_transparency(previous, self.options.chrome)
+                    != surface_transparency(background, self.options.chrome)
                 {
                     // Reconfigure in place: a new surface would leave the old
                     // one's layer (and its last frame) behind the window.
-                    let transparent = background != WindowBackground::Opaque;
+                    let transparent = surface_transparency(background, self.options.chrome);
                     window.set_transparent(transparent);
                     if let Some(gpu) = self.gpu.as_mut() {
                         gpu.set_transparent(transparent)?;
@@ -1106,6 +1285,8 @@ impl<C: 'static> App<C> {
         Ok(())
     }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
+        self.sync_state_chrome()?;
+        self.publish_window_state();
         let result = self.content.after_input(
             outcome,
             &self.context,
@@ -1226,6 +1407,9 @@ impl<C: 'static> App<C> {
         }
         if let Some(requests) = self.extensions.requests.as_mut() {
             requests.close();
+        }
+        if let Some(actions) = self.extensions.window_actions.as_mut() {
+            actions.close();
         }
         eprintln!(
             "Closed after {} frames; {} shaped-text cache misses",
@@ -1823,7 +2007,27 @@ impl<C: 'static> App<C> {
             alpha_active
         };
         #[cfg(feature = "native-gpu")]
-        let background = root_clear(&theme, self.options.background, alpha_active);
+        let (batches, background) = {
+            let mut batches = batches;
+            let background = root_clear(&theme, self.options.background, alpha_active);
+            let radius = if alpha_active && cfg!(target_os = "linux") {
+                super::chrome::client_corner_radius(
+                    self.options.chrome,
+                    cfg!(target_os = "linux"),
+                    Self::window_maximized(w),
+                    w.fullscreen().is_some(),
+                )
+            } else {
+                0
+            };
+            let background = super::chrome::round_frame(
+                &mut batches,
+                self.painter.gpu_viewport(),
+                radius,
+                background,
+            );
+            (batches, background)
+        };
         #[cfg(not(feature = "native-gpu"))]
         let _ = alpha_active;
         let mut raster_done = paint_done;
@@ -1843,7 +2047,8 @@ impl<C: 'static> App<C> {
             }
             Some(Ok(super::gpu::PresentStatus::Lost)) => {
                 // A fresh device and renderer on the window's existing surface.
-                let transparent = self.options.background != WindowBackground::Opaque;
+                let transparent =
+                    surface_transparency(self.options.background, self.options.chrome);
                 let Some(old) = self.gpu.take() else {
                     return Ok(());
                 };
@@ -2079,6 +2284,33 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             return;
         }
+        if matches!(event, HostEvent::WindowActions) {
+            if let Some(pump) = &mut self.extensions.window_actions {
+                pump.drain(&mut self.window_actions);
+            }
+            for action in std::mem::take(&mut self.window_actions) {
+                use crate::ui::WindowAction;
+                if action == WindowAction::Close {
+                    if self.request_close(event_loop, CloseReason::Window) {
+                        return;
+                    }
+                } else if let Some(w) = self.window.clone() {
+                    match action {
+                        WindowAction::Minimize => w.set_minimized(true),
+                        WindowAction::ToggleMaximize => self.toggle_maximize(),
+                        _ => (),
+                    }
+                }
+            }
+            self.publish_window_state();
+            if let Err(error) = self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            }) {
+                self.fail(event_loop, error);
+            }
+            return;
+        }
         #[cfg(target_os = "linux")]
         if matches!(event, HostEvent::SystemReducedMotion) {
             self.reduced_motion = true;
@@ -2181,6 +2413,8 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if unified_titlebar_policy(self.options.chrome, true) {
                 super::macos_chrome::install_unified_titlebar(&w)?;
             }
+            #[cfg(target_os = "macos")]
+            super::macos_chrome::sync_controls_and_shadow(&w, self.options.chrome)?;
             self.access = Some(accesskit_winit::Adapter::with_event_loop_proxy(
                 event_loop,
                 &w,
@@ -2217,7 +2451,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             let (try_gpu, require_gpu) = self.renderer;
             #[cfg(feature = "native-gpu")]
             if try_gpu {
-                match super::gpu::GpuPresenter::new(w.clone(), self.options.background != WindowBackground::Opaque) {
+                match super::gpu::GpuPresenter::new(w.clone(), surface_transparency(self.options.background, self.options.chrome)) {
                     Ok(gpu)=>{
                         // Match winit's native startup ordering (and Volt
                         // Terminal): prepare blur/material before first show.
@@ -2264,7 +2498,12 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         }
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.header_drag_start = None;
         self.backdrop_generation = self.backdrop_generation.wrapping_add(1);
+        #[cfg(target_os = "macos")]
+        {
+            self.custom_zoom = super::macos_chrome::CustomZoom::default();
+        }
         #[cfg(all(target_os = "linux", feature = "native-gpu"))]
         {
             self.linux_backdrop = None;
@@ -2320,6 +2559,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 }
                 WindowEvent::RedrawRequested => self.render()?,
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                    self.header_drag_start = None;
                     #[cfg(target_os = "macos")]
                     if unified_titlebar_policy(self.options.chrome, true) {
                         if let Some(window) = self.window.as_ref() {
@@ -2341,6 +2581,20 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                         self.layout()?;
                     }
                     self.pointer = Some([position.x as f32, position.y as f32]);
+                    let scale = self.window.as_ref().map_or(1., |w| w.scale_factor() as f32);
+                    if super::chrome::take_header_drag(
+                        &mut self.header_drag_start,
+                        [position.x as f32, position.y as f32],
+                        scale,
+                    ) {
+                        self.last_click = None;
+                        if let Some(window) = &self.window {
+                            if let Err(error) = window.drag_window() {
+                                eprintln!("Window drag unavailable: {error}");
+                            }
+                        }
+                        return Ok(());
+                    }
                     if self.code_pointer_drag(position.x as f32, position.y as f32)? {
                         self.update_cursor(position.x as f32, position.y as f32);
                         return Ok(());
@@ -2456,6 +2710,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 WindowEvent::DroppedFile(path) => self.dropped.push(path),
                 WindowEvent::CursorLeft { .. } => {
                     self.last_click = None;
+                    self.header_drag_start = None;
                     self.pointer = None;
                     let outcome = self
                         .runtime
@@ -2484,8 +2739,32 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                 } => {
                     self.layout()?;
                     self.activation_key = None;
+                    self.header_drag_start = None;
+                    self.last_click = None;
                     self.runtime.cancel_input();
                     if let Some([x, y]) = self.pointer {
+                        // Use winit's real system menu only where its backend
+                        // implements it. X11/macOS keep application context menus.
+                        #[cfg(target_os = "linux")]
+                        let wayland = {
+                            use winit::platform::wayland::ActiveEventLoopExtWayland;
+                            event_loop.is_wayland()
+                        };
+                        #[cfg(not(target_os = "linux"))]
+                        let wayland = false;
+                        if super::chrome::native_header_menu(
+                            self.options.chrome,
+                            cfg!(target_os = "windows"),
+                            wayland,
+                        ) && self.runtime.drag_region_hit(x, y)
+                        {
+                            if let Some(window) = &self.window {
+                                if window.fullscreen().is_none() {
+                                    window.show_window_menu(PhysicalPosition::new(x, y));
+                                    return Ok(());
+                                }
+                            }
+                        }
                         // Over code, the caret moves to what was clicked first.
                         if let Some(outcome) = self
                             .runtime
@@ -2507,6 +2786,9 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     button: MouseButton::Left,
                     ..
                 } => {
+                    if state == ElementState::Released {
+                        self.header_drag_start = None;
+                    }
                     if self.trace && state == ElementState::Released {
                         self.pending_release = Some(Instant::now());
                     }
@@ -2517,13 +2799,32 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                 self.key_scroll_at = Some([x, y]);
                                 self.runtime.pointer_move(x, y);
                                 self.activation_key = None;
-                                if self.runtime.drag_region_hit(x, y) {
+                                if let Some(direction) = self.resize_direction() {
+                                    self.runtime.cancel_input();
+                                    if let Some(w) = &self.window {
+                                        if let Err(e) = w.drag_resize_window(direction) {
+                                            eprintln!("Window resize unavailable: {e}");
+                                        }
+                                    }
+                                } else if self.runtime.drag_region_hit(x, y) {
                                     // A drag must not leave a click or keyboard
                                     // activation captured underneath the header.
                                     self.runtime.cancel_input();
-                                    if let Some(window) = &self.window {
-                                        if let Err(error) = window.drag_window() {
-                                            eprintln!("Window drag unavailable: {error}");
+                                    let maximize = self.options.chrome == WindowChrome::Custom
+                                        && self.count_click([x, y]) == 2;
+                                    if maximize {
+                                        self.toggle_maximize();
+                                        self.last_click = None;
+                                    } else {
+                                        // Native move loops can consume the release and
+                                        // second press. Start Custom moves only after a
+                                        // real drag; Wayland still uses the held press serial.
+                                        if self.options.chrome == WindowChrome::Custom {
+                                            self.header_drag_start = Some([x, y]);
+                                        } else if let Some(window) = &self.window {
+                                            if let Err(error) = window.drag_window() {
+                                                eprintln!("Window drag unavailable: {error}");
+                                            }
                                         }
                                     }
                                 } else {
@@ -2568,6 +2869,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                                 self.redraw();
                             }
                             ElementState::Released => {
+                                self.header_drag_start = None;
                                 self.code_pointer_up();
                                 if self.runtime.text_select_release() {
                                     self.after_selection()?;
@@ -2585,6 +2887,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
                     }
                 }
                 WindowEvent::Focused(false) => {
+                    self.header_drag_start = None;
                     self.focused = false;
                     self.runtime.set_tooltips_active(false);
                     self.pointer = None;
@@ -2827,6 +3130,19 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         if event_loop.exiting() {
             return;
         }
+        if let Err(error) = self.sync_state_chrome() {
+            self.fail(event_loop, error);
+            return;
+        }
+        if self.publish_window_state() {
+            if let Err(error) = self.after_input(InputOutcome {
+                changed: true,
+                activated: true,
+            }) {
+                self.fail(event_loop, error);
+                return;
+            }
+        }
         if let (Some(visible), Some(window)) = (&self.extensions.window_visible, &self.window) {
             let desired = visible(&self.context);
             if self.extensions.last_window_visible != Some(desired) {
@@ -2843,6 +3159,9 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         }
         if let Some(requests) = self.extensions.requests.as_mut() {
             requests.finish_turn();
+        }
+        if let Some(actions) = self.extensions.window_actions.as_mut() {
+            actions.finish_turn();
         }
         if !self.dropped.is_empty() {
             let paths = std::mem::take(&mut self.dropped);
@@ -2927,12 +3246,17 @@ fn chrome_policy(chrome: WindowChrome, macos: bool) -> (bool, bool) {
     match chrome {
         WindowChrome::Native => (true, false),
         WindowChrome::Overlay | WindowChrome::CompactOverlay => (true, macos),
-        WindowChrome::Borderless => (false, false),
+        WindowChrome::Custom => (macos, macos),
+        WindowChrome::Borderless => (macos, macos),
     }
 }
 #[cfg(any(test, target_os = "macos"))]
 fn unified_titlebar_policy(chrome: WindowChrome, macos: bool) -> bool {
-    macos && chrome == WindowChrome::Overlay
+    macos
+        && matches!(
+            chrome,
+            WindowChrome::Overlay | WindowChrome::Custom | WindowChrome::Borderless
+        )
 }
 fn root_clear(theme: &Theme, background: WindowBackground, alpha_active: bool) -> [f32; 4] {
     let mut clear = theme.background;
@@ -2943,6 +3267,11 @@ fn root_clear(theme: &Theme, background: WindowBackground, alpha_active: bool) -
     };
     clear
 }
+fn surface_transparency(background: WindowBackground, chrome: WindowChrome) -> bool {
+    background != WindowBackground::Opaque
+        || (cfg!(target_os = "linux")
+            && matches!(chrome, WindowChrome::Custom | WindowChrome::Borderless))
+}
 fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
     let theme = match options.theme {
         ThemeMode::Light => Some(winit::window::Theme::Light),
@@ -2952,7 +3281,8 @@ fn surface_window_attributes(options: &SurfaceOptions) -> WindowAttributes {
     window_attributes(&options.window)
         .with_theme(theme)
         .with_transparent(
-            cfg!(feature = "native-gpu") && options.background != WindowBackground::Opaque,
+            cfg!(feature = "native-gpu")
+                && surface_transparency(options.background, options.chrome),
         )
         .with_blur(
             !cfg!(any(target_os = "macos", target_os = "linux"))
@@ -2982,6 +3312,7 @@ fn window_attributes(options: &WindowOptions) -> WindowAttributes {
                 .with_titlebar_transparent(true)
                 .with_fullsize_content_view(true)
                 .with_title_hidden(true)
+                .with_titlebar_buttons_hidden(options.chrome == WindowChrome::Borderless)
         } else {
             attributes
         }
@@ -3199,17 +3530,16 @@ mod tests {
         assert_eq!(chrome_policy(WindowChrome::Native, true), (true, false));
         assert_eq!(chrome_policy(WindowChrome::Overlay, true), (true, true));
         assert_eq!(chrome_policy(WindowChrome::Overlay, false), (true, false));
-        assert_eq!(
-            chrome_policy(WindowChrome::Borderless, true),
-            (false, false)
-        );
+        assert_eq!(chrome_policy(WindowChrome::Custom, true), (true, true));
+        assert_eq!(chrome_policy(WindowChrome::Custom, false), (false, false));
+        assert_eq!(chrome_policy(WindowChrome::Borderless, true), (true, true));
         assert_eq!(
             chrome_policy(WindowChrome::Borderless, false),
             (false, false)
         );
         let borderless =
             window_attributes(&NativeOptions::default().with_chrome(WindowChrome::Borderless));
-        assert!(!borderless.decorations);
+        assert_eq!(borderless.decorations, cfg!(target_os = "macos"));
         let overlay =
             window_attributes(&NativeOptions::default().with_chrome(WindowChrome::Overlay));
         assert!(overlay.decorations);
@@ -3217,11 +3547,11 @@ mod tests {
     #[test]
     fn unified_titlebar_policy_keeps_native_and_compact_chrome_unchanged() {
         assert!(unified_titlebar_policy(WindowChrome::Overlay, true));
-        for chrome in [
-            WindowChrome::Native,
-            WindowChrome::CompactOverlay,
-            WindowChrome::Borderless,
-        ] {
+        assert!(unified_titlebar_policy(WindowChrome::Custom, true));
+        assert!(!unified_titlebar_policy(WindowChrome::Custom, false));
+        assert!(unified_titlebar_policy(WindowChrome::Borderless, true));
+        assert!(!unified_titlebar_policy(WindowChrome::Borderless, false));
+        for chrome in [WindowChrome::Native, WindowChrome::CompactOverlay] {
             assert!(!unified_titlebar_policy(chrome, true));
         }
         assert!(!unified_titlebar_policy(WindowChrome::Overlay, false));
@@ -3704,6 +4034,31 @@ mod rust_view_tests {
 #[cfg(test)]
 mod surface_option_tests {
     use super::*;
+    #[test]
+    fn linux_client_frames_keep_alpha_even_when_the_app_background_is_opaque() {
+        for chrome in [
+            WindowChrome::Native,
+            WindowChrome::Overlay,
+            WindowChrome::CompactOverlay,
+            WindowChrome::Custom,
+            WindowChrome::Borderless,
+        ] {
+            for background in [
+                WindowBackground::Opaque,
+                WindowBackground::Transparent { opacity: 0.5 },
+            ] {
+                let options = SurfaceOptions::from(NativeOptions::default())
+                    .with_chrome(chrome)
+                    .with_background(background);
+                let attrs = surface_window_attributes(&options);
+                let expected = cfg!(feature = "native-gpu")
+                    && (background != WindowBackground::Opaque
+                        || (cfg!(target_os = "linux")
+                            && matches!(chrome, WindowChrome::Custom | WindowChrome::Borderless)));
+                assert_eq!(attrs.transparent, expected);
+            }
+        }
+    }
     #[cfg(feature = "native-gpu")]
     #[test]
     fn gpu_surface_retries_back_off_and_return_to_event_driven_idle() {
