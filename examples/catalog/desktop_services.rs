@@ -231,7 +231,7 @@ notifications::request_authorization(move |decision| {
 let note = LocalNotification::new("build.ready", "Build ready", "All checks passed.")
     .after(Duration::from_secs(8));
 notifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;
-// A later Remove action (after this callback) may remove "build.ready"."#,
+// A later Remove action (after this callback) may remove "build.ready"."#.into(),
     },Section {
         id:"desktop-tray",title:"One command registry, multiple surfaces",note:"The optional native-desktop tray reuses these command IDs. Menu/toolbar/palette/tray commands all pass current enablement and modal guards.",
         demo:vstack![text(format!("Command executions: {}",app.command_probe)).font_size(24.).font_weight(700),
@@ -243,7 +243,7 @@ notifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;
         template: true, commands: vec![
             DesktopCommand::new("command-probe", "Count command execution"),
         ] })
-// Register the same ID in CommandRegistry; don't duplicate callbacks."#,
+// Register the same ID in CommandRegistry; don't duplicate callbacks."#.into(),
     }],api:vec![
         ("notifications::capabilities()","Adapter availability plus explicit unsupported actions/settings/foreground capabilities."),
         ("request_authorization(callback)","Explicit alert-only decision, no automatic prompting; OS-thread completion."),

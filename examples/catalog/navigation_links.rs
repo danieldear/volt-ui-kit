@@ -155,7 +155,7 @@ navigation_stack(&app.history, |route| match route {
     Route::Activity => activity_view(app),
 }).key("current-page");
 // app.history.back(); app.history.forward();
-// app.history.snapshot(); app.history.restore(checkpoint)?;"#,
+// app.history.snapshot(); app.history.restore(checkpoint)?;"#.into(),
     }
 }
 fn capture(app: &mut App, url: ExternalUrl) {
@@ -195,7 +195,7 @@ pub fn links_section(app: &App) -> Section {
             Err(error) => error.to_string(),
         };
     });
-// HTTP(S) only. No credentials, file URLs or executable schemes."# }
+// HTTP(S) only. No credentials, file URLs or executable schemes."#.into() }
 }
 
 fn platform_links_available() -> bool {

@@ -135,7 +135,7 @@ fn every_page_builds_in_both_modes_with_code_and_overlays() {
     }
     app.palette.open = true;
     app.dialog_open = true;
-    app.fruit_open = true;
+    app.samples.select.open = true;
     mount(&app, [1440., 920.]);
 }
 
@@ -427,11 +427,14 @@ fn data_view_first_last_focus_and_selection_never_overpaint_the_frame() {
                     let mut app = App::new();
                     app.mode = mode;
                     app.go(page);
-                    app.row = None;
+                    app.samples.table.row = None;
+                    app.samples.table_square.row = None;
                     app.file = None;
                     if let Some((index, _)) = target {
                         if page == Page::Table {
-                            app.row = Some(if index == 0 { 0 } else { 5 });
+                            let row = Some(if index == 0 { 0 } else { 5 });
+                            app.samples.table.row = row;
+                            app.samples.table_square.row = row;
                         } else {
                             app.file = Some(if index == 0 { 1 } else { 7 });
                         }
@@ -548,9 +551,11 @@ fn data_view_frame_borders_survive_gpu_selection_and_focus() {
                     let mut app = App::new();
                     app.mode = mode;
                     app.go(page);
-                    app.row = state
+                    let row = state
                         .filter(|_| page == Page::Table)
                         .map(|i| if i == 0 { 0 } else { 5 });
+                    app.samples.table.row = row;
+                    app.samples.table_square.row = row;
                     app.file =
                         state
                             .filter(|_| page == Page::TreeView)
@@ -639,32 +644,51 @@ fn data_view_frame_borders_survive_gpu_selection_and_focus() {
     }
 }
 
+/// Each table sample keeps its own selection and sort.
+fn table_state(app: &App, frame: &str) -> (Option<u32>, Option<(u8, SortDirection)>) {
+    if frame == "invoices" {
+        (app.samples.table.row, app.samples.table.sort)
+    } else {
+        (app.samples.table_square.row, app.samples.table_square.sort)
+    }
+}
+
 #[test]
-fn rounded_and_square_catalog_tables_share_working_sort_and_selection() {
+fn rounded_and_square_catalog_tables_sort_and_select_independently() {
     use volt_ui_kit::declarative::AccessRole;
-    let mut app = App::new();
-    app.go(Page::Table);
     for scale in [1., 2.] {
+        let mut app = App::new();
+        app.go(Page::Table);
+        app.samples.table = Default::default();
+        app.samples.table_square = Default::default();
         let viewport = Viewport::new(1080. * scale, 1600. * scale, scale).unwrap();
         let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
         let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
         let mut painter = RasterPainter::new(viewport);
-        for (frame, row_id, row_value) in [
-            ("invoices", "inv-0", 0),
-            ("invoices-square", "inv-square-5", 5),
+        for (frame, other, row_id, row_value, invoice) in [
+            ("invoices", "invoices-square", "inv-0", 0, "INV001"),
+            ("invoices-square", "invoices", "inv-square-5", 5, "INV006"),
         ] {
             runtime
                 .layout(viewport, &Bindings::default(), &mut painter)
                 .unwrap();
+            let other_before = table_state(&app, other);
             runtime
                 .accessibility_activate(row_id, &mut handlers, &mut app)
                 .unwrap();
-            assert_eq!(app.row, Some(row_value));
+            assert_eq!(table_state(&app, frame).0, Some(row_value));
             let header = format!("{frame}-column-3");
             runtime
                 .accessibility_activate(&header, &mut handlers, &mut app)
                 .unwrap();
-            assert_eq!(app.sort.as_ref().unwrap().0, 3);
+            let (_, sort) = table_state(&app, frame);
+            let (column, direction) = sort.expect("the header sorts its own table");
+            assert_eq!(column, 3);
+            assert_eq!(
+                table_state(&app, other),
+                other_before,
+                "{frame} must not change {other}"
+            );
             let (doc, next) = view(&app).build().unwrap().into_parts();
             runtime
                 .replace_document(doc, &next, &Bindings::default())
@@ -674,28 +698,22 @@ fn rounded_and_square_catalog_tables_share_working_sort_and_selection() {
                 .layout(viewport, &Bindings::default(), &mut painter)
                 .unwrap();
             let nodes = runtime.accessibility_nodes();
-            for id in ["invoices", "invoices-square"] {
-                let table = nodes.iter().position(|n| n.id == id).unwrap();
-                assert_eq!(nodes[table].role, AccessRole::Table);
-                let selected = nodes
-                    .iter()
-                    .filter(|n| n.parent == Some(table) && n.selected == Some(true))
-                    .collect::<Vec<_>>();
-                assert_eq!(selected.len(), 1);
-                assert!(selected[0].label.contains(if row_value == 0 {
-                    "INV001"
-                } else {
-                    "INV006"
-                }));
-                let sort_header = nodes
-                    .iter()
-                    .find(|n| n.id == format!("{id}-column-3"))
-                    .unwrap();
-                assert_eq!(
-                    sort_header.table.unwrap().sort_ascending,
-                    Some(app.sort.as_ref().unwrap().1 == SortDirection::Ascending)
-                );
-            }
+            let table = nodes.iter().position(|n| n.id == frame).unwrap();
+            assert_eq!(nodes[table].role, AccessRole::Table);
+            let selected = nodes
+                .iter()
+                .filter(|n| n.parent == Some(table) && n.selected == Some(true))
+                .collect::<Vec<_>>();
+            assert_eq!(selected.len(), 1);
+            assert!(selected[0].label.contains(invoice));
+            let sort_header = nodes
+                .iter()
+                .find(|n| n.id == format!("{frame}-column-3"))
+                .unwrap();
+            assert_eq!(
+                sort_header.table.unwrap().sort_ascending,
+                Some(direction == SortDirection::Ascending)
+            );
         }
     }
 }
@@ -751,7 +769,8 @@ fn catalog_rounded_table_clips_header_and_last_focus_without_changing_cells() {
                         .unwrap()
                         .activated
                 );
-                assert_eq!(app.row, Some(5));
+                let (row, _) = table_state(&app, key);
+                assert_eq!(row, Some(5));
                 let demo = pages::doc(Page::Table, &app)
                     .sections
                     .into_iter()
@@ -804,7 +823,8 @@ fn catalog_rounded_table_clips_header_and_last_focus_without_changing_cells() {
                         .unwrap()
                         .activated
                 );
-                assert!(app.sort.is_some());
+                let (_, sort) = table_state(&app, key);
+                assert_eq!(sort.map(|(column, _)| column), Some(0));
             }
         }
     }
@@ -2131,6 +2151,34 @@ fn motion_cards_render_inflight_and_reduced_on_gpu_without_fallback() {
                 assert_eq!(gpu.last_over_budget(), None, "{id} reduced motion");
                 assert!(!r.is_animating());
             }
+        }
+    }
+}
+
+#[test]
+fn every_sample_is_a_complete_program_and_the_panel_hides_only_build_lines() {
+    for (name, source) in super::samples::ALL {
+        for line in source.lines().filter(|l| l.ends_with("// catalog-only")) {
+            assert!(
+                line.starts_with("#[cfg(feature = \"native\")]"),
+                "{name}: only the native cfg may be hidden, not {line:?}"
+            );
+        }
+        let shown = super::samples::code(name);
+        assert!(!shown.contains("catalog-only"), "{name}");
+        assert!(
+            !shown.contains("#[cfg("),
+            "{name}: a copied file has no cfg"
+        );
+        for part in [
+            "use volt_ui_kit::native::Application;",
+            "use volt_ui_kit::ui::prelude::*;",
+            "pub struct App",
+            "pub fn view(app: &App) -> Element<App>",
+            "pub fn main() -> Result<(), Box<dyn std::error::Error>>",
+            "Application::new(",
+        ] {
+            assert!(shown.contains(part), "{name} is missing {part:?}");
         }
     }
 }

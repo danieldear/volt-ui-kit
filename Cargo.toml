@@ -98,6 +98,9 @@ required-features = ["native"]
 [[example]]
 name = "components"
 required-features = ["native"]
+[[example]]
+name = "samples"
+required-features = ["native"]
 
 [[example]]
 name = "rust_counter"

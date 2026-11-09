@@ -34,8 +34,10 @@ preview, not a component demo. See [third-party notices](third-party.md).
 - `docs/assets/catalog-data.json`: source-backed Catalog metadata.
 - `docs/site-manifest.json`: the explicit generated publishing allowlist.
 
-The Catalog usage strings are excerpts, not all standalone programs. Page
-notes link to the complete example source and the runnable first-window guide.
+Sections backed by `examples/catalog/samples/` (Button, Select and Table so
+far) show a complete runnable program: the same file the Catalog runs as the
+preview. The remaining usage strings are still excerpts. Page notes link to
+the complete example source and the runnable first-window guide.
 Browser and native interaction tests are separate acceptance gates.
 Snapshots use installed fonts; no Apple font binary is distributed. The dynamic
 date demos use the date on which the exporter runs.

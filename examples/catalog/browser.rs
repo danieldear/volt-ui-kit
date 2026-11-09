@@ -97,7 +97,7 @@ pub fn native_doc(page: Page) -> Doc {
         _ => &[],
     };
     Doc {sections:entries.iter().map(|&(id,title)|Section {
-        id,title,note:"Native OS integration: unavailable in a browser sandbox.",code:"Run the native Catalog for this operating-system integration.",
+        id,title,note:"Native OS integration: unavailable in a browser sandbox.",code:"Run the native Catalog for this operating-system integration.".into(),
         demo:vstack![badge("Native only").background(ColorToken::Warning.alpha(14)).color(ColorToken::Warning),text(title).font_size(22.).font_weight(600),text("This is an operating-system service, not a browser component. It requires the native Catalog; the web preview does not request permissions, send notifications, access files or create a tray icon.").font_size(14.).color(ColorToken::Muted)].max_width(540.).gap(14.,Axis::Vertical).padding(24.,Edge::All).border_width(1.).border_color(ColorToken::Border).rounded(12.).into(),
     }).collect(),api:vec![]}
 }

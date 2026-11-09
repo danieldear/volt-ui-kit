@@ -129,7 +129,7 @@ pub fn workspace(app: &App) -> Section {
     .animation(Animation::spring().duration_ms(520));
 // Or tune the response without adding a timer:
 // Animation::spring_with(Spring::new().damping_ratio(0.7))
-// Retargeting preserves painted position, not physical velocity."#}
+// Retargeting preserves painted position, not physical velocity."#.into()}
 }
 pub fn sequence(app: &App) -> Section {
     let rows = vstack(
@@ -199,7 +199,7 @@ pub fn sequence(app: &App) -> Section {
         .stagger(index, 70))
     .transition_revision(app.replay_revision);
 // Replay button: app.replay_revision = app.replay_revision.wrapping_add(1);
-// Unchanged revision keeps the current transition's clock."#}
+// Unchanged revision keeps the current transition's clock."#.into()}
 }
 pub fn feedback(app: &App) -> Section {
     let surface = vstack![
@@ -246,5 +246,5 @@ pub fn feedback(app: &App) -> Section {
     .pressed_style(|s| s.offset(0., 1.).opacity(0.8))
     .animate_on(Interaction::Hover, Animation::spring().duration_ms(280))
     .animate_on(Interaction::Pressed, Animation::ease_out().duration_ms(90))
-    .on_click(save_changes);"#}
+    .on_click(save_changes);"#.into()}
 }

@@ -158,7 +158,7 @@ fn section(
         title,
         note,
         demo: demo.into(),
-        code,
+        code: code.into(),
     }
 }
 fn muted(value: impl Into<String>) -> volt_ui_kit::ui::Text<App> {

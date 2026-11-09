@@ -195,7 +195,7 @@ pub fn doc(app: &App) -> Doc {
     })
     .run()?;
 // Save / Discard: update app state, then enqueue Close(reason).
-// Cancel: dismiss the dialog without closing or clearing the draft."#,
+// Cancel: dismiss the dialog without closing or clearing the draft."#.into(),
         }],
         api: vec![
             ("CommandRegistry::new().command(...)", "Up to 256 validated, uniquely named Rust commands."),

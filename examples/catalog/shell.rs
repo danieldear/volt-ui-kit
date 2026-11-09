@@ -468,7 +468,7 @@ fn article(app: &App) -> El<App> {
             .font_size(12.);
         let body: El<App> = if showing_code {
             // Selectable, read-only source; Cmd/Ctrl+C copies a selection.
-            text_area(section.code)
+            text_area(section.code.clone())
                 .key(format!("{id}-code"))
                 .read_only(true)
                 .on_change(|_: &mut App, _| {})

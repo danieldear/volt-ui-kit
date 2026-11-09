@@ -290,7 +290,7 @@ let selected = file_dialog::open_file(&FileDialogOptions::new("Open notes"))?;
 // Worker: files::read_text_file(&path)
 // Worker: files::save_text_file(&path, &snapshot, SavePolicy::MatchContents(&original))
 // Main-thread completion marks ONLY that saved snapshot clean.
-// Close stays vetoed until saving succeeds; errors keep the draft."#,
+// Close stays vetoed until saving succeeds; errors keep the draft."#.into(),
     }],api:vec![("file_dialog::open_file / save_file", "Main-thread, native-desktop macOS panels; Cancel is Ok(None)."),("files::read_text_file", "Bounded UTF-8 regular file; no silent truncation."),("files::save_text_file", "Private sibling + sync + commit; explicit create/replace policy."),("SavePolicy::MatchContents(original)","Rejects ordinary external edits before replacement; not a cross-process lock.")]}
 }
 pub fn overlay(app: &App) -> El<App> {

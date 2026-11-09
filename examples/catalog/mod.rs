@@ -15,6 +15,9 @@ pub mod lifecycle;
 pub mod motion_lab;
 pub mod navigation_links;
 mod pages;
+// Each sample's `main` runs only from examples/samples.rs.
+#[allow(dead_code)]
+pub mod samples;
 #[cfg(feature = "native")]
 mod shell;
 #[cfg(all(test, feature = "native"))]
@@ -127,8 +130,6 @@ pub struct App {
     pub log_entries: Vec<String>,
     pub volume: f32,
     pub price: f32,
-    pub fruit: u8,
-    pub fruit_open: bool,
     pub timezone: u8,
     pub timezone_open: bool,
     pub dialog_open: bool,
@@ -140,8 +141,6 @@ pub struct App {
     pub popover_open: bool,
     pub width: f32,
     pub height: f32,
-    pub sort: Option<(u8, SortDirection)>,
-    pub row: Option<u32>,
     pub expanded: Vec<u16>,
     pub file: Option<u16>,
     pub window: Range<usize>,
@@ -150,11 +149,12 @@ pub struct App {
     pub reveal: bool,
     /// Sign-in demo: the password is shown in plain text.
     pub show_password: bool,
-    pub liked: bool,
     pub last_action: String,
     pub image: Image,
     /// Demo state for the parity component pages.
     pub kit: kit::State,
+    /// State for the runnable code samples (see `samples`).
+    pub samples: samples::State,
     /// The landing page's live counter demo.
     pub counter: u32,
     #[cfg(not(feature = "native"))]
@@ -221,8 +221,6 @@ impl App {
                 .into(),
             volume: 0.6,
             price: 40.,
-            fruit: 1,
-            fruit_open: false,
             timezone: 2,
             timezone_open: false,
             dialog_open: false,
@@ -234,8 +232,6 @@ impl App {
             popover_open: false,
             width: 100.,
             height: 25.,
-            sort: Some((0, SortDirection::Ascending)),
-            row: Some(2),
             expanded: vec![1, 2],
             file: Some(4),
             window: 0..14,
@@ -243,10 +239,21 @@ impl App {
             split: 0.4,
             reveal: true,
             show_password: false,
-            liked: false,
             last_action: "Nothing yet".into(),
             image: art::sample_landscape(),
             kit: kit::State::default(),
+            // Open on an interesting state: a sorted table with a selected row.
+            samples: samples::State {
+                select: samples::select::App {
+                    fruit: 1,
+                    ..Default::default()
+                },
+                table: samples::table::App {
+                    row: Some(2),
+                    sort: Some((0, SortDirection::Ascending)),
+                },
+                ..Default::default()
+            },
             counter: 0,
             #[cfg(not(feature = "native"))]
             web_section: String::new(),
@@ -266,8 +273,11 @@ impl App {
         self.palette.query.clear();
         self.nav_open = false;
         // Close every open overlay that belonged to the previous page.
-        self.fruit_open = false;
         self.timezone_open = false;
+        self.samples.select.open = false;
+        self.samples.select_disabled.open = false;
+        self.samples.select_vs_combobox.size_open = false;
+        self.samples.select_vs_combobox.country_search.open = false;
         self.menu_open = false;
         self.actions_open = false;
         self.context_open = false;

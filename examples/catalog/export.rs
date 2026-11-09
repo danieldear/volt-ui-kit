@@ -111,7 +111,7 @@ mod tests {
             assert_eq!(sections.len(), doc.sections.len());
             for (data, section) in sections.iter().zip(doc.sections) {
                 assert_eq!(data["id"], section.id);
-                assert_eq!(data["code"], section.code);
+                assert_eq!(data["code"], section.code.as_ref());
                 assert_eq!(data["title"], section.title);
                 assert_eq!(data["note"], section.note);
             }
