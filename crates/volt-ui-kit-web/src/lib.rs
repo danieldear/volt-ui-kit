@@ -234,6 +234,7 @@ pub struct WebView<C: 'static> {
     painter: RasterPainter,
     viewport: Viewport,
     suspended: bool,
+    busy: bool,
     pointer: Option<[f32; 2]>,
 }
 impl<C: 'static> WebView<C> {
@@ -253,6 +254,7 @@ impl<C: 'static> WebView<C> {
             painter: RasterPainter::new(viewport),
             viewport,
             suspended: false,
+            busy: false,
             pointer: None,
         };
         host.runtime.set_reduced_motion(true);
@@ -836,6 +838,12 @@ impl<C: 'static> WebView<C> {
         }
         Ok(outcome.changed || outcome.activated)
     }
+    /// Keep the host asking for frames while the app has timed work of its
+    /// own, such as a scripted reply playing back, even when nothing animates.
+    /// Clear it when the work ends; there is still no idle loop.
+    pub fn set_busy(&mut self, busy: bool) {
+        self.busy = busy;
+    }
     /// Advance only from a browser animation frame while visible. No idle loop.
     pub fn advance(&mut self, milliseconds: f64) -> Result<bool, String> {
         if !milliseconds.is_finite() || !(0. ..=1e12).contains(&milliseconds) {
@@ -871,7 +879,7 @@ impl<C: 'static> WebView<C> {
             };
             json!({"id":n.id,"parent":n.parent,"role":role,"label":n.label,"value":if n.password {None}else{n.value},"placeholder":n.placeholder,"checked":n.checked,"selected":n.selected,"expanded":n.expanded,"numeric":n.numeric,"scroll":n.scroll,"bounds":n.bounds.map(|v|v/scale),"clip":clip,"enabled":n.enabled,"focused":n.focused,"readOnly":n.read_only || code.unwrap_or(false),"code":code.is_some(),"selection":selection,"password":n.password,"clickable":n.clickable,"multiline":n.role==AccessRole::MultilineTextInput})
         }).collect();
-        json!({"width":self.viewport.width/scale,"height":self.viewport.height/scale,"scale":scale,"suspended":self.suspended,"animating":!self.suspended && self.runtime.is_animating(),"caret":self.runtime.editor_candidate_bounds().map(|r|r.map(|v|v/scale)),"nodes":nodes})
+        json!({"width":self.viewport.width/scale,"height":self.viewport.height/scale,"scale":scale,"suspended":self.suspended,"animating":!self.suspended && (self.busy || self.runtime.is_animating()),"caret":self.runtime.editor_candidate_bounds().map(|r|r.map(|v|v/scale)),"nodes":nodes})
     }
     /// Software drawing is explicit; Canvas is only a pixel presentation target.
     pub fn rgba(&mut self, theme: &UiTheme) -> Result<(Vec<u8>, u32, u32), String> {
