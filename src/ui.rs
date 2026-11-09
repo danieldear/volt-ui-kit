@@ -656,6 +656,8 @@ impl<C: 'static> Element<C> {
             validation_error: self.validation_error,
             input_activation: self.input_activation.map(|f| lift2(f, a)),
             input_key: self.input_key.map(|f| lift1(f, a)),
+            key_press: self.key_press.map(|f| lift1(f, a)),
+            pointer: self.pointer.map(|f| lift1(f, a)),
             drag: self.drag.map(|f| lift1(f, a)),
             drag_start: self.drag_start.map(|f| lift0(f, a)),
             drag_from: self.drag_from.map(|f| lift1(f, a)),
