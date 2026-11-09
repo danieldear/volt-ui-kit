@@ -9,9 +9,8 @@ use super::{
 use super::{
     Align, Bindings, Document, DocumentError, Event, Handlers, Kind, Node, Rounding, Tone, Value,
 };
-use super::{InputKeyEvent, InputModifiers, InputSource, PointerActivation};
 #[cfg(feature = "rust-ui")]
-use super::{Pointer, PointerPhase};
+use super::{InputKeyEvent, InputModifiers, InputSource, Pointer, PointerActivation, PointerPhase};
 use crate::graphics::{BackgroundImage, Canvas, Clip, ClipRegion, MaskMode, VectorPath};
 use crate::{Button, ButtonColors, Painter, Panel, Rect, SurfaceStyle, Theme, UiTheme, Viewport};
 use std::{
