@@ -54,6 +54,21 @@ tools for bundling), and exists only in the repository, not the published crate.
 | `northbound` | A trip planner using most components, with generated photos and two themes. |
 | `showcase` | Volt Atelier: welcome, workspace and component-studio screens. |
 | `desk` | A three-pane conversation workbench with an editable composer. |
+| `maps` | Experimental Rust-rendered maps, camera rotation/tilt, search and routes; MapKit snapshots on macOS. Not a reusable toolkit map component yet. |
+
+### Maps prototype boundaries
+
+`cargo run --release --locked --features native-gpu --example maps` uses live
+network services. Mapbox/Google need developer-provided keys; Apple snapshots
+need macOS. The website uses the free vector provider, without provider keys.
+
+Network vector tiles are limited to 16 MiB before and after decompression,
+128 layers, 100,000 features and 1,000,000 points, with a separate logical
+allocation budget. Text responses are capped at 8 MiB and desktop raster tiles
+at 32 MiB. Browser downloads use streaming limits, six concurrent requests and
+a 20-second abort deadline. Invalid/over-budget responses become errors; these
+limits do not imply a bounded long-session tile cache (eviction is pending).
+Managed Mapbox tokens are attached only to the exact HTTPS API authority.
 
 ## Experimental iOS app
 
