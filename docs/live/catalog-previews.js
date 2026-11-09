@@ -1,6 +1,7 @@
 // One shared WASM module per document. UI declarations and callbacks are Rust.
 import { attachVolt } from './volt-host.js';
-const roots = [...document.querySelectorAll('[data-volt-page]')];
+// Catalog sections (data-volt-page) and whole gallery apps (data-volt-app).
+const roots = [...document.querySelectorAll('[data-volt-page], [data-volt-app]')];
 const active = new Set();
 const MAX_ACTIVE = 8, MAX_GPU = 2;
 let pumping = false, stopped = false;
@@ -12,6 +13,10 @@ const items = roots.map(root => ({ root, stage: root.querySelector('.volt-root')
 function accent() { return Math.max(0, accents.indexOf(document.querySelector('input[name="accent"]:checked')?.id?.replace('accent-', '') || 'zinc')); }
 function report(item, text, error = false) { item.status.textContent = text; item.status.dataset.error = String(error); }
 function freshCanvas(item) { const old = item.stage.querySelector('canvas'); const canvas = old.cloneNode(false); old.replaceWith(canvas); return canvas; }
+function setAppearance(item) {
+  if (item.root.dataset.voltApp) item.driver.appearance(mode.matches);
+  else item.driver.appearance(mode.matches, accent());
+}
 function record() {
   document.documentElement.dataset.voltActive = String(active.size);
   document.documentElement.dataset.voltGpu = String([...active].filter(i => i.gpu).length);
@@ -38,8 +43,10 @@ async function start(item) {
     item.gpu = gpu; record();
     let canvas = freshCanvas(item);
     const page = item.root.dataset.voltPage, section = item.root.dataset.voltSection || '';
+    const app = item.root.dataset.voltApp;
     async function open(useGpu) {
       if (item.driver) await item.driver.resume(canvas, useGpu);
+      else if (app) item.driver = await module.GalleryApp.mount(canvas, useGpu, mode.matches, app);
       else item.driver = await module.CatalogPreview.mount(canvas, useGpu, mode.matches, page, section, accent());
     }
     try { await open(gpu); }
@@ -48,12 +55,15 @@ async function start(item) {
       item.gpu = false; canvas = freshCanvas(item); await open(false); record();
     }
     if (stopped || !item.visible) { item.busy = false; pause(item); return; }
-    item.driver.appearance(mode.matches, accent());
+    setAppearance(item);
     item.root.dataset.voltReady = '0';
+    // Gallery apps lay out at their desktop width and scale to the frame.
+    const width = Number(item.root.dataset.voltWidth || 0);
+    const label = item.root.dataset.voltLabel || 'original Rust Catalog';
     item.controller = attachVolt(item.stage, canvas, item.driver, {
-      passive, virtualWidth: passive ? 1000 : 0,
+      passive, virtualWidth: passive ? 1000 : width,
       onStatus(text, error, snapshot) {
-        report(item, error ? text : `${snapshot?.backend || text} · original Rust Catalog`, error);
+        report(item, error ? text : `${snapshot?.backend || text} · ${label}`, error);
         if (snapshot) {
           item.root.dataset.voltFrames = String(snapshot.frames);
           item.root.dataset.voltBackend = snapshot.backend;
@@ -98,14 +108,18 @@ const observer = new IntersectionObserver(entries => {
   pump();
 }, { threshold: 0.01 });
 for (const item of items) {
-  const height = Number(item.root.dataset.voltHeight || 320);
-  item.stage.style.height = `${Math.max(160, Math.min(760, height))}px`;
+  // Gallery apps, and previews laid out at a fixed width, keep their
+  // proportions in CSS instead.
+  if (!item.root.dataset.voltApp && !item.root.dataset.voltWidth) {
+    const height = Number(item.root.dataset.voltHeight || 320);
+    item.stage.style.height = `${Math.max(160, Math.min(760, height))}px`;
+  }
   observer.observe(item.stage);
 }
 function appearance() {
   for (const item of items) {
     if (item.busy) continue;
-    if (item.driver) { item.driver.appearance(mode.matches, accent()); item.controller?.invalidate(); }
+    if (item.driver) { setAppearance(item); item.controller?.invalidate(); }
     else item.rendered = false;
   }
   pump();

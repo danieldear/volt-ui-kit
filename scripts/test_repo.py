@@ -138,17 +138,27 @@ class SiteTests(unittest.TestCase):
             self.assertNotIn(invented, html)
         self.assertNotIn("<img", html)
         self.assertNotIn("<iframe", html)
-        self.assertEqual(html.count('data-volt-page='), 3)
+        self.assertEqual(html.count('data-volt-page='), 2)
         self.assertIn('src="live/catalog-previews.js"', html)
-        # The counts in the copy come from the Catalog's own metadata.
+        # Gallery slots name only apps the browser build can mount, each once.
+        apps = re.findall(r'data-volt-app="([a-z]+)"', html)
+        web = (build_docs_site.ROOT / "examples/web/src/lib.rs").read_text()
+        mountable = set(re.findall(r'^\s*"([a-z]+)" => WebView::new\(', web, re.M))
+        self.assertEqual(sorted(apps), sorted(set(apps)))
+        self.assertEqual(set(apps), mountable)
+        # The Catalog's numbers and live dashboard open the Components index,
+        # and its counts come from the Catalog's own metadata.
         catalog = json.loads((docs / "assets/catalog-data.json").read_text())
         components = sum(page["group"] == "Components" for page in catalog)
         patterns = sum(page["group"] == "Patterns" for page in catalog)
-        text = re.sub(r"<[^>]+>", "", html)
-        self.assertIn(f"{components} component pages", text)
-        self.assertIn(f"{patterns} app patterns", text)
-        self.assertIn(f"{len(catalog)} reference pages", text)
-        self.assertIn(f"all {len(catalog)} pages", text)
+        examples = sum(len(page["sections"]) for page in catalog)
+        index = (docs / "reference/index.html").read_text()
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", index))
+        self.assertIn(f" {components} Components ", text)
+        self.assertIn(f" {patterns} App patterns ", text)
+        self.assertIn(f" {examples} Rendered examples ", text)
+        self.assertIn('data-volt-page="dashboard" data-volt-section="dashboard"', index)
+        self.assertIn("./scripts/run_catalog.sh", index)
         # Every image the page shows, at every size, exists and is published,
         # and is a Catalog render: apps that are not released stay off the page.
         images = re.findall(r'(?:src|srcset)="([^"]+)"', html)
@@ -168,7 +178,6 @@ class SiteTests(unittest.TestCase):
         self.assertIn('Pause decorative motion', html)
         self.assertIn('animation-play-state: paused', css)
         self.assertIn('.swatch .sr-only { position: static;', css)
-        self.assertIn('./scripts/run_catalog.sh', html)
 
     def test_links_cannot_escape_root_or_use_javascript(self):
         root = build_docs_site.ROOT

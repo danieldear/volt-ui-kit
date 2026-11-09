@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.6.0 (2026-11-08; not published to crates.io)
+
+- The website leads with live apps: Relay and Northbound run in the page in one
+  WebAssembly canvas, as slides of the kit's own carousel, from the same Rust as
+  their desktop examples. The page no longer calls the kit macOS-first; its
+  status table says what is tested on each platform.
+- Add `Element::map_state`: embed a view written for its own state inside a
+  larger app. Every callback in the tree runs against the part of the parent
+  state that the accessor returns, so a whole app can become one screen of
+  another.
+- Carousel: `.controls_below(true)` puts the previous and next buttons under the
+  slide, beside the position markers, so they don't cover interactive slides.
+  `.labels(..)` names the slides; the names replace the dots as small buttons.
+- Browser host: `WebView::set_busy` keeps frames coming while an app plays timed
+  work from the frame clock.
+- Relay plays its scripted agent replies as a timed list of events, from a
+  thread on the desktop and from the frame clock in the browser. Its sample
+  threads use made-up project names.
+- Northbound computes each column of its generated photographs once instead of
+  per pixel: 0.44 s to 0.09 s natively, and about 11 s to 0.6 s in the browser.
+
 - Align the native Catalog landing page with current capabilities: remove
   unmeasured frame-time and 8K claims, describe accessibility semantics and
   macOS-first validation accurately, and derive component/pattern/accent counts

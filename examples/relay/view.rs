@@ -179,7 +179,7 @@ fn sidebar(app: &App) -> El<App> {
     }
 
     let footer = hstack![
-        zstack![text("NH").font_size(11.).font_weight(700).color("#FFFFFF")]
+        zstack![text("Y").font_size(11.).font_weight(700).color("#FFFFFF")]
             .width(28.)
             .height(28.)
             .flow(Flow::Center)
