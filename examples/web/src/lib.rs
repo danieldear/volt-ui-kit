@@ -426,12 +426,7 @@ mod wasm {
                 .map_err(|e| JsValue::from_str(&e))?;
             let error = |e: String| JsValue::from_str(&e);
             let view = match name {
-                "apps" => {
-                    let mut apps = showcase::Showcase::new();
-                    apps.maps.dark = dark;
-                    apps.maps.appearance.set(dark);
-                    WebView::new(apps, showcase::view)
-                }
+                "apps" => WebView::new(showcase::Showcase::in_mode(dark), showcase::view),
                 _ => return Err(JsValue::from_str("unknown gallery")),
             };
             Ok(Self {

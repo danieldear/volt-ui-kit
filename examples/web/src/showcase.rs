@@ -33,6 +33,14 @@ impl Showcase {
             maps: maps::App::new(),
         }
     }
+    /// Starting in the page's light or dark mode, so the map's first style
+    /// matches the page.
+    pub fn in_mode(dark: bool) -> Self {
+        let mut apps = Self::new();
+        apps.maps.dark = dark;
+        apps.maps.appearance.set(dark);
+        apps
+    }
     /// The palette of the app on show; the carousel's controls follow it.
     pub fn theme(&self, system: ThemeMode) -> UiTheme {
         match self.slide {
