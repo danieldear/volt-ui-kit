@@ -810,9 +810,11 @@ impl Runtime {
         // An application root is a context boundary (e.g. another chat).
         // Virtualized rows may disappear inside the SAME root without
         // discarding copy text, but a new root must not inherit it.
+        let same_root = self.document.root().id() == next.root().id();
         #[cfg(feature = "rust-ui")]
-        if self.document.root().id() != next.root().id() {
+        if !same_root {
             self.cancel_text_selection_scope();
+            self.hover_surface = None;
         }
         fn find<'a>(node: &'a Node, id: &str) -> Option<&'a Node> {
             if node.id() == id {
@@ -910,21 +912,19 @@ impl Runtime {
         let previous_styles = self.styles_cache.take();
         self.motion.get_mut().remove(&self.boxes, &ids);
         #[cfg(feature = "rust-ui")]
-        let slider_capture = self.slider_capture.clone();
+        let slider_capture = self.slider_capture.clone().filter(|_| same_root);
         #[cfg(feature = "rust-ui")]
-        let split_capture = self.split_capture.clone();
+        let split_capture = self.split_capture.clone().filter(|_| same_root);
         #[cfg(feature = "rust-ui")]
-        let drag_capture = self
-            .drag_capture
-            .clone()
-            .filter(|_| self.document.root().id() == next.root().id());
+        let drag_capture = self.drag_capture.clone().filter(|_| same_root);
         #[cfg(feature = "rust-ui")]
         let composition = self.editor_composition_snapshot(&next);
-        let scrollbar_capture = self.scrollbar_capture.clone();
+        let scrollbar_capture = self.scrollbar_capture.clone().filter(|_| same_root);
         // A pressed control, with its kind, to keep pressed if it survives.
         let press = self
             .capture
             .clone()
+            .filter(|_| same_root)
             .and_then(|id| find(self.document.root(), &id).map(|n| (id, n.kind)));
         #[cfg(feature = "rust-ui")]
         let press_clicks = self.capture_clicks;
@@ -936,7 +936,7 @@ impl Runtime {
                 Self::input_focus_request(Some(self.document.root()), next.root());
         }
         #[cfg(feature = "rust-ui")]
-        let last_pointer_activation = self.last_pointer_activation.clone();
+        let last_pointer_activation = self.last_pointer_activation.clone().filter(|_| same_root);
         let mut old = std::mem::replace(&mut self.document, next);
         self.reuse.prepare(
             &mut old,

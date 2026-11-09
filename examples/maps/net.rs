@@ -122,9 +122,26 @@ impl Job {
     }
 }
 
+/// One response budget shared by native HTTP, browser streaming and finish.
+/// The latter also guards externally supplied/headless download results.
+pub fn response_limit(job: &Job) -> usize {
+    match job {
+        Job::Tile { vector: true, .. } => mvt::MAX_TILE_BYTES,
+        Job::Tile { vector: false, .. } => 32 * 1024 * 1024,
+        _ => 8 * 1024 * 1024,
+    }
+}
+
 /// A finished download as the app's message: the HTTP status and body, or
 /// why there was none.
 pub fn finish(generation: u64, job: Job, response: Result<(u16, Vec<u8>), String>) -> Msg {
+    let response = response.and_then(|(status, bytes)| {
+        if bytes.len() > response_limit(&job) {
+            Err("map response exceeds size limit".into())
+        } else {
+            Ok((status, bytes))
+        }
+    });
     // Search and routing services explain failures in JSON: keep those.
     let explains = matches!(job, Job::Http { .. });
     let bytes = response.and_then(|(status, bytes)| {
@@ -235,12 +252,7 @@ pub fn run(agent: &ureq::Agent, generation: u64, job: Job) -> Msg {
             request.call()
         }
     };
-    let limit = if matches!(job, Job::Http { .. }) {
-        8
-    } else {
-        32
-    } * 1024
-        * 1024;
+    let limit = response_limit(&job) as u64;
     let response = response
         .map_err(|e| e.to_string())
         .and_then(|mut response| {
@@ -258,4 +270,21 @@ pub fn run(agent: &ureq::Agent, generation: u64, job: Job) -> Msg {
 
 fn text(bytes: Vec<u8>) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn external_response_bytes_are_limited_before_text_or_tile_decode() {
+        let job = Job::Text {
+            what: Fetched::Style,
+            url: "https://fixture.invalid/style".into(),
+        };
+        let limit = response_limit(&job);
+        assert!(matches!(
+            finish(0, job, Ok((200, vec![b'a'; limit + 1]))),
+            Msg::Text(_, _, Err(_))
+        ));
+    }
 }

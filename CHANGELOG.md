@@ -2,11 +2,20 @@
 
 ## Unreleased
 
+- Harden the maps example's network boundary: only the exact HTTPS Mapbox API
+  authority receives a managed token (never a path or lookalike hostname).
+  Vector tiles have a 16 MiB compressed/expanded limit and bounded decoding;
+  malformed varints and geometry fail instead of truncating or overflowing.
+  Browser downloads stream into shared response limits, with six concurrent
+  requests and a 20-second abort deadline rather than unbounded array buffers.
+
 - Fix presses lost to recomposition: an app that rebuilds its document while
   a button is held (on a timer, or when a download arrives) no longer drops
   the press, which made controls need several clicks. The press survives
   when the same control, of the same kind, is still there, enabled and in
-  scope; a press on a control that went away ends.
+  scope and the same application root; a press on a control that went away
+  or belongs to a replaced root ends. Root changes also discard captured drags,
+  scrollbar gestures and previous click identity.
 - An app that registers Inter gets it as its default ("system") face on
   every platform, instead of Avenir Next on macOS and the platform's
   sans-serif elsewhere.
