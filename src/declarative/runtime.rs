@@ -710,6 +710,7 @@ impl Runtime {
         }
         let Some(mut index) = self.boxes.iter().rposition(|b| {
             (!self.portal_passthrough(&b.id))
+                && !b.effects.scroll_passthrough
                 && b.clip.contains(x, y)
                 && b.clip_regions.iter().all(|r| r.contains(x, y))
                 && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))

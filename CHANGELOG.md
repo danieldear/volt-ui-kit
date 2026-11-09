@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- Integrated custom chrome with the current runtime/input and map-safety fixes.
+  Custom header drags wait for pointer movement to preserve double-click
+  maximize; Wayland/Windows blank headers request the native window menu.
+  Interactive children and unsupported-backend context menus are preserved.
+  Shared Northbound browser previews keep native chrome state cfg-gated.
+
+
+- Fix Linux client chrome: Catalog and Northbound now default to Custom;
+  Northbound connects existing-header minimize/maximize/close to native actions, preserving
+  the channel across sample resets. Northbound's client controls are centered
+  26 logical pixels below the top edge without moving the title/search/day row
+  or adding a title bar; hit targets move with the controls. Linux GPU Custom/Borderless windows use an
+  antialiased outer corner mask with matching Wayland blur regions at fractional
+  scale; maximized/fullscreen frames stay rectangular. Native frames remain
+  compositor-owned; software fallback remains opaque/rectangular. No winit
+  upgrade or additional dependencies are required.
+
+- Add optional embedded window chrome and live Catalog Native/Custom/Borderless
+  selection (plus macOS Unified), typed accessible window controls, a separate
+  bounded native action queue, native state reporting, and Linux/Windows edge
+  resizing with fractional-scale hit tests. Controls occupy existing app content,
+  not an added title strip. macOS Custom retains native traffic lights, rounded
+  frame, shadow, resizing and public material. macOS Borderless hides the title
+  and buttons while retaining the invisible native frame for the same material,
+  rounded corners and shadow. Opt-in split-view integrated headers control layout
+  and the configurable native-control safe area only: the Catalog's right panel
+  keeps the same opaque toolbar/content, inset, rounding and shadow in every
+  chrome mode. Toolbar translucency is an independent opt-in (default false);
+  only that explicit glass toolbar omits the full-sheet shadow to avoid a dark
+  band. Existing split-view defaults and opaque page content stay unchanged. Custom close honors existing unsaved-work guards. Add
+  `WindowChrome::Custom` (exhaustive matches must handle it), docs and regression
+  coverage. Fix passive toast layers blocking otherwise draggable headers.
+
 - Harden the maps example's network boundary: only the exact HTTPS Mapbox API
   authority receives a managed token (never a path or lookalike hostname).
   Vector tiles have a 16 MiB compressed/expanded limit and bounded decoding;

@@ -45,10 +45,157 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `Native` (default) | The platform's standard title bar. |
 | `Overlay` | macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar. |
 | `CompactOverlay` | The same with the shorter, older macOS title bar geometry. |
-| `Borderless` | No system decorations; you supply the window controls. |
+| `Borderless` | No visible title or system controls. macOS keeps an invisible native frame for rounded corners, shadow, resizing and public material blur. Linux/Windows are undecorated; you own the complete window UI. |
+| `Custom` | Content extends into the existing app header; no extra title strip. macOS retains native traffic lights, rounded frame, resizing and material blur. Linux/Windows use inline `window_controls` and toolkit-managed edge resizing. |
 
 Mark your header with `.drag_region(true)` so the window can be dragged by it.
 Buttons and other controls inside the header still receive clicks.
+
+### Custom controls and live mode switching
+
+The native Catalog has a **Window** selector in the sidebar footer (also in its
+wide toolbar): Native, Custom and Borderless, plus Unified on macOS. The choice
+is live: it does not replace the window, restart workers or clear application
+state. At narrow widths, open the navigation drawer to reach the selector.
+`--chrome native|custom|borderless|overlay` chooses the initial mode.
+
+Custom mode embeds controls in the existing layout, not a new bar. The Catalog
+uses `navigation_split_view(...).integrated_header(true)` to put native traffic
+lights and the brand in the existing sidebar header. Its right panel retains
+exactly the same opaque toolbar/content, 8pt top/right/bottom inset, rounded
+corners and floating-sheet shadow as Unified and Borderless. Chrome selection
+does not change the panel's material styling. The sidebar still reveals the
+window backdrop; text and controls stay opaque.
+
+`integrated_header` controls layout only and is opt-in, preserving the old
+split-view defaults. `.window_controls_inset(100.)` sets the logical horizontal
+safe area (0–480, finite), without repositioning OS buttons.
+
+Toolbar glass is a separate developer choice:
+`navigation_split_view(...).material(true).toolbar_translucent(true)` reveals
+the window backdrop through the existing toolbar while keeping page content
+opaque. It works with or without an integrated header and defaults to **false**.
+For that explicit glass toolbar the sheet shadow is omitted so its interior
+cannot darken the transparent header. The panel keeps its normal top inset.
+The host's `WindowBackground` independently selects blur/transparency; this
+builder never enables native blur or changes foreground opacity. Apps may also
+paint their own toolbar background. Catalog does not opt into toolbar glass.
+
+```rust,no_run
+use volt_ui_kit::{native::{Application, WindowChrome, WindowState, UiSender}, ui::prelude::*};
+#[derive(Default)]
+struct State {
+    chrome: WindowChrome,
+    window: WindowState,
+    actions: Option<UiSender<WindowAction>>,
+    sidebar_open: bool,
+}
+fn view(app: &State) -> Element<State> {
+    let mut items: Vec<Element<State>> = vec![text("Search or workspace actions").into(), spacer().into()];
+    if !cfg!(target_os = "macos") {
+        items.push(window_controls(app.window.maximized, |app: &mut State, action| {
+            if let Some(sender) = &app.actions { let _ = sender.send(action); }
+        }).into());
+    }
+    navigation_split_view(|_| text("Inbox"), text("Your content"))
+        .key("workspace")
+        .sidebar_header(text("My workspace"))
+        .toolbar(hstack(items).align(Align::Center).drag_region(true))
+        .integrated_header(true)
+        .titlebar_inset(cfg!(target_os = "macos") && !app.window.fullscreen)
+        .window_controls_inset(100.)
+        .material(true)
+        .drawer_open(app.sidebar_open)
+        .on_drawer_change(|app: &mut State, open| app.sidebar_open = open)
+        .into()
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let state = State { chrome: WindowChrome::Custom, ..Default::default() };
+    Application::new("Workspace", state, view)
+        .chrome_from_state(|app| app.chrome)
+        .background(volt_ui_kit::native::WindowBackground::Blur { opacity: 0.72 })
+        .custom_resize_border(6.)
+        .window_actions(|app, sender| app.actions = Some(sender))
+        .on_window_state(|app, state| app.window = state)
+        .run()
+}
+```
+
+- `window_controls` draws accessible vector buttons; it emits `WindowAction`
+  intents, not OS calls. Its returned row accepts ordinary gap/padding/style
+  modifiers, and can be replaced entirely with application-owned controls. Pass
+  `WindowControlsState` instead of a boolean to disable individual actions (for
+  example maximize when the window is not resizable or is fullscreen).
+- `window_actions` uses a separate bounded queue, leaving existing application
+  command IDs and `ApplicationRequest` unchanged. Close always follows
+  `on_close_request`, including Save/Discard/Cancel policies.
+- `on_window_state` reports native maximize/fullscreen/focus/resizable state;
+  its `chrome` field is the host's applied decoration policy, not compositor
+  acknowledgement. It runs only on the UI thread, with no idle polling timer.
+- Linux/Windows Custom edges use a logical resize border (default 6 px,
+  configurable 0–24). Maximized/fullscreen/non-resizable windows have no edge
+  hits. Reserve that border around interactive content. Header buttons never
+  start a window drag. Double-click a blank draggable header to maximize or
+  restore. Custom-header dragging waits for 4 logical pixels of movement before
+  asking the OS to move the window, so the first click does not swallow a second
+  click. Pending drags are cancelled on release, focus loss, resize, suspension,
+  maximize and chrome changes.
+- **Header system menu:** right-click blank Custom drag regions on Wayland or
+  Windows to request the native window menu through winit. Buttons, fields and
+  other interactive children keep their application context-menu behavior.
+  X11/macOS retain application-defined context menus (the Catalog includes a
+  fallback); this does not add a separate title bar.
+- **macOS:** Custom keeps the full-size-content window and native traffic
+  lights, so AppKit retains outer rounded corners, shadow, edge resizing,
+  fullscreen and public material blur. Borderless is visually undecorated:
+  it hides the title/buttons but retains the same invisible frame and material.
+  This is not a raw `NSWindowStyleMask::Borderless` window. Mode switches restore
+  the full-size-content style, button visibility and native shadow. No delegate,
+  content view, native button sizing or Metal layer ownership is replaced.
+  Private compositor blur is never enabled silently.
+- **Linux GPU client frames:** Custom and Borderless clip the *outer window*
+  to antialiased 12-logical-pixel corners, including its background clear and
+  all content. A translucent swapchain is used even for an opaque background;
+  only the corners become transparent, not text or controls. The Wayland blur
+  region follows the rounded shape, resize and scale changes. Maximized and
+  fullscreen windows become rectangular; restoring them brings the corners back.
+  Software fallback remains opaque/rectangular. Native/Overlay mode still uses
+  the desktop's decorations, whose corner shape and buttons are compositor-owned.
+- Chrome changes requested while fullscreen are deferred until fullscreen ends;
+  the Catalog disables its selector there. Compositor shadows, native frame
+  shaping, snapping affordances and decoration policy are still platform-owned—custom
+  painting does not promise identical OS behavior everywhere. GNOME Wayland
+  generally provides no compositor shadow for undecorated surfaces. Custom
+  Windows 11 controls do not provide the native maximize-button Snap Layouts
+  flyout; use Native chrome when that affordance is required.
+- Native remains the host default. Northbound and Catalog default to Custom
+  on Linux, placing minimize/maximize/close in their existing headers; use
+  `--chrome native` to request desktop decorations instead. Catalog also has
+  a live Window selector. Borderless deliberately has no window buttons.
+  `WindowChrome` gains `Custom`; downstream exhaustive
+  matches on that enum need to handle the new variant. Existing option structs,
+  core painters, application request variants and rendering defaults are unchanged.
+
+### Linux desktop acceptance checklist
+
+Cross-compiling and frame-pixel tests do not prove compositor behavior. Test the
+native GPU Catalog on the actual KDE/GNOME/COSMIC session at 100% and 125% scale:
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop \
+  --example catalog -- --chrome custom
+```
+
+- Drag blank existing header space; double-click to maximize and restore.
+- Resize from all four edges and all four corners.
+- Minimize, maximize/restore (including icon change), close and test close guards.
+- Test Super+Up/Down and switch light/dark appearance.
+- Verify rounded floating corners, rectangular maximized/fullscreen corners and
+  rounded corners after restoring; verify blur if supported by the compositor.
+- Right-click blank header space for the native menu on Wayland; on X11 verify
+  the Catalog fallback. Controls and fields must not initiate dragging.
+- Switch Native / Custom / Borderless without recreating the window; Borderless
+  intentionally has no system buttons. Native decorations remain desktop-owned.
 
 ## Transparency and blur
 
