@@ -2,11 +2,12 @@
 //! The app owns the camera; tiles download in the background and arrive as
 //! messages. Apple Maps has no tile service for other renderers, so on macOS
 //! its map comes from MapKit snapshots instead.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "native"))]
 pub mod apple;
 pub mod mvt;
 pub mod net;
 pub mod perspective;
+pub mod platform;
 pub mod services;
 pub mod style;
 pub mod view;
@@ -15,7 +16,9 @@ use net::{Fetched, Job, Msg, Net, TileData, TileKey};
 use services::{Backend, Mode, Place, Route, Units};
 use std::collections::{BTreeMap, BTreeSet};
 use style::{SourceKind, Style};
-use volt_ui_kit::{graphics::Image, native::UiSender, Palette, ThemeMode, UiTheme};
+#[cfg(feature = "native")]
+use volt_ui_kit::native::UiSender;
+use volt_ui_kit::{graphics::Image, Palette, ThemeMode, UiTheme};
 
 pub use view::view;
 
@@ -36,6 +39,16 @@ impl Provider {
         Provider::Google,
         Provider::Apple,
     ];
+    /// The providers this build can show: in a browser, the free vector map
+    /// (image tiles need the desktop's decoder, MapKit the Mac, and keys
+    /// don't belong in a public page).
+    pub fn available() -> &'static [Provider] {
+        if cfg!(feature = "native") {
+            &Self::ALL
+        } else {
+            &[Provider::OpenFreeMap]
+        }
+    }
     pub fn label(self) -> &'static str {
         match self {
             Provider::OpenFreeMap => "OpenFreeMap",
@@ -148,7 +161,13 @@ pub struct App {
     pub status: String,
     pub generation: u64,
     pub net: Option<Net>,
+    #[cfg(feature = "native")]
     pub sender: Option<UiSender<Msg>>,
+    /// A host draws frames (a window, or a page): the camera moves smoothly.
+    /// Headless renders jump straight to where it's going.
+    pub live: bool,
+    /// Messages waiting for their time, in a browser (frame-clock time).
+    timers: Vec<(f64, Msg)>,
     /// Google's tile URLs need a session created with the key first.
     pub google_session: Option<String>,
     /// Apple: the latest MapKit snapshot and the camera it was taken at.
@@ -196,7 +215,7 @@ pub struct App {
     /// What's typed in each key field, before it's saved.
     pub key_drafts: BTreeMap<&'static str, String>,
     // Current location.
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "native"))]
     pub locator: Option<apple::Locator>,
     /// Latitude, longitude and accuracy in metres.
     pub location: Option<(f64, f64, f64)>,
@@ -204,14 +223,14 @@ pub struct App {
     /// Centre the map on the next fix.
     pub follow: bool,
     pub location_note: Option<String>,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "native")), allow(dead_code))]
     location_ticks: u32,
     // Camera motion.
     pub motion: Option<Motion>,
     /// Tells the frame ticker to send frames while something moves.
     frames: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Recent drag positions, for the glide after letting go.
-    drag_trail: Vec<(std::time::Instant, [f32; 2])>,
+    drag_trail: Vec<(f64, [f32; 2])>,
 }
 
 /// How the camera is moving, between frames.
@@ -221,7 +240,7 @@ pub enum Motion {
     Fly {
         from: Camera,
         to: Camera,
-        start: std::time::Instant,
+        start: f64,
         ms: f64,
         lift: f64,
     },
@@ -232,7 +251,7 @@ pub enum Motion {
         to: f64,
         anchor: [f32; 2],
         under: [f64; 2],
-        start: std::time::Instant,
+        start: f64,
         ms: f64,
     },
     /// Turn and tilt to a bearing and pitch, keeping the ground `under` at
@@ -243,14 +262,11 @@ pub enum Motion {
         pitch: f64,
         anchor: [f32; 2],
         under: [f64; 2],
-        start: std::time::Instant,
+        start: f64,
         ms: f64,
     },
     /// Keep moving after a drag lets go, slowing down. Points per millisecond.
-    Glide {
-        velocity: [f64; 2],
-        last: std::time::Instant,
-    },
+    Glide { velocity: [f64; 2], last: f64 },
 }
 
 /// Where a flight is at time `t` (0..=1): eased along the way, pulled out
@@ -321,7 +337,10 @@ impl App {
             status: "Starting…".into(),
             generation: 0,
             net: None,
+            #[cfg(feature = "native")]
             sender: None,
+            live: false,
+            timers: Vec::new(),
             google_session: None,
             snapshot: None,
             snapshot_request: 0,
@@ -351,7 +370,7 @@ impl App {
             units: system_units(),
             keys: BTreeMap::new(),
             key_drafts: BTreeMap::new(),
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "native"))]
             locator: None,
             location: None,
             locating: false,
@@ -374,7 +393,7 @@ impl App {
 
     /// Move the camera there: smoothly in a window, at once headless.
     pub fn fly_to(&mut self, to: Camera) {
-        if self.sender.is_none() {
+        if !self.live {
             self.camera = to;
             self.request_tiles();
             return;
@@ -404,7 +423,7 @@ impl App {
         self.set_motion(Some(Motion::Fly {
             from,
             to: target,
-            start: std::time::Instant::now(),
+            start: platform::now(),
             ms,
             lift,
         }));
@@ -413,7 +432,7 @@ impl App {
     /// Ease the zoom around a point in the map.
     pub fn zoom_smoothly(&mut self, anchor: [f32; 2], zoom: f64) {
         let to = zoom.clamp(1., 19.);
-        if self.sender.is_none() {
+        if !self.live {
             self.zoom_at(anchor, to);
             return;
         }
@@ -423,7 +442,7 @@ impl App {
             to,
             anchor,
             under,
-            start: std::time::Instant::now(),
+            start: platform::now(),
             ms: 260.,
         }));
     }
@@ -434,13 +453,13 @@ impl App {
             self.set_motion(None);
             return;
         };
-        let now = std::time::Instant::now();
-        if std::env::var_os("MAPS_DEBUG").is_some() {
+        let now = platform::now();
+        if platform::debug() {
             let since = match motion {
                 Motion::Fly { start, .. }
                 | Motion::Zoom { start, .. }
-                | Motion::Turn { start, .. } => now.duration_since(start).as_millis(),
-                Motion::Glide { last, .. } => now.duration_since(last).as_millis(),
+                | Motion::Turn { start, .. } => now - start,
+                Motion::Glide { last, .. } => now - last,
             };
             eprintln!("frame {} ms in, zoom {:.2}", since, self.camera.zoom);
         }
@@ -453,7 +472,7 @@ impl App {
                 ms,
                 lift,
             } => {
-                let t = (now.duration_since(start).as_secs_f64() * 1000. / ms).min(1.);
+                let t = ((now - start) / ms).min(1.);
                 self.camera = flight(from, to, lift, t);
                 if t >= 1. {
                     self.camera.bearing = to.bearing.rem_euclid(360.);
@@ -468,7 +487,7 @@ impl App {
                 start,
                 ms,
             } => {
-                let t = (now.duration_since(start).as_secs_f64() * 1000. / ms).min(1.);
+                let t = ((now - start) / ms).min(1.);
                 self.camera.zoom = from + (to - from) * ease_out(t);
                 self.keep_under(under, anchor);
                 done = t >= 1.;
@@ -482,7 +501,7 @@ impl App {
                 start,
                 ms,
             } => {
-                let t = (now.duration_since(start).as_secs_f64() * 1000. / ms).min(1.);
+                let t = ((now - start) / ms).min(1.);
                 let e = ease_in_out(t);
                 self.camera.bearing = from.bearing + turn_between(from.bearing, bearing) * e;
                 self.camera.pitch = from.pitch + (pitch - from.pitch) * e;
@@ -490,7 +509,7 @@ impl App {
                 done = t >= 1.;
             }
             Motion::Glide { velocity, last } => {
-                let dt = now.duration_since(last).as_secs_f64() * 1000.;
+                let dt = now - last;
                 // The ground a step behind the middle moves to the middle.
                 let middle = [self.size[0] / 2., self.size[1] / 2.];
                 let behind = self.ground_at([
@@ -558,7 +577,7 @@ impl App {
         let anchor = [x + w / 2., y + h / 2.];
         let under = self.ground_at(anchor);
         let pitch = pitch.clamp(0., perspective::MAX_PITCH);
-        if self.sender.is_none() {
+        if !self.live {
             self.camera.bearing = bearing.rem_euclid(360.);
             self.camera.pitch = pitch;
             self.keep_under(under, anchor);
@@ -574,7 +593,7 @@ impl App {
             pitch,
             anchor,
             under,
-            start: std::time::Instant::now(),
+            start: platform::now(),
             ms: ms.min(900.),
         }));
     }
@@ -610,7 +629,7 @@ impl App {
             self.fly_to(self.centred(lat, lon, self.camera.zoom.max(15.)));
             return;
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "native"))]
         {
             self.locating = true;
             self.location_note = Some("Finding your location…".into());
@@ -633,14 +652,14 @@ impl App {
                 }
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(all(target_os = "macos", feature = "native")))]
         {
             self.location_note = Some("Location is only wired up on macOS so far.".into());
         }
     }
 
     fn location_tick(&mut self) {
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "native"))]
         {
             let Some(locator) = &self.locator else { return };
             self.location_ticks += 1;
@@ -704,7 +723,9 @@ impl App {
         match (self.provider, self.key()) {
             (Provider::Mapbox, Some(token)) => Backend::Mapbox(token),
             (Provider::Google, Some(key)) => Backend::Google(key),
-            (Provider::Apple, _) if cfg!(target_os = "macos") => Backend::Apple,
+            (Provider::Apple, _) if cfg!(all(target_os = "macos", feature = "native")) => {
+                Backend::Apple
+            }
             _ => Backend::Open,
         }
     }
@@ -723,13 +744,22 @@ impl App {
             return;
         }
         self.searching = true;
-        let (Some(sender), seq) = (self.sender.clone(), self.search_seq) else {
+        let seq = self.search_seq;
+        self.later(350., Msg::SearchDue(seq));
+    }
+
+    /// Send `msg` back to the app after `ms` milliseconds: from a timer
+    /// thread on the desktop, from the frame clock in a browser.
+    fn later(&mut self, ms: f64, msg: Msg) {
+        #[cfg(feature = "native")]
+        if let Some(sender) = self.sender.clone() {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs_f64(ms / 1000.));
+                let _ = sender.send(msg);
+            });
             return;
-        };
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(350));
-            let _ = sender.send(Msg::SearchDue(seq));
-        });
+        }
+        self.timers.push((platform::now() + ms, msg));
     }
 
     pub fn search_now(&mut self) {
@@ -805,7 +835,7 @@ impl App {
             _ => None,
         };
         match self.backend() {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "native"))]
             Backend::Apple => {
                 if let Some(sender) = self.sender.clone() {
                     apple::search(sender, seq, self.query.trim(), self.camera, self.size);
@@ -870,15 +900,10 @@ impl App {
                 self.search_stage += 1;
                 if category {
                     // Nominatim asks for a second between requests.
-                    if let Some(sender) = self.sender.clone() {
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(1100));
-                            let _ = sender.send(Msg::SearchWider(seq));
-                        });
-                        return;
-                    }
+                    self.later(1100., Msg::SearchWider(seq));
+                } else {
+                    self.search_backend(seq);
                 }
-                self.search_backend(seq);
                 return;
             }
         }
@@ -993,7 +1018,7 @@ impl App {
         self.route_error = None;
         let seq = self.route_seq;
         match self.backend() {
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", feature = "native"))]
             Backend::Apple => {
                 if let Some(sender) = self.sender.clone() {
                     apple::directions(sender, seq, &from, &to, self.mode);
@@ -1142,7 +1167,9 @@ impl App {
         self.fly_to(to);
     }
 
+    #[cfg(feature = "native")]
     pub fn start(&mut self, sender: UiSender<Msg>) {
+        self.live = true;
         self.net = Some(Net::start(sender.clone()));
         // Follow the system appearance: once a second, compare the mode the
         // theme last saw with the map's.
@@ -1175,6 +1202,58 @@ impl App {
         }
         self.sender = Some(sender);
         self.load();
+    }
+
+    /// In a browser: the page fetches what the app queues (`net`) and
+    /// delivers it with `update`, and calls this every animation frame.
+    #[cfg_attr(feature = "native", allow(dead_code))]
+    pub fn start_browser(&mut self) {
+        if self.net.is_none() {
+            self.live = true;
+            self.net = Some(Net::queue());
+            self.load();
+        }
+    }
+
+    /// One browser frame: deliver the timers that are due, move the camera
+    /// and follow the page's light or dark mode. True while it wants more
+    /// frames.
+    #[cfg_attr(feature = "native", allow(dead_code))]
+    pub fn tick(&mut self) -> bool {
+        let now = platform::now();
+        let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timers)
+            .into_iter()
+            .partition(|(at, _)| *at <= now);
+        self.timers = waiting;
+        for (_, msg) in due {
+            self.update(msg);
+        }
+        if self.motion.is_some() {
+            self.frame();
+        }
+        self.appearance_check();
+        self.busy()
+    }
+
+    /// Whether this frame changes anything: the camera moves, a timer is
+    /// due, or the page switched between light and dark. Frames while
+    /// only downloads are under way change nothing until they arrive.
+    #[cfg_attr(feature = "native", allow(dead_code))]
+    pub fn wants_frame(&self) -> bool {
+        let now = platform::now();
+        self.motion.is_some()
+            || self.timers.iter().any(|(at, _)| *at <= now)
+            || self.appearance.get() != self.dark
+    }
+
+    /// Something is moving, waiting for its time or downloading.
+    #[cfg_attr(feature = "native", allow(dead_code))]
+    pub fn busy(&self) -> bool {
+        self.motion.is_some()
+            || !self.timers.is_empty()
+            || !self.pending.is_empty()
+            || self.searching
+            || self.routing
     }
 
     fn appearance_check(&mut self) {
@@ -1418,7 +1497,7 @@ impl App {
     }
 
     pub fn update(&mut self, msg: Msg) {
-        if std::env::var_os("MAPS_DEBUG").is_some() {
+        if platform::debug() {
             match &msg {
                 Msg::Text(g, what, r) => eprintln!("msg text g{g} {what:?} ok={}", r.is_ok()),
                 Msg::Tile(g, key, r) => eprintln!(
@@ -1484,11 +1563,11 @@ impl App {
             }
             Msg::SnapshotDue(_, request) => {
                 // Only the latest request survives a burst of camera changes.
-                #[cfg(target_os = "macos")]
+                #[cfg(all(target_os = "macos", feature = "native"))]
                 if request == self.snapshot_request {
                     self.take_snapshot();
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(not(all(target_os = "macos", feature = "native")))]
                 let _ = request;
             }
             Msg::Text(_, Fetched::Style, result) => match result {
@@ -1726,7 +1805,11 @@ impl App {
             .collect();
         let mut jobs = Vec::new();
         for (id, source) in &style.sources {
-            if !used.contains(id.as_str()) || source.tiles.is_empty() {
+            // Image tiles need the desktop's decoder; a browser build draws
+            // the vector layers only.
+            let images_only_on_desktop =
+                !cfg!(feature = "native") && source.kind != SourceKind::Vector;
+            if !used.contains(id.as_str()) || source.tiles.is_empty() || images_only_on_desktop {
                 continue;
             }
             for p in self.placements_for(id, camera) {
@@ -1754,7 +1837,7 @@ impl App {
 
     /// Ask for a snapshot once the camera has been still for a moment, so a
     /// scroll or a resize asks MapKit once instead of on every step.
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "native"))]
     fn request_snapshot(&mut self) {
         let Some(sender) = self.sender.clone() else {
             return;
@@ -1767,9 +1850,9 @@ impl App {
         });
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "native"))]
     fn take_snapshot(&mut self) {
-        if std::env::var_os("MAPS_DEBUG").is_some() {
+        if platform::debug() {
             eprintln!("snapshot taken: size {:?}", self.size);
         }
         if self.size[0] < 1. || self.size[1] < 1. {
@@ -1787,13 +1870,14 @@ impl App {
             self.dark,
         );
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(all(target_os = "macos", feature = "native")))]
     fn request_snapshot(&mut self) {
         self.status = "Apple Maps needs MapKit, which only runs on Apple platforms.".into();
     }
 
     /// Headless: download the style and every visible tile before a
     /// snapshot, without worker threads.
+    #[cfg(feature = "native")]
     pub fn prefetch(&mut self, provider: Provider, size: [f32; 2]) {
         let net = Net::queue();
         self.net = Some(net);
@@ -1801,7 +1885,7 @@ impl App {
         self.provider = provider;
         self.load();
         self.drain();
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "native"))]
         if provider == Provider::Apple {
             let shot = apple::take_blocking(self.camera, size, self.dark);
             self.update(Msg::Snapshot(self.generation, self.snapshot_request, shot));
@@ -1810,6 +1894,7 @@ impl App {
 
     /// Headless: set up a flight like `fly_to` (fetching its destination and
     /// the top of its arc), then put the camera at time `t` along it.
+    #[cfg(feature = "native")]
     pub fn flight_at(&mut self, to: Camera, t: f64) {
         let from = self.camera;
         let mut dx = to.center[0] - from.center[0];
@@ -1853,13 +1938,23 @@ impl App {
         self.centred(59.9139, 10.7522, 12.)
     }
 
-    /// Headless: run queued downloads (and the ones their results queue).
+    /// Headless: run queued downloads (and the ones their results queue),
+    /// and delayed messages without waiting for them.
+    #[cfg(feature = "native")]
     pub fn drain(&mut self) {
         let Some(net) = self.net.clone() else { return };
         let agent = net::agent();
-        while let Some((g, job)) = net.next() {
-            let msg = net::run(&agent, g, job);
-            self.update(msg);
+        loop {
+            while let Some((g, job)) = net.next() {
+                let msg = net::run(&agent, g, job);
+                self.update(msg);
+            }
+            if self.timers.is_empty() {
+                break;
+            }
+            for (_, msg) in std::mem::take(&mut self.timers) {
+                self.update(msg);
+            }
         }
     }
 
@@ -1906,9 +2001,7 @@ impl App {
     /// pointer; a double click zooms in there.
     pub fn pointer(&mut self, p: volt_ui_kit::declarative::Pointer) {
         use volt_ui_kit::declarative::PointerPhase;
-        if std::env::var_os("MAPS_DEBUG").is_some()
-            && !matches!(p.phase, PointerPhase::Hover | PointerPhase::Drag)
-        {
+        if platform::debug() && !matches!(p.phase, PointerPhase::Hover | PointerPhase::Drag) {
             eprintln!(
                 "pointer {:?} at {:?} delta {:?} zoom {} clicks {}",
                 p.phase, p.at, p.delta, p.zoom, p.clicks
@@ -1957,10 +2050,9 @@ impl App {
                 }
             }
             PointerPhase::Drag => {
-                let now = std::time::Instant::now();
+                let now = platform::now();
                 self.drag_trail.push((now, p.offset));
-                self.drag_trail
-                    .retain(|(t, _)| now.duration_since(*t).as_millis() < 100);
+                self.drag_trail.retain(|(t, _)| now - *t < 100.);
                 if let Some(from) = self.drag_from {
                     self.keep_under(from, p.at);
                     // Fetch what comes into view while dragging; Apple waits
@@ -1990,15 +2082,15 @@ impl App {
                         (self.drag_trail.first(), self.drag_trail.last())
                     {
                         // Let go while moving: keep gliding.
-                        let ms = t1.duration_since(t0).as_secs_f64() * 1000.;
-                        let recent = std::time::Instant::now().duration_since(t1).as_millis() < 60;
+                        let ms = t1 - t0;
+                        let recent = platform::now() - t1 < 60.;
                         if ms > 4. && recent {
                             let velocity =
                                 [f64::from(b[0] - a[0]) / ms, f64::from(b[1] - a[1]) / ms];
                             if velocity[0].hypot(velocity[1]) > 0.25 {
                                 self.set_motion(Some(Motion::Glide {
                                     velocity,
-                                    last: std::time::Instant::now(),
+                                    last: platform::now(),
                                 }));
                             }
                         }
@@ -2076,7 +2168,7 @@ pub fn theme(app: &App, system: ThemeMode) -> UiTheme {
 /// The appearance at launch, before the window reports one.
 /// Miles where the system measures in inches (macOS), else kilometres.
 fn system_units() -> Units {
-    let imperial = cfg!(target_os = "macos")
+    let imperial = cfg!(all(target_os = "macos", feature = "native"))
         && std::process::Command::new("/usr/bin/defaults")
             .args(["read", "-g", "AppleMetricUnits"])
             .output()
@@ -2089,17 +2181,17 @@ fn system_units() -> Units {
 }
 
 fn system_is_dark() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(all(target_os = "macos", feature = "native"))
         && std::process::Command::new("/usr/bin/defaults")
             .args(["read", "-g", "AppleInterfaceStyle"])
             .output()
             .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "Dark")
 }
 
-#[cfg(test)]
+// These use the desktop's headless helpers; they run with the example.
+#[cfg(all(test, feature = "native"))]
 mod motion_tests {
     use super::*;
-    use std::time::{Duration, Instant};
 
     fn app() -> App {
         let mut app = App::new();
@@ -2114,7 +2206,7 @@ mod motion_tests {
         app.set_motion(Some(Motion::Fly {
             from: app.camera,
             to,
-            start: Instant::now() - Duration::from_secs(5),
+            start: platform::now() - 5000.,
             ms: 600.,
             lift: 3.,
         }));
@@ -2141,7 +2233,7 @@ mod motion_tests {
             to: app.camera.zoom + 1.,
             anchor,
             under,
-            start: Instant::now() - Duration::from_millis(100),
+            start: platform::now() - 100.,
             ms: 260.,
         }));
         app.frame();
@@ -2187,12 +2279,35 @@ mod motion_tests {
     }
 
     #[test]
+    fn a_browser_page_fetches_queued_jobs_and_drives_timers() {
+        let mut app = app();
+        app.start_browser();
+        let net = app.net.clone().unwrap();
+        let (_, style) = net.next().expect("the map style is asked for first");
+        assert!(style.request().0.contains("tiles.openfreemap.org"));
+        // A pause in typing is a timer the page's frames deliver.
+        app.query = "Clifton Hill".into();
+        app.search_seq += 1;
+        app.searching = true;
+        let seq = app.search_seq;
+        app.later(-1., Msg::SearchDue(seq));
+        assert!(app.busy(), "a waiting timer keeps frames coming");
+        app.tick();
+        let (_, search) = net.next().expect("the search is asked for");
+        assert!(search
+            .request()
+            .0
+            .starts_with("https://photon.komoot.io/api/"));
+        assert!(net.next().is_none());
+    }
+
+    #[test]
     fn a_glide_slows_to_a_stop() {
         let mut app = app();
         let start = app.camera.center;
         app.set_motion(Some(Motion::Glide {
             velocity: [1.5, 0.],
-            last: Instant::now() - Duration::from_millis(16),
+            last: platform::now() - 16.,
         }));
         app.frame();
         assert!(
@@ -2206,7 +2321,7 @@ mod motion_tests {
             if let Some(Motion::Glide { velocity, .. }) = app.motion {
                 app.motion = Some(Motion::Glide {
                     velocity,
-                    last: Instant::now() - Duration::from_millis(16),
+                    last: platform::now() - 16.,
                 });
             }
             app.frame();

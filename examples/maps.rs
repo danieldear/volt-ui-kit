@@ -176,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         support::RustLaunchOptions {
             // The title bar is part of the app: the map runs under it and the
             // macOS window buttons sit over its leading corner.
-            chrome: if cfg!(target_os = "macos") {
+            chrome: if cfg!(all(target_os = "macos", feature = "native")) {
                 WindowChrome::Overlay
             } else {
                 WindowChrome::Native

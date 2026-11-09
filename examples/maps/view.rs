@@ -402,34 +402,49 @@ fn chrome(app: &App) -> Element<App> {
 /// The title bar: it moves the window (its buttons still work) and leaves
 /// room for the macOS window buttons in its leading corner.
 fn toolbar(_app: &App) -> Element<App> {
-    let lights = if cfg!(target_os = "macos") { 70. } else { 0. };
-    hstack![
-        zstack(Vec::<Element<App>>::new()).width(lights).height(1.),
+    let lights = if cfg!(all(target_os = "macos", feature = "native")) {
+        70.
+    } else {
+        0.
+    };
+    let mut items: Vec<Element<App>> = vec![
+        zstack(Vec::<Element<App>>::new())
+            .width(lights)
+            .height(1.)
+            .into(),
         tool("sidebar", SIDEBAR, "Show or hide the sidebar", |app| {
             app.panel_open = !app.panel_open
         }),
-        text("Maps").font_size(15.).font_weight(600).color(INK),
-        spacer(),
-        tool("map-style", LAYERS, "Map style", |app| {
+        text("Maps")
+            .font_size(15.)
+            .font_weight(600)
+            .color(INK)
+            .into(),
+        spacer().into(),
+    ];
+    // A choice of map only where there is one (the browser has one).
+    if Provider::available().len() > 1 {
+        items.push(tool("map-style", LAYERS, "Map style", |app| {
             app.layers_open = !app.layers_open;
             app.settings_open = false;
-        }),
-        tool("settings", SETTINGS, "Settings", |app| {
-            app.settings_open = !app.settings_open;
-            app.layers_open = false;
-        }),
-    ]
-    .key("toolbar")
-    .height(TOOLBAR)
-    .gap(8., Axis::Horizontal)
-    .align(Align::Center)
-    .padding(12., Edge::Horizontal)
-    .background(ColorToken::Base100.alpha(92))
-    .border_color(HAIRLINE)
-    .border_width(1.)
-    .border_sides(Sides::BOTTOM)
-    .drag_region(true)
-    .into()
+        }));
+    }
+    items.push(tool("settings", SETTINGS, "Settings", |app| {
+        app.settings_open = !app.settings_open;
+        app.layers_open = false;
+    }));
+    hstack(items)
+        .key("toolbar")
+        .height(TOOLBAR)
+        .gap(8., Axis::Horizontal)
+        .align(Align::Center)
+        .padding(12., Edge::Horizontal)
+        .background(ColorToken::Base100.alpha(92))
+        .border_color(HAIRLINE)
+        .border_width(1.)
+        .border_sides(Sides::BOTTOM)
+        .drag_region(true)
+        .into()
 }
 
 fn controls(app: &App) -> Element<App> {
@@ -500,7 +515,11 @@ fn controls(app: &App) -> Element<App> {
     }
     column.push(zoom.into());
     column.push(view_card.into());
-    column.push(locate.into());
+    // Location comes from the system on the desktop; the browser build
+    // doesn't ask for it yet.
+    if cfg!(feature = "native") {
+        column.push(locate.into());
+    }
     if let Some(hint) = &app.hint {
         column.push(
             surface(vec![text(hint).font_size(12.5).color(INK).into()])
@@ -534,7 +553,7 @@ fn layer_menu(app: &App) -> Element<App> {
         .font_weight(600)
         .color(INK)
         .into()];
-    for provider in Provider::ALL {
+    for provider in Provider::available().iter().copied() {
         let current = provider == app.provider;
         let missing = provider.key_variable().is_some() && app.key_for(provider).is_none();
         let about = match provider {
@@ -606,7 +625,7 @@ fn settings_menu(app: &App) -> Element<App> {
         .on_select(|app: &mut App, units| app.units = units)
         .into(),
     ];
-    for provider in Provider::ALL {
+    for provider in Provider::available().iter().copied() {
         let (Some(name), Some(var)) = (provider.key_name(), provider.key_variable()) else {
             continue;
         };
@@ -1616,7 +1635,7 @@ fn draw_run(
                 ((x1 - x0) + 1.).min(w - x0) as f32,
                 ((y1 - y0) + 1.).min(h - y0) as f32,
             );
-            if std::env::var_os("MAPS_DEBUG").is_some() {
+            if super::platform::debug() {
                 let paths: usize = packer.canvases.iter().map(|c| c.paths.len()).sum();
                 let commands: usize = packer
                     .canvases
@@ -1739,7 +1758,7 @@ fn vector_layer(
                 if width <= 0. || opacity <= 0. {
                     continue;
                 }
-                if width > 64. && std::env::var_os("MAPS_DEBUG").is_some() {
+                if width > 64. && super::platform::debug() {
                     eprintln!(
                         "wide line: {} width {width} gap {gap} color {}",
                         layer.id,
@@ -1903,7 +1922,7 @@ fn place_labels(labels: Vec<Label>, [w, h]: [f32; 2], budget: usize, out: &mut V
             break;
         }
     }
-    if std::env::var_os("MAPS_DEBUG").is_some() {
+    if super::platform::debug() {
         eprintln!("labels: {} placed, {glyphs} glyphs", taken.len());
     }
 }
@@ -1937,7 +1956,8 @@ fn apple_layer(app: &App, out: &mut Vec<Element<App>>) {
     );
 }
 
-#[cfg(test)]
+// These use the desktop's headless helpers; they run with the example.
+#[cfg(all(test, feature = "native"))]
 mod tests {
     use super::*;
     use volt_ui_kit::{
