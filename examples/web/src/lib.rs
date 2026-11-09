@@ -417,10 +417,12 @@ mod wasm {
             let error = |e: String| JsValue::from_str(&e);
             let view = &mut self.host.view;
             // Relay's scripted agent plays its reply from this clock, on
-            // either slide, and keeps frames coming while it does.
-            if view.context().relay.busy() {
+            // either slide, and keeps frames coming while it does. Time
+            // passes without a rebuild; the app is rebuilt only when an
+            // event is due.
+            if view.context().relay.elapse(elapsed) {
                 view.update(|s| {
-                    s.relay.advance(elapsed);
+                    s.relay.advance(0.);
                 })
                 .map_err(error)?;
             }
@@ -562,15 +564,24 @@ mod tests {
         host.update(|s| s.relay.send(Some("Run the tests".into())))
             .unwrap();
         assert!(host.context().relay.busy() && host.context().relay.running());
-        let mut frames = 0;
+        // As the page does: time passes every frame, and the app is rebuilt
+        // only on the frames where an event is due.
+        let (mut frames, mut rebuilds) = (0, 0);
         while host.context().relay.busy() {
-            host.update(|s| {
-                s.relay.advance(16.);
-            })
-            .unwrap();
+            if host.context().relay.elapse(16.) {
+                host.update(|s| {
+                    s.relay.advance(0.);
+                })
+                .unwrap();
+                rebuilds += 1;
+            }
             frames += 1;
             assert!(frames < 2_000, "the scripted reply never finished");
         }
+        assert!(
+            rebuilds < frames,
+            "{rebuilds} rebuilds in {frames} frames: idle frames rebuilt the app"
+        );
         let reply = host.context().relay.thread().messages.last().unwrap();
         assert!(!reply.streaming && reply.text.starts_with("All green."));
         assert!(!host.context().relay.running());
