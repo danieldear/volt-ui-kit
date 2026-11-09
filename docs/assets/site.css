@@ -3,14 +3,35 @@
    --ink, --secondary, --line, --boundary, --wash, --orchid-wash, --display,
    --body and --mono, so keep those names.
 
-   The landing page is the Catalog's own landing (examples/catalog/landing.rs)
-   on the web: the system sans for reading, an italic serif for accents and a
-   letter-spaced mono for labels, as the Catalog sets them. */
+   Every face is open and self-hosted, so the site looks the same on every
+   system: Bricolage Grotesque for headlines, Inter for reading (the font the
+   live Rust previews draw with), an Instrument Serif italic for accents and
+   JetBrains Mono for labels and code. Each is trimmed to Latin; see
+   docs/third-party.md. */
 @font-face {
   font-family: "Bricolage Grotesque";
   src: url("fonts/bricolage-grotesque.woff2") format("woff2");
   font-weight: 200 800;
   font-stretch: 75% 100%;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/inter.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/jetbrains-mono.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("fonts/instrument-serif-italic.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 400;
   font-display: swap;
 }
 :root {
@@ -29,12 +50,11 @@
   --accent-soft: #ede9fe;
   --success: #16a34a;
   --hairline: rgb(9 9 11 / 8%);
-  --display: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, sans-serif;
-  --body: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-  /* The Catalog's New York and SF Mono, where the browser can reach them. */
-  --serif: ui-serif, "New York", "Iowan Old Style", Charter, Georgia, serif;
-  --label: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --display: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+  --body: "Inter", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --serif: "Instrument Serif", Georgia, serif;
+  --label: "JetBrains Mono", ui-monospace, monospace;
   font-family: var(--body);
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
@@ -95,6 +115,7 @@ html:has(.landing) { scroll-padding-top: 88px; }
 
 /* Type: a bold sans line, then an italic serif accent in the accent colour. */
 .landing .eyebrow { font-family: var(--label); font-size: 11px; font-weight: 500; line-height: 1.6; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+.landing h1, .landing h2 { font-family: var(--display); }
 .landing h2 { font-size: clamp(36px, 4.6vw, 58px); font-weight: 700; line-height: 1.08; letter-spacing: -.025em; }
 .h-line { display: block; }
 .h-serif { font-family: var(--serif); font-style: italic; font-weight: 400; letter-spacing: -.01em; color: var(--accent); font-size: 1.07em; }
@@ -123,9 +144,12 @@ html:has(.landing) { scroll-padding-top: 88px; }
 .brand-mark { width: 26px; height: 26px; flex: none; color: var(--accent); }
 .brand-version { font-size: 11px; font-weight: 500; color: var(--muted); background: var(--wash); border-radius: 999px; padding: 1px 8px; }
 .topnav { display: flex; align-items: center; gap: 28px; margin-left: auto; }
-.topnav a { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; font-family: var(--label); font-size: 11px; font-weight: 500; letter-spacing: .16em; text-transform: uppercase; text-decoration: none; color: var(--secondary); }
+.topnav a { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; white-space: nowrap; font-family: var(--label); font-size: 11px; font-weight: 500; letter-spacing: .16em; text-transform: uppercase; text-decoration: none; color: var(--secondary); }
 .topnav a:hover { color: var(--ink); }
 .topnav .icon { width: 12px; height: 12px; }
+.topnav a[aria-current="page"] { color: var(--ink); text-decoration: underline 2px var(--accent); text-underline-offset: 8px; }
+/* The docs and live pages use the same header across the full width. */
+.topbar-wide { padding-inline: 32px; }
 
 /* Hero: the wordmark and headline inside two hairline orbits. */
 .hero { position: relative; overflow: clip; display: grid; place-items: center; min-height: 720px; padding: 72px 20px 88px; }
@@ -174,16 +198,32 @@ html:has(.landing) { scroll-padding-top: 88px; }
 
 /* Screens */
 .screen { margin-top: 128px; }
-.shot { margin-top: 96px; }
-.shot-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 24px; margin-bottom: 18px; }
-.shot-head p { font-size: 13px; color: var(--muted); }
-.shot-frame img { border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 40px 80px -40px rgb(0 0 0 / 35%), 0 12px 24px -12px rgb(0 0 0 / 12%); }
-.shot-frame figcaption { margin-top: 18px; font-size: 13px; color: var(--muted); }
 
-.numbers { list-style: none; padding: 0; margin: 128px auto 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
-.numbers li { display: grid; gap: 6px; align-content: start; padding-left: 20px; border-left: 1px solid var(--line); }
-.numbers strong { font-size: clamp(56px, 6.5vw, 84px); font-weight: 200; line-height: 1; letter-spacing: -.03em; }
-.numbers span { font-family: var(--label); font-size: 11px; line-height: 1.6; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); max-width: 26ch; }
+
+/* From template to app: three commands, in order. */
+.steps { list-style: none; padding: 0; margin: 36px 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; counter-reset: step; }
+.steps li { display: grid; gap: 12px; align-content: start; padding-top: 20px; border-top: 1px solid var(--line); counter-increment: step; min-width: 0; }
+.steps h3 { display: flex; align-items: baseline; gap: 12px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.steps h3::before { content: counter(step); font-family: var(--label); font-size: 12px; font-weight: 500; color: var(--accent-ink); }
+.steps pre { margin: 0; padding: 14px 16px; overflow-x: auto; border-radius: 10px; background: #0b0b10; border: 1px solid #27272a; color: #e4e4e7; font-family: var(--label); font-size: 13px; line-height: 1.5; }
+.steps p { font-size: 14px; line-height: 1.55; color: var(--secondary); }
+
+/* Live apps: one canvas running the kit's carousel, with whole example
+   apps as its slides. It lays out at 1040 × 760 (each app at 1040 × 700,
+   the carousel's controls below) and scales to the frame. */
+.showcase { margin-top: 40px; }
+.volt-preview.gallery-app .volt-root { height: auto; aspect-ratio: 1040 / 760; border-color: var(--line); box-shadow: 0 32px 64px -32px rgb(0 0 0 / 35%), 0 10px 20px -10px rgb(0 0 0 / 12%); }
+.showcase figcaption { margin-top: 20px; display: grid; gap: 28px; }
+.showcase-note { font-size: 15px; color: var(--secondary); }
+.showcase-note .text-link { font-size: 15px; min-height: 0; }
+.showcase-apps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 48px; }
+.showcase-apps > div { display: grid; gap: 8px; align-content: start; padding-top: 20px; border-top: 1px solid var(--line); }
+.showcase-apps h3 { font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
+.showcase-apps p { font-size: 15px; line-height: 1.55; color: var(--secondary); }
+.showcase-apps .app-run { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: var(--muted); }
+.app-run .text-link { font-size: 13px; min-height: 32px; }
+.projects-title { margin-top: 32px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.projects { grid-template-columns: repeat(2, 1fr); margin-top: 16px; }
 
 .features { list-style: none; padding: 0; margin: 36px 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .features li { padding: 24px; border-radius: 16px; background: color-mix(in srgb, var(--wash) 60%, var(--canvas)); border: 1px solid var(--line); }
@@ -292,7 +332,7 @@ html:has(.landing) { scroll-padding-top: 88px; }
 @media (prefers-color-scheme: dark) {
   ::selection { background: #4c1d95; color: #fff; }
   .fragment { box-shadow: 0 14px 28px rgb(0 0 0 / 40%); }
-  .shot-frame img { box-shadow: 0 40px 80px -40px rgb(0 0 0 / 80%); }
+  .volt-preview.gallery-app .volt-root { box-shadow: 0 32px 64px -32px rgb(0 0 0 / 80%); }
   .swatch-zinc { --swatch: #fafafa; }
   .swatch-blue { --swatch: #3b82f6; }
   .swatch-violet { --swatch: #8b5cf6; }
@@ -312,13 +352,14 @@ html:has(.landing) { scroll-padding-top: 88px; }
 }
 @media (max-width: 1100px) {
   .split { grid-template-columns: 1fr; }
+  .steps { grid-template-columns: 1fr; }
   .features, .index-grid { grid-template-columns: 1fr 1fr; }
-  .numbers, .platforms, .footer-links { grid-template-columns: 1fr 1fr; }
-  .numbers { row-gap: 40px; }
+  .platforms, .footer-links { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 760px) {
   .shell { width: calc(100% - 40px); }
   .topbar-inner { gap: 16px; }
+  .topbar-wide { padding-inline: 20px; }
   .topbar .cta-small, .topnav .topnav-wide, .brand-version { display: none; }
   .topnav { gap: 16px; }
   .topnav a { letter-spacing: .08em; }
@@ -332,15 +373,17 @@ html:has(.landing) { scroll-padding-top: 88px; }
   .hero-lead { font-size: 16px; }
   .hero-lead br { display: none; }
   .hero-meta { gap: 8px 20px; }
-  .screen, .numbers, .footer { margin-top: 96px; }
-  .shot { margin-top: 72px; }
+  .screen, .footer { margin-top: 96px; }
   .lede { font-size: 17px; }
-  .features, .index-grid, .platforms { grid-template-columns: 1fr; }
+  .features, .index-grid, .platforms, .projects { grid-template-columns: 1fr; }
+  .showcase-apps { grid-template-columns: 1fr; }
   .code-card { padding: 18px; }
   .code-card pre { font-size: 12px; }
 }
 @media (max-width: 420px) {
   .brand-name { display: none; }
+  .topnav { gap: 12px; }
+  .topnav a { letter-spacing: .04em; }
   .actions .cta { flex: 1; padding-inline: 16px; }
 }
 @media (forced-colors: active) {

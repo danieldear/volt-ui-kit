@@ -59,8 +59,6 @@ async function run(type,options,label) {
   });
   await page.goto(`${origin}/index.html`);
   assert.equal(await page.locator('img[src*="images/catalog"],img[src*="images/theming"],iframe').count(),0);
-  const dashboard=page.locator('[data-volt-page="dashboard"]');await ready(dashboard);
-  if(label==='chromium')await page.screenshot({path:path.join(output,'landing-live-dashboard.png'),caret:'initial'});
   const counter=page.locator('[data-volt-page="introduction"][data-volt-section="counter"]');await ready(counter);
   await pointer(counter,counter.getByRole('button',{name:'Click me',exact:true}));
   await counter.getByText('Clicked 1 time',{exact:true}).waitFor();
@@ -70,6 +68,9 @@ async function run(type,options,label) {
   await counter.getByText('Clicked 1 time',{exact:true}).waitFor();
   if(label==='chromium')await page.screenshot({path:path.join(output,'landing-direct-rust.png'),caret:'initial'});
   await page.goto(`${origin}/reference/index.html?renderer=software`);
+  // The live Catalog dashboard heads the Components index.
+  const dashboard=page.locator('[data-volt-page="dashboard"]:not([data-volt-mode="directory"])');await ready(dashboard);
+  if(label==='chromium')await page.screenshot({path:path.join(output,'components-live-dashboard.png'),caret:'initial'});
   const cards=page.locator('[data-volt-mode="directory"]');assert.equal(await cards.count(),49);
   for(let i=0;i<await cards.count();i++)await ready(cards.nth(i));
   assert.equal(await page.locator('.volt-status[data-error="true"]').count(),0);
@@ -113,7 +114,7 @@ async function run(type,options,label) {
   assert.equal(await dates.locator('.volt-status[data-error="true"]').count(),0);
   if(label==='chromium')await page.screenshot({path:path.join(output,'catalog-direct-calendar.png'),fullPage:true,caret:'initial'});
   assert.deepEqual(errors,[]);
-  console.log(`${label}: landing counter/state retention, live accent, 49 directory canvases, resource limits, original menu/context callbacks, table sorting/selection and calendar passed.`);
+  console.log(`${label}: landing counter/state retention, live accent, Components dashboard, 49 directory canvases, resource limits, original menu/context callbacks, table sorting/selection and calendar passed.`);
  }catch(e){console.error(label,e,errors);throw e;}finally{await browser.close();}
 }
 (async()=>{await run(chromium,{channel:process.env.PLAYWRIGHT_CHANNEL || undefined,headless:true},'chromium');if(process.env.VOLT_TEST_WEBKIT==='1')await run(webkit,{headless:true},'webkit');})().catch(e=>{console.error(e);process.exitCode=1});

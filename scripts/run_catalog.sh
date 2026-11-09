@@ -47,7 +47,7 @@ if [ "$(uname -s)" = Darwin ]; then
   app="$bundle_dir/Volt Catalog.app"
   cargo run --locked --features dev-tools --bin cargo-volt -- bundle \
     --binary "$binary" --output "$app" --name 'Volt Catalog' \
-    --identifier com.volt.ui.catalog --version 0.5.0 \
+    --identifier com.volt.ui.catalog --version 0.6.0 \
     --minimum-system-version 11.0 --sign ad-hoc
   /usr/bin/codesign --verify --strict "$app"
   /usr/bin/plutil -lint "$app/Contents/Info.plist"
