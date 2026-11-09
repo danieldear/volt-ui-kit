@@ -147,6 +147,12 @@ name = "northbound"
 required-features = ["native"]
 
 [[example]]
+# A test bed for map providers drawn by Volt: open maps, Mapbox, Google and
+# Apple. It downloads styles and tiles, so it needs a network connection.
+name = "maps"
+required-features = ["native"]
+
+[[example]]
 name = "specimen"
 required-features = ["native"]
 
@@ -173,3 +179,18 @@ rustix = { version = "=1.1.6", default-features = false, features = ["std", "eve
 wayland-server = "=0.31.14"
 wayland-protocols-plasma = { version = "=0.3.12", features = ["client", "server"] }
 wayland-protocols = { version = "=0.32.13", features = ["server", "staging"] }
+
+[dev-dependencies]
+# The `maps` example only: HTTPS for map styles and tiles, and gzip for
+# vector tiles that arrive compressed. Neither is a library dependency.
+ureq = "=3.4.3"
+flate2 = "=1.1.10"
+
+# The `maps` example on macOS: Apple Maps through MapKit snapshots.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-map-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-location", "MKMapSnapshotter", "MKMapSnapshotOptions", "MKMapSnapshot", "MKGeometry", "MKTypes", "MKMapView", "MKLocalSearch", "MKLocalSearchRequest", "MKLocalSearchResponse", "MKMapItem", "MKPlacemark", "MKAddress", "MKDirections", "MKDirectionsRequest", "MKDirectionsResponse", "MKDirectionsTypes", "MKMultiPoint", "MKPolyline", "MKShape", "MKOverlay", "MKAnnotation", "MKPointOfInterestCategory"] }
+objc2-core-location = { version = "=0.3.2", default-features = false, features = ["std", "CLLocation", "CLPlacemark", "CLLocationManager"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSAppearance"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSString", "NSDate", "NSRunLoop", "NSArray", "NSRange", "NSEnumerator"] }
+block2 = { version = "=0.6.2", default-features = false, features = ["std"] }
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }

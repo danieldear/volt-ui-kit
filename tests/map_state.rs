@@ -1,7 +1,7 @@
 #![cfg(feature = "rust-ui")]
 //! A view written for its own state runs unchanged inside a larger app.
 use volt_ui_kit::{
-    declarative::{Bindings, Handlers, Runtime, TextMetrics},
+    declarative::{Bindings, Handlers, PointerPhase, Runtime, TextMetrics},
     ui::prelude::*,
     Viewport,
 };
@@ -148,4 +148,59 @@ fn component_state_accessors_compose_with_a_mapped_view() {
     h.click("right-fruit-option-1");
     assert_eq!(h.app.right.fruit, Some(2));
     assert_eq!(h.app.left.fruit, None);
+}
+
+/// A surface that does its own hit testing, such as a map.
+#[derive(Default)]
+struct Surface {
+    presses: u32,
+}
+fn surface(key: &str) -> Element<Surface> {
+    zstack(Vec::<Element<Surface>>::new())
+        .key(key)
+        .width(200.)
+        .height(100.)
+        .on_pointer(|s: &mut Surface, p| {
+            if matches!(p.phase, PointerPhase::Press) {
+                s.presses += 1;
+            }
+        })
+        .into()
+}
+
+#[derive(Default)]
+struct Board {
+    left: Surface,
+    right: Surface,
+}
+
+#[test]
+fn pointer_surfaces_hear_presses_inside_a_mapped_view() {
+    let mut board = Board::default();
+    let view: Element<Board> = hstack![
+        surface("left").map_state(|b: &mut Board| &mut b.left),
+        surface("right").map_state(|b: &mut Board| &mut b.right),
+    ]
+    .into();
+    let (d, mut handlers) = view.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(d, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            Viewport::new(500., 200., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+    let [x, y, ..] = runtime
+        .boxes()
+        .iter()
+        .find(|b| b.id == "right")
+        .unwrap()
+        .bounds
+        .bounds();
+    runtime
+        .pointer_down_outcome(x + 10., y + 10., &mut handlers, &mut board)
+        .unwrap();
+    assert_eq!(board.right.presses, 1, "the right surface heard its press");
+    assert_eq!(board.left.presses, 0);
 }

@@ -110,6 +110,8 @@ struct PopupLayout {
     gap: f32,
     item_height: f32,
     max_height: f32,
+    /// The popup's own width; `None` matches the trigger (208 by default).
+    width: Option<f32>,
 }
 impl Default for PopupLayout {
     fn default() -> Self {
@@ -118,6 +120,7 @@ impl Default for PopupLayout {
             gap: 2.,
             item_height: 34.,
             max_height: 480.,
+            width: None,
         }
     }
 }
@@ -236,6 +239,14 @@ macro_rules! menu_options {
                 self.$field.layout.item_height = value;
                 self
             }
+            /// The popup's width, independent of the trigger's: a compact
+            /// trigger (an inline "Hug ▾" chip) can open a list wide enough
+            /// for its rows. 64..2048 logical pixels; by default the popup
+            /// matches the trigger.
+            pub fn popup_width(mut self, value: f32) -> Self {
+                self.$field.layout.width = Some(value);
+                self
+            }
             /// Maximum popup height (default 480). The viewport may constrain
             /// it further; overflowing rows remain scrollable and keyboard reachable.
             pub fn popup_max_height(mut self, value: f32) -> Self {
@@ -255,6 +266,14 @@ macro_rules! menu_options {
 }
 menu_options!(Menu, 2);
 menu_options!(ContextMenu, 2);
+impl<C, T> Menu<C, T> {
+    /// Space before the trigger's label (default 10), for a compact trigger
+    /// such as an inline "Hug ▾" chip.
+    pub fn label_inset(mut self, value: f32) -> Self {
+        self.0.node.ext.label_inset = Some(value);
+        self
+    }
+}
 impl<C, T> ContextMenu<C, T> {
     /// The target fills the wrapper: for a flexible target, such as a code
     /// view, that takes the room the wrapper is given. Without it the target
@@ -285,6 +304,12 @@ fn error<C, T>(root: &Element<C>, options: &MenuOptions<C, T>) -> Option<String>
         || !(24. ..=8192.).contains(&layout.max_height)
     {
         return Some("popup spacing must be finite: padding 0..256, gap 0..128, item height 24..512, max height 24..8192".into());
+    }
+    if layout
+        .width
+        .is_some_and(|w| !w.is_finite() || !(64. ..=2048.).contains(&w))
+    {
+        return Some("popup width must be finite and 64..2048".into());
     }
     if root.auto_id {
         return Some("menu requires a stable .key(...)".into());
@@ -641,7 +666,11 @@ impl<C: 'static, T: Clone + 'static> From<Menu<C, T>> for Element<C> {
             menu.0.validation_error = Some(error);
             return menu.0;
         }
-        let width = menu.0.node.width.unwrap_or(208.);
+        let width = menu
+            .2
+            .layout
+            .width
+            .unwrap_or(menu.0.node.width.unwrap_or(208.));
         let trigger_key = format!("{}-trigger", menu.0.node.id);
         let change = menu.2.change.unwrap();
         let open = menu.2.open;
@@ -655,6 +684,7 @@ impl<C: 'static, T: Clone + 'static> From<Menu<C, T>> for Element<C> {
         trigger.0.node.width = menu.0.node.width;
         trigger.0.node.accessible_label = menu.0.node.accessible_label.take();
         trigger.0.node.style = menu.0.node.style.clone();
+        trigger.0.node.ext.label_inset = menu.0.node.ext.label_inset;
         menu.0.children.push(trigger.into());
         if open && menu.2.enabled {
             let key = format!("{}-popup", menu.0.node.id);
@@ -709,7 +739,11 @@ impl<C: 'static, T: Clone + 'static> From<ContextMenu<C, T>> for Element<C> {
             let mut popup = popup(
                 menu.2.items,
                 Popup {
-                    width: menu.0.node.width.unwrap_or(208.),
+                    width: menu
+                        .2
+                        .layout
+                        .width
+                        .unwrap_or(menu.0.node.width.unwrap_or(208.)),
                     key,
                     anchor,
                     action: menu.2.action.unwrap(),

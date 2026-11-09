@@ -295,6 +295,16 @@ impl VectorPath {
         inside
     }
 }
+/// How a mask element cuts the content of the container it masks
+/// (see `Container::mask`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MaskMode {
+    /// Content shows where the mask is opaque: a gradient mask fades it.
+    Alpha,
+    /// Content shows where the mask is bright: white shows, black and
+    /// transparent hide (0.2126 R + 0.7152 G + 0.0722 B, times alpha).
+    Luminance,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub enum Clip {
     Bounds,
