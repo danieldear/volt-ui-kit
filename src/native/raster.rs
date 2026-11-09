@@ -2465,12 +2465,17 @@ fn apple_family(fonts: &FontSystem, candidates: &[&str], fallback: &str) -> Stri
     fallback.into()
 }
 fn system_family(fonts: &FontSystem) -> String {
-    if cfg!(target_os = "macos")
-        && fonts
+    let has = |family: &str| {
+        fonts
             .db()
             .faces()
-            .any(|face| face.families.iter().any(|(name, _)| name == "Avenir Next"))
-    {
+            .any(|face| face.families.iter().any(|(name, _)| name == family))
+    };
+    // An app that bundles Inter gets it as its default face, the same on
+    // every platform. (The kit itself bundling Inter is planned.)
+    if let Some(inter) = ["Inter Variable", "Inter"].into_iter().find(|f| has(f)) {
+        inter.into()
+    } else if cfg!(target_os = "macos") && has("Avenir Next") {
         "Avenir Next".into()
     } else {
         "sans-serif".into()
