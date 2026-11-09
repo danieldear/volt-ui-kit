@@ -187,7 +187,7 @@ pub(super) fn draw_run(
         }
     }
     draw_buildings(view, buildings, &mut packer);
-    if std::env::var_os("MAPS_DEBUG").is_some() {
+    if super::super::platform::debug() {
         let paths: usize = packer.canvases.iter().map(|c| c.paths.len()).sum();
         let commands: usize = packer
             .canvases
