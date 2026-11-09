@@ -44,7 +44,7 @@ class CatalogLauncherTests(unittest.TestCase):
         self.assertIn('name = "volt-ui-kit"\nversion = "' + version + '"',
                       (ROOT / 'Cargo.lock').read_text())
         self.assertIn('## ' + version + ' (', (ROOT / 'CHANGELOG.md').read_text())
-        self.assertIn(minor + ' / Pre-1.0', (ROOT / 'scripts/generate_docs.cjs').read_text())
+        self.assertIn('brand-version">' + minor + '<', (ROOT / 'scripts/generate_docs.cjs').read_text())
         self.assertIn('brand-version">' + minor + '<', (ROOT / 'docs/index.html').read_text())
 
     def test_help_and_invalid_options_never_build(self):

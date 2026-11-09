@@ -7,7 +7,7 @@ your Rust closures when something happens.
 
 ## Add the dependency
 
-Version **0.5.0** is prepared in the repository but is not yet on crates.io.
+Version **0.6.0** is prepared in the repository but is not yet on crates.io.
 Use a Git or path dependency until it is published:
 
 ```toml
