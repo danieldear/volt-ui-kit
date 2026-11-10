@@ -128,9 +128,14 @@ fn chrome_selector(app: &App, key: &'static str) -> El<App> {
         select_item(1, "Custom"),
         select_item(2, "Borderless"),
     ];
-    if cfg!(target_os = "macos") {
-        modes.push(select_item(3, "Unified"));
-    }
+    modes.push(select_item(
+        3,
+        if cfg!(target_os = "macos") {
+            "Unified"
+        } else {
+            "Overlay"
+        },
+    ));
     select(modes)
         .key(key)
         .accessible_label("Window decoration mode")
@@ -209,8 +214,8 @@ fn window_header_menu(app: &App, bar: El<App>) -> El<App> {
     )
     .fill()
     .key("window-header-menu")
-    .height(36.)
-    .min_height(36.)
+    .height(56.)
+    .min_height(56.)
     .flex(1.)
     .open(app.window_menu.is_some())
     .position(app.window_menu.unwrap_or([0., 56.]))
