@@ -137,7 +137,7 @@ pub fn response_limit(job: &Job) -> usize {
 pub fn finish(generation: u64, job: Job, response: Result<(u16, Vec<u8>), String>) -> Msg {
     let response = response.and_then(|(status, bytes)| {
         if bytes.len() > response_limit(&job) {
-            Err("map response exceeds size limit".into())
+            Err("Map response exceeds size limit.".into())
         } else {
             Ok((status, bytes))
         }
