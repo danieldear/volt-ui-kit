@@ -79,11 +79,15 @@ class CopiedSampleTests(unittest.TestCase):
 
     def test_browser_ci_pins_a_matching_image_and_retains_all_real_tests(self):
         workflow = (ROOT / '.github/workflows/web-prototype.yml').read_text()
-        image = re.search(r'image: mcr\.microsoft\.com/playwright:v([\d.]+)-noble@sha256:([0-9a-f]{64})', workflow)
+        image = re.search(r'PLAYWRIGHT_IMAGE: mcr\.microsoft\.com/playwright:v([\d.]+)-noble@sha256:([0-9a-f]{64})', workflow)
         self.assertIsNotNone(image)
         self.assertIn('playwright@' + image.group(1), workflow)
         self.assertIn('runs-on: ubuntu-24.04', workflow)
-        self.assertIn('PLAYWRIGHT_BROWSERS_PATH: /ms-playwright', workflow)
+        self.assertIn('--env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright', workflow)
+        self.assertIn('docker run --rm --interactive', workflow)
+        self.assertIn('--user "$(id -u):$(id -g)"', workflow)
+        self.assertNotIn('    container:', workflow)
+        self.assertIn('cargo test --locked --manifest-path crates/volt-ui-kit-web/Cargo.toml', workflow)
         self.assertNotIn('apt-get', workflow)
         self.assertNotIn('install --with-deps', workflow)
         for script in ('test_web.cjs', 'test_catalog_web.cjs', 'test_web_input.cjs'):

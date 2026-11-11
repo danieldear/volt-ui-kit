@@ -10,15 +10,13 @@ concurrency:
 jobs:
   browser-host:
     runs-on: ubuntu-24.04
-    # Match the npm version below. Browsers, fonts and native dependencies are
-    # already installed: no runtime apt/mirror downloads on the rolling image.
-    container:
-      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     timeout-minutes: 30
     # Line numbers without full debug info: smaller, quicker builds to cache.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      # Build Rust on the runner (which has a C compiler), then run browsers
+      # in this matching image with fonts/dependencies already installed.
+      PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,17 +52,21 @@ jobs:
         run: wasm-bindgen --version 2>/dev/null | grep -qx 'wasm-bindgen 0.2.129' || cargo install --locked wasm-bindgen-cli --version 0.2.129
       - run: python3 scripts/build_web.py
       - run: npm install --prefix target/web-test-tools --no-save --ignore-scripts playwright@1.62.1
-      - name: Verify preinstalled Chromium matches the pinned Playwright package
+      - name: Real browser smoke tests in the pinned runtime
+        shell: bash
         run: |
+          docker run --rm --interactive --shm-size=1g \
+            --user "$(id -u):$(id -g)" \
+            --volume "$PWD:$PWD" --workdir "$PWD" \
+            --env HOME=/tmp --env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+            --env NODE_PATH="$PWD/target/web-test-tools/node_modules" \
+            "$PLAYWRIGHT_IMAGE" /bin/bash -euo pipefail -s <<'BROWSER_TESTS'
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node - <<'JS'
           const assert = require('node:assert/strict');
           const fs = require('node:fs');
           assert.equal(require('playwright/package.json').version, '1.62.1');
           assert.ok(fs.existsSync(require('playwright').chromium.executablePath()), 'Pinned Chromium is missing');
           JS
-      - name: Real browser smoke tests
-        shell: bash
-        run: |
           rm -rf target/web-pages/volt-ui-kit
           python3 scripts/build_docs_site.py target/web-pages/volt-ui-kit --web-assets docs/live/pkg
           python3 -m http.server 8768 --bind 127.0.0.1 --directory target/web-pages > target/web-server.log 2>&1 &
@@ -75,6 +77,7 @@ jobs:
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_web.cjs
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_catalog_web.cjs
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_web_input.cjs
+          BROWSER_TESTS
       - name: Save build cache
         if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
