@@ -38,8 +38,19 @@ def check(runner=None):
         (fixture / "Cargo.toml").write_text("\n".join(manifest) + "\n", encoding="utf-8")
         shutil.copyfile(ROOT / "Cargo.lock", fixture / "Cargo.lock")
         env = dict(os.environ, CARGO_TARGET_DIR=str(target))
-        subprocess.run(["cargo", "check", "--offline", "--all-targets", "--manifest-path", str(fixture / "Cargo.toml")],
-                       check=True, env=env)
+        subprocess.run(
+            [
+                "cargo",
+                "check",
+                "--locked",
+                "--offline",
+                "--all-targets",
+                "--manifest-path",
+                str(fixture / "Cargo.toml"),
+            ],
+            check=True,
+            env=env,
+        )
     print(f"Checked {len(names)} exact copied Catalog programs against this toolkit; no windows opened.")
 
 
