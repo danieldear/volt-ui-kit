@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Port eight runnable Button, Select and Table recipes into the current Catalog
+  without changing its design or shared rounded/square Table selection and sort.
+  Their Code panels and web reference show complete cached Rust programs; the
+  `samples` runner lists, launches and prints them. CI checks copied programs
+  independently. Retain mapped-child key/pointer coverage alongside existing tests.
+
 - Integrated custom chrome with the current runtime/input and map-safety fixes.
   Custom header drags wait for pointer movement to preserve double-click
   maximize; Wayland/Windows blank headers request the native window menu.

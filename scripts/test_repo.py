@@ -58,6 +58,26 @@ class SiteTests(unittest.TestCase):
         self.assertIn("./scripts/run_catalog.sh", guide)
         self.assertIn("not yet on crates.io", guide)
 
+    def test_complete_recipe_sources_match_reference_and_keep_excerpt_labels_elsewhere(self):
+        root = build_docs_site.ROOT
+        catalog = json.loads((root / "docs/assets/catalog-data.json").read_text())
+        recipes = {"button-variants", "button-sizes", "button-states", "select",
+                   "select-disabled", "select-vs-combobox", "table", "table-square"}
+        complete = set()
+        for page in catalog:
+            html = (root / f"docs/reference/{page['slug']}.html").read_text()
+            for section in page["sections"]:
+                if section["id"] in recipes:
+                    complete.add(section["id"])
+                    self.assertIn("pub fn main()", section["code"])
+                    self.assertNotIn("catalog-only", section["code"])
+                    self.assertIn(f"--example samples -- {section['id']}</code>", html)
+                    self.assertIn("Complete native Rust program.", html)
+                else:
+                    self.assertNotIn("pub fn main()", section["code"])
+        self.assertEqual(complete, recipes)
+        self.assertIn("Catalog excerpt:", (root / "docs/reference/badge.html").read_text())
+
     def test_real_site_is_valid(self):
         self.assertEqual(inspect_site(build_docs_site.ROOT), [])
 

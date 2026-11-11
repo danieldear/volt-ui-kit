@@ -1,7 +1,7 @@
 //! Page metadata and the live demos, code and API for every component.
 use super::{
     art::{icon, Icon},
-    App, THEMES,
+    samples, App, THEMES,
 };
 use volt_ui_kit::ui::{prelude::*, Element as El};
 
@@ -769,85 +769,12 @@ fn badge_doc() -> Doc {
 }
 
 fn button_doc(app: &App) -> Doc {
-    let variants = line(vec![
-        button("Primary")
-            .key("b-primary")
-            .variant(ButtonVariant::Primary)
-            .on_click(noop)
-            .into(),
-        button("Neutral").key("b-neutral").on_click(noop).into(),
-        button("Soft")
-            .key("b-soft")
-            .variant(ButtonVariant::Soft)
-            .on_click(noop)
-            .into(),
-        button("Outline")
-            .key("b-outline")
-            .variant(ButtonVariant::Outline)
-            .on_click(noop)
-            .into(),
-        button("Ghost")
-            .key("b-ghost")
-            .variant(ButtonVariant::Ghost)
-            .on_click(noop)
-            .into(),
-        button("Delete")
-            .key("b-danger")
-            .variant(ButtonVariant::Danger)
-            .on_click(noop)
-            .into(),
-    ]);
-    let sizes = line(vec![
-        button("Small")
-            .key("b-small")
-            .size(ControlSize::Small)
-            .variant(ButtonVariant::Outline)
-            .on_click(noop)
-            .into(),
-        button("Medium")
-            .key("b-medium")
-            .size(ControlSize::Medium)
-            .variant(ButtonVariant::Outline)
-            .on_click(noop)
-            .into(),
-        button("Large")
-            .key("b-large")
-            .size(ControlSize::Large)
-            .variant(ButtonVariant::Outline)
-            .on_click(noop)
-            .into(),
-    ]);
-    let states = line(vec![
-        button("Disabled")
-            .key("b-disabled")
-            .variant(ButtonVariant::Primary)
-            .enabled(false)
-            .on_click(noop)
-            .into(),
-        button(if app.liked { "Liked" } else { "Like" })
-            .key("b-like")
-            .variant(if app.liked {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Outline
-            })
-            .animation(Animation::ease_out().duration_ms(180))
-            .on_click(|app: &mut App| app.liked = !app.liked)
-            .into(),
-        button("Sort by date")
-            .key("b-disclosure")
-            .disclosure(false)
-            .width(150.)
-            .variant(ButtonVariant::Outline)
-            .on_click(noop)
-            .into(),
-        button("Left aligned")
-            .key("b-align")
-            .label_align(Align::Start)
-            .width(150.)
-            .on_click(noop)
-            .into(),
-    ]);
+    let variants = samples::button_variants::view(&app.samples.button_variants)
+        .map_state(|app: &mut App| &mut app.samples.button_variants);
+    let sizes = samples::button_sizes::view(&app.samples.button_sizes)
+        .map_state(|app: &mut App| &mut app.samples.button_sizes);
+    let states = samples::button_states::view(&app.samples.button_states)
+        .map_state(|app: &mut App| &mut app.samples.button_states);
     Doc {
         sections: vec![
             section(
@@ -855,30 +782,21 @@ fn button_doc(app: &App) -> Doc {
                 "Variants",
                 "Emphasis presets built from theme tokens.",
                 variants,
-                r#"button("Primary").variant(ButtonVariant::Primary).on_click(save)
-button("Soft").variant(ButtonVariant::Soft)
-button("Outline").variant(ButtonVariant::Outline)
-button("Ghost").variant(ButtonVariant::Ghost)
-button("Delete").variant(ButtonVariant::Danger)"#,
+                samples::code("button_variants"),
             ),
             section(
                 "button-sizes",
                 "Sizes",
                 "28, 36 and 44 pixels tall with matching type.",
                 sizes,
-                r#"button("Small").size(ControlSize::Small)
-button("Large").size(ControlSize::Large)"#,
+                samples::code("button_sizes"),
             ),
             section(
                 "button-states",
                 "States",
                 "Disabled, toggled with animation, disclosure and label alignment.",
                 states,
-                r#"button(if app.liked { "Liked" } else { "Like" })
-    .variant(if app.liked { ButtonVariant::Primary } else { ButtonVariant::Outline })
-    .animation(Animation::ease_out().duration_ms(180))
-    .on_click(|app: &mut App| app.liked = !app.liked)
-button("Sort by date").disclosure(false)"#,
+                samples::code("button_states"),
             ),
         ],
         api: vec![
@@ -1379,39 +1297,10 @@ fn slider_doc(app: &App) -> Doc {
 }
 
 fn select_doc(app: &App) -> Doc {
-    let fruits = ["Apple", "Banana", "Blueberry", "Grapes", "Pineapple"];
-    let fruit = select(
-        fruits
-            .iter()
-            .enumerate()
-            .map(|(i, f)| select_item(i as u8, *f)),
-    )
-    .key("select-fruit")
-    .selected(app.fruit)
-    .open(app.fruit_open)
-    .width(220.)
-    .on_select(|app: &mut App, v| app.fruit = v)
-    .on_open_change(|app: &mut App, open| app.fruit_open = open);
-    let zones = [
-        "Pacific (UTC−8)",
-        "Mountain (UTC−7)",
-        "Central (UTC−6)",
-        "Eastern (UTC−5)",
-        "London (UTC+0)",
-        "Tokyo (UTC+9)",
-    ];
-    let tz = select(
-        zones
-            .iter()
-            .enumerate()
-            .map(|(i, z)| select_item(i as u8, *z).enabled(i != 1)),
-    )
-    .key("select-tz")
-    .selected(app.timezone)
-    .open(app.timezone_open)
-    .width(260.)
-    .on_select(|app: &mut App, v| app.timezone = v)
-    .on_open_change(|app: &mut App, open| app.timezone_open = open);
+    let fruit = samples::select::view(&app.samples.select)
+        .map_state(|app: &mut App| &mut app.samples.select);
+    let tz = samples::select_disabled::view(&app.samples.select_disabled)
+        .map_state(|app: &mut App| &mut app.samples.select_disabled);
     Doc {
         sections: vec![
             section(
@@ -1419,63 +1308,21 @@ fn select_doc(app: &App) -> Doc {
                 "Select",
                 "Escape or a click outside closes it; arrow keys move through options.",
                 fruit,
-                r#"select(fruits.iter().enumerate().map(|(i, f)| select_item(i, *f)))
-    .key("fruit")
-    .selected(app.fruit)
-    .open(app.fruit_open)
-    .on_select(|app: &mut App, v| app.fruit = v)
-    .on_open_change(|app: &mut App, open| app.fruit_open = open)"#,
+                samples::code("select"),
             ),
             section(
                 "select-disabled",
                 "Disabled options",
                 "Disabled options are skipped by keyboard and pointer.",
                 tz,
-                r#"select_item(1, "Mountain (UTC−7)").enabled(false)"#,
+                samples::code("select_disabled"),
             ),            section(
                 "select-vs-combobox",
                 "Select or combobox?",
                 "Same field look, different jobs. Select: a short fixed list, picked by click or arrow keys. Combobox: a long list you search by typing.",
-                {
-                    let countries = [
-                        "Argentina", "Australia", "Austria", "Belgium", "Brazil", "Canada",
-                        "Chile", "Denmark", "Finland", "France", "Germany", "India",
-                        "Ireland", "Italy", "Japan", "Kenya", "Mexico", "Netherlands",
-                        "New Zealand", "Norway", "Portugal", "Singapore", "South Korea",
-                        "Spain", "Sweden", "Switzerland", "United Kingdom", "United States",
-                    ];
-                    hstack![
-                        vstack![
-                            muted("Select · 5 fruits"),
-                            text(fruits[app.fruit as usize]).font_size(14.).font_weight(500),
-                            muted("(the first example above)").font_size(12.),
-                        ]
-                        .gap(6., Axis::Vertical)
-                        .width(220.),
-                        vstack![
-                            muted("Combobox · 28 countries"),
-                            combobox(
-                                countries.iter().enumerate().map(|(i, c)| (i as u8, *c)),
-                                &app.kit.combo,
-                            )
-                            .key("select-country")
-                            .selected(app.kit.framework)
-                            .placeholder("Search countries…")
-                            .width(240.)
-                            .state(|app: &mut App| &mut app.kit.combo)
-                            .on_select(|app: &mut App, v| app.kit.framework = Some(v)),
-                        ]
-                        .gap(6., Axis::Vertical),
-                    ]
-                    .gap(40., Axis::Horizontal)
-                },
-                r#"// Few options, no typing:
-select(sizes).key("size").selected(app.size)
-// Many options, type to filter:
-combobox(countries, &app.country_search)
-    .key("country")
-    .state(|app: &mut App| &mut app.country_search)
-    .on_select(|app: &mut App, c| app.country = Some(c))"#,
+                samples::select::comparison_view(&app.samples.select)
+                    .map_state(|app: &mut App| &mut app.samples.select),
+                samples::code("select_vs_combobox"),
             ),
         ],
         api: vec![
@@ -2049,60 +1896,14 @@ text_area(&app.draft).submit_on_enter(true)
 
 // ------------------------------------------------------------ Data
 
-const INVOICES: [(&str, &str, &str, &str); 6] = [
-    ("INV001", "Paid", "Credit card", "$250.00"),
-    ("INV002", "Pending", "PayPal", "$150.00"),
-    ("INV003", "Unpaid", "Bank transfer", "$350.00"),
-    ("INV004", "Paid", "Credit card", "$450.00"),
-    ("INV005", "Paid", "PayPal", "$550.00"),
-    ("INV006", "Pending", "Bank transfer", "$200.00"),
-];
-fn invoice_table(app: &App, square: bool) -> El<App> {
-    let key = if square {
-        "invoices-square"
-    } else {
-        "invoices"
-    };
-    let row_prefix = if square { "inv-square" } else { "inv" };
-    let mut t = table(
-        [
-            table_column(0u8, "Invoice").width(130.).sortable(true),
-            table_column(1, "Status").width(120.).sortable(true),
-            table_column(2, "Method").width(160.).sortable(false),
-            table_column(3, "Amount")
-                .width(110.)
-                .align(Align::End)
-                .sortable(true),
-        ],
-        INVOICES.iter().enumerate().map(|(i, r)| {
-            table_row(i as u32, [r.0, r.1, r.2, r.3]).key(format!("{row_prefix}-{i}"))
-        }),
-    )
-    .key(key)
-    .width(600.)
-    .rounded(if square { 0. } else { 12. })
-    .accessible_label(if square {
-        "Square invoices"
-    } else {
-        "Rounded invoices"
-    })
-    .selected(app.row)
-    .on_select(|app: &mut App, r| app.row = Some(r))
-    .on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)));
-    if let Some((column, direction)) = app.sort {
-        t = t.sort(column, direction);
-    }
-    t.into()
-}
-
 fn table_doc(app: &App) -> Doc {
     let status = || {
         muted(format!(
             "{} invoices{} · {}",
-            INVOICES.len(),
-            app.row.map_or(String::new(), |i| format!(
+            samples::table::INVOICES.len(),
+            app.samples.table.row.map_or(String::new(), |i| format!(
                 " · {} selected",
-                INVOICES[i as usize].0
+                samples::table::INVOICES[i as usize].0
             )),
             if cfg!(feature = "native") {
                 "sorting and selection are shared between both previews"
@@ -2119,25 +1920,15 @@ fn table_doc(app: &App) -> Doc {
                 "table",
                 "Rounded table",
                 "12px outer corners. Sort a header or select a row; the frame stays intact.",
-                vstack![invoice_table(app, false), status()].gap(12., Axis::Vertical),
-                r#"table(columns, rows)
-.key("invoices")
-.rounded(12.) // default outer corners
-.selected(app.row)
-.on_select(|app: &mut App, row| app.row = Some(row))
-.on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))"#,
+                vstack![samples::table::view(&app.samples.table).map_state(|app: &mut App| &mut app.samples.table), status()].gap(12., Axis::Vertical),
+                samples::code("table"),
             ),
             section(
                 "table-square",
                 "Square table",
                 "The same working component with 0px corners, not a static mockup.",
-                vstack![invoice_table(app, true), status()].gap(12., Axis::Vertical),
-                r#"table(columns, rows)
-.key("invoices-square")
-.rounded(0.) // square outer frame and inset rows
-.selected(app.row)
-.on_select(|app: &mut App, row| app.row = Some(row))
-.on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))"#,
+                vstack![samples::table::square_view(&app.samples.table).map_state(|app: &mut App| &mut app.samples.table), status()].gap(12., Axis::Vertical),
+                samples::code("table_square"),
             ),
         ],
         api: vec![
@@ -2865,11 +2656,11 @@ fn settings_doc(app: &App) -> Doc {
                     .map(|(i, z)| select_item(i as u8, *z))
             )
             .key("set-tz")
-            .selected(app.timezone.min(5))
-            .open(app.timezone_open)
+            .selected(app.samples.select_disabled.zone.min(5))
+            .open(app.samples.select_disabled.open)
             .width(150.)
-            .on_select(|app: &mut App, v| app.timezone = v)
-            .on_open_change(|app: &mut App, o| app.timezone_open = o)
+            .on_select(|app: &mut App, v| app.samples.select_disabled.zone = v)
+            .on_open_change(|app: &mut App, o| app.samples.select_disabled.open = o)
             .into()
         ),
         divider().background(ColorToken::Border),

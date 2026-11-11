@@ -68,6 +68,8 @@ jobs:
       - run: cargo package --locked
       - run: cargo run --locked --example gallery
       - run: cargo build --locked --features native --examples
+      - name: Copied Catalog programs compile independently
+        run: python3 scripts/check_sample_sources.py
       - run: cargo run --locked --features native --example complete_app -- --snapshot target/complete-app.png
       - run: cargo run --locked --features native --example rust_settings -- --snapshot target/rust-settings.png
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable

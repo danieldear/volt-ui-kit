@@ -125,6 +125,9 @@ menus and file panels, but not the local-notification demo. Adding
 `native-notifications` alone is not enough on macOS; use the launcher for that
 end-to-end test. For software-only component testing, use `--features native`.
 See [examples](examples/README.md#catalog-launch-modes) for the launch modes.
+Button, Select and Table Code panels also provide complete runnable Rust programs.
+See [component recipes](examples/README.md#runnable-component-recipes) for the
+eight sample commands and copied-program setup.
 
 ## Use it
 

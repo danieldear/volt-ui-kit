@@ -135,7 +135,7 @@ fn every_page_builds_in_both_modes_with_code_and_overlays() {
     }
     app.palette.open = true;
     app.dialog_open = true;
-    app.fruit_open = true;
+    app.samples.select.open = true;
     mount(&app, [1440., 920.]);
 }
 
@@ -429,11 +429,11 @@ fn data_view_first_last_focus_and_selection_never_overpaint_the_frame() {
                     let mut app = App::new();
                     app.mode = mode;
                     app.go(page);
-                    app.row = None;
+                    app.samples.table.row = None;
                     app.file = None;
                     if let Some((index, _)) = target {
                         if page == Page::Table {
-                            app.row = Some(if index == 0 { 0 } else { 5 });
+                            app.samples.table.row = Some(if index == 0 { 0 } else { 5 });
                         } else {
                             app.file = Some(if index == 0 { 1 } else { 7 });
                         }
@@ -550,9 +550,10 @@ fn data_view_frame_borders_survive_gpu_selection_and_focus() {
                     let mut app = App::new();
                     app.mode = mode;
                     app.go(page);
-                    app.row = state
-                        .filter(|_| page == Page::Table)
-                        .map(|i| if i == 0 { 0 } else { 5 });
+                    app.samples.table.row =
+                        state
+                            .filter(|_| page == Page::Table)
+                            .map(|i| if i == 0 { 0 } else { 5 });
                     app.file =
                         state
                             .filter(|_| page == Page::TreeView)
@@ -661,12 +662,12 @@ fn rounded_and_square_catalog_tables_share_working_sort_and_selection() {
             runtime
                 .accessibility_activate(row_id, &mut handlers, &mut app)
                 .unwrap();
-            assert_eq!(app.row, Some(row_value));
+            assert_eq!(app.samples.table.row, Some(row_value));
             let header = format!("{frame}-column-3");
             runtime
                 .accessibility_activate(&header, &mut handlers, &mut app)
                 .unwrap();
-            assert_eq!(app.sort.as_ref().unwrap().0, 3);
+            assert_eq!(app.samples.table.sort.as_ref().unwrap().0, 3);
             let (doc, next) = view(&app).build().unwrap().into_parts();
             runtime
                 .replace_document(doc, &next, &Bindings::default())
@@ -695,7 +696,7 @@ fn rounded_and_square_catalog_tables_share_working_sort_and_selection() {
                     .unwrap();
                 assert_eq!(
                     sort_header.table.unwrap().sort_ascending,
-                    Some(app.sort.as_ref().unwrap().1 == SortDirection::Ascending)
+                    Some(app.samples.table.sort.as_ref().unwrap().1 == SortDirection::Ascending)
                 );
             }
         }
@@ -753,7 +754,7 @@ fn catalog_rounded_table_clips_header_and_last_focus_without_changing_cells() {
                         .unwrap()
                         .activated
                 );
-                assert_eq!(app.row, Some(5));
+                assert_eq!(app.samples.table.row, Some(5));
                 let demo = pages::doc(Page::Table, &app)
                     .sections
                     .into_iter()
@@ -806,7 +807,7 @@ fn catalog_rounded_table_clips_header_and_last_focus_without_changing_cells() {
                         .unwrap()
                         .activated
                 );
-                assert!(app.sort.is_some());
+                assert!(app.samples.table.sort.is_some());
             }
         }
     }
@@ -2389,4 +2390,117 @@ fn check_rounded_frame_budgets(mut gpu: Option<volt_ui_kit::native::GpuOffscreen
             }
         }
     }
+}
+
+#[test]
+fn converted_recipe_panels_use_cached_complete_program_sources() {
+    let app = App::new();
+    for (page, id, recipe) in [
+        (Page::Button, "button-variants", "button_variants"),
+        (Page::Button, "button-sizes", "button_sizes"),
+        (Page::Button, "button-states", "button_states"),
+        (Page::Select, "select", "select"),
+        (Page::Select, "select-disabled", "select_disabled"),
+        (Page::Select, "select-vs-combobox", "select_vs_combobox"),
+        (Page::Table, "table", "table"),
+        (Page::Table, "table-square", "table_square"),
+    ] {
+        let section = pages::doc(page, &app)
+            .sections
+            .into_iter()
+            .find(|s| s.id == id)
+            .unwrap();
+        assert!(
+            std::ptr::eq(section.code, super::samples::code(recipe)),
+            "{id}: source must come from the compiled recipe"
+        );
+        assert!(section.code.contains("pub fn main()"));
+    }
+}
+
+#[test]
+fn mapped_recipe_callbacks_keep_button_and_select_state_isolated() {
+    let mut app = App::new();
+    let demo = pages::doc(Page::Button, &app)
+        .sections
+        .into_iter()
+        .find(|s| s.id == "button-states")
+        .unwrap()
+        .demo;
+    let (doc, mut handlers) = demo.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let viewport = Viewport::new(1000., 600., 1.).unwrap();
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(
+        !runtime
+            .accessibility_activate("b-disabled", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(
+        runtime
+            .accessibility_activate("b-like", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(app.samples.button_states.liked);
+    assert_eq!(app.samples.select.fruit, 1);
+    assert_eq!(app.samples.table.row, Some(2));
+
+    app.samples.select.open = true;
+    let demo = pages::doc(Page::Select, &app)
+        .sections
+        .into_iter()
+        .find(|s| s.id == "select")
+        .unwrap()
+        .demo;
+    let (doc, mut handlers) = demo.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(
+        runtime
+            .accessibility_activate("select-fruit-option-4", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.samples.select.fruit, 4);
+    let comparison = pages::doc(Page::Select, &app)
+        .sections
+        .into_iter()
+        .find(|s| s.id == "select-vs-combobox")
+        .unwrap()
+        .demo;
+    let (doc, handlers) = comparison.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(runtime
+        .accessibility_nodes()
+        .iter()
+        .any(|n| n.label == "Pineapple"));
+    app.samples.select.country_search.open = true;
+    app.samples.select_disabled.open = true;
+    app.go(Page::Button);
+    assert!(
+        !app.samples.select.open
+            && !app.samples.select.country_search.open
+            && !app.samples.select_disabled.open
+    );
 }
