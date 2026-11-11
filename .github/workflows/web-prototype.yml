@@ -55,6 +55,7 @@ jobs:
       - name: Real browser smoke tests
         shell: bash
         run: |
+          rm -rf target/web-pages/volt-ui-kit
           python3 scripts/build_docs_site.py target/web-pages/volt-ui-kit --web-assets docs/live/pkg
           python3 -m http.server 8768 --bind 127.0.0.1 --directory target/web-pages > target/web-server.log 2>&1 &
           server=$!
