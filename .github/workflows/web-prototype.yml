@@ -57,10 +57,11 @@ jobs:
         run: |
           rm -rf target/web-pages/volt-ui-kit
           python3 scripts/build_docs_site.py target/web-pages/volt-ui-kit --web-assets docs/live/pkg
-          docker run --rm --interactive --shm-size=1g \
+          docker run --rm --interactive --init --shm-size=1g \
             --user "$(id -u):$(id -g)" \
             --volume "$PWD:$PWD" --workdir "$PWD" \
             --env HOME=/tmp --env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+            --env DEBUG=pw:browser \
             --env NODE_PATH="$PWD/target/web-test-tools/node_modules" \
             "$PLAYWRIGHT_IMAGE" /bin/bash -euo pipefail -s <<'BROWSER_TESTS'
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node - <<'JS'
@@ -91,7 +92,7 @@ jobs:
           }).listen(8768, '127.0.0.1');
           SERVER
           server=$!
-          trap 'kill "$server"' EXIT
+          trap 'kill "$server"; if test -f /sys/fs/cgroup/memory.events; then cat /sys/fs/cgroup/memory.events; fi' EXIT
           for i in {1..30}; do curl --fail --silent http://127.0.0.1:8768/volt-ui-kit/live/ > /dev/null && break; sleep 1; done
           export VOLT_WEB_URL=http://127.0.0.1:8768/volt-ui-kit
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_web.cjs
