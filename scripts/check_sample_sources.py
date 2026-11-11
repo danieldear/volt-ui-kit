@@ -3,7 +3,8 @@
 
 Build `cargo build --locked --features native --example samples` first. Uses
 CARGO_TARGET_DIR if set and seeds the temporary fixture with the repository's
-lockfile (including its currently locked yanked transitive dependencies).
+lockfile (including its currently locked yanked transitive dependencies). Prepare
+the temporary package graph offline before checking it with an immutable lock.
 """
 import argparse
 import json
@@ -38,6 +39,18 @@ def check(runner=None):
         (fixture / "Cargo.toml").write_text("\n".join(manifest) + "\n", encoding="utf-8")
         shutil.copyfile(ROOT / "Cargo.lock", fixture / "Cargo.lock")
         env = dict(os.environ, CARGO_TARGET_DIR=str(target))
+        # This is a new package, not the repository root. Cargo must add the
+        # fixture and prune unused root dependencies before --locked can work.
+        # Seed first to retain reviewed versions (including locked yanks), and
+        # reconcile only the new workspace offline; existing dependency versions
+        # stay pinned. This changes only the disposable fixture lockfile.
+        subprocess.run(
+            ["cargo", "update", "--offline", "--workspace",
+             "--manifest-path", str(fixture / "Cargo.toml")],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            env=env,
+        )
         subprocess.run(
             [
                 "cargo",
