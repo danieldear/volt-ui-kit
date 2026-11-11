@@ -1488,10 +1488,28 @@ impl App {
                 format!("https://api.mapbox.com/{ids}?access_token={token}")
             };
         }
-        if url.contains("api.mapbox.com") && !url.contains("access_token") {
+        // Remote style/TileJSON URLs are untrusted. A substring in a path,
+        // userinfo or lookalike hostname must never receive our provider token.
+        let authority = url
+            .strip_prefix("https://")
+            .and_then(|rest| rest.split(['/', '?', '#']).next());
+        let trusted = authority.is_some_and(|host| {
+            host.eq_ignore_ascii_case("api.mapbox.com")
+                || host.eq_ignore_ascii_case("api.mapbox.com:443")
+        });
+        let (base, fragment) = url
+            .split_once('#')
+            .map_or((url, None), |(a, b)| (a, Some(b)));
+        let has_token = base.split_once('?').is_some_and(|(_, query)| {
+            query
+                .split('&')
+                .any(|pair| pair.split('=').next() == Some("access_token"))
+        });
+        if trusted && !has_token {
             let token = self.key().unwrap_or_default();
-            let join = if url.contains('?') { '&' } else { '?' };
-            return format!("{url}{join}access_token={token}");
+            let join = if base.contains('?') { '&' } else { '?' };
+            let suffix = fragment.map_or(String::new(), |f| format!("#{f}"));
+            return format!("{base}{join}access_token={token}{suffix}");
         }
         url.to_owned()
     }
@@ -2197,6 +2215,51 @@ mod motion_tests {
         let mut app = App::new();
         app.size = [1280., 820.];
         app
+    }
+
+    #[test]
+    fn mapbox_token_attachment_preserves_real_query_keys_and_fragments() {
+        let mut a = app();
+        a.provider = Provider::Mapbox;
+        a.keys.insert(
+            "MAPBOX_ACCESS_TOKEN".into(),
+            "fixture-token-not-a-credential".into(),
+        );
+        for base in [
+            "https://api.mapbox.com/v4/data",
+            "https://API.MAPBOX.COM:443/v4/data",
+        ] {
+            assert_eq!(
+                a.resolve(&format!("{base}?other=access_token#tile"), false),
+                format!(
+                    "{base}?other=access_token&access_token=fixture-token-not-a-credential#tile"
+                )
+            );
+            let present = format!("{base}?access_token=already-provided#tile");
+            assert_eq!(a.resolve(&present, false), present);
+        }
+    }
+    #[test]
+    fn mapbox_tokens_are_never_attached_to_lookalike_or_path_matched_hosts() {
+        let mut a = app();
+        a.provider = Provider::Mapbox;
+        a.keys.insert(
+            "MAPBOX_ACCESS_TOKEN".into(),
+            "fixture-token-not-a-credential".into(),
+        );
+        for url in [
+            "https://api.mapbox.com.attacker.invalid/tiles/0",
+            "https://attacker.invalid/api.mapbox.com/tiles/0",
+            "https://attacker.invalid/?redirect=api.mapbox.com",
+            "https://api.mapbox.com@attacker.invalid/tiles/0",
+            "http://api.mapbox.com/tiles/0",
+        ] {
+            assert_eq!(
+                a.resolve(url, false),
+                url,
+                "credential would leave the trusted HTTPS authority"
+            );
+        }
     }
 
     #[test]

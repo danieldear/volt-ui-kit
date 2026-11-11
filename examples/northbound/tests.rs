@@ -363,3 +363,256 @@ fn incremental_hover_cost_at_retina() {
         full
     );
 }
+
+#[test]
+fn custom_window_controls_fit_existing_header_and_reset_preserves_host_state() {
+    use volt_ui_kit::native::{WindowChrome, WindowState};
+    let mut app = App::new();
+    app.chrome = WindowChrome::Custom;
+    app.window_state.resizable = true;
+    for macos in [false, true] {
+        for size in [[560., 460.], [760., 900.], [1320., 900.]] {
+            // Exercise the Linux/Windows header geometry on every test host.
+            let viewport = Viewport::new(size[0] - 84., size[1], 1.).unwrap();
+            let ui: volt_ui_kit::ui::Element<App> =
+                volt_ui_kit::vstack![screens::top_bar(&app, macos), volt_ui_kit::ui::spacer()]
+                    .into();
+            let (document, handlers) = ui.build().unwrap().into_parts();
+            let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+            runtime
+                .layout(
+                    viewport,
+                    &Bindings::default(),
+                    &mut RasterPainter::new(viewport),
+                )
+                .unwrap();
+            let labels: Vec<_> = runtime
+                .accessibility_nodes()
+                .into_iter()
+                .filter(|n| {
+                    ["Minimize window", "Maximize window", "Close window"]
+                        .contains(&n.label.as_str())
+                })
+                .collect();
+            assert_eq!(labels.len(), if macos { 0 } else { 3 });
+            for n in labels {
+                let [x, y, w, h] = runtime
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == n.id)
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert!(
+                    x >= 0. && x + w <= viewport.width && y >= 0. && y + h <= 92.,
+                    "{} outside header at {size:?}: {x},{y},{w},{h}",
+                    n.label
+                );
+                assert!(!runtime.drag_region_hit(x + w / 2., y + h / 2.));
+            }
+        }
+    }
+    app.window_state.maximized = true;
+    let before = app.window_state;
+    app.reset();
+    assert_eq!(app.chrome, WindowChrome::Custom);
+    assert_eq!(app.window_state, before);
+    app.window_state.fullscreen = true;
+    let runtime = mount(&app, [1320., 900.]);
+    assert!(!runtime
+        .accessibility_nodes()
+        .iter()
+        .any(|n| n.label == "Close window"));
+    app.window_state = WindowState::default();
+    app.chrome = WindowChrome::Native;
+    let runtime = mount(&app, [1320., 900.]);
+    assert!(!runtime
+        .accessibility_nodes()
+        .iter()
+        .any(|n| n.label == "Close window"));
+}
+
+#[test]
+fn raised_controls_move_hit_targets_without_moving_other_header_content() {
+    use volt_ui_kit::{native::WindowChrome, ui::prelude::*};
+    let mut app = App::new();
+    app.chrome = WindowChrome::Custom;
+    app.window_state.resizable = true;
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        app.mode = mode;
+        for screen in Screen::ALL {
+            app.screen = screen;
+            for maximized in [false, true] {
+                app.window_state.maximized = maximized;
+                for width in [560., 760., 1320.] {
+                    for scale in [1., 1.25, 2.] {
+                        let vp = Viewport::new((width - 84.) * scale, 460. * scale, scale).unwrap();
+                        // Same original row, including its old trailing controls.
+                        // Compare against it, not guessed title/search coordinates.
+                        let old = screens::header_row(
+                            &app,
+                            Some(
+                                window_controls(maximized, |_: &mut App, _| {})
+                                    .key("old-window-controls")
+                                    .into(),
+                            ),
+                        );
+                        let mount_header = |header: Element<App>| {
+                            let ui: Element<App> = vstack![header, spacer()].into();
+                            let (document, handlers) = ui.build().unwrap().into_parts();
+                            let mut r =
+                                Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+                            r.layout(vp, &Bindings::default(), &mut RasterPainter::new(vp))
+                                .unwrap();
+                            (r, handlers)
+                        };
+                        let (before, _) = mount_header(old);
+                        let (mut after, mut handlers) = mount_header(screens::top_bar(&app, false));
+                        let prefix = |r: &Runtime, stop: &str| {
+                            r.boxes()
+                                .iter()
+                                .skip_while(|b| b.id != "top-bar")
+                                .take_while(|b| b.id != stop)
+                                .map(|b| (b.kind, b.bounds, b.clip, b.text_style.clone()))
+                                .collect::<Vec<_>>()
+                        };
+                        assert_eq!(
+                            prefix(&before, "old-window-controls"),
+                            prefix(&after, "window-controls-slot"),
+                            "non-control layout moved at {width}px / {scale}x / {screen:?}"
+                        );
+                        if width == 1320. && scale == 1.25 && !maximized {
+                            let mut painter = RasterPainter::new(vp);
+                            let palette = theme(&app, mode);
+                            let old_batches = before.paint_ui(&mut painter, &palette);
+                            let old_pixels = painter
+                                .rasterize(&old_batches, palette.palette.base[0])
+                                .unwrap();
+                            let new_batches = after.paint_ui(&mut painter, &palette);
+                            let new_pixels = painter
+                                .rasterize(&new_batches, palette.palette.base[0])
+                                .unwrap();
+                            let left = after
+                                .boxes()
+                                .iter()
+                                .find(|b| b.id == "northbound-window-controls")
+                                .unwrap()
+                                .bounds
+                                .bounds()[0];
+                            for y in 0..(92. * scale) as u32 {
+                                for x in 0..(left - 2. * scale) as u32 {
+                                    assert_eq!(
+                                        old_pixels.pixel(x, y),
+                                        new_pixels.pixel(x, y),
+                                        "non-control pixels changed at {x},{y} in {screen:?}"
+                                    );
+                                }
+                            }
+                        }
+                        let labels = [
+                            "Minimize window",
+                            if maximized {
+                                "Restore window"
+                            } else {
+                                "Maximize window"
+                            },
+                            "Close window",
+                        ];
+                        for label in labels {
+                            let bounds = |r: &Runtime| {
+                                let node = r
+                                    .accessibility_nodes()
+                                    .into_iter()
+                                    .find(|n| n.label == label)
+                                    .unwrap();
+                                r.boxes()
+                                    .iter()
+                                    .find(|b| b.id == node.id)
+                                    .unwrap()
+                                    .bounds
+                                    .bounds()
+                            };
+                            let [ox, oy, ow, oh] = bounds(&before);
+                            let [x, y, w, h] = bounds(&after);
+                            for (a, b) in [(x, ox), (w, ow), (h, oh)] {
+                                assert!((a - b).abs() < 0.001);
+                            }
+                            assert!(
+                                (y + h / 2. - 26. * scale).abs() < 0.001,
+                                "control center {y}+{h}/2 at {scale}x"
+                            );
+                            assert!(
+                                (oy - y - 29. * scale).abs() < 0.001,
+                                "only controls should rise by 29 logical px"
+                            );
+                            assert!(!after.drag_region_hit(x + w / 2., y + h / 2.));
+                            after
+                                .pointer_down_outcome(
+                                    x + w / 2.,
+                                    y + h / 2.,
+                                    &mut handlers,
+                                    &mut app,
+                                )
+                                .unwrap();
+                            assert!(
+                                after
+                                    .pointer_up_outcome(
+                                        x + w / 2.,
+                                        y + h / 2.,
+                                        &mut handlers,
+                                        &mut app
+                                    )
+                                    .unwrap()
+                                    .activated
+                            );
+                            // The old on-screen location must not remain clickable.
+                            after
+                                .pointer_down_outcome(
+                                    ox + ow / 2.,
+                                    oy + oh / 2.,
+                                    &mut handlers,
+                                    &mut app,
+                                )
+                                .unwrap();
+                            assert!(
+                                !after
+                                    .pointer_up_outcome(
+                                        ox + ow / 2.,
+                                        oy + oh / 2.,
+                                        &mut handlers,
+                                        &mut app
+                                    )
+                                    .unwrap()
+                                    .activated
+                            );
+                            assert!(after.drag_region_hit(ox + ow / 2., oy + oh / 2.));
+                        }
+                        if let Some(b) = after.boxes().iter().find(|b| b.id == "search") {
+                            let [x, y, _, _] = b.bounds.bounds();
+                            // The raised lane overlaps this y: its empty area must
+                            // not occlude the unchanged search editor underneath.
+                            let point = [x + 8. * scale, y + 5. * scale];
+                            after
+                                .pointer_down_outcome(point[0], point[1], &mut handlers, &mut app)
+                                .unwrap();
+                            after
+                                .pointer_up_outcome(point[0], point[1], &mut handlers, &mut app)
+                                .unwrap();
+                            assert!(after.editing_focus());
+                        }
+                        assert_eq!(
+                            after
+                                .boxes()
+                                .iter()
+                                .find(|b| b.id == "top-bar")
+                                .unwrap()
+                                .bounds
+                                .bounds()[3],
+                            92. * scale
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

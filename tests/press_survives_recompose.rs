@@ -19,6 +19,7 @@ struct App {
     clicks: u32,
     ticks: u32,
     hide: bool,
+    other_root: bool,
 }
 fn view(app: &App) -> Element<App> {
     let mut items: Vec<Element<App>> = vec![text(format!("Tick {}", app.ticks)).into()];
@@ -30,7 +31,9 @@ fn view(app: &App) -> Element<App> {
                 .into(),
         );
     }
-    vstack(items).key("root").into()
+    vstack(items)
+        .key(if app.other_root { "other-root" } else { "root" })
+        .into()
 }
 struct Harness {
     app: App,
@@ -117,6 +120,27 @@ fn a_press_on_a_control_that_went_away_does_not_click() {
     assert!(
         !out.activated,
         "the press ended when its button was removed"
+    );
+    assert_eq!(h.app.clicks, 0);
+}
+
+#[test]
+fn a_press_does_not_cross_into_another_root_with_the_same_button_key() {
+    let mut h = Harness::new();
+    let (x, y) = h.centre("add");
+    h.runtime
+        .pointer_down_outcome(x, y, &mut h.handlers, &mut h.app)
+        .unwrap();
+    h.app.other_root = true;
+    h.tick();
+    let (x, y) = h.centre("add");
+    let out = h
+        .runtime
+        .pointer_up_outcome(x, y, &mut h.handlers, &mut h.app)
+        .unwrap();
+    assert!(
+        !out.activated,
+        "a release in another application context must not activate its reused key"
     );
     assert_eq!(h.app.clicks, 0);
 }

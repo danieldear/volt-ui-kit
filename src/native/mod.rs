@@ -5,6 +5,8 @@ mod application;
 pub use application::{Application, RendererPreference};
 mod backdrop;
 pub use backdrop::{BackdropProtocol, BackdropStatus, BackdropUnavailable};
+mod chrome;
+pub use chrome::WindowState;
 mod commands;
 #[cfg(target_os = "linux")]
 pub mod linux_backdrop;

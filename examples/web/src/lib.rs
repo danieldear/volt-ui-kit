@@ -373,6 +373,19 @@ mod wasm {
         running: std::rc::Rc<std::cell::Cell<usize>>,
     }
 
+    // Clear the timeout and drop its closure on every return/error path. A
+    // stalled tile must not permanently occupy a bounded download slot.
+    struct FetchDeadline {
+        window: web_sys::Window,
+        id: i32,
+        _callback: Closure<dyn FnMut()>,
+    }
+    impl Drop for FetchDeadline {
+        fn drop(&mut self) {
+            self.window.clear_timeout_with_handle(self.id);
+        }
+    }
+
     /// One job over the browser's fetch: the HTTP status and body.
     async fn fetch(job: &maps::net::Job) -> Result<(u16, Vec<u8>), String> {
         use wasm_bindgen::JsCast;
@@ -384,23 +397,81 @@ mod wasm {
             init.set_method("POST");
             init.set_body(&JsValue::from_str(body));
         }
+        let window = web_sys::window().ok_or("This page has no window to fetch from.")?;
+        let abort = web_sys::AbortController::new().map_err(said)?;
+        init.set_signal(Some(&abort.signal()));
+        let cancel = abort.clone();
+        let callback = Closure::wrap(Box::new(move || cancel.abort()) as Box<dyn FnMut()>);
+        let id = window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                callback.as_ref().unchecked_ref(),
+                20_000,
+            )
+            .map_err(said)?;
+        let _deadline = FetchDeadline {
+            window: window.clone(),
+            id,
+            _callback: callback,
+        };
         let request = web_sys::Request::new_with_str_and_init(url, &init).map_err(said)?;
         if body.is_some() {
-            request.headers().set("Content-Type", "application/json").map_err(said)?;
+            request
+                .headers()
+                .set("Content-Type", "application/json")
+                .map_err(said)?;
         }
         for (name, value) in headers {
             request.headers().set(name, value).map_err(said)?;
         }
-        let window = web_sys::window().ok_or("This page has no window to fetch from.")?;
         let response: web_sys::Response = JsFuture::from(window.fetch_with_request(&request))
             .await
             .map_err(|_| "The map service could not be reached.".to_owned())?
             .dyn_into()
             .map_err(said)?;
-        let buffer = JsFuture::from(response.array_buffer().map_err(said)?)
-            .await
-            .map_err(said)?;
-        Ok((response.status(), js_sys::Uint8Array::new(&buffer).to_vec()))
+        let limit = maps::net::response_limit(job);
+        if response
+            .headers()
+            .get("Content-Length")
+            .map_err(said)?
+            .and_then(|n| n.parse::<u64>().ok())
+            .is_some_and(|n| n > limit as u64)
+        {
+            abort.abort();
+            return Err("Map response exceeds size limit.".into());
+        }
+        let Some(body) = response.body() else {
+            return Ok((response.status(), vec![]));
+        };
+        let reader: web_sys::ReadableStreamDefaultReader = body
+            .get_reader()
+            .dyn_into()
+            .map_err(|e: js_sys::Object| said(e.into()))?;
+        let mut bytes = Vec::new();
+        loop {
+            let result = JsFuture::from(reader.read()).await.map_err(said)?;
+            if js_sys::Reflect::get(&result, &JsValue::from_str("done"))
+                .map_err(said)?
+                .as_bool()
+                == Some(true)
+            {
+                break;
+            }
+            let chunk = js_sys::Uint8Array::new(
+                &js_sys::Reflect::get(&result, &JsValue::from_str("value")).map_err(said)?,
+            );
+            if bytes
+                .len()
+                .checked_add(chunk.length() as usize)
+                .is_none_or(|n| n > limit)
+            {
+                abort.abort();
+                return Err("Map response exceeds size limit.".into());
+            }
+            let start = bytes.len();
+            bytes.resize(start + chunk.length() as usize, 0);
+            chunk.copy_to(&mut bytes[start..]);
+        }
+        Ok((response.status(), bytes))
     }
 
     /// The landing page's live apps: Relay, Northbound and Maps as slides of
@@ -489,7 +560,10 @@ mod wasm {
                 .map_err(error)?;
             }
             if let Some(net) = view.context().maps.net.clone() {
-                while let Some((generation, job)) = net.next() {
+                while self.downloads.running.get() < 6 {
+                    let Some((generation, job)) = net.next() else {
+                        break;
+                    };
                     let downloads = self.downloads.clone();
                     downloads.running.set(downloads.running.get() + 1);
                     wasm_bindgen_futures::spawn_local(async move {
@@ -540,6 +614,19 @@ mod wasm {
 mod tests {
     use super::*;
     use volt_ui_kit_web::{WebEvent, WebView};
+    #[test]
+    fn shared_northbound_keeps_browser_header_and_reset_without_native_controls() {
+        let mut host = WebView::new(gallery_northbound(), northbound::view).unwrap();
+        host.dispatch(WebEvent::Resize { width: 1200., height: 800., scale: 1.25 }).unwrap();
+        let no_window_controls = |host: &WebView<northbound::App>| {
+            assert!(!host.runtime().boxes().iter().any(|b| b.id.contains("window-controls")));
+        };
+        no_window_controls(&host);
+        host.update(|app| app.reset()).unwrap();
+        assert_eq!(host.context().screen, northbound::Screen::Settings);
+        no_window_controls(&host);
+    }
+
     #[test]
     fn code_ime_is_application_owned_and_read_only_blocks_mutations() {
         use volt_ui_kit::declarative::CodeInput;

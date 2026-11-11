@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import re
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,27 @@ from unittest.mock import patch
 import build_docs_site
 from check_repo import Site, check_link, inspect_site
 import configure_github
+
+
+class AttributionTests(unittest.TestCase):
+    def test_shared_settings_disable_commit_pr_and_session_attribution(self):
+        settings = json.loads((build_docs_site.ROOT / ".claude/settings.json").read_text())
+        self.assertEqual(settings, {
+            "attribution": {"commit": "", "pr": "", "sessionUrl": False},
+        })
+
+    def test_local_agent_state_is_ignored_but_shared_policy_is_not(self):
+        root = build_docs_site.ROOT
+        local = [".claude/settings.local.json", ".claude/worktrees/example/README.md",
+                 ".claude/sessions/local.json"]
+        with tempfile.TemporaryDirectory() as directory:
+            empty_ignore = Path(directory) / "empty-ignore"
+            empty_ignore.write_text("")
+            command = ["git", "-c", f"core.excludesFile={empty_ignore}", "check-ignore", "--no-index", "--"]
+            result = subprocess.run(command + local, cwd=root, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.splitlines(), local)
+            result = subprocess.run(command + [".claude/settings.json"], cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
 
 
 class SiteTests(unittest.TestCase):
@@ -93,7 +115,7 @@ class SiteTests(unittest.TestCase):
             slots += html.count('data-volt-page=')
             self.assertNotIn('<iframe', html)
             self.assertNotIn('images/components/', html)
-        self.assertEqual(slots, 123)
+        self.assertEqual(slots, 124)
         self.assertFalse(any(name.startswith('images/components/') for name in build_docs_site.FILES))
 
     def test_web_staging_publishes_only_expected_runtime_outputs(self):

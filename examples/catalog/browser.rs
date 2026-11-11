@@ -88,7 +88,10 @@ pub fn view(app: &App) -> Element<App> {
 
 pub fn native_doc(page: Page) -> Doc {
     let entries: &[(&str, &str)] = match page {
-        Page::ApplicationLifecycle => &[("application-document", "Application lifecycle")],
+        Page::ApplicationLifecycle => &[
+            ("application-document", "Application lifecycle"),
+            ("application-window-chrome", "Native window decorations"),
+        ],
         Page::Documents => &[("document-files", "Native file workflows")],
         Page::DesktopServices => &[
             ("desktop-notifications", "OS notifications"),
@@ -133,7 +136,7 @@ mod tests {
                 count += 1;
             }
         }
-        assert_eq!(count, 123);
+        assert_eq!(count, 124);
     }
     #[test]
     fn landing_counter_and_appearance_reuse_original_callback_state() {

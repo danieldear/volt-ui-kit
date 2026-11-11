@@ -2344,6 +2344,18 @@
         "Close or KeepOpen; the developer owns dirty state and dialogs."
       ],
       [
+        "Application::chrome_from_state(f)",
+        "Live Native / Custom / Borderless / macOS Overlay policy; no window replacement."
+      ],
+      [
+        "Application::window_actions(f) / on_window_state(f)",
+        "Bounded typed control intents; native maximize/fullscreen/focus snapshots."
+      ],
+      [
+        "window_controls(maximized, on_action)",
+        "Accessible vector controls; close goes through the host close guard."
+      ],
+      [
         "Application::requests(initialize)",
         "Bounded, event-driven commands and close requests; no idle polling."
       ]
@@ -2357,6 +2369,15 @@
         "image": "application-lifecycle-application-document.png",
         "note": "Edit the draft, use Save or Cmd/Ctrl+S, then request closing. Dirty work opens Save / Discard / Cancel. Saving here is in memory, not disk persistence.",
         "title": "A guarded document",
+        "width": 1000
+      },
+      {
+        "code": "Application::new(\"Workspace\", app, view)\n    .chrome_from_state(|app| app.chrome)\n    .custom_resize_border(6.) // logical pixels, Custom mode only\n    .window_actions(|app, sender| app.window_actions = Some(sender))\n    .on_window_state(|app, state| app.window_state = state)\n    .on_close_request(close_guard)\n    .run()?;\n// Linux/Windows: place controls inside your EXISTING draggable toolbar.\n// macOS Custom retains native traffic lights; do not draw duplicate buttons.\nwindow_controls(app.window_state.maximized, |app: &mut App, action| {\n    if let Some(sender) = &app.window_actions { let _ = sender.send(action); }\n});\n// navigation_split_view(...).integrated_header(true).material(true)\n// embeds controls without restyling the opaque, inset detail panel.\n// .toolbar_translucent(true) separately opts into header glass (default false).\n// The shell default and Application Native default remain unchanged.",
+        "height": 200,
+        "id": "application-window-chrome",
+        "image": "application-lifecycle-application-window-chrome.png",
+        "note": "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
+        "title": "Window decorations and controls",
         "width": 1000
       }
     ],

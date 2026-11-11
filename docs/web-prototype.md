@@ -2,7 +2,7 @@
 
 **Experimental.** The landing page and component reference now draw the
 **original Catalog Rust builders and callbacks** in browser canvases, instead
-of loading component screenshots. All 123 published sections have a live slot;
+of loading component screenshots. All 124 published sections have a live slot;
 OS-specific lifecycle, document and desktop-service sections show an explicit
 native-only capability card. These notices do not emulate file access,
 notifications or tray icons. This is not a claim of full web/desktop parity.

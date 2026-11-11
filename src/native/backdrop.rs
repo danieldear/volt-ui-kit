@@ -41,6 +41,8 @@ pub enum BackdropUnavailable {
     ReducedTransparency,
     /// No adapter is implemented for this platform.
     Platform,
+    /// Public AppKit underlay currently needs a decorated window.
+    UndecoratedWindow,
 }
 
 /// Native backdrop request status. `Requested` does not promise visible blur:
@@ -94,6 +96,9 @@ impl BackdropStatus {
                 "Blur unavailable: reduced transparency is enabled"
             }
             Self::Unsupported(BackdropUnavailable::Platform) => "Blur unavailable on this platform",
+            Self::Unsupported(BackdropUnavailable::UndecoratedWindow) => {
+                "Public material needs an AppKit frame; transparency remains available"
+            }
             Self::Failed => "Backdrop setup failed; see terminal diagnostics",
         }
     }

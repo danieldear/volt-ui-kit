@@ -35,6 +35,12 @@
 
 ## Embedded content and extensible maps (planned)
 
+**Prototype available:** `examples/maps` already draws vector/raster provider
+maps in Rust, with camera interaction, search/routes and macOS MapKit snapshots;
+the web gallery runs the free-vector subset. This is an example-level spike,
+not a reusable `map` component, provider trait or native-view embedding API.
+The contracts and host integrations below remain planned and need an API proposal.
+
 Build reusable embedding infrastructure once, then integrate map providers
 through optional adapters. This is planned work, not an existing map component:
 the current native capabilities report both `maps` and `embedded_web` as

@@ -19,6 +19,8 @@ fn parse_args(
     let mut forwarded = vec!["--size".to_owned(), "1440x920".to_owned()];
     let mut chrome = if cfg!(target_os = "macos") {
         WindowChrome::Overlay
+    } else if cfg!(target_os = "linux") {
+        WindowChrome::Custom
     } else {
         WindowChrome::Native
     };
@@ -68,6 +70,17 @@ fn parse_args(
             }
             "--palette" => app.palette.open = true,
             "--dialog" => app.dialog_open = true,
+            "--chrome" => {
+                chrome = match args.next().as_deref() {
+                    Some("native") => WindowChrome::Native,
+                    Some("overlay") => WindowChrome::Overlay,
+                    Some("custom") => WindowChrome::Custom,
+                    Some("borderless") => WindowChrome::Borderless,
+                    _ => {
+                        return Err("--chrome must be native, overlay, custom or borderless".into())
+                    }
+                };
+            }
             "--native-chrome" => chrome = WindowChrome::Native,
             "--compact-chrome" => chrome = WindowChrome::CompactOverlay,
             "--background" => {
@@ -106,6 +119,7 @@ fn parse_args(
             app.code.insert(id.to_owned());
         }
     }
+    app.chrome = chrome;
     app.glass = background != "opaque";
     app.opacity = ((opacity * 100.).round() as u8).max(catalog::OPACITY_MIN);
     app.tint = tint;
@@ -153,6 +167,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let application = application
                 // Built-in component animations (as `cargo volt new` sets).
                 .motion(volt_ui_kit::ui::Motion::Default)
+                .chrome_from_state(|app| app.chrome)
+                .window_actions(|app, sender| app.window_actions = Some(sender))
+                .on_window_state(|app, state| app.window_state = state)
                 .background_from_state(catalog::window_background)
                 .on_backdrop_status(|app, status| app.backdrop_status = status.description().into())
                 .renderer(renderer)
