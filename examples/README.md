@@ -9,6 +9,7 @@ Run individual examples with `cargo run --release --locked --features <features>
 | Example | Shows |
 | --- | --- |
 | `catalog` | Every component with live previews, source and API tables; themes, the Theme editor and a dashboard |
+| `samples` | Eight runnable Button, Select and Table recipes, using the same builders as the Catalog |
 | `rust_counter` | The smallest app: state, a view and callbacks |
 | `rust_settings` | Reusable view functions, conditionals and typed toggles |
 | `rust_keyed_list` | Lists, stable keys and callbacks that capture IDs |
@@ -45,6 +46,40 @@ Other platforms report the unavailable notification adapter explicitly.
 The launcher takes only `--check` or `--help`; it does not forward the direct
 example flags above. It requires Cargo and Python 3 (plus macOS command-line
 tools for bundling), and exists only in the repository, not the published crate.
+
+## Runnable component recipes
+
+Button, Select and Table Code panels contain complete native Rust programs,
+including their state, imports, view and `main`. Other panels remain labeled
+Catalog excerpts. Run the recipes independently from this checkout:
+
+```sh
+cargo run --locked --features native --example samples -- --list
+cargo run --locked --features native --example samples -- button-states
+cargo run --locked --features native --example samples -- select-vs-combobox
+cargo run --locked --features native --example samples -- table-square
+cargo run --locked --features native --example samples -- --source table
+```
+
+The eight recipe names are `button-variants`, `button-sizes`, `button-states`,
+`select`, `select-disabled`, `select-vs-combobox`, `table` and `table-square`.
+`--list` and `--source` do not open windows. Replace `native` with `native-gpu`
+to render on the GPU.
+
+Six source files in [`catalog/samples`](catalog/samples) implement the eight
+recipes. Select/comparison and rounded/square Table reuse their implementation.
+Within the native Catalog, the two Table previews still share sorting and row
+selection; separate browser previews have independent state.
+
+To copy a Code panel into a new project's `src/main.rs`, add this dependency:
+
+```toml
+volt-ui-kit = { path = "/path/to/volt-ui-kit", features = ["native"] }
+```
+
+Replace the path with this checkout (the crate is not yet published). The
+Select program also accepts `--compare`; the Table program accepts `--square`.
+These choose the comparison and square variants when running a copied program.
 
 ## Linux window controls and corners
 

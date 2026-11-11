@@ -1,7 +1,10 @@
 #![cfg(feature = "rust-ui")]
 //! A view written for its own state runs unchanged inside a larger app.
 use volt_ui_kit::{
-    declarative::{Bindings, Handlers, PointerPhase, Runtime, TextMetrics},
+    declarative::{
+        Bindings, Handlers, InputModifiers, KeyPress, PointerPhase, PressedKey, Runtime,
+        TextMetrics,
+    },
     ui::prelude::*,
     Viewport,
 };
@@ -203,4 +206,62 @@ fn pointer_surfaces_hear_presses_inside_a_mapped_view() {
         .unwrap();
     assert_eq!(board.right.presses, 1, "the right surface heard its press");
     assert_eq!(board.left.presses, 0);
+}
+
+/// A canvas-like view: application keys and a pointer surface.
+#[derive(Default)]
+struct Canvas {
+    keys: Vec<PressedKey>,
+    presses: Vec<[f32; 2]>,
+}
+#[derive(Default)]
+struct Editor {
+    canvas: Canvas,
+}
+fn canvas(_: &Canvas) -> Element<Canvas> {
+    zstack(Vec::<Element<Canvas>>::new())
+        .key("surface")
+        .width(300.)
+        .height(200.)
+        .on_key_press(|c: &mut Canvas, k| {
+            c.keys.push(k.key);
+            true
+        })
+        .on_pointer(|c: &mut Canvas, p| {
+            if p.phase == PointerPhase::Press {
+                c.presses.push(p.at);
+            }
+        })
+        .into()
+}
+
+#[test]
+fn key_presses_and_pointer_surfaces_run_on_the_mapped_state() {
+    let mut editor = Editor::default();
+    let view = canvas(&editor.canvas).map_state(|e: &mut Editor| &mut e.canvas);
+    let (d, mut handlers) = view.build().unwrap().into_parts();
+    let mut r = Runtime::new(d, &handlers, &Bindings::default()).unwrap();
+    r.layout(
+        Viewport::new(400., 300., 1.).unwrap(),
+        &Bindings::default(),
+        &mut Metrics,
+    )
+    .unwrap();
+    let delete = KeyPress {
+        key: PressedKey::Delete,
+        modifiers: InputModifiers::default(),
+        repeat: false,
+    };
+    assert!(r.key_press(delete, &mut handlers, &mut editor).unwrap());
+    r.pointer_down_outcome_with_clicks(
+        40.,
+        30.,
+        InputModifiers::default(),
+        1,
+        &mut handlers,
+        &mut editor,
+    )
+    .unwrap();
+    assert_eq!(editor.canvas.keys, [PressedKey::Delete]);
+    assert_eq!(editor.canvas.presses, [[40., 30.]]);
 }

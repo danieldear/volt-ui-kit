@@ -42,6 +42,18 @@ cargo +1.89.0 check --locked --all-targets --all-features
 cargo check --locked --lib --target wasm32-unknown-unknown --features rust-ui
 ```
 
+The eight complete Catalog recipes must also compile when copied out of the
+Catalog. This check opens no windows and uses the existing build cache:
+
+```sh
+cargo build --locked --features native --example samples
+python3 scripts/check_sample_sources.py
+```
+
+It honors `CARGO_TARGET_DIR`, uses the repository lockfile to seed an isolated
+fixture, and checks the exact text emitted by each `--source` command offline.
+CI runs it after building the native examples.
+
 Some tests need a GPU or measure timing, so they are ignored by default. Run
 them on a machine with a GPU when you touch rendering:
 

@@ -15,6 +15,27 @@ Common rules:
 - Popups, menus and dialogs are drawn inside the window and keep focus and
   input inside their scope while open.
 
+## Runnable recipes
+
+The Button, Select and Table Catalog Code panels show complete native programs,
+not fragments with missing callbacks. They use the same builders as their live
+previews. Eight variants are available through the repository's `samples` runner:
+
+```sh
+cargo run --locked --features native --example samples -- --list
+cargo run --locked --features native --example samples -- button-states
+cargo run --locked --features native --example samples -- table-square
+cargo run --locked --features native --example samples -- --source select
+```
+
+Copy a complete program into `src/main.rs` with a `volt-ui-kit` dependency and
+its `native` feature enabled. Use a path dependency for unpublished toolkit
+changes. Select accepts `--compare`; Table accepts `--square`. Other Catalog
+panels are still excerpts; their callbacks and helpers live in the Catalog.
+See [runnable recipes](../examples/README.md#runnable-component-recipes) for all
+names and dependency setup. Rounded and square Tables share state in the native
+Catalog; each embedded browser preview has independent state.
+
 ## Buttons and actions
 
 ```rust
