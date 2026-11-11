@@ -90,6 +90,9 @@ class CopiedSampleTests(unittest.TestCase):
         self.assertIn('cargo test --locked --manifest-path crates/volt-ui-kit-web/Cargo.toml', workflow)
         self.assertNotIn('apt-get', workflow)
         self.assertNotIn('install --with-deps', workflow)
+        runtime = workflow.split("<<'BROWSER_TESTS'", 1)[1]
+        self.assertNotIn('python3', runtime)
+        self.assertIn("'application/wasm'", runtime)
         for script in ('test_web.cjs', 'test_catalog_web.cjs', 'test_web_input.cjs'):
             self.assertIn('node scripts/' + script, workflow)
 

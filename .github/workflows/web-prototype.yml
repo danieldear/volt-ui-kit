@@ -55,6 +55,8 @@ jobs:
       - name: Real browser smoke tests in the pinned runtime
         shell: bash
         run: |
+          rm -rf target/web-pages/volt-ui-kit
+          python3 scripts/build_docs_site.py target/web-pages/volt-ui-kit --web-assets docs/live/pkg
           docker run --rm --interactive --shm-size=1g \
             --user "$(id -u):$(id -g)" \
             --volume "$PWD:$PWD" --workdir "$PWD" \
@@ -67,9 +69,27 @@ jobs:
           assert.equal(require('playwright/package.json').version, '1.62.1');
           assert.ok(fs.existsSync(require('playwright').chromium.executablePath()), 'Pinned Chromium is missing');
           JS
-          rm -rf target/web-pages/volt-ui-kit
-          python3 scripts/build_docs_site.py target/web-pages/volt-ui-kit --web-assets docs/live/pkg
-          python3 -m http.server 8768 --bind 127.0.0.1 --directory target/web-pages > target/web-server.log 2>&1 &
+          # The browser image includes Node, but does not promise Python/build tools.
+          node - <<'SERVER' > target/web-server.log 2>&1 &
+          const http = require('node:http'), fs = require('node:fs'), path = require('node:path');
+          const root = path.resolve('target/web-pages');
+          const types = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm',
+            '.css':'text/css','.json':'application/json','.svg':'image/svg+xml',
+            '.png':'image/png','.jpg':'image/jpeg','.woff2':'font/woff2','.ttf':'font/ttf'};
+          http.createServer((req, res) => {
+            if (!['GET','HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
+            let name;
+            try { name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); }
+            catch { res.writeHead(400).end(); return; }
+            const file = path.resolve(root, '.' + name, name.endsWith('/') ? 'index.html' : '');
+            if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
+            fs.readFile(file, (error, data) => {
+              if (error) { res.writeHead(404).end(); return; }
+              res.writeHead(200, {'Content-Type':types[path.extname(file)] || 'application/octet-stream'});
+              res.end(req.method === 'HEAD' ? undefined : data);
+            });
+          }).listen(8768, '127.0.0.1');
+          SERVER
           server=$!
           trap 'kill "$server"' EXIT
           for i in {1..30}; do curl --fail --silent http://127.0.0.1:8768/volt-ui-kit/live/ > /dev/null && break; sleep 1; done
