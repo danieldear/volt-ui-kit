@@ -257,7 +257,7 @@ pub fn install(options: &InstallOptions) -> io::Result<Installation> {
             return Err(error("destination already exists: only a managed registration can be updated using --replace; nothing overwritten"));
         }
     }
-    let desktop = format!("[Desktop Entry]\nType=Application\nName={}\nExec={}\nIcon={id}\nTerminal=false\nCategories=Utility;\nStartupNotify=false\nStartupWMClass={id}\nX-Volt-Managed=true\n", value_escape(&options.name), exec_argument(path_text(&binary)?));
+    let desktop = format!("[Desktop Entry]\nType=Application\nName={}\nExec={}\nIcon={}\nTerminal=false\nCategories=Utility;\nStartupNotify=false\nStartupWMClass={id}\nX-Volt-Managed=true\n", value_escape(&options.name), exec_argument(path_text(&binary)?), value_escape(path_text(&result.icon)?));
     publish(&result.icon, &image, old_icon.is_some())?;
     if let Err(e) = publish(&result.launcher, desktop.as_bytes(), old_launcher.is_some()) {
         let rollback = if let Some(old) = old_icon {

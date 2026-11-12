@@ -92,7 +92,7 @@ publication remains the separate manual step in the
 ## Live Rust previews
 
 Run `python3 scripts/build_web.py` using the versioned tools in
-[the web guide](web-prototype.md). Do not commit generated JS/WASM. All 124
+[the web guide](web-prototype.md). Do not commit generated JS/WASM. All 125
 reference slots reuse original Catalog section declarations. Four sections
 covering native lifecycle/files/OS services show explicit capability notices;
 background threads and external navigation remain native-only actions.

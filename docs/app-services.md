@@ -153,6 +153,10 @@ the owned Quit menu item. It cannot stop Force Quit, system shutdown or a crash.
 
 ## Files and dialogs
 
+The synchronous example below is macOS-specific. For portable UI callbacks,
+including nonblocking Linux portals, use the `request_*` APIs described under
+[Linux desktop services](#linux-desktop-services).
+
 ```rust,no_run
 use volt_ui_kit::native::{
     file_dialog::{self, FileDialogOptions},
@@ -168,7 +172,10 @@ if let Some(path) = file_dialog::open_file(&FileDialogOptions::new("Open notes")
 ```
 
 - `open_file` and `save_file` (with `.suggested_name(..)`) show the native macOS
-  panels and need `native-desktop`. Other platforms return `Unsupported` for now.
+  panels and need `native-desktop`. Linux with `native-desktop` uses XDG Desktop Portals; call `request_open_file`,
+  `request_open_folder` or `request_save_file` for UI callbacks. Synchronous Linux
+  functions are worker-only. Offer separate file/folder actions on Linux; combined
+  selection is unsupported. Other platforms return `Unsupported`.
 - `save_text_file` writes to a temporary file and moves it into place.
   `CreateNew` never overwrites; `MatchContents(original)` refuses to save if the
   file changed on disk since you read it; `ApprovedReplacement` overwrites.
@@ -194,10 +201,11 @@ let ui: Element<App> = link("Project website ↗", "https://example.com")
     }).into();
 ```
 
-`native::links::available()` reports compiled support: currently macOS with
-`native-desktop`. Dispatch requires the main thread and uses public
-`NSWorkspace`/`NSURL` APIs, not a shell or subprocess. Other builds return
-`OpenUrlError::Unsupported`. Success means the OS accepted the request, not
+`native::links::available()` reports compiled support: macOS or Linux with
+`native-desktop`. macOS dispatch requires the main thread and uses public
+`NSWorkspace`/`NSURL` APIs. Linux uses the OpenURI portal; use
+`links::request_open_url` for a nonblocking UI callback. Other builds return
+`OpenUrlError::Unsupported`. Neither backend uses a shell. Success means the OS accepted the request, not
 that a browser loaded the page. Volt itself makes no network request. Custom
 schemes, email actions, app deep-link registration and embedded browsing are not
 part of this HTTP(S)-only adapter.
@@ -223,7 +231,9 @@ The menu includes the standard About, Services, Hide and Quit items. A
 `native::file_dialog::reveal_file(&absolute_path)` asks Finder to select an
 existing file or folder without opening its contents. It requires
 `native-desktop` on macOS and the UI thread; other platforms return
-`Unsupported`. Success reports dispatch, not an observed Finder window.
+`Unsupported` unless the Linux `native-desktop` adapter is compiled. Linux uses
+FileManager1 or portal OpenDirectory; prefer `request_reveal_file` for a UI
+callback. Success reports dispatch, not an observed file-manager window.
 
 ### Tray-resident window visibility
 
@@ -452,3 +462,84 @@ every option.
 To receive the files Finder opens with your app (double-click, Open With,
 the Dock), install an AppKit handler in `Application::before_launch`, which
 runs once the application object exists and before launch events arrive.
+
+## Linux desktop services
+
+Enable `native-desktop` on Linux for the optional Rust D-Bus adapters. It reuses
+our already-locked zbus stack and adds Chrono/its timezone resolver for Trash
+timestamps. There is no GTK/WebView linkage or shell-command fallback. The default
+`native` feature alone does not enable these services. `native-notifications` can
+independently opt into Linux notifications.
+
+| Service | Linux adapter and limits |
+| --- | --- |
+| Open/save file, choose folder | XDG FileChooser portal. Cancel returns `Ok(None)`. Separate file/folder actions; combined selection is unsupported. |
+| Open file/directory or web URL | XDG OpenURI portal. An explicit action may launch the registered default application. Acceptance is not proof of rendering. |
+| Reveal in file manager | FileManager1.ShowItems, otherwise portal OpenDirectory. Portal fallback refuses symbolic-link selection rather than reveal an unexpected target. |
+| Notifications | Freedesktop server. Immediate, silent requests; stable IDs replace tracked notifications. Removal addresses the original daemon identity. No simulated permission grant, delayed scheduling, click actions or forced presentation. |
+| Checked Trash | Freedesktop home/per-volume Trash with `.trashinfo` and local timestamps. Owned, non-world-writable directories, same-device/local-volume checks, symlink refusal, atomic no-overwrite rename and identity receipt. Never copy/delete, recursively review contents, permanently delete or empty Trash. |
+| Tray and menu | StatusNotifierItem + DBusMenu with bounded, state-aware commands. Watcher changes trigger re-registration; no idle polling. No tray host means no tray icon—Volt does not install GNOME extensions or alter the desktop. Close-to-tray window hiding/focus still needs Wayland-specific acceptance. |
+| Global native menu bar | Not supplied on Linux. Use Volt's in-app menu/toolbar components. |
+
+Linux tracks up to 64 notification IDs per process; replacement/removal tracking
+is not persisted across application restarts. OS acceptance is not visible delivery.
+
+These are **compiled adapters**, not guaranteed desktop services. Runtime
+availability varies between KDE, GNOME, COSMIC, sandboxing and installed portal
+backends. Run `native::linux_services::probe()` on a worker to inspect the running
+session; it does not open dialogs, send notifications or activate missing services.
+The Catalog's Desktop services page includes that probe, file/folder/save-location
+controls, explicit open/reveal/browser actions, an immediate Linux notification,
+tray commands, and a generated-file-only Trash test. Composition never calls OS
+services. The Documents page also uses nonblocking Linux choosers.
+
+### Nonblocking UI callbacks
+
+```rust,no_run
+use volt_ui_kit::native::{file_dialog::{self, FileDialogOptions}, links};
+use volt_ui_kit::ui::ExternalUrl;
+file_dialog::request_open_file(FileDialogOptions::new("Open notes"), move |result| {
+    // On Linux, send this worker result through UiSender before editing UI.
+    // Ok(None) means Cancel.
+})?;
+links::request_open_url(ExternalUrl::parse("https://example.com")?, move |result| {
+    // Accepted dispatch is not a browser-load receipt.
+})?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`request_open_folder`, `request_save_file`, `request_open_path` and
+`request_reveal_file` follow the same model. macOS preserves its main-thread
+native start behavior. Linux runs at most four service operations concurrently,
+with five-second D-Bus method timeouts and a five-minute portal response deadline;
+expired requests are closed. A full worker budget returns a startup error.
+Use `notifications::remove_async` rather than blocking Linux's UI thread.
+
+### Recoverable Trash safety
+
+`recoverable_trash_for` is metadata-only and never creates directories.
+`prepare_trash_for` is an explicit operation that may create a missing private
+Trash; call it only as part of a deliberate cleanup action. Before moving real
+items, applications must confirm intent, protect system/application paths and
+revalidate their selection. `move_to_trash_checked` rechecks its own gates, uses
+rename-only movement, and returns `TrashReceipt`. An error with
+`may_have_moved()==true` must **never** be retried blindly. No app Undo is supplied;
+restoration remains with the desktop file manager. Path-based concurrent-change
+windows remain, just as with the macOS adapter; this is not a filesystem transaction.
+New Trash directories use `0700`; existing desktop-owned group permissions are
+retained, not changed. Foreign ownership, symlinks, world-writable Trash directories
+and unknown/non-local filesystem types fail closed.
+
+### Linux acceptance
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page desktop-services
+```
+
+For maintainers, the explicitly ignored Catalog test
+`catalog::desktop_services::linux_live_tests::notification_round_trip`
+sends one generic local notification and requests removal. The separately ignored
+`catalog::desktop_services::linux_live_tests::trash_round_trip` moves only a
+generated file into Trash. Run it only with deliberate approval in a desktop session; it
+never touches personal files or empties Trash. A passing OS submission is not
+visual acceptance on every desktop. Test KDE, GNOME and COSMIC separately.

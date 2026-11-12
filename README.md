@@ -165,8 +165,8 @@ keeps native traffic lights. See [window controls and Linux diagnostics](docs/wi
 | --- | --- |
 | `native` | A window with software drawing, text, images, clipboard, IME and accessibility |
 | `native-gpu` | GPU drawing with Vello (implies `native`) |
-| `native-desktop` | macOS menus, tray and file panels |
-| `native-notifications` | macOS local notifications |
+| `native-desktop` | macOS integrations; Linux portals, notifications, checked Trash and supported tray hosts |
+| `native-notifications` | macOS local / Linux immediate notifications |
 | `rust-ui` / `declarative` | The builders and runtime without a window, for custom hosts |
 | `dev-tools` | The `cargo volt` command |
 | `rendering` / `rendering-gpu` | Shared drawing adapters without desktop window/clipboard integration |
@@ -243,3 +243,7 @@ python3 scripts/build_web.py  # requires wasm32 target and wasm-bindgen-cli 0.2.
 python3 -m http.server 8768 --bind 127.0.0.1 --directory docs
 # Open http://127.0.0.1:8768/index.html or /reference/index.html
 ```
+
+Linux desktop services use optional Rust D-Bus adapters, not GTK or a WebView.
+See [Linux desktop services](docs/app-services.md#linux-desktop-services) for
+portal dialogs, default-app dispatch, notifications, checked Trash and tray limits.

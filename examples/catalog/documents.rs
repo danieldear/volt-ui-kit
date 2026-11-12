@@ -37,8 +37,19 @@ impl State {
 }
 #[derive(Debug)]
 pub enum Completion {
-    Loaded { path: PathBuf, text: String },
-    Saved { path: PathBuf, snapshot: String },
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    Dialog {
+        save: bool,
+        path: Option<PathBuf>,
+    },
+    Loaded {
+        path: PathBuf,
+        text: String,
+    },
+    Saved {
+        path: PathBuf,
+        snapshot: String,
+    },
 }
 /// Completion retries are worker-only and bounded by channel closure. There is
 /// one document operation at a time; normal progress coalesces in the other demo.
@@ -85,10 +96,43 @@ pub fn open(app: &mut App) {
 fn choose_open(app: &mut App) {
     app.documents.after = None;
     app.documents.prompt = false;
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    request_dialog(
+        app,
+        false,
+        FileDialogOptions::new("Open UTF-8 notes (8 KiB maximum)"),
+    );
+    #[cfg(not(all(feature = "native-desktop", target_os = "linux")))]
     match file_dialog::open_file(&FileDialogOptions::new("Open UTF-8 notes (8 KiB maximum)")) {
         Ok(Some(path)) => load_path(app, path),
         Ok(None) => app.documents.status = "Open cancelled; document unchanged".into(),
         Err(e) => app.documents.error = Some(e.to_string()),
+    }
+}
+#[cfg(all(feature = "native-desktop", target_os = "linux"))]
+fn request_dialog(app: &mut App, save: bool, options: FileDialogOptions) {
+    let sender = app.sender.clone().expect("ready checked");
+    app.documents.generation = app.documents.generation.wrapping_add(1);
+    let generation = app.documents.generation;
+    app.documents.busy = true;
+    app.documents.status = "Waiting for desktop file chooser…".into();
+    let callback = move |result: Result<Option<PathBuf>, file_dialog::FileDialogError>| {
+        deliver(
+            sender,
+            generation,
+            result
+                .map(|path| Completion::Dialog { save, path })
+                .map_err(|e| e.to_string()),
+        )
+    };
+    let result = if save {
+        file_dialog::request_save_file(options, callback)
+    } else {
+        file_dialog::request_open_file(options, callback)
+    };
+    if let Err(e) = result {
+        app.documents.busy = false;
+        app.documents.error = Some(e.to_string());
     }
 }
 pub fn load_path(app: &mut App, path: PathBuf) {
@@ -144,6 +188,13 @@ fn save_as_or_current(app: &mut App, save_as: bool) {
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
             .unwrap_or("notes.txt");
+        #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+        {
+            let options = FileDialogOptions::new("Save UTF-8 notes").suggested_name(name);
+            request_dialog(app, true, options);
+            return;
+        }
+        #[cfg(not(all(feature = "native-desktop", target_os = "linux")))]
         match file_dialog::save_file(
             &FileDialogOptions::new("Save UTF-8 notes").suggested_name(name),
         ) {
@@ -205,6 +256,24 @@ pub fn finish(app: &mut App, generation: u64, result: &Result<Completion, String
             app.documents.error = Some(e.clone());
             app.documents.status = "Operation failed; draft retained".into();
             app.documents.prompt = app.documents.after.is_some();
+            return;
+        }
+        #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+        Ok(Completion::Dialog { save, path }) => {
+            match path {
+                Some(path) => {
+                    if *save {
+                        save_path(app, path.clone(), true);
+                    } else {
+                        load_path(app, path.clone());
+                    }
+                }
+                None => {
+                    app.documents.after = None;
+                    app.documents.prompt = false;
+                    app.documents.status = "File dialog cancelled; document unchanged".into();
+                }
+            }
             return;
         }
         Ok(Completion::Loaded { path, text }) => {
@@ -291,7 +360,7 @@ let selected = file_dialog::open_file(&FileDialogOptions::new("Open notes"))?;
 // Worker: files::save_text_file(&path, &snapshot, SavePolicy::MatchContents(&original))
 // Main-thread completion marks ONLY that saved snapshot clean.
 // Close stays vetoed until saving succeeds; errors keep the draft."#,
-    }],api:vec![("file_dialog::open_file / save_file", "Main-thread, native-desktop macOS panels; Cancel is Ok(None)."),("files::read_text_file", "Bounded UTF-8 regular file; no silent truncation."),("files::save_text_file", "Private sibling + sync + commit; explicit create/replace policy."),("SavePolicy::MatchContents(original)","Rejects ordinary external edits before replacement; not a cross-process lock.")]}
+    }],api:vec![("file_dialog::open_file / save_file", "macOS panels; Linux uses request_open_file/request_save_file callbacks without blocking the UI. Cancel is Ok(None)."),("files::read_text_file", "Bounded UTF-8 regular file; no silent truncation."),("files::save_text_file", "Private sibling + sync + commit; explicit create/replace policy."),("SavePolicy::MatchContents(original)","Rejects ordinary external edits before replacement; not a cross-process lock.")]}
 }
 pub fn overlay(app: &App) -> El<App> {
     let error: El<App> = if let Some(error) = &app.documents.error {

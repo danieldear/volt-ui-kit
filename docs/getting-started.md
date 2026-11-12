@@ -29,8 +29,8 @@ Nothing is enabled by default; pick what your application needs.
 | --- | --- |
 | `native` | A window host: winit, cosmic-text, software drawing (tiny-skia), images, clipboard, IME and AccessKit accessibility. Includes `rust-ui`. |
 | `native-gpu` | GPU drawing with Vello on wgpu (Metal, DX12 or Vulkan), with automatic software fallback. Includes `native`. |
-| `native-desktop` | macOS application menus, a tray menu, and native open/save panels. |
-| `native-notifications` | macOS local notifications. |
+| `native-desktop` | macOS integrations; Linux portal dialogs, file actions, immediate notifications, checked Trash and supported tray hosts. |
+| `native-notifications` | macOS local notifications; Linux immediate desktop notifications. |
 | `rust-ui` | The Rust builders (`ui` module) without a window, for custom hosts. |
 | `declarative` | The validated document tree, runtime and optional JSON frontend. |
 | `dev-tools` | The `cargo volt` command: project templates, a rebuild-and-restart dev loop, and macOS app bundles. |

@@ -396,6 +396,7 @@ impl Drop for App {
 #[cfg(feature = "native")]
 pub fn update(app: &mut App, message: Message) {
     desktop_services::drain(app);
+    navigation_links::drain(app);
     let (generation, step) = match message {
         Message::NotificationWake => return,
         Message::File { generation, result } => {

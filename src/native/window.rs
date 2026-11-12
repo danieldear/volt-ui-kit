@@ -486,6 +486,11 @@ fn run_host<C: 'static>(
         .app_id
         .get_or_insert_with(|| super::identity::default_app_id(&options.native.title));
     super::identity::validate_app_id(app_id)?;
+    #[cfg(all(
+        target_os = "linux",
+        any(feature = "native-desktop", feature = "native-notifications")
+    ))]
+    super::linux_services::set_app_id(app_id);
     let event_loop = super::identity::event_loop_builder::<HostEvent>(backend).build()?;
     // GNOME's setting needs a subprocess: keep it off the UI thread and apply
     // it when it arrives, settling anything already animating.
@@ -535,7 +540,10 @@ fn run_host<C: 'static>(
         header_drag_start: None,
         #[cfg(target_os = "macos")]
         custom_zoom: Default::default(),
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         desktop_host: None,
         proxy,
         access: None,
@@ -639,9 +647,15 @@ enum HostEvent {
         generation: u64,
         status: super::BackdropStatus,
     },
-    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    #[cfg(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))]
     Close(CloseReason),
-    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    #[cfg(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))]
     Command(String),
     /// Screen-reader activation and action requests from AccessKit.
     Access(accesskit_winit::Event),
@@ -666,8 +680,11 @@ struct App<C> {
     header_drag_start: Option<[f32; 2]>,
     #[cfg(target_os = "macos")]
     custom_zoom: super::macos_chrome::CustomZoom,
-    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
-    desktop_host: Option<super::system::macos::DesktopHost>,
+    #[cfg(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))]
+    desktop_host: Option<super::system::DesktopHost>,
     /// Delivers AccessKit events into the event loop.
     proxy: winit::event_loop::EventLoopProxy<HostEvent>,
     access: Option<accesskit_winit::Adapter>,
@@ -1366,7 +1383,10 @@ impl<C: 'static> App<C> {
             }
             Ok(()) => {}
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         if let Some(host) = &self.desktop_host {
             host.sync_commands(
                 &self.extensions.commands.entries(&self.context),
@@ -2400,7 +2420,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             return;
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         if let HostEvent::Close(reason) = event {
             if !self.request_close(event_loop, reason) {
                 if let Err(error) = self.after_input(InputOutcome {
@@ -2412,7 +2435,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             return;
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         if let HostEvent::Command(id) = event {
             if self.runtime.application_commands_allowed()
                 && self
@@ -2487,13 +2513,16 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             } else {
                 ThemeMode::Dark
             };
-            #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+            #[cfg(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            ))]
             if let Some(config) = &self.extensions.desktop {
                 let proxy = self.proxy.clone();
-                self.desktop_host = Some(super::system::macos::DesktopHost::install(
+                self.desktop_host = Some(super::system::DesktopHost::install(
                     config,
                     move |event| {
-                        use super::system::macos::DesktopEvent;
+                        use super::system::DesktopEvent;
                         let _ = proxy.send_event(match event {
                             DesktopEvent::Command(id) => HostEvent::Command(id),
                             DesktopEvent::Quit => HostEvent::Close(CloseReason::Quit),
@@ -2563,7 +2592,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         {
             self.linux_backdrop = None;
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         {
             // Drop the previous menu before resumed installs its replacement.
             self.desktop_host = None;

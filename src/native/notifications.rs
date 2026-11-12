@@ -31,9 +31,15 @@ pub struct NotificationCapabilities {
 }
 /// Compiled adapter only; not permission, bundle readiness or presentation status.
 pub fn capabilities() -> NotificationCapabilities {
-    let available = cfg!(all(feature = "native-notifications", target_os = "macos"));
+    let available = cfg!(any(
+        all(feature = "native-notifications", target_os = "macos"),
+        all(
+            target_os = "linux",
+            any(feature = "native-desktop", feature = "native-notifications")
+        )
+    ));
     NotificationCapabilities {
-        authorization: available,
+        authorization: cfg!(all(feature = "native-notifications", target_os = "macos")),
         local_requests: available,
         removal: available,
         settings_query: false,
@@ -47,6 +53,7 @@ pub struct LocalNotification {
     title: String,
     body: String,
     delay: Option<Duration>,
+    desktop_id: Option<String>,
 }
 impl LocalNotification {
     pub fn new(id: impl Into<String>, title: impl Into<String>, body: impl Into<String>) -> Self {
@@ -55,6 +62,7 @@ impl LocalNotification {
             title: title.into(),
             body: body.into(),
             delay: None,
+            desktop_id: None,
         }
     }
     /// One-shot delay between 1 second and 24 hours; no repeating timer.
@@ -62,12 +70,32 @@ impl LocalNotification {
         self.delay = Some(delay);
         self
     }
+    pub fn application_id(mut self, id: impl Into<String>) -> Self {
+        self.desktop_id = Some(id.into());
+        self
+    }
+    pub fn desktop_id(&self) -> Option<&str> {
+        self.desktop_id.as_deref()
+    }
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+    pub fn delay(&self) -> Option<Duration> {
+        self.delay
+    }
     pub fn id(&self) -> &str {
         &self.id
     }
     /// Pure validation; never initializes a notification center or prompts.
     pub fn validate(&self) -> Result<(), NotificationError> {
         validate_id(&self.id)?;
+        if let Some(id) = &self.desktop_id {
+            super::identity::validate_app_id(id)
+                .map_err(|_| NotificationError::InvalidNotification)?;
+        }
         if self.title.trim().is_empty()
             || self.title.len() > 128
             || self.title.chars().any(char::is_control)
@@ -107,10 +135,10 @@ impl fmt::Display for NotificationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::InvalidNotification => "invalid notification ID, title, body or one-shot delay",
-            Self::Unsupported => "local notifications require native-notifications on macOS",
-            Self::WrongThread => "start notification operations on the native main thread",
+            Self::Unsupported => "requested notification capability is unavailable; Linux supports immediate notifications but not authorization prompts or delayed scheduling",
+            Self::WrongThread => "macOS notification operations start on the main thread; Linux removal uses remove_async or a worker",
             Self::MissingAppBundle => "local notifications require a running .app with a bundle identifier; package the executable first",
-            Self::NativeFailure => "UserNotifications rejected the operation; check authorization, bundle/signing and OS settings (native details unavailable)",
+            Self::NativeFailure => "native notification service rejected the operation; check desktop availability, authorization and platform packaging",
         })
     }
 }
@@ -132,6 +160,8 @@ pub fn request_authorization(
 }
 /// Submit a silent, one-shot local request. Equal IDs use OS replacement semantics.
 /// Success from the callback is OS acceptance, not a banner/visibility receipt.
+/// Linux replaces tracked IDs in this process only; tracking is not persisted
+/// across app restarts (at most 64 IDs). Linux rejects delayed scheduling.
 /// Does not ask permission; foreground/Focus/settings may suppress presentation.
 pub fn send(
     notification: &LocalNotification,
@@ -147,7 +177,13 @@ pub fn remove(id: &str) -> Result<(), NotificationError> {
     validate_id(id)?;
     backend::remove(id)
 }
-#[cfg(not(all(feature = "native-notifications", target_os = "macos")))]
+#[cfg(not(any(
+    all(feature = "native-notifications", target_os = "macos"),
+    all(
+        target_os = "linux",
+        any(feature = "native-desktop", feature = "native-notifications")
+    )
+)))]
 mod backend {
     use super::*;
     pub(super) fn request_authorization(
@@ -272,6 +308,58 @@ mod backend {
         Ok(())
     }
 }
+/// Scheduling is currently provided by macOS only. Linux accepts immediate
+/// notifications and explicitly rejects `.after`, rather than inventing delivery.
+pub fn scheduling_available() -> bool {
+    cfg!(all(feature = "native-notifications", target_os = "macos"))
+}
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "native-desktop", feature = "native-notifications")
+))]
+mod backend {
+    use super::*;
+    pub(super) fn request_authorization(
+        _: impl FnOnce(Result<Authorization, NotificationError>) + Send + 'static,
+    ) -> Result<(), NotificationError> {
+        Err(NotificationError::Unsupported)
+    }
+    pub(super) fn send(
+        note: &LocalNotification,
+        callback: impl FnOnce(Result<(), NotificationError>) + Send + 'static,
+    ) -> Result<(), NotificationError> {
+        crate::native::linux_services::notifications::send(note, callback)
+    }
+    pub(super) fn remove(id: &str) -> Result<(), NotificationError> {
+        crate::native::linux_services::notifications::remove(id)
+    }
+}
+/// A nonblocking removal entry point for Linux. On macOS starts on the main
+/// thread. Success reports native acceptance, not observed disappearance.
+pub fn remove_async(
+    id: String,
+    callback: impl FnOnce(Result<(), NotificationError>) + Send + 'static,
+) -> Result<(), NotificationError> {
+    validate_id(&id)?;
+    #[cfg(all(
+        target_os = "linux",
+        any(feature = "native-desktop", feature = "native-notifications")
+    ))]
+    return super::linux_services::spawn(
+        move || remove(&id).map_err(|e| e.to_string()),
+        move |r| callback(r.map_err(|_| NotificationError::NativeFailure)),
+    )
+    .map_err(|_| NotificationError::NativeFailure);
+    #[cfg(not(all(
+        target_os = "linux",
+        any(feature = "native-desktop", feature = "native-notifications")
+    )))]
+    {
+        callback(remove(&id));
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

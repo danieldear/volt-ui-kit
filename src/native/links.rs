@@ -11,8 +11,10 @@ pub enum OpenUrlError {
 impl fmt::Display for OpenUrlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Unsupported => "opening web URLs requires native-desktop on macOS",
-            Self::WrongThread => "opening web URLs requires the main thread",
+            Self::Unsupported => {
+                "opening web URLs requires native-desktop on macOS or Linux with a desktop portal"
+            }
+            Self::WrongThread => "use request_open_url for portable dispatch; synchronous macOS dispatch needs the main thread, Linux needs a worker",
             Self::NativeFailure => "the operating system could not open the web URL",
         })
     }
@@ -20,7 +22,10 @@ impl fmt::Display for OpenUrlError {
 impl std::error::Error for OpenUrlError {}
 /// Compiled adapter availability, not a promise that a browser is installed.
 pub fn available() -> bool {
-    cfg!(all(feature = "native-desktop", target_os = "macos"))
+    cfg!(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))
 }
 /// Request the default browser through a public OS API. Success means the OS
 /// accepted dispatch, not that the site loaded. No shell, subprocess or network
@@ -39,12 +44,41 @@ pub fn open_url(url: &ExternalUrl) -> Result<(), OpenUrlError> {
             Err(OpenUrlError::NativeFailure)
         }
     }
-    #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    {
+        if super::linux_services::on_ui_thread() {
+            return Err(OpenUrlError::WrongThread);
+        }
+        super::linux_services::open_url(url.as_str()).map_err(|_| OpenUrlError::NativeFailure)
+    }
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
     {
         let _ = url;
         Err(OpenUrlError::Unsupported)
     }
 }
+/// Linux dispatch uses a bounded worker; macOS dispatch starts on the main thread.
+pub fn request_open_url(
+    url: ExternalUrl,
+    callback: impl FnOnce(Result<(), OpenUrlError>) + Send + 'static,
+) -> Result<(), OpenUrlError> {
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    return super::linux_services::spawn(
+        move || open_url(&url).map_err(|e| e.to_string()),
+        move |r| callback(r.map_err(|_| OpenUrlError::NativeFailure)),
+    )
+    .map_err(|_| OpenUrlError::NativeFailure);
+    #[cfg(not(all(feature = "native-desktop", target_os = "linux")))]
+    {
+        let result = open_url(&url);
+        callback(result);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,11 +86,17 @@ mod tests {
     fn capability_matches_build() {
         assert_eq!(
             available(),
-            cfg!(all(feature = "native-desktop", target_os = "macos"))
+            cfg!(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            ))
         );
     }
     #[test]
-    #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
     fn unsupported_dispatch_is_explicit() {
         assert_eq!(
             open_url(&ExternalUrl::parse("https://example.com").unwrap()),

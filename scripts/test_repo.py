@@ -135,7 +135,8 @@ class SiteTests(unittest.TestCase):
             slots += html.count('data-volt-page=')
             self.assertNotIn('<iframe', html)
             self.assertNotIn('images/components/', html)
-        self.assertEqual(slots, 124)
+        catalog = json.loads((docs / "assets/catalog-data.json").read_text())
+        self.assertEqual(slots, sum(len(page["sections"]) for page in catalog))
         self.assertFalse(any(name.startswith('images/components/') for name in build_docs_site.FILES))
 
     def test_web_staging_publishes_only_expected_runtime_outputs(self):

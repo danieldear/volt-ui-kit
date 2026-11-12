@@ -288,7 +288,10 @@ pub fn overlays(app: &App) -> Vec<El<App>> {
             .backdrop_dismiss(false).on_dismiss(|app: &mut App| app.close_prompt = None).into(),
     ]
 }
-#[cfg(all(feature = "native-desktop", target_os = "macos"))]
+#[cfg(all(
+    feature = "native-desktop",
+    any(target_os = "macos", target_os = "linux")
+))]
 pub fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
     use volt_ui_kit::native::system::{DesktopCommand, DesktopConfig, DesktopMenu, TrayConfig};
     let rgba = (0i32..18 * 18)

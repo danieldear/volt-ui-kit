@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add optional Rust-only Linux desktop services: nonblocking XDG portal file/folder
+  dialogs, default-app file/URL dispatch, file-manager reveal, immediate silent
+  notifications/removal, checked freedesktop Trash, and StatusNotifierItem/DBusMenu
+  tray commands. Preserve macOS APIs and explicit unsupported capabilities. Add
+  Catalog workflows, private-bus portal race/cancel tests and Trash regressions.
+  Linux scheduling, combined file-or-folder dialogs, notification actions and
+  global menu bars remain unsupported; GNOME tray visibility needs a tray host.
+
 - Add explicit per-user `cargo volt install-linux` registration with matched
   desktop/app IDs and app-specific icons for Catalog, Northbound and generated
   starters. Launchers point directly to the selected executable, safely escaping

@@ -190,7 +190,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .messages(|app, sender| app.sender = Some(sender), catalog::update)
                 // Under `cargo volt dev`, code changes restart on the same page.
                 .dev_state(catalog::dev_save, catalog::dev_load);
-            #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+            #[cfg(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            ))]
             let application = application.desktop(catalog::lifecycle::desktop(), |_, _| {});
             application
         },

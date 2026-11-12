@@ -20,10 +20,12 @@ pub struct State {
     pub history: NavigationHistory<Route>,
     pub captured: Option<ExternalUrl>,
     pub message: String,
+    pub mailbox: std::sync::Arc<std::sync::Mutex<Option<Result<(), String>>>>,
 }
 impl Default for State {
     fn default() -> Self {
         Self {
+            mailbox: Default::default(),
             history: NavigationHistory::new(Route::Workspace),
             captured: None,
             message: "Links are intercepted here. Nothing opens until you choose Open in browser."
@@ -177,10 +179,7 @@ pub fn links_section(app: &App) -> Section {
         button("Open in browser ↗").key("link-open-browser").variant(ButtonVariant::Outline).height(34.).font_size(12.)
             .enabled(app.routes.captured.is_some() && platform_links_available())
             .on_click(|app: &mut App| {
-                if let Some(url)=&app.routes.captured { app.routes.message=match platform_open_url(url) {
-                    Ok(()) => "The operating system accepted the browser request.".into(),
-                    Err(error) => error.to_string(),
-                }; }
+                if let Some(url)=app.routes.captured.clone() { platform_open_url(app,url); }
             }),
         muted(if platform_links_available() { "Browser dispatch is explicit. No automatic launch, permission prompt or network request on mount." } else { "Browser dispatch is unavailable in this build. Link callbacks and keyboard interaction still work." }).font_size(11.),
     ].width_fraction(1.).max_width(600.)
@@ -190,10 +189,9 @@ pub fn links_section(app: &App) -> Section {
     .key("documentation")
     .on_open(|app: &mut App, url| {
         // Your policy: capture, confirm, or explicitly dispatch.
-        app.status = match volt_ui_kit::native::links::open_url(&url) {
-            Ok(()) => "Browser request accepted".into(),
-            Err(error) => error.to_string(),
-        };
+        if let Err(error) = volt_ui_kit::native::links::request_open_url(url, move |result| {
+            // Marshal result to your UI mailbox; Linux completes on a worker.
+        }) { app.status = error.to_string(); }
     });
 // HTTP(S) only. No credentials, file URLs or executable schemes."# }
 }
@@ -208,14 +206,41 @@ fn platform_links_available() -> bool {
         false
     }
 }
-fn platform_open_url(url: &ExternalUrl) -> Result<(), String> {
+fn platform_open_url(app: &mut App, url: ExternalUrl) {
     #[cfg(feature = "native")]
     {
-        volt_ui_kit::native::links::open_url(url).map_err(|e| e.to_string())
+        let Some(sender) = app.sender.clone() else {
+            app.routes.message = "Open the native Catalog to dispatch a browser request".into();
+            return;
+        };
+        let mailbox = app.routes.mailbox.clone();
+        app.routes.message = "Waiting for the desktop browser request…".into();
+        if let Err(e) = volt_ui_kit::native::links::request_open_url(url, move |result| {
+            *mailbox.lock().unwrap_or_else(|p| p.into_inner()) =
+                Some(result.map_err(|e| e.to_string()));
+            let _ = sender.send(super::Message::NotificationWake);
+        }) {
+            app.routes.message = e.to_string();
+        }
     }
     #[cfg(not(feature = "native"))]
     {
         let _ = url;
-        Err("Native browser dispatch is unavailable in a web preview".into())
+        app.routes.message = "Native browser dispatch is unavailable in a web preview".into();
+    }
+}
+#[cfg(feature = "native")]
+pub fn drain(app: &mut App) {
+    let result = app
+        .routes
+        .mailbox
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take();
+    if let Some(result) = result {
+        app.routes.message = match result {
+            Ok(()) => "The operating system accepted the browser request.".into(),
+            Err(e) => e,
+        };
     }
 }

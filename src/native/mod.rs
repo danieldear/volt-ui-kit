@@ -21,6 +21,11 @@ pub mod clipboard;
 pub mod file_dialog;
 pub mod files;
 pub mod links;
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "native-desktop", feature = "native-notifications")
+))]
+pub mod linux_services;
 #[cfg(target_os = "macos")]
 mod macos_chrome;
 #[cfg(all(target_os = "macos", feature = "native-gpu"))]

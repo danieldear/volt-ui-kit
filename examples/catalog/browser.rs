@@ -95,6 +95,7 @@ pub fn native_doc(page: Page) -> Doc {
         Page::Documents => &[("document-files", "Native file workflows")],
         Page::DesktopServices => &[
             ("desktop-notifications", "OS notifications"),
+            ("desktop-files", "Native file and desktop actions"),
             ("desktop-tray", "Native tray commands"),
         ],
         _ => &[],

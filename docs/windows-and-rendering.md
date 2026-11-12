@@ -467,6 +467,8 @@ cargo volt install-linux --binary target/release/my-app \
 
 This writes a matching desktop entry in `$XDG_DATA_HOME/applications` and copies
 its icon into `$XDG_DATA_HOME/icons/hicolor` (default `~/.local/share`). The
+installed desktop entry uses the explicit icon path, avoiding Plasma/Qt theme
+lookup or cache differences while retaining the matching themed icon asset. The
 launcher points directly to the canonical executable path, with no shell or PATH
 lookup. Executable paths containing `%` or `=` are rejected for desktop/GIO
 compatibility; build at another path before registering. **Keep that binary at its

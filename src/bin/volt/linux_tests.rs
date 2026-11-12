@@ -63,7 +63,15 @@ fn install_matches_identity_and_copies_icon_without_copying_binary() {
         result.launcher.file_name().unwrap(),
         "com.example.test.desktop"
     );
-    assert!(desktop.contains("Icon=com.example.test\n"));
+    assert!(desktop.contains(&format!(
+        "Icon={}\n",
+        result
+            .icon
+            .to_str()
+            .unwrap()
+            .replace('\\', "\\\\")
+            .replace(' ', "\\s")
+    )));
     assert!(desktop.contains("StartupWMClass=com.example.test\n"));
     assert!(desktop.contains("Terminal=false\n"));
     assert!(desktop.contains("X-Volt-Managed=true\n"));

@@ -13,10 +13,9 @@ navigation_stack(&amp;app.history, |route| match route {
     .key(&quot;documentation&quot;)
     .on_open(|app: &amp;mut App, url| {
         // Your policy: capture, confirm, or explicitly dispatch.
-        app.status = match volt_ui_kit::native::links::open_url(&amp;url) {
-            Ok(()) =&gt; &quot;Browser request accepted&quot;.into(),
-            Err(error) =&gt; error.to_string(),
-        };
+        if let Err(error) = volt_ui_kit::native::links::request_open_url(url, move |result| {
+            // Marshal result to your UI mailbox; Linux completes on a worker.
+        }) { app.status = error.to_string(); }
     });
 // HTTP(S) only. No credentials, file URLs or executable schemes.</code></pre></div><p class="snippet-note">Catalog excerpt: names such as <code>app</code>, callbacks and helper functions belong to the example. <a href="https://github.com/danieldear/volt-ui-kit/tree/main/examples/catalog">View the complete source</a> or start with the <a href="../guides/getting-started.html#your-first-window">runnable app guide</a>.</p></details></section><section class="reference-section" id="navigation-layouts"><div class="section-title"><h2>Navigation, your layout</h2><span>03 / 04</span></div><p class="section-description">All three previews share controlled app state. These are independent components, not a mandatory application shell.</p><figure class="component-capture"><div class="volt-preview" data-volt-page="navigation" data-volt-section="navigation-layouts" data-volt-height="488"><div class="volt-root"><canvas aria-hidden="true"></canvas><div class="volt-semantics" aria-label="Live navigation preview"></div></div><p class="volt-status" role="status">Rust preview loads when visible…</p><noscript><p class="live-note">Live previews require JavaScript and WebAssembly. The Rust source and API notes remain available below.</p></noscript></div><figcaption>Original Rust Catalog · live rendering <a href="../live/index.html?catalog=navigation&amp;section=navigation-layouts">Open live ↗</a></figcaption></figure><details class="usage-source"><summary>How to use <span>Rust source</span></summary><div class="reference-code"><div>Rust declaration<span>Source</span></div><pre tabindex="0" role="region" aria-label="Rust declaration"><code>navigation([
     navigation_item(Page::Inbox, &quot;Inbox&quot;).key(&quot;inbox&quot;).section(&quot;Mail&quot;).badge(&quot;3&quot;),

@@ -9,8 +9,8 @@
 //! | --- | --- |
 //! | `native` | A window host with software drawing, text, images, clipboard, IME and accessibility |
 //! | `native-gpu` | GPU drawing with Vello (implies `native`) |
-//! | `native-desktop` | macOS menus, tray and file panels |
-//! | `native-notifications` | macOS local notifications |
+//! | `native-desktop` | macOS integrations; Linux portal dialogs, file actions, notifications, checked Trash and supported tray hosts |
+//! | `native-notifications` | macOS local / Linux immediate notifications |
 //! | `rust-ui` | The `ui` builders without a window, for custom hosts |
 //! | `declarative` | The validated tree, runtime and optional JSON frontend |
 //! | `dev-tools` | The `cargo volt` command |

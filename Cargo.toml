@@ -24,8 +24,8 @@ rendering = ["rust-ui", "dep:tiny-skia", "dep:cosmic-text", "dep:image"]
 rendering-gpu = ["rendering", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
 mobile = ["rendering-gpu"]
 native = ["rendering", "dep:winit", "dep:softbuffer", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:wayland-client", "dep:wayland-backend", "dep:wayland-protocols", "dep:wayland-protocols-plasma", "dep:rustix"]
-native-desktop = ["native", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSPasteboard", "objc2-foundation?/NSData", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL", "objc2-foundation?/NSFileManager", "objc2-foundation?/NSError", "objc2-foundation?/NSPathUtilities", "dep:rustix"]
-native-notifications = ["native", "dep:objc2-user-notifications", "dep:block2", "objc2-foundation?/NSBundle", "objc2-foundation?/NSURL"]
+native-desktop = ["native", "dep:zbus", "dep:futures-lite", "dep:async-io", "dep:chrono", "dep:async-channel", "rustix?/fs", "rustix?/process", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSPasteboard", "objc2-foundation?/NSData", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL", "objc2-foundation?/NSFileManager", "objc2-foundation?/NSError", "objc2-foundation?/NSPathUtilities", "dep:rustix"]
+native-notifications = ["native", "dep:zbus", "dep:futures-lite", "dep:async-io", "dep:objc2-user-notifications", "dep:block2", "objc2-foundation?/NSBundle", "objc2-foundation?/NSURL"]
 dev-tools = ["dep:serde_json"]
 native-gpu = ["native", "rendering-gpu"]
 
@@ -70,6 +70,12 @@ wgpu = { version = "=30.0.1", optional = true, default-features = false, feature
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "dx12"] }
 [target.'cfg(target_os = "linux")'.dependencies]
+# Shared Rust D-Bus stack already locked through accessibility; no GTK/WebView.
+zbus = { version = "=5.19.0", optional = true }
+async-channel = { version = "=2.5.0", optional = true }
+futures-lite = { version = "=2.6.1", optional = true }
+async-io = { version = "=2.6.0", optional = true }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock"], optional = true }
 # Already transitive through winit; the compatibility adapter adds the modern
 # background-effect protocol without a breaking winit/accessibility migration.
 wayland-protocols-plasma = { version = "=0.3.12", optional = true, features = ["client"] }
