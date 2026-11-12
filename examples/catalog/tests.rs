@@ -2504,3 +2504,91 @@ fn mapped_recipe_callbacks_keep_button_and_select_state_isolated() {
             && !app.samples.select_disabled.open
     );
 }
+
+#[test]
+fn window_settings_are_in_the_existing_header_at_every_supported_width() {
+    use volt_ui_kit::native::WindowChrome as W;
+    for chrome in [W::Native, W::Custom, W::Borderless, W::Overlay] {
+        for size in [[360., 460.], [560., 460.], [1100., 650.], [1440., 920.]] {
+            let mut app = App::new();
+            app.chrome = chrome;
+            let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let v = Viewport::new(size[0], size[1], 1.).unwrap();
+            r.layout(v, &Bindings::default(), &mut RasterPainter::new(v))
+                .unwrap();
+            let n = r
+                .accessibility_nodes()
+                .into_iter()
+                .find(|n| n.label == "Window settings")
+                .unwrap();
+            let [x, y, w, h] = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == n.id)
+                .unwrap()
+                .bounds
+                .bounds();
+            assert!(
+                x >= 0. && x + w <= size[0] && y >= 0. && y + h <= 64.,
+                "{chrome:?} {size:?}: {x},{y},{w},{h}"
+            );
+            assert!(
+                r.accessibility_activate(&n.id, &mut handlers, &mut app)
+                    .unwrap()
+                    .activated
+            );
+            assert!(app.chrome_panel_open);
+            let popup = mount(&app, size);
+            assert!(popup
+                .boxes()
+                .iter()
+                .any(|b| b.id == "popup-chrome-mode-trigger"));
+        }
+    }
+}
+
+#[test]
+fn linux_header_controls_stay_inside_the_existing_compact_toolbar() {
+    use volt_ui_kit::ui::prelude::*;
+    let mut app = App::new();
+    app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+    for style in [
+        WindowControlStyle::Symbols,
+        WindowControlStyle::TrafficLights,
+    ] {
+        app.window_control_style = style;
+        for width in [320., 360., 560., 1100., 1440.] {
+            let ui: Element<App> = vstack![super::shell::header_for_platform(&app, false)]
+                .align(Align::Stretch)
+                .into();
+            let (doc, handlers) = ui.build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let vp = Viewport::new(width - 32., 56., 1.).unwrap();
+            r.layout(vp, &Bindings::default(), &mut RasterPainter::new(vp))
+                .unwrap();
+            for n in r.accessibility_nodes().into_iter().filter(|n| {
+                [
+                    "Window settings",
+                    "Close window",
+                    "Minimize window",
+                    "Maximize window",
+                ]
+                .contains(&n.label.as_str())
+            }) {
+                let [x, y, w, h] = r
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == n.id)
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert!(
+                    x >= 0. && x + w <= vp.width + 0.01 && y >= 0. && y + h <= 56.01,
+                    "{width} {style:?} {}: {x},{y},{w},{h}",
+                    n.label
+                );
+            }
+        }
+    }
+}

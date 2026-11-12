@@ -35,11 +35,34 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 <div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowChrome</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Native</code> (default)</td><td>The platform&#39;s standard title bar.</td></tr><tr><td><code>Overlay</code></td><td>macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar.</td></tr><tr><td><code>CompactOverlay</code></td><td>The same with the shorter, older macOS title bar geometry.</td></tr><tr><td><code>Borderless</code></td><td>No visible title or system controls. macOS keeps an invisible native frame for rounded corners, shadow, resizing and public material blur. Linux/Windows are undecorated; you own the complete window UI.</td></tr><tr><td><code>Custom</code></td><td>Content extends into the existing app header; no extra title strip. macOS retains native traffic lights, rounded frame, resizing and material blur. Linux/Windows use inline <code>window_controls</code> and toolkit-managed edge resizing.</td></tr></tbody></table></div><p>Mark your header with <code>.drag_region(true)</code> so the window can be dragged by it.
 Buttons and other controls inside the header still receive clicks.</p>
 <h3 id="custom-controls-and-live-mode-switching">Custom controls and live mode switching</h3>
-<p>The native Catalog has a <strong>Window</strong> selector in the sidebar footer (also in its
-wide toolbar): Native, Custom and Borderless, plus Unified on macOS. The choice
-is live: it does not replace the window, restart workers or clear application
-state. At narrow widths, open the navigation drawer to reach the selector.
-<code>--chrome native|custom|borderless|overlay</code> chooses the initial mode.</p>
+<p>The native Catalog has a <strong>Window settings</strong> button in the existing header at
+all supported widths. It opens the mode selector, app-drawn control style and
+actual host diagnostics. The sidebar footer/drawer and wide-header selectors
+remain available: Native, Custom, Borderless and Unified (Overlay on Linux).
+Changing chrome is live: it does not replace the window, restart workers or
+clear application state. <code>--chrome native|custom|borderless|overlay</code> chooses the
+initial mode; <code>--control-style symbols|traffic-lights</code> chooses the app-drawn style.
+macOS retains native traffic lights; the style picker changes the simulated
+preview there, never draws duplicate buttons over AppKit.</p>
+<h3 id="reuse-the-existing-header">Reuse the existing header</h3>
+<p><code>window_header(content, controls)</code> composes one existing row with a draggable
+background and interactive children. It does not insert a global title bar or
+change the native decoration policy. Its default height (56 logical pixels),
+gap and padding are ordinary container properties you can customize.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>window_header(
+    text(&quot;Workspace&quot;).font_weight(600),
+    window_controls_with_style(
+        WindowControlsState { maximized: app.window.maximized,
+            can_maximize: app.window.resizable, ..Default::default() },
+        WindowControlStyle::TrafficLights, // or Symbols (the legacy default)
+        |app: &amp;mut App, action| {
+            if let Some(sender) = &amp;app.actions { let _ = sender.send(action); }
+        },
+    ),
+).key(&quot;workspace-header&quot;).padding(16., Edge::Horizontal)</code></pre></div><p>Connect <code>Application::window_actions</code> and <code>on_window_state</code> as below. Close still
+uses the application&#39;s close guard. On macOS, omit application-drawn controls
+and reserve the native control safe area. Borderless intentionally hides controls;
+simple legacy examples retain native chrome unless their layouts opt in.</p>
 <p>Custom mode embeds controls in the existing layout, not a new bar. The Catalog
 uses <code>navigation_split_view(...).integrated_header(true)</code> to put native traffic
 lights and the brand in the existing sidebar header. Its right panel retains
@@ -283,4 +306,68 @@ skipping when one is unavailable.</p>
 <h2 id="resource-limits">Resource limits</h2>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Resource</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>Window framebuffer</td><td>64 megapixels</td></tr><tr><td>GPU image cache</td><td>64 MiB</td></tr><tr><td>GPU glyph cache</td><td>16 MiB / 4,096 glyphs</td></tr><tr><td>Opacity layer depth / clip depth</td><td>24 / 48</td></tr><tr><td>Shadow work per frame (software)</td><td>16 megapixels; extra shadows are skipped and counted</td></tr></tbody></table></div><p>These bound the kit&#39;s own caches. GPU drivers, Vello&#39;s internal buffers and the
 OS compositor use additional memory.</p>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#configuring-the-window">Configuring the window</a><a href="#title-bar-and-chrome">Title bar and chrome</a><a href="#custom-controls-and-live-mode-switching">Custom controls and live mode switching</a><a href="#linux-desktop-acceptance-checklist">Linux desktop acceptance checklist</a><a href="#transparency-and-blur">Transparency and blur</a><a href="#linux-desktop-blur">Linux desktop blur</a><a href="#testing-on-linux">Testing on Linux</a><a href="#gpu-and-software-drawing">GPU and software drawing</a><a href="#large-scenes">Large scenes</a><a href="#performance-and-diagnostics">Performance and diagnostics</a><a href="#headless-scene-budget-checks">Headless scene-budget checks</a><a href="#resource-limits">Resource limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+<h2 id="linux-identity-launchers-and-backend-diagnostics">Linux identity, launchers and backend diagnostics</h2>
+<p>winit remains the window/input host. On a Wayland session it creates a normal
+Wayland toplevel, not a dialog wrapper; on X11 it uses the X11 backend. Volt&#39;s
+blur adapter attaches to the same Wayland surface. No compositor fork or second
+window is involved.</p>
+<p>Set a stable reverse-DNS ID matching your desktop-entry filename:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>Application::new(&quot;My app&quot;, app, view)
+    .app_id(&quot;com.example.my_app&quot;) // Wayland app_id and X11 WM_CLASS
+    .on_window_diagnostics(|app, state| app.diagnostics = Some(state))
+    .run()?;</code></pre></div><p><code>WindowDiagnostics</code> reports the actual backend, renderer, chrome, scale and
+backdrop request state. The host also emits an event-driven <code>VOLT_UI_WINDOW</code>
+line on changes (not per frame). An unset ID gets a deterministic development
+fallback hash derived from the initial title (not its plaintext); explicitly choose
+a unique ID for distribution. This is a development ID, not a privacy/security hash.
+This property does not replace a macOS bundle ID or Windows package identity.</p>
+<p>The default is automatic backend selection. To constrain Linux testing:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>VOLT_UI_BACKEND=wayland cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --chrome custom --background blur --control-style traffic-lights
+VOLT_UI_BACKEND=x11 cargo run --release --locked --features native-gpu --example northbound -- --chrome custom</code></pre></div><p>The builder equivalent is <code>.linux_backend(LinuxBackend::Wayland)</code> (or <code>X11</code> /
+<code>Auto</code>), overriding the environment. Unsupported or unavailable explicit choices
+fail clearly; they never silently select a different backend. Non-Linux accepts
+only <code>Auto</code>. GPU/Vulkan is a rendering backend, not a window-system backend.</p>
+<p>Current native blur requires Wayland and a compositor supporting one of Volt&#39;s
+negotiated protocols. X11 blur is unsupported; software is opaque. Linux GPU
+Custom/Borderless windows use the existing rounded mask; maximized/fullscreen
+windows are rectangular. Compositor shadows/effects remain desktop policy and
+need live KDE/COSMIC acceptance, not just successful compilation.</p>
+<p><code>cargo volt new</code> generates wired Custom controls on Linux, native integrated
+controls on macOS and native decorations on Windows. All templates use the
+shared header/control helpers; you can change the style or chrome policy in Rust.
+Creation options <code>--chrome</code>, <code>--control-style</code> and <code>--app-id</code> configure those
+policies directly; mobile templates reject these desktop-only options.
+The generated <code>packaging/linux/&lt;app_id&gt;.desktop</code> and editable SVG icon match the
+source identity. Neither <code>new</code> nor <code>run</code> installs them. Without a registered
+launcher/icon, KDE may show the generic Wayland icon even with a correct app ID;
+that does not mean the app is a dialog or running inside a Wayland wrapper.</p>
+<p>After building a generated app, explicitly register it with the current user:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo build --release
+cargo volt install-linux --binary target/release/my-app \
+  --app-id dev.volt.my_app --name &quot;My App&quot; \
+  --icon packaging/linux/dev.volt.my_app.svg</code></pre></div><p>This writes a matching desktop entry in <code>$XDG_DATA_HOME/applications</code> and copies
+its icon into <code>$XDG_DATA_HOME/icons/hicolor</code> (default <code>~/.local/share</code>). The
+launcher points directly to the canonical executable path, with no shell or PATH
+lookup. Executable paths containing <code>%</code> or <code>=</code> are rejected for desktop/GIO
+compatibility; build at another path before registering. <strong>Keep that binary at its
+registered path</strong>. Rebuild in place, then restart
+the app. Re-run registration with <code>--replace</code> to update a managed launcher/icon;
+unmanaged entries, destination symlinks and ordinary overwrite attempts are
+refused. Keep the same SVG/PNG format on updates. SVG or a 256×256 PNG is supported;
+icons are size/header checked, not fully decoded. No startup service, sudo,
+permission request, compositor setting or dependency is installed. No app is
+launched by registration. <code>--data-dir /absolute/path</code> isolates packaging tests.</p>
+<p>For the checkout&#39;s examples:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo build --release --locked --features native-gpu,native-desktop,dev-tools \
+  --example catalog --example northbound --bin cargo-volt
+./target/release/cargo-volt install-linux --binary target/release/examples/catalog \
+  --app-id dev.volt.catalog --name &quot;Volt Catalog&quot; \
+  --icon examples/linux/dev.volt.catalog.svg
+./target/release/cargo-volt install-linux --binary target/release/examples/northbound \
+  --app-id dev.volt.northbound --name &quot;Northbound&quot; \
+  --icon examples/linux/dev.volt.northbound.svg</code></pre></div><p>Restart running apps after registering; desktop menus/icon caches may refresh
+asynchronously. This is local registration, not a portable Linux package or a
+system-wide installer. To unregister, remove only the matching managed <code>.desktop</code>
+and icon paths printed by the command; the executable is never copied/deleted.
+Update the source app ID, desktop filename and icon name together if rebranding.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#configuring-the-window">Configuring the window</a><a href="#title-bar-and-chrome">Title bar and chrome</a><a href="#custom-controls-and-live-mode-switching">Custom controls and live mode switching</a><a href="#reuse-the-existing-header">Reuse the existing header</a><a href="#linux-desktop-acceptance-checklist">Linux desktop acceptance checklist</a><a href="#transparency-and-blur">Transparency and blur</a><a href="#linux-desktop-blur">Linux desktop blur</a><a href="#testing-on-linux">Testing on Linux</a><a href="#gpu-and-software-drawing">GPU and software drawing</a><a href="#large-scenes">Large scenes</a><a href="#performance-and-diagnostics">Performance and diagnostics</a><a href="#headless-scene-budget-checks">Headless scene-budget checks</a><a href="#resource-limits">Resource limits</a><a href="#linux-identity-launchers-and-backend-diagnostics">Linux identity, launchers and backend diagnostics</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

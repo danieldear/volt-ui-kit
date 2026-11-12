@@ -23,7 +23,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowAttributes, WindowId},
 };
@@ -478,7 +478,15 @@ fn run_host<C: 'static>(
     let reduced_motion = reduced_motion
         || (linux_desktop == system_motion::Desktop::Kde && system_motion::kde_reduced_motion());
     runtime.set_reduced_motion(reduced_motion);
-    let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
+    let backend = super::identity::backend_preference(
+        extensions.linux_backend,
+        std::env::var("VOLT_UI_BACKEND").ok().as_deref(),
+    )?;
+    let app_id = extensions
+        .app_id
+        .get_or_insert_with(|| super::identity::default_app_id(&options.native.title));
+    super::identity::validate_app_id(app_id)?;
+    let event_loop = super::identity::event_loop_builder::<HostEvent>(backend).build()?;
     // GNOME's setting needs a subprocess: keep it off the UI thread and apply
     // it when it arrives, settling anything already animating.
     #[cfg(target_os = "linux")]
@@ -1149,6 +1157,47 @@ impl<C: 'static> App<C> {
         let Some(w) = &self.window else {
             return false;
         };
+        let backend = super::identity::actual_backend(w);
+        let renderer = {
+            #[cfg(feature = "native-gpu")]
+            {
+                if self.gpu.is_some() {
+                    "gpu"
+                } else {
+                    "software"
+                }
+            }
+            #[cfg(not(feature = "native-gpu"))]
+            {
+                "software"
+            }
+        };
+        let scale_factor = w.scale_factor();
+        let mut changed = false;
+        // Identity is immutable: do not allocate a string on every idle/input event.
+        let diagnostics_changed = self.extensions.last_diagnostics.as_ref().is_none_or(|d| {
+            d.backend != backend
+                || d.renderer != renderer
+                || d.chrome != self.options.chrome
+                || d.backdrop != self.backdrop_status
+                || d.scale_factor != scale_factor
+        });
+        if diagnostics_changed {
+            let diagnostics = super::WindowDiagnostics {
+                backend,
+                renderer,
+                scale_factor,
+                app_id: self.extensions.app_id.clone().unwrap_or_default(),
+                chrome: self.options.chrome,
+                backdrop: self.backdrop_status,
+            };
+            eprintln!("VOLT_UI_WINDOW backend={} app_id={} renderer={} chrome={:?} scale={} backdrop={:?}", diagnostics.backend.name(), diagnostics.app_id, diagnostics.renderer, diagnostics.chrome, diagnostics.scale_factor, diagnostics.backdrop);
+            self.extensions.last_diagnostics = Some(diagnostics.clone());
+            if let Some(callback) = &mut self.extensions.diagnostics {
+                callback(&mut self.context, diagnostics);
+                changed = true;
+            }
+        }
         let state = super::WindowState {
             maximized: Self::window_maximized(w),
             fullscreen: w.fullscreen().is_some(),
@@ -1157,14 +1206,14 @@ impl<C: 'static> App<C> {
             chrome: self.options.chrome,
         };
         if self.last_window_state == Some(state) {
-            return false;
+            return changed;
         }
         self.last_window_state = Some(state);
         if let Some(changed) = &mut self.extensions.window_state {
             changed(&mut self.context, state);
             return true;
         }
-        false
+        changed
     }
     fn sync_state_chrome(&mut self) -> Result<(), String> {
         let desired = self
@@ -2406,7 +2455,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             // AccessKit must be attached before the window is first shown.
             let w = Arc::new(
                 event_loop
-                    .create_window(surface_window_attributes(&self.options).with_visible(false))
+                    .create_window(super::identity::attributes(
+                        surface_window_attributes(&self.options).with_visible(false),
+                        self.extensions
+                            .app_id
+                            .as_deref()
+                            .expect("validated host identity"),
+                    ))
                     .map_err(|e| e.to_string())?,
             );
             #[cfg(target_os = "macos")]

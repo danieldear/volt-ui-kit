@@ -199,10 +199,10 @@ pub fn doc(app: &App) -> Doc {
         }, Section {
             id: "application-window-chrome",
             title: "Window decorations and controls",
-            note: "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
+            note: "Open Window settings in the header (at any width) to choose Native, Custom or Borderless and Symbols / Traffic lights. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
             demo: vstack![
                 hstack![text("Workspace").font_weight(600), spacer(),
-                    window_controls(app.chrome_demo_maximized, |app: &mut App, action| {
+                    window_controls_with_style(app.chrome_demo_maximized, app.window_control_style, |app: &mut App, action| {
                         if action == WindowAction::ToggleMaximize { app.chrome_demo_maximized = !app.chrome_demo_maximized; }
                         app.last_action = format!("Window preview: {action:?} (no OS operation)");
                     }).key("window-preview-controls"),
@@ -212,6 +212,8 @@ pub fn doc(app: &App) -> Doc {
                 text("Custom uses native traffic lights, rounded corners and material blur on macOS; Linux/Windows controls live inline in the existing toolbar.").font_size(12.).color(ColorToken::Muted),
             ].max_width(600.).gap(12.,Axis::Vertical).into(),
             code: r#"Application::new("Workspace", app, view)
+    .app_id("com.example.workspace") // matches the Linux .desktop filename
+    .on_window_diagnostics(|app, state| app.diagnostics = Some(state))
     .chrome_from_state(|app| app.chrome)
     .custom_resize_border(6.) // logical pixels, Custom mode only
     .window_actions(|app, sender| app.window_actions = Some(sender))
@@ -220,9 +222,13 @@ pub fn doc(app: &App) -> Doc {
     .run()?;
 // Linux/Windows: place controls inside your EXISTING draggable toolbar.
 // macOS Custom retains native traffic lights; do not draw duplicate buttons.
-window_controls(app.window_state.maximized, |app: &mut App, action| {
-    if let Some(sender) = &app.window_actions { let _ = sender.send(action); }
-});
+window_header(text("Workspace"), window_controls_with_style(
+    app.window_state.maximized,
+    WindowControlStyle::TrafficLights, // or Symbols (legacy default)
+    |app: &mut App, action| {
+        if let Some(sender) = &app.window_actions { let _ = sender.send(action); }
+    },
+)).key("workspace-header");
 // navigation_split_view(...).integrated_header(true).material(true)
 // embeds controls without restyling the opaque, inset detail panel.
 // .toolbar_translucent(true) separately opts into header glass (default false).
@@ -237,6 +243,10 @@ window_controls(app.window_state.maximized, |app: &mut App, action| {
             ("Application::chrome_from_state(f)", "Live Native / Custom / Borderless / macOS Overlay policy; no window replacement."),
             ("Application::window_actions(f) / on_window_state(f)", "Bounded typed control intents; native maximize/fullscreen/focus snapshots."),
             ("window_controls(maximized, on_action)", "Accessible vector controls; close goes through the host close guard."),
+            ("window_header(content, controls)", "Shared existing-header composition; configurable height, gap and padding; no global title strip."),
+            ("window_controls_with_style(state, style, f)", "Symbols or TrafficLights, with the same accessible intents and availability."),
+            ("Application::app_id(id) / on_window_diagnostics(f)", "Linux identity plus actual backend, renderer, scale and blur request diagnostics."),
+            ("Application::linux_backend(preference)", "Auto, Wayland or X11. Explicit unavailable backends fail, never silently fall back."),
             ("Application::requests(initialize)", "Bounded, event-driven commands and close requests; no idle polling."),
         ],
     }

@@ -48,6 +48,8 @@ Catalog. This check opens no windows and uses the existing build cache:
 ```sh
 cargo build --locked --features native --example samples
 python3 scripts/check_sample_sources.py
+cargo build --locked --features dev-tools --bin cargo-volt
+python3 scripts/check_scaffold_sources.py
 ```
 
 It honors `CARGO_TARGET_DIR`, uses the repository lockfile to seed an isolated

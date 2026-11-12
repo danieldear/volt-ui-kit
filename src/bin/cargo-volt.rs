@@ -1,4 +1,4 @@
-//! Local scaffolding, rebuild/restart and macOS packaging. No shell evaluation.
+//! Local scaffolding, rebuild/restart, Linux registration and macOS packaging. No shell evaluation.
 #![forbid(unsafe_code)]
 #[path = "volt/android.rs"]
 mod android;
@@ -9,6 +9,11 @@ mod bundle;
 mod bundle_tests;
 #[path = "volt/ios.rs"]
 mod ios;
+#[path = "volt/linux.rs"]
+mod linux;
+#[cfg(test)]
+#[path = "volt/linux_tests.rs"]
+mod linux_tests;
 #[path = "volt/release.rs"]
 mod release;
 // Releases are macOS-only; the tests compare macOS paths.
@@ -33,10 +38,15 @@ fn template(kind: &str) -> io::Result<String> {
     }
     if kind == "minimal" {
         return Ok(String::from(
-            r#"use volt_ui_kit::{native::{Application, WindowChrome}, ui::prelude::*};
-fn view(_: &()) -> Element<()> {
+            r#"use volt_ui_kit::{native::{Application, WindowChrome, WindowState, UiSender}, ui::prelude::*};
+#[derive(Default)]
+struct App { window: WindowState, window_actions: Option<UiSender<WindowAction>> }
+fn view(app: &App) -> Element<App> {
     vstack![
-        window_header("My app"),
+        window_header(text("My app").key("window-title").font_size(15.).font_weight(600), window_buttons(app))
+            .key("window-header").height(60.)
+            .padding(if cfg!(target_os = "macos") && matches!(window_chrome(), WindowChrome::Overlay | WindowChrome::CompactOverlay | WindowChrome::Custom) { 96. } else { 20. }, Edge::Left)
+            .padding(20., Edge::Right),
         divider().background(ColorToken::Border),
         vstack![text("Hello, Volt").font_size(28.)]
             .key("app-content").flex(1.).padding(24., Edge::All),
@@ -45,14 +55,17 @@ fn view(_: &()) -> Element<()> {
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Built-in component animations; Motion::None turns them all off.
-    Application::new("My app", (), view)
+    Application::new("My app", App::default(), view)
         .motion(Motion::Default)
+        .app_id("dev.volt.my_app")
+        .window_actions(|app, sender| app.window_actions = Some(sender))
+        .on_window_state(|app, state| app.window = state)
         .chrome(window_chrome()).theme_with(theme).run()
 }
 "#,
         ) + THEME
             + WINDOW_CHROME
-            + WINDOW_HEADER);
+            + WINDOW_BUTTONS);
     }
     let (title,items,body)=match kind {
         "mail"=>("Mailbox","Inbox|Sent|Drafts", "text(\"Your mail interface\").font_size(24.).into()"),
@@ -79,11 +92,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Vec<_>>()
         .join(",\n                ");
     Ok(format!(
-        r#"use volt_ui_kit::{{native::{{Application, WindowChrome}}, ui::prelude::*}};
+        r#"use volt_ui_kit::{{native::{{Application, WindowChrome, WindowState, UiSender}}, ui::prelude::*}};
 const PAGES: [&str; {count}] = [{names}];
 // sidebar_width stays None until the sidebar's divider is first dragged.
 #[derive(Default)]
-struct App {{ page: u8, nav_open: bool, sidebar_width: Option<f32>{extra_state} }}
+struct App {{ page: u8, nav_open: bool, sidebar_width: Option<f32>, window: WindowState, window_actions: Option<UiSender<WindowAction>>{extra_state} }}
 fn view(app: &App) -> Element<App> {{
     let content: Element<App> = {body};
     // The Catalog's shell: the sidebar beside the page. Below 1024pt the
@@ -108,7 +121,9 @@ fn view(app: &App) -> Element<App> {{
         hstack![text("{title}").font_size(15.).font_weight(700)]
             .key("app-name").height(40.).align(Align::Center).padding(18., Edge::Horizontal),
     )
-    .toolbar(text(PAGES[app.page as usize]).key("page-title").font_weight(600))
+    .integrated_header(window_chrome() == WindowChrome::Custom)
+    .titlebar_inset(cfg!(target_os = "macos") && matches!(window_chrome(), WindowChrome::Overlay | WindowChrome::CompactOverlay | WindowChrome::Custom))
+    .toolbar(window_header(text(PAGES[app.page as usize]).key("page-title").font_weight(600), window_buttons(app)).key("app-toolbar"))
     // Drag the divider to resize the sidebar (200-420pt), as in the Catalog.
     .sidebar_width(app.sidebar_width.unwrap_or(248.))
     .on_sidebar_resize(|app: &mut App, width| app.sidebar_width = Some(width.round()))
@@ -121,11 +136,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     // Built-in component animations; Motion::None turns them all off.
     Application::new("{title}", App::default(), view)
         .motion(Motion::Default)
+        .app_id("dev.volt.my_app")
+        .window_actions(|app, sender| app.window_actions = Some(sender))
+        .on_window_state(|app, state| app.window = state)
         .size(1100, 760).chrome(window_chrome()).theme_with(theme).run()
 }}
 "#
     ) + THEME
-        + WINDOW_CHROME)
+        + WINDOW_CHROME
+        + WINDOW_BUTTONS)
 }
 // The Catalog's colours, not the kit's default warm palette.
 const THEME: &str = r#"
@@ -145,24 +164,30 @@ const WINDOW_CHROME: &str = r#"
 fn window_chrome() -> WindowChrome {
     if cfg!(target_os = "macos") {
         WindowChrome::Overlay
+    } else if cfg!(target_os = "linux") {
+        WindowChrome::Custom
     } else {
         WindowChrome::Native
     }
 }
 "#;
-// The minimal template's own title row; split views bring their own.
-const WINDOW_HEADER: &str = r#"
-fn window_header<C: 'static>(title: &str) -> Element<C> {
-    // 60pt unified header, with a clear lane for native macOS traffic lights.
-    hstack![text(title).key("window-title").font_size(15.).font_weight(600), spacer()]
-        .key("window-header").height(60.).align(Align::Center)
-        .padding(if cfg!(target_os = "macos") { 96. } else { 20. }, Edge::Left)
-        .padding(20., Edge::Right).drag_region(true).into()
+// Only app-drawn controls use this helper; never duplicate macOS native buttons.
+const WINDOW_BUTTONS: &str = r#"
+fn window_buttons(app: &App) -> Element<App> {
+    if window_chrome() != WindowChrome::Custom || cfg!(target_os = "macos") || app.window.fullscreen {
+        return spacer().width(0.).flex(0.).into();
+    }
+    window_controls_with_style(
+        WindowControlsState { maximized: app.window.maximized,
+            can_maximize: app.window.resizable, ..Default::default() },
+        WindowControlStyle::Symbols, // or TrafficLights; spacing remains configurable
+        |app: &mut App, action| { if let Some(sender) = &app.window_actions { let _ = sender.send(action); } },
+    ).key("app-window-controls").into()
 }
 "#;
 fn desktop_template(source: String, kind: &str) -> String {
     let callback = if kind == "minimal" {
-        "|_: &mut (), id| println!(\"Native command: {id}\")"
+        "|_: &mut App, id| println!(\"Native command: {id}\")"
     } else if kind == "agent" {
         "|app: &mut App, id| { if id == \"settings\" { app.page = 2; } else if id == \"clear\" { app.draft.clear(); } }"
     } else {
@@ -189,7 +214,47 @@ fn desktop() -> volt_ui_kit::native::system::DesktopConfig {
         desktop.replace(", DesktopCommand::new(\"clear\", \"Clear draft\")", "")
     }
 }
+#[derive(Default)]
+struct WindowScaffold<'a> {
+    chrome: Option<&'a str>,
+    style: Option<&'a str>,
+    app_id: Option<&'a str>,
+}
+#[cfg(test)]
 fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Result<()> {
+    scaffold_configured(destination, kind, kit, desktop, &WindowScaffold::default())
+}
+fn scaffold_configured(
+    destination: &Path,
+    kind: &str,
+    kit: &Path,
+    desktop: bool,
+    window: &WindowScaffold<'_>,
+) -> io::Result<()> {
+    if matches!(kind, "ios" | "android")
+        && (window.chrome.is_some() || window.style.is_some() || window.app_id.is_some())
+    {
+        return Err(error(
+            "--chrome, --control-style and --app-id are desktop scaffold options",
+        ));
+    }
+    let chrome = match window.chrome {
+        None => None,
+        Some("native") => Some("Native"),
+        Some("custom") => Some("Custom"),
+        Some("overlay") => Some("Overlay"),
+        Some("borderless") => Some("Borderless"),
+        _ => {
+            return Err(error(
+                "--chrome must be native, custom, overlay or borderless",
+            ))
+        }
+    };
+    let style = match window.style {
+        None | Some("symbols") => "Symbols",
+        Some("traffic-lights") => "TrafficLights",
+        _ => return Err(error("--control-style must be symbols or traffic-lights")),
+    };
     if kind == "android" {
         ios::resolve(kind, None, desktop)?;
         return android::scaffold(destination, kit);
@@ -198,7 +263,17 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
         ios::resolve(kind, None, desktop)?;
         return ios::scaffold(destination, kit);
     }
-    let source = template(kind)?;
+    let mut source = template(kind)?;
+    if let Some(chrome) = chrome {
+        source = source.replace(
+            WINDOW_CHROME,
+            &format!("\nfn window_chrome() -> WindowChrome {{ WindowChrome::{chrome} }}\n"),
+        );
+    }
+    source = source.replace(
+        "WindowControlStyle::Symbols, // or TrafficLights;",
+        &format!("WindowControlStyle::{style}, // or Symbols / TrafficLights;"),
+    );
     let source = if desktop {
         desktop_template(source, kind)
     } else {
@@ -223,6 +298,20 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
             "project name must start with a letter and use ASCII letters/digits/-/_",
         ));
     }
+    let app_id = window
+        .app_id
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("dev.volt.{}", name.to_ascii_lowercase().replace('-', "_")));
+    if app_id.len() > 247
+        || !app_id.contains('.')
+        || !app_id.split('.').all(|part| {
+            !part.is_empty()
+                && (part.as_bytes()[0].is_ascii_alphabetic() || part.starts_with('_'))
+                && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+    {
+        return Err(error("--app-id must be a reverse-DNS ASCII identifier with letters/digits/underscores, at most 247 bytes"));
+    }
     if fs::symlink_metadata(destination).is_ok() {
         return Err(error("destination already exists; nothing overwritten"));
     }
@@ -241,14 +330,25 @@ fn scaffold(destination: &Path, kind: &str, kit: &Path, desktop: bool) -> io::Re
     let result = (|| {
         fs::create_dir(destination.join("src"))?;
         fs::write(destination.join("Cargo.toml"),format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\nresolver = \"3\"\nrust-version = \"1.89\"\n\n[dependencies]\nvolt-ui-kit = {{ path = {path}, features = [{features}] }}\n"))?;
-        fs::write(destination.join("src/main.rs"), source)?;
+        fs::write(
+            destination.join("src/main.rs"),
+            source.replace("dev.volt.my_app", &app_id),
+        )?;
+        fs::create_dir_all(destination.join("packaging/linux"))?;
+        fs::write(destination.join(format!("packaging/linux/{app_id}.desktop")), format!(
+            "[Desktop Entry]\nType=Application\nName={name}\nExec={name}\nTryExec={name}\nIcon={app_id}\nTerminal=false\nCategories=Utility;\nStartupNotify=false\nStartupWMClass={app_id}\n"
+        ))?;
+        fs::write(
+            destination.join(format!("packaging/linux/{app_id}.svg")),
+            linux::DEFAULT_ICON,
+        )?;
         fs::write(destination.join(".gitignore"), "/target\n")?;
         let (shell, native) = if kind == "minimal" {
             ("", "")
         } else {
             ("The sidebar and page come from navigation_split_view, the Catalog's own shell: drag the divider to resize the sidebar, and below 1024pt it moves into a drawer.\n", " (and turn off .titlebar_inset on macOS)")
         };
-        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable header with reserved control space. Other platforms retain native window decorations.\n{shell}Change window_chrome() to WindowChrome::Native for a standard title bar{native}. Background blur/transparency is not forced.\ntheme() gives the app the Catalog's neutral Zinc palette, light or dark with the system; add .with_accent(..) there for a brand colour.\nCustomize layouts, themes and window backgrounds in Rust.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
+        fs::write(destination.join("README.md"),format!("# {name}\n\nRun `cargo run`. GPU is preferred; no renderer flags needed.\nThis {kind} template is a UI starting point, not a mail backend, AI client or editor engine.\nOn macOS the generated app uses Catalog-style unified chrome: no separate title strip, native traffic lights and a draggable header with reserved control space. By default Linux uses integrated Custom controls; Windows retains native decorations. Choose --chrome, --control-style and --app-id at creation, or edit the generated Rust policy. The shared window_header() composes the existing toolbar; window_buttons() routes minimize/maximize/close through the host, without a second title bar.\n{shell}Change window_chrome() to WindowChrome::Native for a standard title bar{native}. Background blur/transparency is not forced.\ntheme() gives the app the Catalog's neutral Zinc palette, light or dark with the system; add .with_accent(..) there for a brand colour.\nCustomize layouts, themes and window backgrounds in Rust. Change WindowControlStyle::Symbols to TrafficLights for app-drawn coloured controls. macOS keeps native traffic lights.\n\nLinux: VOLT_UI_BACKEND=wayland cargo run (or x11 / auto). The startup VOLT_UI_WINDOW line reports the actual backend, app_id, renderer and blur request status. Native blur currently needs Wayland and a supporting compositor; software and X11 cannot show it.\nA matching packaging/linux/*.desktop launcher is generated, never installed automatically. Build with cargo build --release. Then explicitly register the app and its editable starter icon:\n\n```sh\ncargo volt install-linux --binary target/release/{name} --app-id {app_id} --name {name} --icon packaging/linux/{app_id}.svg\n```\n\nThe binary stays at its build path; do not move/delete it. Re-run with --replace after updates (only managed entries are replaced). Registration writes only per-user application/icon files; it never runs the app, requests permissions or changes compositor settings. Without registration, KDE may show a generic Wayland icon even when the app_id is correct.\n\nUse `cargo-volt dev .` for rebuild/restart (state is not retained).\n\nOn macOS, build with `cargo build --release`, then see `cargo-volt bundle --help`\nfor a local .app with explicit identity/resources and ad-hoc signing. This is not\nDeveloper ID signing or notarization; keep bundle resources immutable.\n"))?;
         Ok(())
     })();
     if result.is_err() {
@@ -439,21 +539,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.remove(0);
     }
     match args.first().map(String::as_str) {
+        Some("new") if args.get(1).is_some_and(|s| s == "--help") && args.len() == 2 => {
+            println!("cargo volt new PATH --kit-path PATH [--template minimal|navigation|mail|settings|agent]\n  --chrome native|custom|overlay|borderless   Initial desktop window policy\n  --control-style symbols|traffic-lights     App-drawn controls (macOS keeps native buttons)\n  --app-id com.example.my_app                Linux app_id/WM_CLASS and matching desktop filename\n  --desktop                                 Opt into macOS menus/tray\n  --platform ios|android                    Separate mobile host templates; desktop chrome flags do not apply\n\nDefault: integrated Custom on Linux, native integrated traffic lights on macOS, native decorations on Windows. No extra global title bar. Generated Linux launchers are not installed automatically.");
+        }
         Some("new") if args.len()>=2 => {
-            let mut kind="minimal"; let mut kit=None; let mut desktop=false; let mut platform=None; let mut i=2;
+            let mut kind="minimal"; let mut kit=None; let mut desktop=false; let mut platform=None; let mut window=WindowScaffold::default(); let mut i=2;
             while i<args.len() {match args[i].as_str() {
                 "--desktop" => {desktop=true;i+=1;},
+                "--chrome" if i+1<args.len()=>{window.chrome=Some(&args[i+1]);i+=2;},
+                "--control-style" if i+1<args.len()=>{window.style=Some(&args[i+1]);i+=2;},
+                "--app-id" if i+1<args.len()=>{window.app_id=Some(&args[i+1]);i+=2;},
                 "--platform" if i+1<args.len()=>{platform=Some(args[i+1].as_str());i+=2;},
                 "--template" if i+1<args.len()=>{kind=&args[i+1];i+=2;},
                 "--kit-path" if i+1<args.len()=>{kit=Some(Path::new(&args[i+1]));i+=2;},
                 _=>return Err(error("unknown/missing scaffold option").into()),
             }}
             let kind=ios::resolve(kind,platform,desktop)?;
-            scaffold(Path::new(&args[1]),kind,kit.ok_or_else(||error("--kit-path required until published"))?, desktop)?;
+            scaffold_configured(Path::new(&args[1]),kind,kit.ok_or_else(||error("--kit-path required until published"))?, desktop, &window)?;
             if kind=="android" {println!("Created {}. Build: cd {}/android && ./gradlew assembleDebug; edit src/lib.rs.",args[1],args[1]);}
             else if kind=="ios" {println!("Created {}. Open {}/ios/VoltApp.xcodeproj; edit src/lib.rs (no Swift glue required).",args[1],args[1]);}
             else {println!("Created {}. Run: cargo run --manifest-path {}/Cargo.toml",args[1],args[1]);}
         }
+        Some("install-linux") if args.len() == 2 && args[1] == "--help" => println!("{}", linux::HELP),
+        Some("install-linux") => linux::run(&args[1..])?,
         Some("bundle" | "release") if args.get(1).is_some_and(|s| s == "--help") && args.len()==2 => {
             println!("{}\n\nManual bundling from a prebuilt binary:\n{}", release::HELP, bundle::HELP)
         }
@@ -462,13 +570,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("bundle") => release::main(&args[1..], false)?,
         Some("release") => release::main(&args[1..], true)?,
         Some("dev") if args.len()<=2=>dev(Path::new(args.get(1).map_or(".",String::as_str)))?,
-        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--platform desktop|ios|android] [--template minimal|navigation|mail|settings|agent|ios|android] [--desktop]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt bundle --help").into()),
+        _=>return Err(error("Usage: cargo volt new PATH --kit-path PATH [--platform desktop|ios|android] [--template minimal|navigation|mail|settings|agent|ios|android] [--desktop] [--chrome native|custom|overlay|borderless] [--control-style symbols|traffic-lights] [--app-id com.example.my_app]\n       cargo volt dev [PATH] (runs trusted local project; rebuild/restart; apps using Application::dev_state keep state and window)\n       cargo volt bundle [--universal]   (app from [package.metadata.volt.bundle])\n       cargo volt release [--universal]  (Developer ID, notarized app and disk image)\n       cargo volt install-linux --help    (explicit Linux app/icon registration)\n       cargo volt bundle --help").into()),
     }
     Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scaffold_window_options_are_validated_before_creation() {
+        let parent = DevHandoff::new(&std::env::temp_dir()).unwrap();
+        let path = parent.0.join("chosen");
+        let kit = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let options = WindowScaffold {
+            chrome: Some("custom"),
+            style: Some("traffic-lights"),
+            app_id: Some("com.example.chosen"),
+        };
+        scaffold_configured(&path, "minimal", kit, false, &options).unwrap();
+        let source = fs::read_to_string(path.join("src/main.rs")).unwrap();
+        assert!(source.contains("fn window_chrome() -> WindowChrome { WindowChrome::Custom }"));
+        assert!(source.contains("WindowControlStyle::TrafficLights,"));
+        assert!(source.contains(".app_id(\"com.example.chosen\")"));
+        assert!(path
+            .join("packaging/linux/com.example.chosen.desktop")
+            .is_file());
+        for options in [
+            WindowScaffold {
+                app_id: Some("com.bad\nExec=anything"),
+                ..Default::default()
+            },
+            WindowScaffold {
+                chrome: Some("bad"),
+                ..Default::default()
+            },
+            WindowScaffold {
+                style: Some("bad"),
+                ..Default::default()
+            },
+        ] {
+            let invalid = parent.0.join("invalid");
+            assert!(scaffold_configured(&invalid, "navigation", kit, false, &options).is_err());
+            assert!(!invalid.exists());
+        }
+        assert!(
+            scaffold_configured(&parent.0.join("mobile"), "ios", kit, false, &options).is_err()
+        );
+    }
+    #[test]
+    fn linux_launcher_matches_generated_identity_and_is_not_installed() {
+        let parent = DevHandoff::new(&std::env::temp_dir()).unwrap();
+        let destination = parent.0.join("My-Starter");
+        scaffold(
+            &destination,
+            "navigation",
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            false,
+        )
+        .unwrap();
+        let id = "dev.volt.my_starter";
+        let launcher =
+            fs::read_to_string(destination.join(format!("packaging/linux/{id}.desktop"))).unwrap();
+        assert!(launcher.contains("Exec=My-Starter\n"));
+        assert!(launcher.contains(&format!("StartupWMClass={id}\n")));
+        assert!(launcher.contains(&format!("Icon={id}\n")));
+        assert!(destination
+            .join(format!("packaging/linux/{id}.svg"))
+            .is_file());
+        assert!(launcher.contains("Terminal=false\n"));
+        assert!(!launcher.contains("DBusActivatable=true"));
+        let source = fs::read_to_string(destination.join("src/main.rs")).unwrap();
+        assert!(source.contains(&format!(".app_id(\"{id}\")")));
+        assert!(source.contains("window_buttons(app)"));
+        assert_eq!(fs::read_dir(&parent.0).unwrap().count(), 1);
+    }
     #[test]
     fn dev_handoff_is_fresh_private_and_removed_on_drop() {
         let directory = DevHandoff::new(&std::env::temp_dir()).unwrap();
@@ -541,11 +716,16 @@ mod tests {
                 );
                 assert!(source.contains("WindowChrome::Overlay"));
                 assert!(source.contains("WindowChrome::Native"));
+                assert!(source.contains("WindowChrome::Custom"));
+                assert!(source.contains(".app_id(\"dev.volt.my_app\")"));
+                assert!(source.contains(".window_actions("));
+                assert!(source.contains(".on_window_state("));
+                assert!(source.contains("window_controls_with_style("));
                 assert!(source.contains("cfg!(target_os = \"macos\")"));
                 if kind == "minimal" {
-                    assert!(source.contains("fn window_header"));
+                    assert!(source.contains("window_header(text("));
                     assert!(source.contains(".height(60.)"));
-                    assert!(source.contains(".drag_region(true)"));
+                    assert!(source.contains(".key(\"window-header\")"));
                     assert!(source.contains("{ 96. } else { 20. }"));
                 } else {
                     // The split view brings the drag header, the window-control

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Add explicit per-user `cargo volt install-linux` registration with matched
+  desktop/app IDs and app-specific icons for Catalog, Northbound and generated
+  starters. Launchers point directly to the selected executable, safely escaping
+  paths without a shell. No automatic installation, sudo or dependency changes;
+  updates require `--replace` and a managed registration. Add collision, injection,
+  symlink and scaffold regression tests. KDE Wayland blur was manually confirmed
+  in VM QA; hardware GPU performance and other-desktop acceptance remain separate.
+
+- Make Catalog Window settings available in the existing header at every width,
+  with live mode selection, optional app-drawn TrafficLights/Symbols and actual
+  backend diagnostics. Share configurable `window_header` composition and control
+  styles across Catalog, Northbound and all desktop `cargo volt new` templates.
+  Native macOS controls and existing legacy defaults remain intact; no global
+  title strip is inserted. Add validated Linux app identity/WM_CLASS, explicit
+  Wayland/X11 backend selection, event-driven host diagnostics and opt-in matching
+  desktop launchers in generated projects, with `--chrome`, `--control-style`
+  and `--app-id` creation options. CI compiles all ten desktop starters.
+  Linux compositor visual/runtime acceptance remains a separate release gate.
+
 - Port eight runnable Button, Select and Table recipes into the current Catalog
   without changing its design or shared rounded/square Table selection and sort.
   Their Code panels and web reference show complete cached Rust programs; the

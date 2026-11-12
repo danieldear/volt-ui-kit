@@ -125,6 +125,12 @@ pub struct App {
     #[cfg(feature = "native")]
     pub chrome_picker: Option<&'static str>,
     #[cfg(feature = "native")]
+    pub chrome_panel_open: bool,
+    #[cfg(feature = "native")]
+    pub window_control_style: volt_ui_kit::ui::WindowControlStyle,
+    #[cfg(feature = "native")]
+    pub window_diagnostics: Option<volt_ui_kit::native::WindowDiagnostics>,
+    #[cfg(feature = "native")]
     pub chrome_demo_maximized: bool,
     #[cfg(feature = "native")]
     pub documents: documents::State,
@@ -192,6 +198,12 @@ impl App {
             window_menu: None,
             #[cfg(feature = "native")]
             chrome_picker: None,
+            #[cfg(feature = "native")]
+            chrome_panel_open: false,
+            #[cfg(feature = "native")]
+            window_control_style: Default::default(),
+            #[cfg(feature = "native")]
+            window_diagnostics: None,
             #[cfg(feature = "native")]
             chrome_demo_maximized: false,
             #[cfg(feature = "native")]

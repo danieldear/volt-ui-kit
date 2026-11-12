@@ -38,6 +38,38 @@ cargo run --locked --features native --example rust_counter
 cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
 ```
 
+Window settings is always available in the Catalog's existing header, including
+compact windows. Choose Native / Custom / Borderless and Symbols / Traffic lights;
+macOS retains native traffic lights. For direct Linux testing:
+
+```sh
+VOLT_UI_BACKEND=wayland cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --chrome custom --background blur --control-style traffic-lights
+VOLT_UI_BACKEND=wayland cargo run --release --locked --features native-gpu --example northbound -- --chrome custom --control-style traffic-lights
+```
+
+The `VOLT_UI_WINDOW` log identifies the actual backend, application ID, renderer,
+scale and blur request state. `VOLT_UI_BACKEND=x11` explicitly tests X11 (no native
+blur support). Without the variable, normal winit auto-selection remains in use.
+Other small recipes keep their existing native frames; Custom is not an automatic
+injected title bar. See [chrome integration](../docs/windows-and-rendering.md).
+
+For desktop-menu/taskbar integration, optional launchers are in `examples/linux/`.
+After building the release binaries, you may install the matching binary and
+launcher yourself (this is not required to run with Cargo):
+
+```sh
+install -Dm755 target/release/examples/catalog "$HOME/.local/bin/volt-catalog"
+install -Dm644 examples/linux/dev.volt.catalog.desktop "$HOME/.local/share/applications/dev.volt.catalog.desktop"
+```
+
+Ensure `~/.local/bin` is on the graphical session's PATH, or edit `Exec` and
+`TryExec` to your absolute installed binary path before using the launcher.
+Northbound has an equivalent `dev.volt.northbound.desktop` launcher and expects
+`volt-northbound` on PATH. These development launchers use a generic system icon;
+projects can supply their own. They do not install tray/startup services or
+alter window-manager rules. A missing launcher affects identity/icon matching,
+not whether the window is a modal dialog.
+
 On macOS, local notifications need both `native-notifications` **and** a running
 identified app bundle; use the full launcher rather than adding a flag to
 `cargo run`. Permission remains an explicit button click. See
@@ -176,3 +208,12 @@ SDK/NDK setup, APK commands, the smoke test and remaining hardware gates.
 ## WebAssembly live demo
 
 `examples/web` uses the separate Rust browser host for live buttons, tabs, forms and scrolling. See the [web guide](../docs/web-prototype.md) for tool versions, build steps, GPU/software behavior and remaining limitations.
+
+### Linux application icons
+
+A correct Wayland app ID alone does not install a menu entry or icon. To avoid
+KDE's generic Wayland icon, build the examples and explicitly register their
+matching icons/launchers with `cargo volt install-linux`. See the exact
+[Catalog and Northbound commands](../docs/windows-and-rendering.md#linux-identity-launchers-and-backend-diagnostics).
+Registration never launches an app or changes the compositor; plain `cargo run`
+stays installation-free. Restart existing windows after registration.

@@ -5,6 +5,8 @@ mod application;
 pub use application::{Application, RendererPreference};
 mod backdrop;
 pub use backdrop::{BackdropProtocol, BackdropStatus, BackdropUnavailable};
+mod identity;
+pub use identity::{LinuxBackend, WindowBackend, WindowDiagnostics};
 mod chrome;
 pub use chrome::WindowState;
 mod commands;

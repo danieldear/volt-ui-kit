@@ -32,6 +32,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .ok_or("--accent must be aurora, ember, glacier or heather")?;
             }
             "--reserve" => app.reserve_open = true,
+            "--control-style" => {
+                app.window_control_style = match args.next().as_deref() {
+                    Some("symbols") => volt_ui_kit::ui::WindowControlStyle::Symbols,
+                    Some("traffic-lights") => volt_ui_kit::ui::WindowControlStyle::TrafficLights,
+                    _ => return Err("--control-style must be symbols or traffic-lights".into()),
+                }
+            }
             "--native-chrome" => chrome = WindowChrome::Native,
             "--chrome" => {
                 chrome = match args.next().as_deref() {
@@ -69,6 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         |application| {
             application
+                .app_id("dev.volt.northbound")
                 .chrome_from_state(|app| app.chrome)
                 .window_actions(|app, sender| app.window_actions = Some(sender))
                 .on_window_state(|app, state| app.window_state = state)

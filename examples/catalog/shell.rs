@@ -101,6 +101,7 @@ pub fn view(app: &App) -> El<App> {
     .material(app.glass);
     let mut layers: Vec<El<App>> = vec![shell.into()];
     layers.extend(dialogs(app));
+    layers.push(window_settings(app));
     layers.push(palette(app));
     layers.push(toast(app));
     layers.extend(super::lifecycle::overlays(app));
@@ -195,6 +196,39 @@ fn chrome_settings(app: &App, key: &'static str) -> El<App> {
     .padding(18., Edge::Horizontal)
     .into()
 }
+fn window_settings(app: &App) -> El<App> {
+    let host = app
+        .window_diagnostics
+        .as_ref()
+        .map(|d| {
+            format!(
+                "{} · {} · {:.2}×\n{}\nBackdrop: {}",
+                d.backend.name(),
+                d.renderer,
+                d.scale_factor,
+                d.app_id,
+                d.backdrop.description()
+            )
+        })
+        .unwrap_or_else(|| "Host diagnostics available in a native window.".into());
+    popover(vstack![
+        text("Window settings").font_size(17.).font_weight(600),
+        chrome_settings(app, "popup-chrome-mode"),
+        text("Application-drawn controls").font_size(12.).color(ColorToken::Muted),
+        segmented_control([(0u8, "Symbols"), (1, "Traffic lights")])
+            .key("window-control-style")
+            .selected(if app.window_control_style == WindowControlStyle::Symbols {0} else {1})
+            .on_select(|app: &mut App, value| app.window_control_style = if value == 1 { WindowControlStyle::TrafficLights } else { WindowControlStyle::Symbols }),
+        text(if cfg!(target_os = "macos") { "macOS retains native traffic lights. The style choice applies to app-drawn previews and Linux/Windows Custom controls." } else { "Control style applies to Custom mode. Borderless intentionally hides the controls." }).font_size(12.).color(ColorToken::Muted),
+        divider(),
+        text(host).font_family("SF Mono").font_size(11.).color(ColorToken::Muted),
+    ].gap(12., Axis::Vertical).align(Align::Stretch))
+        .key("window-settings").anchor("window-settings-button")
+        .open(app.chrome_panel_open)
+        .on_dismiss(|app: &mut App| { app.chrome_panel_open = false; app.chrome_picker = None; })
+        .into()
+}
+
 fn window_header_menu(app: &App, bar: El<App>) -> El<App> {
     context_menu(
         bar,
@@ -266,6 +300,10 @@ fn mode_button(app: &App) -> El<App> {
 }
 
 fn header(app: &App) -> El<App> {
+    header_for_platform(app, cfg!(target_os = "macos"))
+}
+
+pub(super) fn header_for_platform(app: &App, macos: bool) -> El<App> {
     let nav = |label: &'static str, target: Page| -> El<App> {
         let active = match target {
             Page::Introduction => app.page == Page::Introduction,
@@ -317,6 +355,23 @@ fn header(app: &App) -> El<App> {
     .height(36.)
     .align(Align::Stretch);
     // Below Md the search box becomes an icon button.
+    let window_settings_button = tooltip(
+        "Window settings",
+        zstack![
+            button("")
+                .key("window-settings-button")
+                .accessible_label("Window settings")
+                .variant(ButtonVariant::Ghost)
+                .width(36.)
+                .height(36.)
+                .on_click(|app: &mut App| app.chrome_panel_open = !app.chrome_panel_open),
+            icon(Icon::Window, 18., ColorToken::BaseContent),
+        ]
+        .width(36.)
+        .height(36.)
+        .flow(Flow::Center),
+    )
+    .key("window-settings-tooltip");
     let search_compact = zstack![
         button("")
             .key("open-palette-compact")
@@ -331,7 +386,11 @@ fn header(app: &App) -> El<App> {
     .width(36.)
     .height(36.)
     .flow(Flow::Center)
-    .visible(responsive(true).at(Breakpoint::Md, false));
+    .visible(
+        responsive(false)
+            .at(Breakpoint::MinWidth(400.), true)
+            .at(Breakpoint::Md, false),
+    );
     let search = search.visible(responsive(false).at(Breakpoint::Md, true));
     let themes = menu(
         if app.custom_palettes.is_some() {
@@ -358,13 +417,14 @@ fn header(app: &App) -> El<App> {
     .on_open_change(|app: &mut App, open| app.theme_menu_open = open);
     // Controls are ordinary content in the existing toolbar, never another row.
     let custom_controls: El<App> =
-        if app.chrome == volt_ui_kit::native::WindowChrome::Custom && !cfg!(target_os = "macos") {
-            window_controls(
+        if app.chrome == volt_ui_kit::native::WindowChrome::Custom && !macos {
+            window_controls_with_style(
                 WindowControlsState {
                     maximized: app.window_state.maximized,
                     can_maximize: app.window_state.resizable && !app.window_state.fullscreen,
                     ..Default::default()
                 },
+                app.window_control_style,
                 |app: &mut App, action| {
                     if let Some(sender) = &app.window_actions {
                         let _ = sender.send(action);
@@ -376,16 +436,15 @@ fn header(app: &App) -> El<App> {
         } else {
             spacer().width(0.).flex(0.).into()
         };
-    let themes: El<App> =
-        if app.chrome == volt_ui_kit::native::WindowChrome::Custom && !cfg!(target_os = "macos") {
-            themes
-                .visible(responsive(false).at(Breakpoint::Sm, true))
-                .into()
-        } else {
-            themes.into()
-        };
+    let themes: El<App> = if !macos {
+        themes
+            .visible(responsive(false).at(Breakpoint::Md, true))
+            .into()
+    } else {
+        themes.into()
+    };
     // The shell owns the original toolbar's geometry and drag region.
-    let bar: El<App> = hstack![
+    let header_content: El<App> = hstack![
         hstack![
             nav("Docs", Page::Introduction),
             nav("Components", Page::Button),
@@ -402,17 +461,19 @@ fn header(app: &App) -> El<App> {
         .flex(1.),
         search,
         search_compact,
+        window_settings_button,
         chrome_selector(app, "header-chrome-mode")
             .visible(responsive(false).at(Breakpoint::Xl, true)),
         themes,
         mode_button(app),
-        custom_controls,
     ]
-    .drag_region(true)
-    .key("site-header")
+    .key("header-content")
     .gap(6., Axis::Horizontal)
     .align(Align::Center)
     .into();
+    let bar = window_header(header_content, custom_controls)
+        .key("site-header")
+        .into();
     if app.chrome == volt_ui_kit::native::WindowChrome::Custom {
         window_header_menu(app, bar)
     } else {

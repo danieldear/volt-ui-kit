@@ -97,7 +97,27 @@ Templates: `minimal`, `navigation`, `mail`, `settings` and `agent`. Add
 `--desktop` for macOS menus and a tray item. `new` never overwrites an existing
 directory. All but `minimal` start from `navigation_split_view`, the Catalog's
 own sidebar-and-detail shell, with a sidebar you resize by dragging its
-divider. Every template also uses the Catalog's colours:
+divider. All templates wire window actions through the shared header/control
+helpers. Linux defaults to integrated Custom controls (editable Symbols or
+TrafficLights); macOS keeps native integrated traffic lights, and Windows keeps
+native decorations. No extra global title bar is added. The app ID and generated
+`packaging/linux/*.desktop` entry and editable SVG icon match; nothing is installed or run.
+After `cargo build --release`, use `cargo volt install-linux --binary target/release/my-app --app-id dev.volt.my_app --name "My App" --icon packaging/linux/dev.volt.my_app.svg`
+to explicitly register your Linux app for proper menu/taskbar identity. The binary
+stays at that path; use `--replace` to update a registration made by this command.
+See [Linux identity and diagnostics](windows-and-rendering.md#linux-identity-launchers-and-backend-diagnostics)
+for backend selection, launcher setup and capability limits.
+
+You can choose these at creation (desktop templates only):
+
+```sh
+cargo volt new my-workspace --kit-path /path/to/volt-ui-kit --template navigation --chrome custom --control-style traffic-lights --app-id com.example.my_workspace
+```
+
+`--chrome native` keeps the system title bar; `borderless` intentionally hides
+controls. The generated helpers remain editable Rust, not a mandatory app shell.
+
+Every template also uses the Catalog's colours:
 its `theme()` function picks `Palette::zinc_light()` or `Palette::zinc_dark()`
 to match the system appearance (see
 [Built-in palettes](styling-and-themes.md#built-in-palettes)).

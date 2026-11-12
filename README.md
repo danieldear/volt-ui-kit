@@ -152,6 +152,15 @@ cargo volt new my-app --kit-path /path/to/volt-ui-kit --template navigation
 cargo volt dev my-app
 ```
 
+On Linux, register a built app's matching icon and launcher explicitly with
+[`cargo volt install-linux`](docs/windows-and-rendering.md#linux-identity-launchers-and-backend-diagnostics).
+This avoids generic Wayland icons; `new` and `run` never install anything.
+
+Desktop templates include shared integrated-header controls and Linux app
+identity/launcher metadata. The launcher is opt-in, never auto-installed; macOS
+keeps native traffic lights. See [window controls and Linux diagnostics](docs/windows-and-rendering.md#linux-identity-launchers-and-backend-diagnostics).
+
+
 | Feature | Adds |
 | --- | --- |
 | `native` | A window with software drawing, text, images, clipboard, IME and accessibility |

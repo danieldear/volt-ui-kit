@@ -81,6 +81,13 @@ fn parse_args(
                     }
                 };
             }
+            "--control-style" => {
+                app.window_control_style = match args.next().as_deref() {
+                    Some("symbols") => volt_ui_kit::ui::WindowControlStyle::Symbols,
+                    Some("traffic-lights") => volt_ui_kit::ui::WindowControlStyle::TrafficLights,
+                    _ => return Err("--control-style must be symbols or traffic-lights".into()),
+                }
+            }
             "--native-chrome" => chrome = WindowChrome::Native,
             "--compact-chrome" => chrome = WindowChrome::CompactOverlay,
             "--background" => {
@@ -167,6 +174,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let application = application
                 // Built-in component animations (as `cargo volt new` sets).
                 .motion(volt_ui_kit::ui::Motion::Default)
+                .app_id("dev.volt.catalog")
+                .on_window_diagnostics(|app, diagnostics| {
+                    app.window_diagnostics = Some(diagnostics)
+                })
                 .chrome_from_state(|app| app.chrome)
                 .window_actions(|app, sender| app.window_actions = Some(sender))
                 .on_window_state(|app, state| app.window_state = state)
