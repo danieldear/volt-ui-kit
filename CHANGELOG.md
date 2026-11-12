@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix Linux desktop application startup: `Application::validate()` accepts the
+  compiled tray host without requiring a macOS-style global menu. Preserve
+  invalid-configuration and missing-adapter rejection, add platform-aware startup
+  regressions, and correct the Catalog launcher's Linux capability message.
+
 - Add optional Rust-only Linux desktop services: nonblocking XDG portal file/folder
   dialogs, default-app file/URL dispatch, file-manager reveal, immediate silent
   notifications/removal, checked freedesktop Trash, and StatusNotifierItem/DBusMenu

@@ -471,6 +471,11 @@ timestamps. There is no GTK/WebView linkage or shell-command fallback. The defau
 `native` feature alone does not enable these services. `native-notifications` can
 independently opt into Linux notifications.
 
+`Application::desktop(..)` accepts the Linux tray host without requiring native
+global-menu support. Validation checks compiled adapters, not whether the current
+desktop session has a tray watcher or notification server; use the Catalog's
+runtime probe to check those services.
+
 | Service | Linux adapter and limits |
 | --- | --- |
 | Open/save file, choose folder | XDG FileChooser portal. Cancel returns `Ok(None)`. Separate file/folder actions; combined selection is unsupported. |

@@ -23,6 +23,22 @@ fn mount(app: &App, size: [f32; 2]) -> Runtime {
 }
 
 #[test]
+#[cfg(all(
+    feature = "native-desktop",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn desktop_services_catalog_passes_application_startup_validation() {
+    let mut app = App::new();
+    app.page = Page::DesktopServices;
+    volt_ui_kit::native::Application::new("Volt UI Kit", app, view)
+        .app_id("dev.volt.catalog")
+        .commands(lifecycle::commands())
+        .desktop(lifecycle::desktop(), |_, _| {})
+        .validate()
+        .expect("Catalog's real desktop configuration must pass startup validation");
+}
+
+#[test]
 fn desktop_services_cancellation_controls_and_modal_scope_are_guarded() {
     let mut app = App::new();
     app.page = Page::DesktopServices;

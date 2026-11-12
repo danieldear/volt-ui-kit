@@ -402,7 +402,8 @@ impl<C: 'static> Application<C> {
         self.extensions.before_launch = Some(Box::new(setup));
         self
     }
-    /// Optional native menus/tray. Requires `native-desktop` on macOS.
+    /// Optional native menus/tray. Requires `native-desktop` on macOS or Linux.
+    /// Linux supplies the tray host, not a native global menu bar.
     pub fn desktop(
         mut self,
         config: super::system::DesktopConfig,
@@ -444,8 +445,11 @@ impl<C: 'static> Application<C> {
         self.extensions.commands.validate()?;
         if let Some(desktop) = &self.extensions.desktop {
             desktop.validate()?;
-            if !super::system::capabilities().native_menu {
-                return Err("native desktop integration requires native-desktop on macOS".into());
+            let capabilities = super::system::capabilities();
+            if !capabilities.native_menu && !capabilities.tray_icon {
+                return Err(
+                    "native desktop integration requires native-desktop on macOS or Linux".into(),
+                );
             }
         }
         Ok(())
@@ -491,6 +495,50 @@ impl<C: 'static> Application<C> {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    #[test]
+    fn desktop_validation_accepts_the_compiled_host_without_creating_resources() {
+        use crate::native::system::{DesktopCommand, DesktopConfig, DesktopMenu, TrayConfig};
+        use crate::ui::spacer;
+        let desktop = DesktopConfig::new("Desktop validation")
+            .menu(DesktopMenu::new(
+                "Actions",
+                [DesktopCommand::new("count", "Count")],
+            ))
+            .tray(TrayConfig {
+                tooltip: "Desktop validation".into(),
+                rgba: vec![255; 4],
+                width: 1,
+                height: 1,
+                template: false,
+                commands: vec![DesktopCommand::new("count", "Count")],
+            });
+        // This calls the same validation as run(), without a window, session bus,
+        // notification permission or running tray watcher. Linux deliberately has
+        // no native global menu, but its tray host must still pass startup.
+        let result = Application::new("Desktop validation", (), |_| spacer().into())
+            .desktop(desktop, |_, _| {})
+            .validate();
+        assert_eq!(
+            result.is_ok(),
+            cfg!(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            )),
+            "desktop startup validation: {result:?}"
+        );
+    }
+
+    #[test]
+    fn desktop_validation_still_rejects_invalid_configuration() {
+        use crate::native::system::DesktopConfig;
+        use crate::ui::spacer;
+        let error = Application::new("Desktop validation", (), |_| spacer().into())
+            .desktop(DesktopConfig::new(""), |_, _| {})
+            .validate()
+            .unwrap_err();
+        assert!(error.contains("invalid desktop app/menu label"), "{error}");
+    }
+
     #[test]
     fn app_identity_and_diagnostics_configuration_is_additive() {
         use crate::ui::spacer;
