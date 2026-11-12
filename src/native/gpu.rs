@@ -36,6 +36,44 @@ fn opaque_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::Composi
     .into_iter()
     .find(|mode| modes.contains(mode))
 }
+fn negotiated_alpha_mode(
+    modes: &[wgpu::CompositeAlphaMode],
+    transparent: bool,
+    allow_opaque_alpha: bool,
+) -> Result<wgpu::CompositeAlphaMode, String> {
+    if transparent {
+        alpha_mode(modes)
+            .or_else(|| {
+                if allow_opaque_alpha {
+                    opaque_alpha_mode(modes)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| "compositor does not advertise transparent alpha support".into())
+    } else {
+        opaque_alpha_mode(modes)
+            .ok_or_else(|| "compositor has no opaque/inherited alpha mode".into())
+    }
+}
+fn alpha_is_transparent(alpha: wgpu::CompositeAlphaMode) -> bool {
+    matches!(
+        alpha,
+        wgpu::CompositeAlphaMode::PreMultiplied | wgpu::CompositeAlphaMode::PostMultiplied
+    )
+}
+#[cfg(feature = "native")]
+fn native_x11_surface(window: Option<&Window>) -> bool {
+    use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+    cfg!(target_os = "linux")
+        && window.is_some_and(|window| {
+            matches!(
+                window.display_handle().map(|handle| handle.as_raw()),
+                Ok(RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_))
+            )
+        })
+}
+
 // Separate surface configuration from pixel encoding: wgpu (26 through 30)
 // advertises PostMultiplied for Metal, although Core Animation consumes premultiplied RGB.
 // Keep the advertised/supported SurfaceConfiguration, but compensate in the
@@ -454,6 +492,9 @@ pub struct GpuPresenter {
     lost: Arc<AtomicBool>,
     /// What the surface supports, for switching opacity in place.
     alpha_modes: Vec<wgpu::CompositeAlphaMode>,
+    /// Only native Linux X11 windows may degrade missing alpha to opaque GPU
+    /// presentation. Platform-owned mobile/web surfaces keep their contract.
+    allow_opaque_alpha: bool,
     backend: wgpu::Backend,
     pub adapter_name: String,
 }
@@ -664,13 +705,20 @@ impl GpuPresenter {
             return Err("GPU drawing requires compute shaders and indirect execution; this adapter does not advertise both".into());
         }
         let caps = surface.get_capabilities(&adapter);
-        let alpha = if transparent {
-            alpha_mode(&caps.alpha_modes)
-                .ok_or("compositor does not advertise transparent alpha support")?
-        } else {
-            opaque_alpha_mode(&caps.alpha_modes)
-                .ok_or("compositor has no opaque/inherited alpha mode")?
+        let allow_opaque_alpha = {
+            #[cfg(feature = "native")]
+            {
+                native_x11_surface(window.as_deref())
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                false
+            }
         };
+        let alpha = negotiated_alpha_mode(&caps.alpha_modes, transparent, allow_opaque_alpha)?;
+        if transparent && !alpha_is_transparent(alpha) {
+            eprintln!("Volt UI: X11 surface has no transparent alpha mode; retaining GPU drawing with an opaque rectangular window (custom controls remain available)");
+        }
         let adapter_name = format!("{} / {:?}", info.name, info.backend);
         let format = caps
             .formats
@@ -754,21 +802,25 @@ impl GpuPresenter {
             textures: TextureImages::default(),
             lost,
             alpha_modes: caps.alpha_modes,
+            allow_opaque_alpha,
             backend: info.backend,
             adapter_name,
         })
     }
+    /// Actual negotiated surface alpha, not the application's requested policy.
+    #[cfg(feature = "native-gpu")]
+    pub(crate) fn is_transparent(&self) -> bool {
+        alpha_is_transparent(self.config.alpha_mode)
+    }
     /// Switch between an opaque and a transparent window by reconfiguring
     /// the surface in place; see [`GpuPresenter::recreate`] for why a new
-    /// surface is never made for this.
+    /// surface is never made for this. Native Linux X11 windows without alpha
+    /// support stay on the opaque GPU surface rather than failing the switch.
     pub fn set_transparent(&mut self, transparent: bool) -> Result<(), String> {
-        let alpha = if transparent {
-            alpha_mode(&self.alpha_modes)
-                .ok_or("compositor does not advertise transparent alpha support")?
-        } else {
-            opaque_alpha_mode(&self.alpha_modes)
-                .ok_or("compositor has no opaque/inherited alpha mode")?
-        };
+        let alpha = negotiated_alpha_mode(&self.alpha_modes, transparent, self.allow_opaque_alpha)?;
+        if transparent && !alpha_is_transparent(alpha) {
+            eprintln!("Volt UI: X11 surface has no transparent alpha mode; retaining GPU drawing with an opaque rectangular window (custom controls remain available)");
+        }
         if alpha == self.config.alpha_mode {
             return Ok(());
         }
@@ -1466,5 +1518,36 @@ mod tests {
         );
         assert_eq!(alpha_mode(&[Opaque, PostMultiplied]), Some(PostMultiplied));
         assert_eq!(alpha_mode(&[Opaque, Auto, Inherit]), None);
+    }
+
+    #[test]
+    fn x11_opaque_only_surfaces_keep_gpu_chrome_without_claiming_alpha() {
+        use wgpu::CompositeAlphaMode::*;
+        for (modes, expected) in [
+            (vec![Opaque], Opaque),
+            (vec![Inherit], Inherit),
+            (vec![Inherit, Opaque], Opaque),
+        ] {
+            assert_eq!(negotiated_alpha_mode(&modes, true, true), Ok(expected));
+            assert_eq!(negotiated_alpha_mode(&modes, false, true), Ok(expected));
+            assert!(!alpha_is_transparent(expected));
+            // Platform-owned mobile/web surfaces and other native backends
+            // retain the strict transparent-surface contract.
+            assert!(negotiated_alpha_mode(&modes, true, false).is_err());
+        }
+        assert_eq!(
+            negotiated_alpha_mode(&[Opaque, PostMultiplied, PreMultiplied], true, true),
+            Ok(PreMultiplied)
+        );
+        assert!(negotiated_alpha_mode(&[], true, true).is_err());
+        assert!(negotiated_alpha_mode(&[Auto], true, true).is_err());
+        assert!(negotiated_alpha_mode(&[PreMultiplied], false, true).is_err());
+        for alpha in [PreMultiplied, PostMultiplied] {
+            assert_eq!(
+                negotiated_alpha_mode(&[Opaque, alpha], true, true),
+                Ok(alpha)
+            );
+            assert!(alpha_is_transparent(alpha));
+        }
     }
 }

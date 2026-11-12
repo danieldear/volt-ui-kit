@@ -1268,8 +1268,8 @@ impl<C: 'static> App<C> {
             #[cfg(target_os = "linux")]
             if let Some(gpu) = self.gpu.as_mut() {
                 let transparent = surface_transparency(self.options.background, desired);
-                w.set_transparent(transparent);
                 gpu.set_transparent(transparent)?;
+                w.set_transparent(gpu.is_transparent());
             }
             self.sync_native_backdrop(&w);
         }
@@ -1300,9 +1300,9 @@ impl<C: 'static> App<C> {
                     // Reconfigure in place: a new surface would leave the old
                     // one's layer (and its last frame) behind the window.
                     let transparent = surface_transparency(background, self.options.chrome);
-                    window.set_transparent(transparent);
                     if let Some(gpu) = self.gpu.as_mut() {
                         gpu.set_transparent(transparent)?;
+                        window.set_transparent(gpu.is_transparent());
                     }
                     window.request_redraw();
                 }
@@ -2057,7 +2057,7 @@ impl<C: 'static> App<C> {
         let batches = self.runtime.paint_ui(&mut self.painter, &ui);
         let paint_done = self.trace.then(Instant::now);
         #[cfg(feature = "native-gpu")]
-        let alpha_active = self.gpu.is_some();
+        let alpha_active = self.gpu.as_ref().is_some_and(|gpu| gpu.is_transparent());
         #[cfg(not(feature = "native-gpu"))]
         let alpha_active = false;
         #[cfg(all(feature = "native-gpu", target_os = "macos"))]
@@ -2123,6 +2123,8 @@ impl<C: 'static> App<C> {
                 };
                 match old.recreate(transparent) {
                     Ok(gpu) => {
+                        #[cfg(target_os = "linux")]
+                        w.set_transparent(gpu.is_transparent());
                         eprintln!("Volt UI: GPU renderer recreated ({})", gpu.adapter_name);
                         self.gpu = Some(gpu);
                         w.request_redraw();
@@ -2537,6 +2539,8 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if try_gpu {
                 match super::gpu::GpuPresenter::new(w.clone(), surface_transparency(self.options.background, self.options.chrome)) {
                     Ok(gpu)=>{
+                        #[cfg(target_os = "linux")]
+                        w.set_transparent(gpu.is_transparent());
                         // Match winit's native startup ordering (and Volt
                         // Terminal): prepare blur/material before first show.
                         // GPU admission stays first so a software fallback

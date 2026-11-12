@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fix Custom/Borderless GPU startup on X11 surfaces without transparent alpha:
+  negotiate an opaque/inherited GPU surface instead of failing or forcing CPU
+  drawing. Use actual negotiated alpha for the clear, corner mask and native
+  transparency during startup, live chrome/background changes and recovery.
+  Preserve alpha-capable desktop and platform-owned mobile/web surface policies;
+  X11 backdrop blur remains unsupported.
+
 - Fix Linux desktop application startup: `Application::validate()` accepts the
   compiled tray host without requiring a macOS-style global menu. Preserve
   invalid-configuration and missing-adapter rejection, add platform-aware startup

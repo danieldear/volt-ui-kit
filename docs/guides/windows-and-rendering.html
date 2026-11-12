@@ -151,12 +151,17 @@ This is not a raw <code>NSWindowStyleMask::Borderless</code> window. Mode switch
 the full-size-content style, button visibility and native shadow. No delegate,
 content view, native button sizing or Metal layer ownership is replaced.
 Private compositor blur is never enabled silently.</li>
-<li><strong>Linux GPU client frames:</strong> Custom and Borderless clip the <em>outer window</em>
-to antialiased 12-logical-pixel corners, including its background clear and
+<li><strong>Linux GPU client frames:</strong> On alpha-capable surfaces, Custom and Borderless
+clip the <em>outer window</em> to antialiased 12-logical-pixel corners, including its background clear and
 all content. A translucent swapchain is used even for an opaque background;
 only the corners become transparent, not text or controls. The Wayland blur
 region follows the rounded shape, resize and scale changes. Maximized and
 fullscreen windows become rectangular; restoring them brings the corners back.
+Native X11 surfaces that advertise only opaque/inherited alpha retain GPU
+rendering and custom controls with an opaque rectangular frame, even when
+transparency was requested. They do not apply a transparent corner mask or
+promise blur; <code>GpuRequired</code> requires GPU drawing, not transparent alpha.
+This policy also applies to live chrome/background changes and device recovery.
 Software fallback remains opaque/rectangular. Native/Overlay mode still uses
 the desktop&#39;s decorations, whose corner shape and buttons are compositor-owned.</li>
 <li>Chrome changes requested while fullscreen are deferred until fullscreen ends;
@@ -329,8 +334,10 @@ fail clearly; they never silently select a different backend. Non-Linux accepts
 only <code>Auto</code>. GPU/Vulkan is a rendering backend, not a window-system backend.</p>
 <p>Current native blur requires Wayland and a compositor supporting one of Volt&#39;s
 negotiated protocols. X11 blur is unsupported; software is opaque. Linux GPU
-Custom/Borderless windows use the existing rounded mask; maximized/fullscreen
-windows are rectangular. Compositor shadows/effects remain desktop policy and
+Custom/Borderless windows use the rounded mask when transparent alpha is
+supported; X11 surfaces without it retain an opaque rectangular GPU window, not
+a renderer failure. Maximized/fullscreen windows are rectangular. Compositor
+shadows/effects remain desktop policy and
 need live KDE/COSMIC acceptance, not just successful compilation.</p>
 <p><code>cargo volt new</code> generates wired Custom controls on Linux, native integrated
 controls on macOS and native decorations on Windows. All templates use the
