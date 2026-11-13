@@ -193,7 +193,7 @@ wayland-protocols = { version = "=0.32.13", features = ["server", "staging"] }
 # The `maps` example only: HTTPS for map styles and tiles, and gzip for
 # vector tiles that arrive compressed. Neither is a library dependency.
 ureq = "=3.4.3"
-flate2 = "=1.1.10"
+flate2 = "=1.1.11"
 
 # The `maps` example on macOS: Apple Maps through MapKit snapshots.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
