@@ -490,6 +490,15 @@ pub(crate) struct Effects {
     pub shadows: Vec<Shadow>,
 }
 impl Effects {
+    pub(crate) fn has_geometry(&self) -> bool {
+        self.layout_animation.is_some()
+            || self.drag_motion.is_some()
+            || self.timeline.is_some()
+            || std::iter::once(&self.base)
+                .chain(&self.states)
+                .chain(std::iter::once(&self.disabled))
+                .any(|style| style.transform.is_some())
+    }
     pub fn validate(&self, path: &str) -> Result<(), DocumentError> {
         if self.layout_animation.is_some_and(|a| !a.valid())
             || self.shared.as_ref().is_some_and(|s| {

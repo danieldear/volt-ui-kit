@@ -1,78 +1,135 @@
 //! Input uses the same sampled pose as paint, not an axis-aligned approximation.
 use super::*;
 use crate::motion::Affine2D;
-impl Runtime {
-    pub(super) fn world_transform(&self, b: &LayoutBox) -> Affine2D {
-        if !self.has_transforms {
-            return Affine2D::IDENTITY;
-        }
-        let Some(index) = self.boxes.iter().position(|v| v.id == b.id) else {
-            return Affine2D::IDENTITY;
-        };
-        let mut ancestry = vec![b];
-        let mut depth = b.depth;
-        for parent in self.boxes[..index].iter().rev() {
-            if parent.depth < depth {
-                ancestry.push(parent);
-                depth = parent.depth;
+use std::collections::HashMap;
+
+/// Layout topology only. Poses are sampled at the current clock/input state,
+/// never cached across hover, retargeting or animation frames.
+#[derive(Default)]
+pub(super) struct TransformIndex {
+    ids: HashMap<String, usize>,
+    parents: Vec<Option<usize>>,
+    affected: Vec<bool>,
+    paint: Vec<bool>,
+}
+impl TransformIndex {
+    pub fn build(boxes: &[LayoutBox]) -> Self {
+        let mut result = Self::default();
+        let mut stack: Vec<usize> = vec![];
+        for (i, b) in boxes.iter().enumerate() {
+            while stack.last().is_some_and(|p| boxes[*p].depth >= b.depth) {
+                stack.pop();
             }
+            let parent = stack.last().copied();
+            let affected = parent.is_some_and(|p| result.affected[p]) || b.effects.has_geometry();
+            result.ids.insert(b.id.clone(), i);
+            result.parents.push(parent);
+            result.affected.push(affected);
+            result.paint.push(affected);
+            stack.push(i);
+        }
+        // A moving leaf can enter the viewport through a non-clipping,
+        // offscreen parent. Keep its ancestor groups for clips/opacity/masks.
+        for i in (0..boxes.len()).rev() {
+            if result.paint[i] {
+                if let Some(parent) = result.parents[i] {
+                    result.paint[parent] = true;
+                }
+            }
+        }
+        result
+    }
+    pub fn affected(&self, id: &str) -> bool {
+        self.ids.get(id).is_some_and(|i| self.affected[*i])
+    }
+    pub fn paint(&self, b: &LayoutBox) -> bool {
+        b.layout_visible || self.ids.get(&b.id).is_some_and(|i| self.paint[*i])
+    }
+}
+impl Runtime {
+    pub(super) fn rebuild_transform_index(&mut self) {
+        self.transform_index = if self.has_transforms {
+            TransformIndex::build(&self.boxes)
+        } else {
+            TransformIndex::default()
+        };
+    }
+    /// One ancestry walk, root to leaf, shared by input clipping/visibility.
+    /// Unaffected siblings stay on the ordinary axis-aligned fast path.
+    fn transform_path(&self, b: &LayoutBox) -> Vec<(usize, Affine2D)> {
+        let Some(&index) = self.transform_index.ids.get(&b.id) else {
+            return vec![];
+        };
+        let mut ancestry = vec![index];
+        let mut parent = self.transform_index.parents[index];
+        while let Some(i) = parent {
+            ancestry.push(i);
+            parent = self.transform_index.parents[i];
         }
         let theme = self.input_theme.borrow();
         let motion = self.motion.try_borrow().ok();
         let mut result = Affine2D::IDENTITY;
         let mut geometry = Affine2D::IDENTITY;
-        for node in ancestry.into_iter().rev() {
-            let target =
-                visual_target(node, self.state_for_box(node), &theme, self.scale).transform;
-            let pose = motion
-                .as_ref()
-                .map_or(target, |m| m.input_transform(&node.id, target));
-            if let Some(m) = motion.as_ref() {
-                let (local, next) = m.node_matrix(node, pose, self.scale, geometry);
-                result = local.then(result);
-                geometry = next;
-            } else {
-                result = pose
-                    .matrix(node.bounds.bounds().map(|v| v / self.scale), self.scale)
-                    .then(result);
-            }
+        ancestry
+            .into_iter()
+            .rev()
+            .map(|i| {
+                if self.transform_index.affected[i] {
+                    let node = &self.boxes[i];
+                    let target =
+                        visual_target(node, self.state_for_box(node), &theme, self.scale).transform;
+                    let pose = motion
+                        .as_ref()
+                        .map_or(target, |m| m.input_transform(&node.id, target));
+                    if let Some(m) = motion.as_ref() {
+                        let (local, next) = m.node_matrix(node, pose, self.scale, geometry);
+                        result = local.then(result);
+                        geometry = next;
+                    } else {
+                        result = pose
+                            .matrix(node.bounds.bounds().map(|v| v / self.scale), self.scale)
+                            .then(result);
+                    }
+                }
+                (i, result)
+            })
+            .collect()
+    }
+    pub(super) fn world_transform(&self, b: &LayoutBox) -> Affine2D {
+        if !self.has_transforms || !self.transform_index.affected(&b.id) {
+            return Affine2D::IDENTITY;
         }
-
-        result
+        self.transform_path(b)
+            .last()
+            .map_or(Affine2D::IDENTITY, |(_, m)| *m)
     }
     /// Conservative world-space visibility, including ancestor clipping. This
     /// controls frame scheduling, not glyph/shape antialiasing.
     pub(super) fn motion_visible(&self, b: &LayoutBox) -> bool {
-        if !self.has_transforms {
+        if !self.has_transforms || !self.transform_index.affected(&b.id) {
             return b.layout_visible;
         }
         let Some([w, h, _]) = self.last_viewport else {
             return false;
         };
-        let bounds = self.world_transform(b).bounds(b.bounds.bounds());
+        let path = self.transform_path(b);
+        let matrix = path.last().map_or(Affine2D::IDENTITY, |(_, m)| *m);
+        let bounds = matrix.bounds(b.bounds.bounds());
         let Some(mut visible) = Rect::new(bounds[0], bounds[1], bounds[2], bounds[3])
             .and_then(|r| intersection(r, Rect::new(0., 0., w, h).unwrap()))
         else {
             return false;
         };
-        let Some(index) = self.boxes.iter().position(|p| p.id == b.id) else {
-            return false;
-        };
-        let mut depth = b.depth + 1;
-        for (at, node) in self.boxes[..=index].iter().enumerate().rev() {
-            if node.depth >= depth {
-                continue;
-            }
-            depth = node.depth;
-            let parent = self.boxes[..at].iter().rev().find(|p| p.depth < node.depth);
-            let matrix = parent.map_or(Affine2D::IDENTITY, |p| self.world_transform(p));
-            let r = matrix.bounds(node.ancestor_clip.bounds());
+        let mut parent = Affine2D::IDENTITY;
+        for (i, matrix) in path {
+            let r = parent.bounds(self.boxes[i].ancestor_clip.bounds());
             let Some(next) =
                 Rect::new(r[0], r[1], r[2], r[3]).and_then(|r| intersection(visible, r))
             else {
                 return false;
             };
             visible = next;
+            parent = matrix;
         }
         true
     }
@@ -107,7 +164,7 @@ impl Runtime {
             .is_some_and(|p| b.bounds.contains_corners(b.radii(self.scale), p[0], p[1]))
     }
     pub(super) fn hit_clip(&self, b: &LayoutBox, x: f32, y: f32) -> bool {
-        if !self.has_transforms {
+        if !self.has_transforms || !self.transform_index.affected(&b.id) {
             return b.clip.contains(x, y)
                 && b.clip_regions.iter().all(|r| r.contains(x, y))
                 && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y));
@@ -118,37 +175,93 @@ impl Runtime {
         if !(x >= 0. && y >= 0. && x < w && y < h) {
             return false;
         }
-        let Some(index) = self.boxes.iter().position(|v| v.id == b.id) else {
-            return false;
-        };
-        let mut depth = b.depth + 1;
-        for node in self.boxes[..=index].iter().rev() {
-            if node.depth < depth {
-                depth = node.depth;
-                let at = self.boxes[..=index]
-                    .iter()
-                    .position(|p| p.id == node.id)
-                    .unwrap();
-                let parent = self.boxes[..at].iter().rev().find(|p| p.depth < node.depth);
-                let matrix = parent.map_or(Affine2D::IDENTITY, |p| self.world_transform(p));
-                if !matrix
-                    .inverse()
-                    .map(|m| m.point([x, y]))
-                    .is_some_and(|p| node.ancestor_clip.contains(p[0], p[1]))
-                {
-                    return false;
-                }
+        let mut parent = Affine2D::IDENTITY;
+        for (i, matrix) in self.transform_path(b) {
+            let node = &self.boxes[i];
+            if !parent
+                .inverse()
+                .map(|m| m.point([x, y]))
+                .is_some_and(|p| node.ancestor_clip.contains(p[0], p[1]))
+            {
+                return false;
+            }
+            let Some(point) = matrix.inverse().map(|m| m.point([x, y])) else {
+                return false;
+            };
+            if node
+                .content_clip
+                .as_ref()
+                .is_some_and(|clip| !clip.contains(point[0], point[1]))
+            {
+                return false;
+            }
+            parent = matrix;
+        }
+        true
+    }
+}
 
-                if let Some(clip) = &node.content_clip {
-                    if !self
-                        .input_point(node, x, y)
-                        .is_some_and(|p| clip.contains(p[0], p[1]))
-                    {
-                        return false;
-                    }
-                }
+#[cfg(all(test, feature = "rust-ui", feature = "rendering"))]
+mod tests {
+    use super::*;
+    use crate::{
+        rendering::RasterPainter,
+        ui::{prelude::*, text},
+        Painter,
+    };
+
+    fn fixture(scale: f32) -> (Runtime, RasterPainter) {
+        let mut children: Vec<Element<()>> =
+            vec![text("Tilted").key("tilted").rotate(12.).height(40.).into()];
+        for i in 0..30 {
+            children.push(
+                vstack![text(format!("Row {i}"))]
+                    .key(format!("row-{i}"))
+                    .height(45.)
+                    .padding(5., Edge::All)
+                    .background(ColorToken::Base200)
+                    .rounded(6.)
+                    .opacity(0.8)
+                    .clip_contents(true)
+                    .into(),
+            );
+        }
+        let tree: Element<()> = vstack(children)
+            .key("scroll")
+            .height(180.)
+            .scroll(Scroll::Vertical)
+            .clip_contents(true)
+            .into();
+        let (d, h) = tree.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        let vp = Viewport::new(400. * scale, 180. * scale, scale).unwrap();
+        let mut p = RasterPainter::new(vp);
+        r.layout(vp, &Bindings::default(), &mut p).unwrap();
+        (r, p)
+    }
+    #[test]
+    fn culled_motion_paint_matches_full_scene_pixels_during_scroll() {
+        for scale in [1., 1.25, 2.] {
+            let (mut r, mut p) = fixture(scale);
+            for delta in [0., 25., 85., 170., -140.] {
+                r.scroll_at(120. * scale, 100. * scale, [0., delta]);
+                r.layout(p.viewport(), &Bindings::default(), &mut p)
+                    .unwrap();
+                let culled = r.paint_ui(&mut p, &UiTheme::dark());
+                let actual = p.rasterize(&culled, [0.; 4]).unwrap();
+                let flags = r.transform_index.paint.clone();
+                r.transform_index.paint.fill(true);
+                let full = r.paint_ui(&mut p, &UiTheme::dark());
+                let expected = p.rasterize(&full, [0.; 4]).unwrap();
+                r.transform_index.paint = flags;
+                assert_eq!(
+                    actual.pixels(),
+                    expected.pixels(),
+                    "DPI {scale}, delta {delta}"
+                );
+                assert!(!r.transform_index.affected("row-20"));
+                assert!(r.transform_index.affected("tilted"));
             }
         }
-        self.input_point(b, x, y).is_some()
     }
 }

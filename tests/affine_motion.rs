@@ -589,3 +589,38 @@ fn transformed_editors_report_world_space_ime_and_selection_bounds_at_fractional
         }
     }
 }
+
+#[test]
+fn culling_preserves_an_offscreen_leaf_transformed_into_view_through_its_ancestors() {
+    let tree: Element<usize> = vstack![
+        text("Top").height(30.),
+        spacer().height(260.),
+        vstack![button("Moved into view")
+            .key("moved")
+            .width(150.)
+            .height(40.)
+            .transform(Transform2D::new().translate(0., -240.))
+            .on_click(|n: &mut usize| *n += 1)]
+        .key("offscreen-parent")
+        .height(50.)
+    ]
+    .key("scroll")
+    .height(180.)
+    .scroll(Scroll::Vertical)
+    .into();
+    let (d, mut h) = tree.build().unwrap().into_parts();
+    let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    let vp = Viewport::new(400., 180., 1.).unwrap();
+    let mut p = RasterPainter::new(vp);
+    r.layout(vp, &Bindings::default(), &mut p).unwrap();
+    let batches = r.paint_ui(&mut p, &UiTheme::dark());
+    let frame = p.rasterize(&batches, [0.; 4]).unwrap();
+    assert!(frame.pixel(30, 65).unwrap().alpha() > 0);
+    let mut count = 0;
+    r.pointer_down(30., 65.);
+    r.pointer_up(30., 65., &mut h, &mut count).unwrap();
+    assert_eq!(
+        count, 1,
+        "keep moving leaf and its offscreen ancestor groups"
+    );
+}

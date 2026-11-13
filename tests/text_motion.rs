@@ -129,3 +129,21 @@ fn offscreen_shimmer_and_ambient_sleep_then_resume_after_scrolling() {
         .unwrap();
     assert_eq!(r.animation_wait(), None);
 }
+
+#[test]
+fn adding_a_transform_does_not_paint_unrelated_offscreen_text() {
+    let r = mount(
+        vstack![
+            text("Visible").rotate(0.).height(30.),
+            spacer().height(300.),
+            text("Offscreen ordinary text").key("below").height(30.)
+        ]
+        .height(180.)
+        .scroll(Scroll::Vertical)
+        .into(),
+    );
+    assert!(
+        !draws(&r).iter().any(|s| s == "Offscreen ordinary text"),
+        "a transform elsewhere must not disable normal viewport culling"
+    );
+}

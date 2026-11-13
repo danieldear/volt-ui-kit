@@ -511,6 +511,7 @@ pub struct Runtime {
     last_viewport: Option<[f32; 3]>,
     motion: RefCell<Motion>,
     has_transforms: bool,
+    transform_index: transforms::TransformIndex,
     /// The last painted palette also governs input occlusion. Layout stores
     /// token/pair specifications, not their active theme's resolved colours.
     input_theme: RefCell<UiTheme>,
@@ -619,6 +620,7 @@ impl Runtime {
             last_viewport: None,
             motion: RefCell::new(Motion::default()),
             has_transforms: false,
+            transform_index: transforms::TransformIndex::default(),
             input_theme: RefCell::new(UiTheme::light()),
             scroll_offsets: BTreeMap::new(),
             lazy_heights: BTreeMap::new(),
@@ -985,6 +987,7 @@ impl Runtime {
         self.cache = None;
         self.boxes.clear();
         self.layout_boxes.clear();
+        self.transform_index = transforms::TransformIndex::default();
         self.cancel_input();
         #[cfg(feature = "rust-ui")]
         {
@@ -1253,6 +1256,7 @@ impl Runtime {
             .filter(|b| b.layout_visible || self.has_transforms)
             .cloned()
             .collect();
+        self.rebuild_transform_index();
         #[cfg(feature = "rust-ui")]
         self.layout_editors(metrics);
         #[cfg(feature = "rust-ui")]
@@ -1697,6 +1701,7 @@ impl Runtime {
             .filter(|b| b.layout_visible || self.has_transforms)
             .cloned()
             .collect();
+        self.rebuild_transform_index();
         let motion = self.motion.get_mut();
         motion
             .geometry
@@ -3071,7 +3076,21 @@ impl Runtime {
         let mut out = Vec::new();
         let mut motion = self.motion.borrow_mut();
         motion.scale = self.scale;
-        let mut boxes = motion.paint_boxes(&self.boxes);
+        // A pose elsewhere must not disable viewport culling for the entire
+        // document. Keep moving subtrees and their ancestor groups, not every
+        // unrelated section below the viewport. Exits are inserted afterwards.
+        let visible = self.has_transforms.then(|| {
+            self.boxes
+                .iter()
+                .filter(|b| self.transform_index.paint(b))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let live = visible.as_deref().unwrap_or(&self.boxes);
+        let mut boxes = motion.paint_boxes(live);
+        if boxes.is_none() {
+            boxes = visible;
+        }
         // Frame sequences show the frame for now; finished ones keep the
         // final drawing, which layout already holds.
         if motion.frames_playing() {
@@ -3248,7 +3267,9 @@ impl Runtime {
                 geometry_stack.pop();
             }
             let inherited = geometry_stack.last().map_or(parent_geometry, |(_, g)| *g);
-            let (matrix, next_geometry) = if !self.has_transforms {
+            let (matrix, next_geometry) = if !self.has_transforms
+                || (!source.departing && !self.transform_index.affected(&source.id))
+            {
                 (crate::motion::Affine2D::IDENTITY, inherited)
             } else {
                 motion.node_matrix(source, visual.transform, self.scale, inherited)

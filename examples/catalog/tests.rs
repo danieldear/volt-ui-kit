@@ -1028,7 +1028,12 @@ fn compositor_launch_is_explicit_and_defaults_remain_public() {
 
 #[test]
 fn scrolling_pages_by_shifting_matches_a_full_layout() {
-    for page in [Page::Introduction, Page::Table, Page::Settings] {
+    for page in [
+        Page::Introduction,
+        Page::Table,
+        Page::Settings,
+        Page::Effects,
+    ] {
         let mut app = App::new();
         app.go(page);
         app.glass = true;
@@ -2716,6 +2721,64 @@ fn new_motion_recipes_render_on_gpu_at_fractional_dpi_without_framebuffer_upload
                 r.set_reduced_motion(true);
                 assert_eq!(r.animation_wait(), None);
             }
+        }
+    }
+}
+
+#[test]
+#[ignore = "local scroll-stage timing report; not a portable performance threshold"]
+fn motion_scroll_stage_profile() {
+    use std::time::{Duration, Instant};
+    for page in [Page::Effects, Page::Table] {
+        for scale in [1.25, 2.] {
+            let mut app = App::new();
+            app.go(page);
+            let (d, mut h) = view(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(1280. * scale, 800. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            r.advance_animations(Duration::from_secs(10));
+            r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            let mut input = vec![];
+            let mut paint = vec![];
+            let mut clock = vec![];
+            for i in 0..160 {
+                let now = Duration::from_secs(10) + Duration::from_secs_f64(f64::from(i) / 120.);
+                let at = Instant::now();
+                r.scroll_outcome(
+                    900. * scale,
+                    500. * scale,
+                    [0., if i < 80 { 24. } else { -24. }],
+                    &mut h,
+                    &mut app,
+                )
+                .unwrap();
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                r.pointer_move(900. * scale, 500. * scale);
+                r.cursor_at(900. * scale, 500. * scale);
+                r.dispatch_hover_regions(Some([900. * scale, 500. * scale]), &mut h, &mut app)
+                    .unwrap();
+                input.push(at.elapsed().as_secs_f64() * 1000.);
+                let at = Instant::now();
+                r.advance_animations(now);
+                r.animation_wait();
+                r.is_animating();
+                clock.push(at.elapsed().as_secs_f64() * 1000.);
+                let at = Instant::now();
+                let batches = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+                std::hint::black_box(batches);
+                paint.push(at.elapsed().as_secs_f64() * 1000.);
+            }
+            let stats = |v: &mut [f64]| {
+                v.sort_by(f64::total_cmp);
+                (
+                    v.iter().sum::<f64>() / v.len() as f64,
+                    v[v.len() / 2],
+                    v[v.len() * 95 / 100],
+                )
+            };
+            println!("SCROLL_PROFILE {page:?} scale={scale} nodes={} input_avg_p50_p95_ms={:?} clock={:?} paint={:?}",r.boxes().len(),stats(&mut input),stats(&mut clock),stats(&mut paint));
         }
     }
 }

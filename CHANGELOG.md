@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fix scroll input latency on motion-heavy pages: index transform ancestry and
+  keep ordinary hit testing/viewport culling for unaffected subtrees. Preserve
+  moving offscreen descendants and ancestor clipping/opacity, with pixel-parity,
+  input and fractional-DPI regressions. Native trackpad deltas and momentum,
+  animation timing, antialiasing and existing layout remain unchanged.
+
 - Add opt-in 2D subtree transforms with matching hit tests, keyed/shared-element
   layout transitions, bounded analytic drag momentum, pose timelines with
   pause/reverse/seek, and typing/crossfade/rolling-number/shimmer text presets.

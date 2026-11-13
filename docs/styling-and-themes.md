@@ -328,6 +328,11 @@ CPU framebuffers. Opted-in transform/text-motion scopes keep outline hinting
 consistent through the animation, avoiding a hinted/unhinted switch at rest.
 Transformed subscenes share the root image/font/glyph caches and frame-image
 admission identities rather than multiplying cache budgets per element.
+Motion is scoped to the affected subtree: ordinary siblings retain viewport
+culling and direct hit testing. Moving offscreen descendants retain their
+ancestor clips and opacity groups so they can enter the viewport correctly.
+Native trackpad scrolling uses the host deltas and momentum directly; adding a
+transform does not add another smoothing tween or animate the scroll layout.
 Software motion renders at a density appropriate to magnification, then composites
 with bicubic filtering. Software transform staging is bounded (16 megapixels per
 layer, 64 MiB cumulative staging, 24 nested scopes); very large scenes can exceed
