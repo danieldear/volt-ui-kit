@@ -548,6 +548,7 @@ fn run_host<C: 'static>(
         proxy,
         access: None,
         access_ids: Default::default(),
+        access_updates: AccessUpdates::default(),
         runtime,
         context,
         handlers,
@@ -690,6 +691,7 @@ struct App<C> {
     access: Option<accesskit_winit::Adapter>,
     /// AccessKit node ids of the last published tree, for action routing.
     access_ids: std::collections::HashMap<accesskit::NodeId, String>,
+    access_updates: AccessUpdates,
     runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
@@ -960,9 +962,13 @@ impl<C: 'static> App<C> {
         )
         .ok_or("invalid viewport")?;
         self.painter.set_viewport(v);
-        self.runtime
+        if self
+            .runtime
             .layout(v, &self.bindings, &mut self.painter)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+        {
+            self.access_updates.invalidate();
+        }
         if let Some([x, y]) = self.pointer {
             self.runtime.pointer_move(x, y);
         }
@@ -1351,6 +1357,9 @@ impl<C: 'static> App<C> {
         Ok(())
     }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
+        if outcome.changed || outcome.activated {
+            self.access_updates.invalidate();
+        }
         self.sync_state_chrome()?;
         self.publish_window_state();
         let result = self.content.after_input(
@@ -1909,6 +1918,9 @@ impl<C: 'static> App<C> {
     /// Publish the accessibility tree. AccessKit runs the builder only while
     /// assistive technology is active, so this costs nothing otherwise.
     fn update_access(&mut self) {
+        if !self.access_updates.dirty {
+            return;
+        }
         let (Some(access), Some(window)) = (self.access.as_mut(), self.window.as_ref()) else {
             return;
         };
@@ -1916,6 +1928,7 @@ impl<C: 'static> App<C> {
         let title = &self.options.native.title;
         let runtime = &self.runtime;
         let ids = &mut self.access_ids;
+        let updates = &mut self.access_updates;
         access.update_if_active(|| {
             let (update, map) = super::accessibility::tree_update(
                 &runtime.accessibility_nodes(),
@@ -1925,13 +1938,17 @@ impl<C: 'static> App<C> {
                 &runtime.accessibility_links(),
             );
             *ids = map;
+            updates.published();
             update
         });
     }
     fn access_event(&mut self, event: accesskit_winit::WindowEvent) -> Result<(), String> {
         use super::accessibility::{command, AccessCommand};
         match event {
-            accesskit_winit::WindowEvent::InitialTreeRequested => self.update_access(),
+            accesskit_winit::WindowEvent::InitialTreeRequested => {
+                self.access_updates.invalidate();
+                self.update_access();
+            }
             accesskit_winit::WindowEvent::ActionRequested(request) => {
                 let Some(command) = command(&request, &self.access_ids) else {
                     return Ok(());
@@ -2618,6 +2635,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         self.pending_release = None;
         self.access = None;
         self.access_ids.clear();
+        self.access_updates.invalidate();
         self.window = None;
         self.ime_allowed = false;
         self.runtime.cancel_input();
@@ -2628,6 +2646,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
+        }
+        // Painting ambient effects does not change semantic values or hit
+        // geometry. Input, focus, resize and actual layouts still invalidate.
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            self.access_updates.invalidate();
         }
         if let (Some(access), Some(window)) = (self.access.as_mut(), self.window.as_ref()) {
             access.process_event(window, &event);
@@ -3430,6 +3453,26 @@ fn motion_needs_final_frame(
     changed && after != Some(Duration::ZERO) && (after.is_none() || before == Some(Duration::ZERO))
 }
 
+/// Publish semantic changes, not identical trees on every decorative frame.
+/// Keep the initial dirty flag until AccessKit actually invokes its builder;
+/// inactive adapters must still receive a complete first tree when activated.
+struct AccessUpdates {
+    dirty: bool,
+}
+impl Default for AccessUpdates {
+    fn default() -> Self {
+        Self { dirty: true }
+    }
+}
+impl AccessUpdates {
+    fn invalidate(&mut self) {
+        self.dirty = true;
+    }
+    fn published(&mut self) {
+        self.dirty = false;
+    }
+}
+
 /// Paces animation frames. Under vsync (GPU, FIFO presentation) the display
 /// sets the rate: the next frame is requested right after each present and
 /// the swap chain waits for the next refresh — 120 Hz on ProMotion — with no
@@ -3701,6 +3744,23 @@ mod tests {
         assert_eq!(clock.deadline(start, true), None);
         assert_eq!(clock.deadline(start, false), None);
     }
+    #[test]
+    fn accessibility_updates_stay_dirty_until_published_and_coalesce_frames() {
+        let mut updates = AccessUpdates::default();
+        assert!(updates.dirty);
+        // Merely checking an inactive adapter must not consume initial work.
+        assert!(updates.dirty);
+        updates.published();
+        for _ in 0..120 {
+            assert!(!updates.dirty);
+        }
+        updates.invalidate(); // input/layout/focus or a fresh tree request
+        updates.invalidate(); // coalesce changes before the next painted frame
+        assert!(updates.dirty);
+        updates.published();
+        assert!(!updates.dirty);
+    }
+
     #[test]
     fn animation_clock_waits_when_idle_and_bounds_active_frame_pacing() {
         let start = Instant::now();

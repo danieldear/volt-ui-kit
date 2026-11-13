@@ -103,6 +103,9 @@ pub(crate) struct GpuSceneEncoder {
     peak: Vec<u8>,
     /// Estimated command words per tile, including draws and clip scopes.
     commands: Vec<u32>,
+    /// Row difference array: record rectangle ends, then resolve tile totals
+    /// once. Admission stays exact without touching every covered tile/draw.
+    command_edges: Vec<i64>,
     open_tiles: Vec<[usize; 4]>,
     /// Zero-copy handles to loaded faces; stable ids keep Vello's outline cache warm.
     fonts: HashMap<cosmic_text::fontdb::ID, Option<FontData>>,
@@ -410,9 +413,9 @@ impl GpuSceneEncoder {
         let y1 = ((r.y1 / 16.).ceil() as usize).min(th);
         for y in y0..y1 {
             self.budget.row_tiles[y] += (x1 - x0).max(1) as u64;
-            for words in &mut self.commands[y * tw + x0..y * tw + x1] {
-                *words = words.saturating_add(8);
-            }
+            let row = y * (tw + 1);
+            self.command_edges[row + x0] += 8;
+            self.command_edges[row + x1] -= 8;
         }
         let bins = span(r.x0, r.x1, 256.);
         let by0 = (r.y0 / 256.).floor() as usize;
@@ -458,7 +461,21 @@ impl GpuSceneEncoder {
             None
         }
     }
+    fn resolve_tile_commands(&mut self) {
+        let [tw, th] = self.tiles;
+        for y in 0..th {
+            let mut words = 0i64;
+            for (edge, total) in self.command_edges[y * (tw + 1)..y * (tw + 1) + tw]
+                .iter()
+                .zip(&mut self.commands[y * tw..(y + 1) * tw])
+            {
+                words += edge;
+                *total = words.clamp(0, i64::from(u32::MAX)) as u32;
+            }
+        }
+    }
     fn finish_budget(&mut self) {
+        self.resolve_tile_commands();
         let th = self.tiles[1];
         self.stats.spill_slots = self
             .peak
@@ -633,6 +650,9 @@ impl GpuSceneEncoder {
         self.peak.resize(count, 0);
         self.commands.clear();
         self.commands.resize(count, 0);
+        self.command_edges.clear();
+        self.command_edges
+            .resize((self.tiles[0] + 1) * self.tiles[1], 0);
         self.budget.row_tiles = vec![0; self.tiles[1]];
         self.budget.bin_rows = vec![0; self.tiles[1].div_ceil(16)];
         self.viewport_height = vp.height as u32;
@@ -1399,6 +1419,51 @@ impl GpuSceneEncoder {
 #[cfg(test)]
 mod tile_depth_tests {
     use super::*;
+
+    #[test]
+    fn rectangle_command_accounting_matches_the_per_tile_oracle() {
+        let mut encoder = GpuSceneEncoder {
+            tiles: [17, 11],
+            commands: vec![0; 17 * 11],
+            command_edges: vec![0; 18 * 11],
+            budget: Budget {
+                row_tiles: vec![0; 11],
+                bin_rows: vec![0; 1],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut expected = vec![0u32; 17 * 11];
+        let mut seed = 73u32;
+        for _ in 0..1000 {
+            let mut next = || {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed % 400) as f64 - 64.
+            };
+            let (x, y) = (next(), next());
+            let r = Rect::new(x, y, x + next().abs(), y + next().abs());
+            encoder.note(r);
+            let r = r.intersect(Rect::new(0., 0., 272., 176.));
+            if !r.is_zero_area() {
+                for y in (r.y0 / 16.).floor() as usize..(r.y1 / 16.).ceil() as usize {
+                    for x in (r.x0 / 16.).floor() as usize..(r.x1 / 16.).ceil() as usize {
+                        expected[y * 17 + x] = expected[y * 17 + x].saturating_add(8);
+                    }
+                }
+            }
+        }
+        encoder.resolve_tile_commands();
+        assert_eq!(encoder.commands, expected);
+        // Resolving again must not count a rectangle a second time.
+        encoder.resolve_tile_commands();
+        assert_eq!(encoder.commands, expected);
+        encoder.command_edges.fill(0);
+        encoder.command_edges[0] = i64::from(u32::MAX) + 8;
+        encoder.command_edges[1] = -encoder.command_edges[0];
+        encoder.resolve_tile_commands();
+        assert_eq!(encoder.commands[0], u32::MAX);
+        assert!(encoder.commands[1..].iter().all(|v| *v == 0));
+    }
 
     #[test]
     fn popping_layers_only_decrements_covered_tiles_and_accepts_empty_edges() {

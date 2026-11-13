@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Reduce animation-frame allocation by sharing immutable vector artwork between
+  paint snapshots and avoiding a second styled-node clone. Coalesce native
+  accessibility publication until input, layout, focus or an initial tree request
+  changes semantics; decorative frames retain their existing timing and appearance.
+- Make GPU tile-command admission linear in covered rows plus viewport tiles,
+  preserving the same admission totals and safety limits. Release cache-only image
+  textures and obsolete resized band targets, while keeping application-owned
+  images and same-viewport strip targets warm. Add regression and actual-GPU
+  readback tests; no public API, dependency, antialiasing or frame-rate changes.
+
 - Anchor package metadata-file patterns to the repository root so ignored local
   tooling readmes/licenses cannot accidentally enter a release archive.
 

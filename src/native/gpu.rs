@@ -247,10 +247,26 @@ fn encode_frame(
             r.used = textures.clock;
         }
     }
+    textures.release_unowned(renderer);
     let mut resolve = |image: &Image| textures.resolve(image, device, queue, renderer);
     encoder.encode_with(batches, painter, Some(&mut resolve))
 }
 impl TextureImages {
+    fn release_unowned(&mut self, renderer: &mut vello::Renderer) {
+        // Keep application-owned images warm even when off screen. A cache-only
+        // Image has no remaining caller that could reuse its identity, so its
+        // registered GPU texture can be released without future upload churn.
+        self.map.retain(|_, r| {
+            if r.used < self.clock && r._source.is_uniquely_owned() {
+                self.bytes -= r.bytes;
+                renderer.unregister_texture(r.data.clone());
+                false
+            } else {
+                true
+            }
+        });
+    }
+
     fn resolve(
         &mut self,
         image: &Image,
@@ -332,6 +348,12 @@ impl TextureImages {
 /// strips renders each strip through a reusable strip texture (the scene
 /// shifted up by the strip's offset) and copies it into place, so large
 /// displays stay on the GPU within Vello's fixed per-pass buffers.
+struct StripTarget {
+    texture: wgpu::Texture,
+    extent: [u32; 2],
+    viewport: [u32; 2],
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_frame(
     device: &wgpu::Device,
@@ -341,7 +363,7 @@ fn render_frame(
     target: &wgpu::Texture,
     size: [u32; 2],
     background: [f32; 4],
-    strip: &mut Option<(wgpu::Texture, [u32; 2])>,
+    strip: &mut Option<StripTarget>,
 ) -> Result<(), String> {
     let params = |height| vello::RenderParams {
         base_color: color(background),
@@ -350,6 +372,12 @@ fn render_frame(
         antialiasing_method: vello::AaConfig::Area,
     };
     if encoder.bands.len() <= 1 {
+        // Retire a band target from an obsolete viewport. Keep it warm at
+        // the same extent: animated scenes near an admission boundary may
+        // alternate between one/two bands, and must not allocate every frame.
+        if strip.as_ref().is_some_and(|target| target.viewport != size) {
+            *strip = None;
+        }
         return renderer
             .render_to_texture(
                 device,
@@ -362,7 +390,7 @@ fn render_frame(
     }
     let tallest = encoder.bands.iter().map(|b| b[1]).max().unwrap_or(1);
     let want = [size[0], tallest];
-    if strip.as_ref().is_none_or(|s| s.1 != want) {
+    if strip.as_ref().is_none_or(|s| s.extent != want) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Volt UI GPU strip"),
             size: wgpu::Extent3d {
@@ -377,9 +405,15 @@ fn render_frame(
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        *strip = Some((texture, want));
+        *strip = Some(StripTarget {
+            texture,
+            extent: want,
+            viewport: size,
+        });
     }
-    let (texture, _) = strip.as_ref().unwrap();
+    let target_strip = strip.as_mut().unwrap();
+    target_strip.viewport = size;
+    let texture = &target_strip.texture;
     let view = texture.create_view(&Default::default());
     let mut shifted = vello::Scene::new();
     for &[y, height] in &encoder.bands {
@@ -484,7 +518,7 @@ pub struct GpuPresenter {
     texture: Option<wgpu::Texture>,
     bind_group: Option<wgpu::BindGroup>,
     /// Reusable strip target for frames rendered in horizontal bands.
-    strip: Option<(wgpu::Texture, [u32; 2])>,
+    strip: Option<StripTarget>,
     renderer: Option<vello::Renderer>,
     allow_software: bool,
     encoder: GpuSceneEncoder,
@@ -1039,7 +1073,7 @@ pub struct GpuOffscreenRenderer {
     textures: TextureImages,
     lost: Arc<AtomicBool>,
     target: Option<(wgpu::Texture, wgpu::Buffer, [u32; 2])>,
-    strip: Option<(wgpu::Texture, [u32; 2])>,
+    strip: Option<StripTarget>,
     pub adapter_name: String,
 }
 impl GpuOffscreenRenderer {
@@ -1245,6 +1279,85 @@ impl GpuOffscreenRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires an actual GPU; validates transient texture release"]
+    fn returning_from_banded_rendering_releases_the_strip_without_changing_pixels() {
+        use crate::{Rect, Viewport};
+        let mut gpu = GpuOffscreenRenderer::new().unwrap();
+        let mut painter = RasterPainter::new(Viewport::new(64., 64., 1.).unwrap());
+        let batches = [PaintBatch {
+            clip: Rect::new(0., 0., 64., 64.).unwrap(),
+            shapes: vec![Shape::Rectangle([0., 0., 64., 64.], [0., 0., 1., 1.])],
+            glyphs: vec![],
+        }];
+        let first = gpu.render(&mut painter, &batches, [0.; 4]).unwrap();
+        gpu.encoder.bands = vec![[0, 32], [32, 32]];
+        render_frame(
+            &gpu.device,
+            &gpu.queue,
+            &mut gpu.renderer,
+            &gpu.encoder,
+            &gpu.target.as_ref().unwrap().0,
+            [64, 64],
+            [0.; 4],
+            &mut gpu.strip,
+        )
+        .unwrap();
+        assert_eq!(gpu.strip.as_ref().unwrap().extent, [64, 32]);
+        let second = gpu.render(&mut painter, &batches, [0.; 4]).unwrap();
+        assert!(
+            gpu.strip.is_some(),
+            "same-size animation must keep its warm target"
+        );
+        assert_eq!(first.data(), second.data());
+        painter.set_viewport(Viewport::new(32., 32., 1.).unwrap());
+        let resized = gpu.render(&mut painter, &batches, [0.; 4]).unwrap();
+        assert!(gpu.strip.is_none(), "obsolete band target remains resident");
+        assert!(resized
+            .pixels()
+            .iter()
+            .all(|p| p.blue() == 255 && p.alpha() == 255));
+    }
+
+    #[test]
+    #[ignore = "requires an actual GPU; validates unmounted image residency"]
+    fn gpu_images_release_when_only_the_cache_owns_them_but_live_images_stay_warm() {
+        use crate::{graphics::Image, Rect, Viewport};
+        let mut gpu = GpuOffscreenRenderer::new().unwrap();
+        let mut painter = RasterPainter::new(Viewport::new(64., 64., 1.).unwrap());
+        let image = Image::from_rgba(1024, 1024, vec![255; 1024 * 1024 * 4]).unwrap();
+        {
+            let batches = [PaintBatch {
+                clip: Rect::new(0., 0., 64., 64.).unwrap(),
+                shapes: vec![Shape::Image(
+                    [0., 0., 64., 64.],
+                    image.clone().background(),
+                    1.,
+                )],
+                glyphs: vec![],
+            }];
+            gpu.render(&mut painter, &batches, [0.; 4]).unwrap();
+        }
+        let empty: [PaintBatch<Shape, Glyph>; 0] = [];
+        gpu.render(&mut painter, &empty, [0., 0., 1., 1.]).unwrap();
+        assert_eq!(
+            gpu.resident_image_bytes(),
+            4 * 1024 * 1024,
+            "an application-owned image must remain warm even off-screen"
+        );
+        drop(image);
+        let pixels = gpu.render(&mut painter, &empty, [0., 0., 1., 1.]).unwrap();
+        assert_eq!(
+            gpu.resident_image_bytes(),
+            0,
+            "a cache-only image cannot be reused and must release GPU residency"
+        );
+        assert!(pixels
+            .pixels()
+            .iter()
+            .all(|p| p.blue() == 255 && p.alpha() == 255));
+    }
+
     #[test]
     fn opaque_image_staging_borrows_pixels_and_alpha_conversion_is_exact() {
         let opaque = [255, 128, 64, 255, 0, 0, 0, 0];

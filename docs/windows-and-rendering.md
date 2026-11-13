@@ -364,6 +364,9 @@ draws a frame in software only when it cannot fit. Images are admitted up to
 
 - A settled window draws nothing and uses no timers. Animations request frames
   only while they run.
+- Decorative animation frames share immutable vector artwork and do not publish
+  an identical native accessibility tree each frame. Input, focus, layout and
+  initial assistive-technology activation still publish updated semantics.
 - `VOLT_UI_TRACE=1` prints per-frame timings (layout, paint, GPU encode and
   present, text cache misses), GPU scene statistics (shapes, glyphs, layers,
   estimated buffer use) and the font and surface setup. It never logs your
@@ -403,12 +406,34 @@ skipping when one is unavailable.
 | --- | --- |
 | Window framebuffer | 64 megapixels |
 | GPU image cache | 64 MiB |
+| Registered GPU image textures | 96 MiB |
 | GPU glyph cache | 16 MiB / 4,096 glyphs |
 | Opacity layer depth / clip depth | 24 / 48 |
 | Shadow work per frame (software) | 16 megapixels; extra shadows are skipped and counted |
 
 These bound the kit's own caches. GPU drivers, Vello's internal buffers and the
 OS compositor use additional memory.
+
+The 64 MiB image-data cache is used by the scene encoder's CPU-backed image path;
+the 96 MiB texture registry keeps native/offscreen GPU uploads reusable. Images
+still owned by the application remain warm, even off-screen. Once only the
+registry owns an image, its registered texture is released on the next admitted
+frame. Dropping a view is not enough if application state still retains the image.
+Vello's internal atlas can retain capacity; this is not a total GPU-memory limit
+or a promise that the OS immediately returns memory to the system.
+
+Large scenes can use a temporary band-rendering texture. It stays warm while
+frames at the same viewport alternate between banded and single-pass rendering,
+avoiding allocation churn. A later single-pass frame at a different viewport
+releases the obsolete band target. Quality, animation durations and native
+refresh-rate pacing are unchanged.
+
+Explicit GPU resource-lifetime regressions (require an actual GPU):
+
+```sh
+cargo test --locked --all-features --lib gpu_images_release_when -- --ignored
+cargo test --locked --all-features --lib returning_from_banded_rendering -- --ignored
+```
 
 ## Linux identity, launchers and backend diagnostics
 
