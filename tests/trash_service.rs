@@ -46,7 +46,10 @@ fn only_unverified_post_success_receipts_may_have_moved() {
     }
 }
 
-#[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+#[cfg(not(all(
+    feature = "native-desktop",
+    any(target_os = "macos", target_os = "linux")
+)))]
 #[test]
 fn unsupported_adapter_never_attempts_filesystem_or_native_trash_actions() {
     let path = std::env::current_dir()

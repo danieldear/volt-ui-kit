@@ -21,7 +21,13 @@ async function run(browserType, options, label) {
     if (label !== 'webkit') await page.screenshot({ path: path.join(output, file), fullPage: true, caret: 'initial' });
   };
   const waitFrame = () => page.waitForFunction(() => Number(document.querySelector('#demo')?.dataset.frames) > 0 && document.querySelector('#status')?.dataset.error !== 'true');
+  // Dispatch changes Rust state immediately, but DOM bounds/focus follow on
+  // animation frames. Let pending frame + focus-transfer work commit before
+  // measuring a new pointer target; do not click coordinates from an old view.
+  const settle = () => page.evaluate(() => new Promise(resolve =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
   async function pointer(locator) {
+    await settle();
     const bounds = JSON.parse(await locator.getAttribute('data-volt-bounds'));
     const r = await page.locator('canvas').boundingBox();
     await page.mouse.click(r.x + bounds[0] + bounds[2] / 2, r.y + bounds[1] + bounds[3] / 2);
@@ -37,8 +43,10 @@ async function run(browserType, options, label) {
     await pointer(page.getByRole('checkbox', { name: 'Enable notifications' }));
     await page.waitForFunction(() => document.querySelector('[role=checkbox]')?.getAttribute('aria-checked') === 'true');
     await capture(`${label}-01-components.png`);
-    await page.getByRole('tab', { name: 'Components', exact: true }).focus();
-    await page.keyboard.press('ArrowRight');
+    await settle();
+    // Focus and dispatch the key to the same tab, not a global key after a
+    // separately awaited focus that a pending pointer frame can transfer.
+    await page.getByRole('tab', { name: 'Components', exact: true }).press('ArrowRight');
     const name = page.getByRole('textbox', { name: 'Display name' });
     await name.waitFor();
     await name.fill('Zoë 東京');
@@ -103,6 +111,14 @@ async function run(browserType, options, label) {
     console.log(`${label}: pointer, keyboard tabs, Unicode form, composition, scroll, themes, compact resize, reset, idle and preferred rendering passed (${mode}).`);
   } catch (error) {
     console.error(label, 'status:', await page.locator('#status').innerText({timeout:1000}).catch(() => 'unavailable'), 'backend:', await page.locator('#backend').innerText({timeout:1000}).catch(() => 'unavailable'), 'errors:', errors);
+    console.error('frame/focus diagnostics:', await page.evaluate(() => ({
+      active: {tag:document.activeElement?.localName,id:document.activeElement?.dataset.voltId},
+      frames:document.querySelector('#demo')?.dataset.frames,
+      tabs:[...document.querySelectorAll('[role="tab"]')].map(el=>({
+        id:el.dataset.voltId,selected:el.getAttribute('aria-selected'),
+        hidden:el.hidden,bounds:el.dataset.voltBounds,
+      })),
+    })).catch(() => 'unavailable'));
     await capture(`${label}-failure.png`);
     throw error;
   } finally { await browser.close(); }
