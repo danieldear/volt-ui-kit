@@ -37,7 +37,7 @@ is not acceptance of this candidate.
 Checked items are scoped evidence from this review, not final frozen-main gates,
 physical-device acceptance, a security certification or Windows UI acceptance.
 
-- [x] Local all-feature/all-target tests: 1,052 passed; 32 explicitly ignored.
+- [x] Local all-feature/all-target tests: 1,053 passed; 32 explicitly ignored.
 - [x] Local doctests: 62 passed; seven explicitly ignored.
 - [x] macOS all-target Clippy and Rust 1.89 all-target checks pass; Linux-target
   library Clippy/MSRV and WASM/mobile host build checks pass.
@@ -60,14 +60,18 @@ physical-device acceptance, a security certification or Windows UI acceptance.
   and X11 opaque Custom rendering are recorded as user acceptance, not automated
   physical-device proof. X11 transparency/blur remains unsupported/pending.
 - [x] Linux VM previously passed the Catalog/library suites and X11/Wayland
-  startup checks at `da03454`; the final portal special-file regression must
-  additionally pass Ubuntu CI after the VM became unavailable over SSH.
+  startup checks at `da03454`; the new portal special-file regression also passed
+  Ubuntu CI. Full integration CI remains required after correcting stale
+  platform assertions and the current-stable Clippy check.
 - [x] Record a candidate performance baseline on Apple M4 Pro / 24 GiB /
   macOS 27.0.1: native idle CPU/RSS, Metal presentation traces, synthetic button
   actions and Table scroll frames at 100%, 125% and 200% scale. GPU headless
   timings include readback, not on-screen latency or app-attributed GPU/power.
   Raw logs/measurements stay in ignored local QA artifacts; Windows/Linux hardware
   performance and long-running memory/power acceptance remain separate.
+  The focused animated Introduction is not static idle: its intentional ambient
+  effects measured about 40.9% of one CPU core at roughly 118 frames/s on the
+  120 Hz display. Do not substitute the quiet static-Button measurements for it.
 
 ### Dependency review decisions
 
@@ -143,6 +147,9 @@ an owner; never turn a failed check into a checked box by hiding it.
   list known issues rather than claiming production parity.
 - [ ] Record idle CPU, representative scrolling/frame cost and memory with
   hardware, scale, build mode and renderer; separate measurements from estimates.
+- [ ] Profile and accept visible decorative-animation cost separately from
+  static idle; consider developer-controlled motion budgets and offscreen
+  suspension without silently changing the approved design or all animation rates.
 - [ ] Keep web, iOS, Android and maps prototype limitations explicit; confirm
   which hosts/templates require a repository checkout or unpublished subcrate.
 

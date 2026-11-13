@@ -48,7 +48,10 @@ fn required_renderer_and_unsupported_services_report_missing_capabilities() {
     );
     assert_eq!(
         app.validate().is_ok(),
-        cfg!(all(target_os = "macos", feature = "native-desktop"))
+        cfg!(all(
+            any(target_os = "macos", target_os = "linux"),
+            feature = "native-desktop"
+        ))
     );
 }
 

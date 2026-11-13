@@ -583,8 +583,8 @@ impl GpuSceneEncoder {
         if let Some(r) = self.open_tiles.pop() {
             let tw = self.tiles[0];
             for y in r[1]..r[3] {
-                for i in y * tw + r[0]..y * tw + r[2] {
-                    self.depth[i] = self.depth[i].saturating_sub(1);
+                for depth in &mut self.depth[y * tw + r[0]..y * tw + r[2]] {
+                    *depth = depth.saturating_sub(1);
                 }
             }
         }
@@ -1393,5 +1393,35 @@ impl GpuSceneEncoder {
             self.pop_layer();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tile_depth_tests {
+    use super::*;
+
+    #[test]
+    fn popping_layers_only_decrements_covered_tiles_and_accepts_empty_edges() {
+        let mut encoder = GpuSceneEncoder {
+            tiles: [3, 2],
+            depth: vec![0, 0, 2, 0, 1, 2],
+            ..Default::default()
+        };
+        let mut pop = |area| {
+            encoder.scene.push_layer(
+                Fill::NonZero,
+                vello::peniko::BlendMode::default(),
+                1.,
+                Affine::IDENTITY,
+                &Rect::new(0., 0., 48., 32.),
+            );
+            encoder.open_tiles.push(area);
+            encoder.pop_layer();
+        };
+        pop([1, 0, 3, 2]);
+        pop([3, 0, 3, 2]); // clipped entirely beyond the right edge
+        pop([0, 2, 3, 2]); // clipped entirely beyond the bottom edge
+        assert_eq!(encoder.depth, [0, 0, 1, 0, 0, 1]);
+        assert!(encoder.open_tiles.is_empty());
     }
 }
