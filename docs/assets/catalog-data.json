@@ -825,7 +825,7 @@
         "width": 1000
       },
       {
-        "code": "link(\"Documentation ↗\", \"https://example.com/docs\")\n    .key(\"documentation\")\n    .on_open(|app: &mut App, url| {\n        // Your policy: capture, confirm, or explicitly dispatch.\n        app.status = match volt_ui_kit::native::links::open_url(&url) {\n            Ok(()) => \"Browser request accepted\".into(),\n            Err(error) => error.to_string(),\n        };\n    });\n// HTTP(S) only. No credentials, file URLs or executable schemes.",
+        "code": "link(\"Documentation ↗\", \"https://example.com/docs\")\n    .key(\"documentation\")\n    .on_open(|app: &mut App, url| {\n        // Your policy: capture, confirm, or explicitly dispatch.\n        if let Err(error) = volt_ui_kit::native::links::request_open_url(url, move |result| {\n            // Marshal result to your UI mailbox; Linux completes on a worker.\n        }) { app.status = error.to_string(); }\n    });\n// HTTP(S) only. No credentials, file URLs or executable schemes.",
         "height": 459,
         "id": "navigation-links",
         "image": "navigation-navigation-links.png",
@@ -2356,6 +2356,22 @@
         "Accessible vector controls; close goes through the host close guard."
       ],
       [
+        "window_header(content, controls)",
+        "Shared existing-header composition; configurable height, gap and padding; no global title strip."
+      ],
+      [
+        "window_controls_with_style(state, style, f)",
+        "Symbols or TrafficLights, with the same accessible intents and availability."
+      ],
+      [
+        "Application::app_id(id) / on_window_diagnostics(f)",
+        "Linux identity plus actual backend, renderer, scale and blur request diagnostics."
+      ],
+      [
+        "Application::linux_backend(preference)",
+        "Auto, Wayland or X11. Explicit unavailable backends fail, never silently fall back."
+      ],
+      [
         "Application::requests(initialize)",
         "Bounded, event-driven commands and close requests; no idle polling."
       ]
@@ -2372,11 +2388,11 @@
         "width": 1000
       },
       {
-        "code": "Application::new(\"Workspace\", app, view)\n    .chrome_from_state(|app| app.chrome)\n    .custom_resize_border(6.) // logical pixels, Custom mode only\n    .window_actions(|app, sender| app.window_actions = Some(sender))\n    .on_window_state(|app, state| app.window_state = state)\n    .on_close_request(close_guard)\n    .run()?;\n// Linux/Windows: place controls inside your EXISTING draggable toolbar.\n// macOS Custom retains native traffic lights; do not draw duplicate buttons.\nwindow_controls(app.window_state.maximized, |app: &mut App, action| {\n    if let Some(sender) = &app.window_actions { let _ = sender.send(action); }\n});\n// navigation_split_view(...).integrated_header(true).material(true)\n// embeds controls without restyling the opaque, inset detail panel.\n// .toolbar_translucent(true) separately opts into header glass (default false).\n// The shell default and Application Native default remain unchanged.",
+        "code": "Application::new(\"Workspace\", app, view)\n    .app_id(\"com.example.workspace\") // matches the Linux .desktop filename\n    .on_window_diagnostics(|app, state| app.diagnostics = Some(state))\n    .chrome_from_state(|app| app.chrome)\n    .custom_resize_border(6.) // logical pixels, Custom mode only\n    .window_actions(|app, sender| app.window_actions = Some(sender))\n    .on_window_state(|app, state| app.window_state = state)\n    .on_close_request(close_guard)\n    .run()?;\n// Linux/Windows: place controls inside your EXISTING draggable toolbar.\n// macOS Custom retains native traffic lights; do not draw duplicate buttons.\nwindow_header(text(\"Workspace\"), window_controls_with_style(\n    app.window_state.maximized,\n    WindowControlStyle::TrafficLights, // or Symbols (legacy default)\n    |app: &mut App, action| {\n        if let Some(sender) = &app.window_actions { let _ = sender.send(action); }\n    },\n)).key(\"workspace-header\");\n// navigation_split_view(...).integrated_header(true).material(true)\n// embeds controls without restyling the opaque, inset detail panel.\n// .toolbar_translucent(true) separately opts into header glass (default false).\n// The shell default and Application Native default remain unchanged.",
         "height": 200,
         "id": "application-window-chrome",
         "image": "application-lifecycle-application-window-chrome.png",
-        "note": "Choose Native, Custom or Borderless in the Catalog's Window selector. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
+        "note": "Open Window settings in the header (at any width) to choose Native, Custom or Borderless and Symbols / Traffic lights. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
         "title": "Window decorations and controls",
         "width": 1000
       }
@@ -2389,7 +2405,7 @@
     "api": [
       [
         "file_dialog::open_file / save_file",
-        "Main-thread, native-desktop macOS panels; Cancel is Ok(None)."
+        "macOS panels; Linux uses request_open_file/request_save_file callbacks without blocking the UI. Cancel is Ok(None)."
       ],
       [
         "files::read_text_file",
@@ -2428,7 +2444,7 @@
       ],
       [
         "request_authorization(callback)",
-        "Explicit alert-only decision, no automatic prompting; OS-thread completion."
+        "macOS alert-only decision; Linux reports authorization=false, with no fake prompt or grant."
       ],
       [
         "LocalNotification::new(id,title,body)",
@@ -2436,7 +2452,7 @@
       ],
       [
         "notification.after(Duration)",
-        "One-shot 1 second–24 hours, silent local notification."
+        "macOS-only one-shot delay; Linux accepts immediate notifications and rejects delayed scheduling."
       ],
       [
         "notifications::send / remove",
@@ -2446,7 +2462,7 @@
     "group": "Patterns",
     "sections": [
       {
-        "code": "// Build with native-notifications, then package the executable.\n// Only a deliberate user action calls request_authorization.\nnotifications::request_authorization(move |decision| {\n    // Marshal into bounded UiSender; never mutate UI on this OS thread.\n})?;\nlet note = LocalNotification::new(\"build.ready\", \"Build ready\", \"All checks passed.\")\n    .after(Duration::from_secs(8));\nnotifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;\n// A later Remove action (after this callback) may remove \"build.ready\".",
+        "code": "let caps = notifications::capabilities();\nif caps.authorization {\n    // macOS: native-notifications + identified .app.\n    notifications::request_authorization(move |decision| {\n        // Marshal to UiSender. Send from the UI after permission is granted.\n    })?;\n} else if caps.local_requests {\n    // Linux: no simulated permission grant; immediate desktop notification.\n    let note = LocalNotification::new(\"build.ready\", \"Build ready\", \"All checks passed.\");\n    notifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;\n}\n// Linux: remove_async(\"build.ready\".into(), callback).\n// macOS alone supports after(Duration); Linux rejects delayed scheduling.",
         "height": 589,
         "id": "desktop-notifications",
         "image": "desktop-services-desktop-notifications.png",
@@ -2455,11 +2471,20 @@
         "width": 1000
       },
       {
+        "code": "// File panels: nonblocking on Linux; macOS starts its panel on the main thread.\nfile_dialog::request_open_file(FileDialogOptions::new(\"Open\"), move |result| {\n    // Result<Option<PathBuf>, FileDialogError>; None means Cancel.\n    // Marshal the result into UiSender before changing application state.\n})?;\n// On a worker, after an explicit user action:\nfile_dialog::open_path(&path)?;\nfile_dialog::reveal_file(&path)?;\n// Only after confirmation and application-specific protected-path checks:\nfile_dialog::prepare_trash_for(&path)?;\nlet receipt = file_dialog::move_to_trash_checked(&path)?;",
+        "height": 424,
+        "id": "desktop-files",
+        "image": "desktop-services-desktop-files.png",
+        "note": "Explicit OS requests. Choosing a save location writes nothing; opening a path may launch its registered application. The Trash test uses only a generated file.",
+        "title": "Files and desktop integration",
+        "width": 1000
+      },
+      {
         "code": "DesktopConfig::new(\"My app\")\n    .tray(TrayConfig { tooltip: \"My app\".into(), rgba, width: 18, height: 18,\n        template: true, commands: vec![\n            DesktopCommand::new(\"command-probe\", \"Count command execution\"),\n        ] })\n// Register the same ID in CommandRegistry; don't duplicate callbacks.",
         "height": 206,
         "id": "desktop-tray",
         "image": "desktop-services-desktop-tray.png",
-        "note": "The optional native-desktop tray reuses these command IDs. Menu/toolbar/palette/tray commands all pass current enablement and modal guards.",
+        "note": "The optional native-desktop tray (macOS and supported Linux desktops) reuses these command IDs. Menu/toolbar/palette/tray commands all pass current enablement and modal guards.",
         "title": "One command registry, multiple surfaces",
         "width": 1000
       }

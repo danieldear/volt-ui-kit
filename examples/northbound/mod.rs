@@ -212,6 +212,8 @@ pub struct App {
     #[cfg(feature = "native")]
     pub chrome: volt_ui_kit::native::WindowChrome,
     #[cfg(feature = "native")]
+    pub window_control_style: volt_ui_kit::ui::WindowControlStyle,
+    #[cfg(feature = "native")]
     pub window_state: volt_ui_kit::native::WindowState,
     #[cfg(feature = "native")]
     pub window_actions: Option<volt_ui_kit::native::UiSender<volt_ui_kit::ui::WindowAction>>,
@@ -280,6 +282,8 @@ impl App {
             },
             #[cfg(feature = "native")]
             window_state: Default::default(),
+            #[cfg(feature = "native")]
+            window_control_style: Default::default(),
             #[cfg(feature = "native")]
             window_actions: None,
             screen: Screen::Route,
@@ -389,11 +393,21 @@ impl App {
         let (mode, accent, units) = (self.mode, self.accent, self.units);
         // Rebuild the sample data without regenerating the photographs.
         #[cfg(feature = "native")]
-        let window = (self.chrome, self.window_state, self.window_actions.take());
+        let window = (
+            self.chrome,
+            self.window_state,
+            self.window_actions.take(),
+            self.window_control_style,
+        );
         *self = Self::sample(photos, thumbs);
         #[cfg(feature = "native")]
         {
-            (self.chrome, self.window_state, self.window_actions) = window;
+            (
+                self.chrome,
+                self.window_state,
+                self.window_actions,
+                self.window_control_style,
+            ) = window;
         }
         (self.mode, self.accent, self.units) = (mode, accent, units);
         self.screen = Screen::Settings;

@@ -23,6 +23,22 @@ fn mount(app: &App, size: [f32; 2]) -> Runtime {
 }
 
 #[test]
+#[cfg(all(
+    feature = "native-desktop",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn desktop_services_catalog_passes_application_startup_validation() {
+    let mut app = App::new();
+    app.page = Page::DesktopServices;
+    volt_ui_kit::native::Application::new("Volt UI Kit", app, view)
+        .app_id("dev.volt.catalog")
+        .commands(lifecycle::commands())
+        .desktop(lifecycle::desktop(), |_, _| {})
+        .validate()
+        .expect("Catalog's real desktop configuration must pass startup validation");
+}
+
+#[test]
 fn desktop_services_cancellation_controls_and_modal_scope_are_guarded() {
     let mut app = App::new();
     app.page = Page::DesktopServices;
@@ -1807,8 +1823,10 @@ fn catalog_context_menu_opens_from_the_preview_surface() {
 #[test]
 fn notification_setup_help_explains_feature_and_bundle_requirements() {
     let help = desktop_services::notification_setup_help();
-    if !cfg!(target_os = "macos") {
-        assert!(help.contains("macOS only"));
+    if cfg!(target_os = "linux") {
+        assert!(help.contains("No macOS-style permission prompt"));
+    } else if !cfg!(target_os = "macos") {
+        assert!(help.contains("not available"));
     } else if !cfg!(feature = "native-notifications") {
         assert!(help.contains("./scripts/run_catalog.sh"));
         assert!(help.contains("full Catalog app"));
@@ -2503,4 +2521,92 @@ fn mapped_recipe_callbacks_keep_button_and_select_state_isolated() {
             && !app.samples.select.country_search.open
             && !app.samples.select_disabled.open
     );
+}
+
+#[test]
+fn window_settings_are_in_the_existing_header_at_every_supported_width() {
+    use volt_ui_kit::native::WindowChrome as W;
+    for chrome in [W::Native, W::Custom, W::Borderless, W::Overlay] {
+        for size in [[360., 460.], [560., 460.], [1100., 650.], [1440., 920.]] {
+            let mut app = App::new();
+            app.chrome = chrome;
+            let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let v = Viewport::new(size[0], size[1], 1.).unwrap();
+            r.layout(v, &Bindings::default(), &mut RasterPainter::new(v))
+                .unwrap();
+            let n = r
+                .accessibility_nodes()
+                .into_iter()
+                .find(|n| n.label == "Window settings")
+                .unwrap();
+            let [x, y, w, h] = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == n.id)
+                .unwrap()
+                .bounds
+                .bounds();
+            assert!(
+                x >= 0. && x + w <= size[0] && y >= 0. && y + h <= 64.,
+                "{chrome:?} {size:?}: {x},{y},{w},{h}"
+            );
+            assert!(
+                r.accessibility_activate(&n.id, &mut handlers, &mut app)
+                    .unwrap()
+                    .activated
+            );
+            assert!(app.chrome_panel_open);
+            let popup = mount(&app, size);
+            assert!(popup
+                .boxes()
+                .iter()
+                .any(|b| b.id == "popup-chrome-mode-trigger"));
+        }
+    }
+}
+
+#[test]
+fn linux_header_controls_stay_inside_the_existing_compact_toolbar() {
+    use volt_ui_kit::ui::prelude::*;
+    let mut app = App::new();
+    app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+    for style in [
+        WindowControlStyle::Symbols,
+        WindowControlStyle::TrafficLights,
+    ] {
+        app.window_control_style = style;
+        for width in [320., 360., 560., 1100., 1440.] {
+            let ui: Element<App> = vstack![super::shell::header_for_platform(&app, false)]
+                .align(Align::Stretch)
+                .into();
+            let (doc, handlers) = ui.build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let vp = Viewport::new(width - 32., 56., 1.).unwrap();
+            r.layout(vp, &Bindings::default(), &mut RasterPainter::new(vp))
+                .unwrap();
+            for n in r.accessibility_nodes().into_iter().filter(|n| {
+                [
+                    "Window settings",
+                    "Close window",
+                    "Minimize window",
+                    "Maximize window",
+                ]
+                .contains(&n.label.as_str())
+            }) {
+                let [x, y, w, h] = r
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == n.id)
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert!(
+                    x >= 0. && x + w <= vp.width + 0.01 && y >= 0. && y + h <= 56.01,
+                    "{width} {style:?} {}: {x},{y},{w},{h}",
+                    n.label
+                );
+            }
+        }
+    }
 }

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Northbound
+Exec=volt-northbound
+TryExec=volt-northbound
+Icon=dev.volt.northbound
+Terminal=false
+Categories=Development;
+StartupNotify=false
+StartupWMClass=dev.volt.northbound

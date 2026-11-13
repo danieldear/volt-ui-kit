@@ -48,7 +48,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
       - run: cargo fmt --all -- --check
       - run: cargo test --locked
-      - run: cargo test --locked --all-features --all-targets
+      # Report every failing integration-test binary in one run; still fail CI.
+      - run: cargo test --locked --all-features --all-targets --no-fail-fast
       - run: cargo test --locked --all-features --doc
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Documentation builds without warnings
@@ -70,6 +71,10 @@ jobs:
       - run: cargo build --locked --features native --examples
       - name: Copied Catalog programs compile independently
         run: python3 scripts/check_sample_sources.py
+      - name: Generated desktop starters compile independently
+        run: |
+          cargo build --locked --features dev-tools --bin cargo-volt
+          python3 scripts/check_scaffold_sources.py
       - run: cargo run --locked --features native --example complete_app -- --snapshot target/complete-app.png
       - run: cargo run --locked --features native --example rust_settings -- --snapshot target/rust-settings.png
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable

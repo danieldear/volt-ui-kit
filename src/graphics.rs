@@ -40,6 +40,14 @@ impl Image {
     pub fn height(&self) -> u32 {
         self.0.height
     }
+    /// A renderer cache is the last owner; no application can reuse this
+    /// immutable image identity. Internal only: this is not an eviction hint
+    /// for live application-owned images.
+    #[cfg(feature = "rendering-gpu")]
+    pub(crate) fn is_uniquely_owned(&self) -> bool {
+        Arc::strong_count(&self.0) == 1
+    }
+
     /// Premultiplied RGBA, suitable for renderer upload without decoding.
     pub fn pixels(&self) -> &[u8] {
         &self.0.pixels

@@ -138,6 +138,9 @@ the save succeeds.</p>
 <p>The guard covers the window&#39;s close button, Cmd+W and, with <code>native-desktop</code>,
 the owned Quit menu item. It cannot stop Force Quit, system shutdown or a crash.</p>
 <h2 id="files-and-dialogs">Files and dialogs</h2>
+<p>The synchronous example below is macOS-specific. For portable UI callbacks,
+including nonblocking Linux portals, use the <code>request_*</code> APIs described under
+<a href="#linux-desktop-services">Linux desktop services</a>.</p>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::native::{
     file_dialog::{self, FileDialogOptions},
     files::{read_text_file, save_text_file, SavePolicy},
@@ -149,7 +152,10 @@ if let Some(path) = file_dialog::open_file(&amp;FileDialogOptions::new(&quot;Ope
     save_text_file(&amp;path, &quot;Updated&quot;, SavePolicy::MatchContents(&amp;original))?;
 }</code></pre></div><ul>
 <li><code>open_file</code> and <code>save_file</code> (with <code>.suggested_name(..)</code>) show the native macOS
-panels and need <code>native-desktop</code>. Other platforms return <code>Unsupported</code> for now.</li>
+panels and need <code>native-desktop</code>. Linux with <code>native-desktop</code> uses XDG Desktop Portals; call <code>request_open_file</code>,
+<code>request_open_folder</code> or <code>request_save_file</code> for UI callbacks. Synchronous Linux
+functions are worker-only. Offer separate file/folder actions on Linux; combined
+selection is unsupported. Other platforms return <code>Unsupported</code>.</li>
 <li><code>save_text_file</code> writes to a temporary file and moves it into place.
 <code>CreateNew</code> never overwrites; <code>MatchContents(original)</code> refuses to save if the
 file changed on disk since you read it; <code>ApprovedReplacement</code> overwrites.</li>
@@ -169,10 +175,11 @@ let ui: Element&lt;App&gt; = link(&quot;Project website ↗&quot;, &quot;https:/
             Ok(()) =&gt; &quot;Browser request accepted&quot;.into(),
             Err(error) =&gt; error.to_string(),
         };
-    }).into();</code></pre></div><p><code>native::links::available()</code> reports compiled support: currently macOS with
-<code>native-desktop</code>. Dispatch requires the main thread and uses public
-<code>NSWorkspace</code>/<code>NSURL</code> APIs, not a shell or subprocess. Other builds return
-<code>OpenUrlError::Unsupported</code>. Success means the OS accepted the request, not
+    }).into();</code></pre></div><p><code>native::links::available()</code> reports compiled support: macOS or Linux with
+<code>native-desktop</code>. macOS dispatch requires the main thread and uses public
+<code>NSWorkspace</code>/<code>NSURL</code> APIs. Linux uses the OpenURI portal; use
+<code>links::request_open_url</code> for a nonblocking UI callback. Other builds return
+<code>OpenUrlError::Unsupported</code>. Neither backend uses a shell. Success means the OS accepted the request, not
 that a browser loaded the page. Volt itself makes no network request. Custom
 schemes, email actions, app deep-link registration and embedded browsing are not
 part of this HTTP(S)-only adapter.</p>
@@ -190,7 +197,9 @@ let desktop = DesktopConfig::new(&quot;My app&quot;).menu(DesktopMenu::new(
 <p><code>native::file_dialog::reveal_file(&amp;absolute_path)</code> asks Finder to select an
 existing file or folder without opening its contents. It requires
 <code>native-desktop</code> on macOS and the UI thread; other platforms return
-<code>Unsupported</code>. Success reports dispatch, not an observed Finder window.</p>
+<code>Unsupported</code> unless the Linux <code>native-desktop</code> adapter is compiled. Linux uses
+FileManager1 or portal OpenDirectory; prefer <code>request_reveal_file</code> for a UI
+callback. Success reports dispatch, not an observed file-manager window.</p>
 <h3 id="tray-resident-window-visibility">Tray-resident window visibility</h3>
 <p>Use <code>.window_visibility_from_state(|app| !app.hidden)</code> with a tray command that
 clears <code>hidden</code>. In <code>.on_close_request</code>, set <code>hidden = true</code> and return
@@ -351,4 +360,64 @@ every option.</p>
 <p>To receive the files Finder opens with your app (double-click, Open With,
 the Dock), install an AppKit handler in <code>Application::before_launch</code>, which
 runs once the application object exists and before launch events arrive.</p>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#opening-web-links">Opening web links</a><a href="#menus-and-tray">Menus and tray</a><a href="#tray-resident-window-visibility">Tray-resident window visibility</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#the-development-loop">The development loop</a><a href="#explicit-macos-trash">Explicit macOS Trash</a><a href="#packaging-and-releasing">Packaging and releasing</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+<h2 id="linux-desktop-services">Linux desktop services</h2>
+<p>Enable <code>native-desktop</code> on Linux for the optional Rust D-Bus adapters. It reuses
+our already-locked zbus stack and adds Chrono/its timezone resolver for Trash
+timestamps. There is no GTK/WebView linkage or shell-command fallback. The default
+<code>native</code> feature alone does not enable these services. <code>native-notifications</code> can
+independently opt into Linux notifications.</p>
+<p><code>Application::desktop(..)</code> accepts the Linux tray host without requiring native
+global-menu support. Validation checks compiled adapters, not whether the current
+desktop session has a tray watcher or notification server; use the Catalog&#39;s
+runtime probe to check those services.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Service</th><th scope="col">Linux adapter and limits</th></tr></thead><tbody><tr><td>Open/save file, choose folder</td><td>XDG FileChooser portal. Cancel returns <code>Ok(None)</code>. Separate file/folder actions; combined selection is unsupported.</td></tr><tr><td>Open file/directory or web URL</td><td>XDG OpenURI portal. An explicit action may launch the registered default application. Acceptance is not proof of rendering.</td></tr><tr><td>Reveal in file manager</td><td>FileManager1.ShowItems, otherwise portal OpenDirectory. Portal fallback refuses symbolic-link selection rather than reveal an unexpected target.</td></tr><tr><td>Notifications</td><td>Freedesktop server. Immediate, silent requests; stable IDs replace tracked notifications. Removal addresses the original daemon identity. No simulated permission grant, delayed scheduling, click actions or forced presentation.</td></tr><tr><td>Checked Trash</td><td>Freedesktop home/per-volume Trash with <code>.trashinfo</code> and local timestamps. Owned, non-world-writable directories, same-device/local-volume checks, symlink refusal, atomic no-overwrite rename and identity receipt. Never copy/delete, recursively review contents, permanently delete or empty Trash.</td></tr><tr><td>Tray and menu</td><td>StatusNotifierItem + DBusMenu with bounded, state-aware commands. Watcher changes trigger re-registration; no idle polling. No tray host means no tray icon—Volt does not install GNOME extensions or alter the desktop. Close-to-tray window hiding/focus still needs Wayland-specific acceptance.</td></tr><tr><td>Global native menu bar</td><td>Not supplied on Linux. Use Volt&#39;s in-app menu/toolbar components.</td></tr></tbody></table></div><p>Portal file dispatch admits regular files and directories only. Named pipes,
+devices and other special files are rejected; nonblocking descriptor opening
+prevents a FIFO replacement race from occupying a worker while waiting for a
+writer. This does not impose a time bound on arbitrary filesystem or mount I/O.</p>
+<p>Linux tracks up to 64 notification IDs per process; replacement/removal tracking
+is not persisted across application restarts. OS acceptance is not visible delivery.</p>
+<p>These are <strong>compiled adapters</strong>, not guaranteed desktop services. Runtime
+availability varies between KDE, GNOME, COSMIC, sandboxing and installed portal
+backends. Run <code>native::linux_services::probe()</code> on a worker to inspect the running
+session; it does not open dialogs, send notifications or activate missing services.
+The Catalog&#39;s Desktop services page includes that probe, file/folder/save-location
+controls, explicit open/reveal/browser actions, an immediate Linux notification,
+tray commands, and a generated-file-only Trash test. Composition never calls OS
+services. The Documents page also uses nonblocking Linux choosers.</p>
+<h3 id="nonblocking-ui-callbacks">Nonblocking UI callbacks</h3>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::native::{file_dialog::{self, FileDialogOptions}, links};
+use volt_ui_kit::ui::ExternalUrl;
+file_dialog::request_open_file(FileDialogOptions::new(&quot;Open notes&quot;), move |result| {
+    // On Linux, send this worker result through UiSender before editing UI.
+    // Ok(None) means Cancel.
+})?;
+links::request_open_url(ExternalUrl::parse(&quot;https://example.com&quot;)?, move |result| {
+    // Accepted dispatch is not a browser-load receipt.
+})?;</code></pre></div><p><code>request_open_folder</code>, <code>request_save_file</code>, <code>request_open_path</code> and
+<code>request_reveal_file</code> follow the same model. macOS preserves its main-thread
+native start behavior. Linux runs at most four service operations concurrently,
+with five-second D-Bus method timeouts and a five-minute portal response deadline;
+expired requests are closed. A full worker budget returns a startup error.
+Use <code>notifications::remove_async</code> rather than blocking Linux&#39;s UI thread.</p>
+<h3 id="recoverable-trash-safety">Recoverable Trash safety</h3>
+<p><code>recoverable_trash_for</code> is metadata-only and never creates directories.
+<code>prepare_trash_for</code> is an explicit operation that may create a missing private
+Trash; call it only as part of a deliberate cleanup action. Before moving real
+items, applications must confirm intent, protect system/application paths and
+revalidate their selection. <code>move_to_trash_checked</code> rechecks its own gates, uses
+rename-only movement, and returns <code>TrashReceipt</code>. An error with
+<code>may_have_moved()==true</code> must <strong>never</strong> be retried blindly. No app Undo is supplied;
+restoration remains with the desktop file manager. Path-based concurrent-change
+windows remain, just as with the macOS adapter; this is not a filesystem transaction.
+New Trash directories use <code>0700</code>; existing desktop-owned group permissions are
+retained, not changed. Foreign ownership, symlinks, world-writable Trash directories
+and unknown/non-local filesystem types fail closed.</p>
+<h3 id="linux-acceptance">Linux acceptance</h3>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page desktop-services</code></pre></div><p>For maintainers, the explicitly ignored Catalog test
+<code>catalog::desktop_services::linux_live_tests::notification_round_trip</code>
+sends one generic local notification and requests removal. The separately ignored
+<code>catalog::desktop_services::linux_live_tests::trash_round_trip</code> moves only a
+generated file into Trash. Run it only with deliberate approval in a desktop session; it
+never touches personal files or empties Trash. A passing OS submission is not
+visual acceptance on every desktop. Test KDE, GNOME and COSMIC separately.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#opening-web-links">Opening web links</a><a href="#menus-and-tray">Menus and tray</a><a href="#tray-resident-window-visibility">Tray-resident window visibility</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#the-development-loop">The development loop</a><a href="#explicit-macos-trash">Explicit macOS Trash</a><a href="#packaging-and-releasing">Packaging and releasing</a><a href="#linux-desktop-services">Linux desktop services</a><a href="#nonblocking-ui-callbacks">Nonblocking UI callbacks</a><a href="#recoverable-trash-safety">Recoverable Trash safety</a><a href="#linux-acceptance">Linux acceptance</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

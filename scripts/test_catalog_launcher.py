@@ -61,7 +61,9 @@ class CatalogLauncherTests(unittest.TestCase):
         self.assertIn('native-gpu,native-desktop,native-notifications', calls)
         self.assertIn('--locked', calls)
         self.assertIn('executed', calls)
-        self.assertIn('macOS-only', result.stdout)
+        self.assertIn('Linux desktop services', result.stdout)
+        self.assertIn('need desktop session services', result.stdout)
+        self.assertNotIn('macOS-only', result.stdout)
         self.assertFalse(leftovers)
 
     def test_macos_registers_the_signed_bundle_before_opening(self):

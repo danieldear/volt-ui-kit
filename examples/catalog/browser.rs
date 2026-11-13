@@ -95,6 +95,7 @@ pub fn native_doc(page: Page) -> Doc {
         Page::Documents => &[("document-files", "Native file workflows")],
         Page::DesktopServices => &[
             ("desktop-notifications", "OS notifications"),
+            ("desktop-files", "Native file and desktop actions"),
             ("desktop-tray", "Native tray commands"),
         ],
         _ => &[],
@@ -112,6 +113,9 @@ mod tests {
     #[test]
     fn every_published_catalog_section_uses_shared_builders_and_settles() {
         let app = App::new();
+        let published: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../docs/assets/catalog-data.json")).unwrap();
+        assert_eq!(published.len(), PAGES.len());
         let mut count = 0;
         for page in PAGES {
             let sections: Vec<_> = pages::doc(page, &app)
@@ -119,6 +123,17 @@ mod tests {
                 .into_iter()
                 .map(|s| s.id)
                 .collect();
+            let metadata = published
+                .iter()
+                .find(|p| p["slug"].as_str() == Some(page.slug().as_str()))
+                .unwrap_or_else(|| panic!("missing published page: {}", page.slug()));
+            let expected: Vec<_> = metadata["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(sections, expected, "section IDs for {}", page.slug());
             if sections.is_empty() {
                 continue;
             }
@@ -136,7 +151,11 @@ mod tests {
                 count += 1;
             }
         }
-        assert_eq!(count, 124);
+        let published_count: usize = published
+            .iter()
+            .map(|p| p["sections"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(count, published_count);
     }
     #[test]
     fn landing_counter_and_appearance_reuse_original_callback_state() {

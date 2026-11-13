@@ -12,7 +12,7 @@ commit your app&#39;s <code>Cargo.lock</code> for reproducibility; a moving defa
 not a versioned release.</p>
 <h3 id="features">Features</h3>
 <p>Nothing is enabled by default; pick what your application needs.</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Feature</th><th scope="col">Adds</th></tr></thead><tbody><tr><td><code>native</code></td><td>A window host: winit, cosmic-text, software drawing (tiny-skia), images, clipboard, IME and AccessKit accessibility. Includes <code>rust-ui</code>.</td></tr><tr><td><code>native-gpu</code></td><td>GPU drawing with Vello on wgpu (Metal, DX12 or Vulkan), with automatic software fallback. Includes <code>native</code>.</td></tr><tr><td><code>native-desktop</code></td><td>macOS application menus, a tray menu, and native open/save panels.</td></tr><tr><td><code>native-notifications</code></td><td>macOS local notifications.</td></tr><tr><td><code>rust-ui</code></td><td>The Rust builders (<code>ui</code> module) without a window, for custom hosts.</td></tr><tr><td><code>declarative</code></td><td>The validated document tree, runtime and optional JSON frontend.</td></tr><tr><td><code>dev-tools</code></td><td>The <code>cargo volt</code> command: project templates, a rebuild-and-restart dev loop, and macOS app bundles.</td></tr></tbody></table></div><p>Most applications want <code>native-gpu</code>. Add <code>native-desktop</code> for menus and file
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Feature</th><th scope="col">Adds</th></tr></thead><tbody><tr><td><code>native</code></td><td>A window host: winit, cosmic-text, software drawing (tiny-skia), images, clipboard, IME and AccessKit accessibility. Includes <code>rust-ui</code>.</td></tr><tr><td><code>native-gpu</code></td><td>GPU drawing with Vello on wgpu (Metal, DX12 or Vulkan), with automatic software fallback. Includes <code>native</code>.</td></tr><tr><td><code>native-desktop</code></td><td>macOS integrations; Linux portal dialogs, file actions, immediate notifications, checked Trash and supported tray hosts.</td></tr><tr><td><code>native-notifications</code></td><td>macOS local notifications; Linux immediate desktop notifications.</td></tr><tr><td><code>rust-ui</code></td><td>The Rust builders (<code>ui</code> module) without a window, for custom hosts.</td></tr><tr><td><code>declarative</code></td><td>The validated document tree, runtime and optional JSON frontend.</td></tr><tr><td><code>dev-tools</code></td><td>The <code>cargo volt</code> command: project templates, a rebuild-and-restart dev loop, and macOS app bundles.</td></tr></tbody></table></div><p>Most applications want <code>native-gpu</code>. Add <code>native-desktop</code> for menus and file
 panels.</p>
 <h2 id="your-first-window">Your first window</h2>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::Application, ui::prelude::*};
@@ -61,7 +61,20 @@ cargo volt dev my-app</code></pre></div><p>Templates: <code>minimal</code>, <cod
 <code>--desktop</code> for macOS menus and a tray item. <code>new</code> never overwrites an existing
 directory. All but <code>minimal</code> start from <code>navigation_split_view</code>, the Catalog&#39;s
 own sidebar-and-detail shell, with a sidebar you resize by dragging its
-divider. Every template also uses the Catalog&#39;s colours:
+divider. All templates wire window actions through the shared header/control
+helpers. Linux defaults to integrated Custom controls (editable Symbols or
+TrafficLights); macOS keeps native integrated traffic lights, and Windows keeps
+native decorations. No extra global title bar is added. The app ID and generated
+<code>packaging/linux/*.desktop</code> entry and editable SVG icon match; nothing is installed or run.
+After <code>cargo build --release</code>, use <code>cargo volt install-linux --binary target/release/my-app --app-id dev.volt.my_app --name &quot;My App&quot; --icon packaging/linux/dev.volt.my_app.svg</code>
+to explicitly register your Linux app for proper menu/taskbar identity. The binary
+stays at that path; use <code>--replace</code> to update a registration made by this command.
+See <a href="../guides/windows-and-rendering.html#linux-identity-launchers-and-backend-diagnostics">Linux identity and diagnostics</a>
+for backend selection, launcher setup and capability limits.</p>
+<p>You can choose these at creation (desktop templates only):</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo volt new my-workspace --kit-path /path/to/volt-ui-kit --template navigation --chrome custom --control-style traffic-lights --app-id com.example.my_workspace</code></pre></div><p><code>--chrome native</code> keeps the system title bar; <code>borderless</code> intentionally hides
+controls. The generated helpers remain editable Rust, not a mandatory app shell.</p>
+<p>Every template also uses the Catalog&#39;s colours:
 its <code>theme()</code> function picks <code>Palette::zinc_light()</code> or <code>Palette::zinc_dark()</code>
 to match the system appearance (see
 <a href="../guides/styling-and-themes.html#built-in-palettes">Built-in palettes</a>).</p>

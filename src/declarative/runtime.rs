@@ -16,6 +16,7 @@ use crate::{Button, ButtonColors, Painter, Panel, Rect, SurfaceStyle, Theme, UiT
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
     time::Duration,
 };
 
@@ -328,7 +329,7 @@ pub struct LayoutBox {
     clip_regions: Vec<ClipRegion>,
     content_clip: Option<ClipRegion>,
     image: Option<BackgroundImage>,
-    canvas: Canvas,
+    canvas: Arc<Canvas>,
     pub(crate) frames: Option<crate::graphics::CanvasFrames>,
     pub scroll_max: [f32; 2],
     pub scroll_offset: [f32; 2],
@@ -3014,7 +3015,7 @@ impl Runtime {
             let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
             for b in &mut list {
                 if let Some(canvas) = b.frames.as_ref().and_then(|f| motion.frame(&b.id, f)) {
-                    b.canvas = canvas.clone();
+                    b.canvas = Arc::new(canvas.clone());
                 }
             }
             boxes = Some(list);
@@ -3238,17 +3239,16 @@ impl Runtime {
             let treatment = has_visual_patch(&original.effects)
                 || !ui.is_legacy()
                 || original.style.background_opacity < 1.;
-            let mut styled;
-            let b = if treatment {
-                styled = original.clone();
-                styled.style.color = Some(visual.color);
-                styled.style.background = Some(visual.background);
-                styled.style.border_color = Some(visual.border);
-                styled.style.border_width = Some(visual.width);
-                &styled
-            } else {
-                original
-            };
+            // Patch the owned paint snapshot once instead of cloning every
+            // text/image/vector payload a second time. Geometry is unchanged.
+            if treatment {
+                themed.style.color = Some(visual.color);
+                themed.style.background = Some(visual.background);
+                themed.style.border_color = Some(visual.border);
+                themed.style.border_width = Some(visual.width);
+            }
+            let original = &themed;
+            let b = original;
             #[cfg(feature = "rust-ui")]
             if let Some(highlight) = self.paint_text_selection(p, ui, b) {
                 out.push(highlight);
@@ -4657,7 +4657,7 @@ fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32) {
                     cx - cos * cx + sin * cy,
                     cy - sin * cx - cos * cy,
                 ];
-                for path in &mut boxes[i].canvas.paths {
+                for path in &mut Arc::make_mut(&mut boxes[i].canvas).paths {
                     path.path = std::mem::take(&mut path.path).transformed(m);
                 }
             }
@@ -5463,7 +5463,7 @@ fn place(
         clip_regions: regions.to_vec(),
         content_clip: None,
         image: n.surface.image.clone(),
-        canvas: n.surface.canvas.clone(),
+        canvas: Arc::new(n.surface.canvas.clone()),
         frames: n.surface.frames.clone(),
         scroll_max: [0.; 2],
         scroll_offset: [0.; 2],
@@ -6978,6 +6978,35 @@ mod ambient_tests {
             "not cut by padding"
         );
     }
+    #[test]
+    fn ambient_frames_preserve_semantic_values_and_hit_geometry() {
+        let mut r = mount(false);
+        let semantic = r.accessibility_nodes();
+        for at in [16, 500, 1000, 2999, 4000, 8000] {
+            r.advance_animations(Duration::from_millis(at));
+            let _ = painted_rect(&r, at);
+            assert_eq!(semantic, r.accessibility_nodes());
+        }
+    }
+
+    #[test]
+    fn paint_snapshots_share_vector_artwork_until_a_spin_changes_it() {
+        let r = mount(false);
+        let copy = r.boxes.clone();
+        for (original, snapshot) in r.boxes.iter().zip(&copy) {
+            assert!(Arc::ptr_eq(&original.canvas, &snapshot.canvas));
+        }
+        let spun = painted_rect(&r, 1000);
+        let original = r.boxes.iter().find(|b| b.id == "ring").unwrap();
+        let changed = spun.iter().find(|b| b.id == "ring").unwrap();
+        assert!(!Arc::ptr_eq(&original.canvas, &changed.canvas));
+        assert_ne!(original.canvas, changed.canvas);
+        assert!(Arc::ptr_eq(
+            &original.canvas,
+            &copy.iter().find(|b| b.id == "ring").unwrap().canvas,
+        ));
+    }
+
     #[test]
     fn reduced_motion_stops_ambient_frames() {
         let r = mount(true);

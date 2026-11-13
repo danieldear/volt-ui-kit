@@ -23,7 +23,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition, PhysicalSize},
     event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowAttributes, WindowId},
 };
@@ -478,7 +478,20 @@ fn run_host<C: 'static>(
     let reduced_motion = reduced_motion
         || (linux_desktop == system_motion::Desktop::Kde && system_motion::kde_reduced_motion());
     runtime.set_reduced_motion(reduced_motion);
-    let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
+    let backend = super::identity::backend_preference(
+        extensions.linux_backend,
+        std::env::var("VOLT_UI_BACKEND").ok().as_deref(),
+    )?;
+    let app_id = extensions
+        .app_id
+        .get_or_insert_with(|| super::identity::default_app_id(&options.native.title));
+    super::identity::validate_app_id(app_id)?;
+    #[cfg(all(
+        target_os = "linux",
+        any(feature = "native-desktop", feature = "native-notifications")
+    ))]
+    super::linux_services::set_app_id(app_id);
+    let event_loop = super::identity::event_loop_builder::<HostEvent>(backend).build()?;
     // GNOME's setting needs a subprocess: keep it off the UI thread and apply
     // it when it arrives, settling anything already animating.
     #[cfg(target_os = "linux")]
@@ -527,11 +540,15 @@ fn run_host<C: 'static>(
         header_drag_start: None,
         #[cfg(target_os = "macos")]
         custom_zoom: Default::default(),
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         desktop_host: None,
         proxy,
         access: None,
         access_ids: Default::default(),
+        access_updates: AccessUpdates::default(),
         runtime,
         context,
         handlers,
@@ -631,9 +648,15 @@ enum HostEvent {
         generation: u64,
         status: super::BackdropStatus,
     },
-    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    #[cfg(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))]
     Close(CloseReason),
-    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    #[cfg(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))]
     Command(String),
     /// Screen-reader activation and action requests from AccessKit.
     Access(accesskit_winit::Event),
@@ -658,13 +681,17 @@ struct App<C> {
     header_drag_start: Option<[f32; 2]>,
     #[cfg(target_os = "macos")]
     custom_zoom: super::macos_chrome::CustomZoom,
-    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
-    desktop_host: Option<super::system::macos::DesktopHost>,
+    #[cfg(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))]
+    desktop_host: Option<super::system::DesktopHost>,
     /// Delivers AccessKit events into the event loop.
     proxy: winit::event_loop::EventLoopProxy<HostEvent>,
     access: Option<accesskit_winit::Adapter>,
     /// AccessKit node ids of the last published tree, for action routing.
     access_ids: std::collections::HashMap<accesskit::NodeId, String>,
+    access_updates: AccessUpdates,
     runtime: Runtime,
     context: C,
     handlers: Handlers<'static, C>,
@@ -935,9 +962,13 @@ impl<C: 'static> App<C> {
         )
         .ok_or("invalid viewport")?;
         self.painter.set_viewport(v);
-        self.runtime
+        if self
+            .runtime
             .layout(v, &self.bindings, &mut self.painter)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+        {
+            self.access_updates.invalidate();
+        }
         if let Some([x, y]) = self.pointer {
             self.runtime.pointer_move(x, y);
         }
@@ -1149,6 +1180,47 @@ impl<C: 'static> App<C> {
         let Some(w) = &self.window else {
             return false;
         };
+        let backend = super::identity::actual_backend(w);
+        let renderer = {
+            #[cfg(feature = "native-gpu")]
+            {
+                if self.gpu.is_some() {
+                    "gpu"
+                } else {
+                    "software"
+                }
+            }
+            #[cfg(not(feature = "native-gpu"))]
+            {
+                "software"
+            }
+        };
+        let scale_factor = w.scale_factor();
+        let mut changed = false;
+        // Identity is immutable: do not allocate a string on every idle/input event.
+        let diagnostics_changed = self.extensions.last_diagnostics.as_ref().is_none_or(|d| {
+            d.backend != backend
+                || d.renderer != renderer
+                || d.chrome != self.options.chrome
+                || d.backdrop != self.backdrop_status
+                || d.scale_factor != scale_factor
+        });
+        if diagnostics_changed {
+            let diagnostics = super::WindowDiagnostics {
+                backend,
+                renderer,
+                scale_factor,
+                app_id: self.extensions.app_id.clone().unwrap_or_default(),
+                chrome: self.options.chrome,
+                backdrop: self.backdrop_status,
+            };
+            eprintln!("VOLT_UI_WINDOW backend={} app_id={} renderer={} chrome={:?} scale={} backdrop={:?}", diagnostics.backend.name(), diagnostics.app_id, diagnostics.renderer, diagnostics.chrome, diagnostics.scale_factor, diagnostics.backdrop);
+            self.extensions.last_diagnostics = Some(diagnostics.clone());
+            if let Some(callback) = &mut self.extensions.diagnostics {
+                callback(&mut self.context, diagnostics);
+                changed = true;
+            }
+        }
         let state = super::WindowState {
             maximized: Self::window_maximized(w),
             fullscreen: w.fullscreen().is_some(),
@@ -1157,14 +1229,14 @@ impl<C: 'static> App<C> {
             chrome: self.options.chrome,
         };
         if self.last_window_state == Some(state) {
-            return false;
+            return changed;
         }
         self.last_window_state = Some(state);
         if let Some(changed) = &mut self.extensions.window_state {
             changed(&mut self.context, state);
             return true;
         }
-        false
+        changed
     }
     fn sync_state_chrome(&mut self) -> Result<(), String> {
         let desired = self
@@ -1202,8 +1274,8 @@ impl<C: 'static> App<C> {
             #[cfg(target_os = "linux")]
             if let Some(gpu) = self.gpu.as_mut() {
                 let transparent = surface_transparency(self.options.background, desired);
-                w.set_transparent(transparent);
                 gpu.set_transparent(transparent)?;
+                w.set_transparent(gpu.is_transparent());
             }
             self.sync_native_backdrop(&w);
         }
@@ -1234,9 +1306,9 @@ impl<C: 'static> App<C> {
                     // Reconfigure in place: a new surface would leave the old
                     // one's layer (and its last frame) behind the window.
                     let transparent = surface_transparency(background, self.options.chrome);
-                    window.set_transparent(transparent);
                     if let Some(gpu) = self.gpu.as_mut() {
                         gpu.set_transparent(transparent)?;
+                        window.set_transparent(gpu.is_transparent());
                     }
                     window.request_redraw();
                 }
@@ -1285,6 +1357,9 @@ impl<C: 'static> App<C> {
         Ok(())
     }
     fn after_input(&mut self, outcome: InputOutcome) -> Result<(), String> {
+        if outcome.changed || outcome.activated {
+            self.access_updates.invalidate();
+        }
         self.sync_state_chrome()?;
         self.publish_window_state();
         let result = self.content.after_input(
@@ -1317,7 +1392,10 @@ impl<C: 'static> App<C> {
             }
             Ok(()) => {}
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         if let Some(host) = &self.desktop_host {
             host.sync_commands(
                 &self.extensions.commands.entries(&self.context),
@@ -1840,6 +1918,9 @@ impl<C: 'static> App<C> {
     /// Publish the accessibility tree. AccessKit runs the builder only while
     /// assistive technology is active, so this costs nothing otherwise.
     fn update_access(&mut self) {
+        if !self.access_updates.dirty {
+            return;
+        }
         let (Some(access), Some(window)) = (self.access.as_mut(), self.window.as_ref()) else {
             return;
         };
@@ -1847,6 +1928,7 @@ impl<C: 'static> App<C> {
         let title = &self.options.native.title;
         let runtime = &self.runtime;
         let ids = &mut self.access_ids;
+        let updates = &mut self.access_updates;
         access.update_if_active(|| {
             let (update, map) = super::accessibility::tree_update(
                 &runtime.accessibility_nodes(),
@@ -1856,13 +1938,17 @@ impl<C: 'static> App<C> {
                 &runtime.accessibility_links(),
             );
             *ids = map;
+            updates.published();
             update
         });
     }
     fn access_event(&mut self, event: accesskit_winit::WindowEvent) -> Result<(), String> {
         use super::accessibility::{command, AccessCommand};
         match event {
-            accesskit_winit::WindowEvent::InitialTreeRequested => self.update_access(),
+            accesskit_winit::WindowEvent::InitialTreeRequested => {
+                self.access_updates.invalidate();
+                self.update_access();
+            }
             accesskit_winit::WindowEvent::ActionRequested(request) => {
                 let Some(command) = command(&request, &self.access_ids) else {
                     return Ok(());
@@ -1988,7 +2074,7 @@ impl<C: 'static> App<C> {
         let batches = self.runtime.paint_ui(&mut self.painter, &ui);
         let paint_done = self.trace.then(Instant::now);
         #[cfg(feature = "native-gpu")]
-        let alpha_active = self.gpu.is_some();
+        let alpha_active = self.gpu.as_ref().is_some_and(|gpu| gpu.is_transparent());
         #[cfg(not(feature = "native-gpu"))]
         let alpha_active = false;
         #[cfg(all(feature = "native-gpu", target_os = "macos"))]
@@ -2054,6 +2140,8 @@ impl<C: 'static> App<C> {
                 };
                 match old.recreate(transparent) {
                     Ok(gpu) => {
+                        #[cfg(target_os = "linux")]
+                        w.set_transparent(gpu.is_transparent());
                         eprintln!("Volt UI: GPU renderer recreated ({})", gpu.adapter_name);
                         self.gpu = Some(gpu);
                         w.request_redraw();
@@ -2351,7 +2439,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             return;
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         if let HostEvent::Close(reason) = event {
             if !self.request_close(event_loop, reason) {
                 if let Err(error) = self.after_input(InputOutcome {
@@ -2363,7 +2454,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             }
             return;
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         if let HostEvent::Command(id) = event {
             if self.runtime.application_commands_allowed()
                 && self
@@ -2406,7 +2500,13 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             // AccessKit must be attached before the window is first shown.
             let w = Arc::new(
                 event_loop
-                    .create_window(surface_window_attributes(&self.options).with_visible(false))
+                    .create_window(super::identity::attributes(
+                        surface_window_attributes(&self.options).with_visible(false),
+                        self.extensions
+                            .app_id
+                            .as_deref()
+                            .expect("validated host identity"),
+                    ))
                     .map_err(|e| e.to_string())?,
             );
             #[cfg(target_os = "macos")]
@@ -2432,13 +2532,16 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             } else {
                 ThemeMode::Dark
             };
-            #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+            #[cfg(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            ))]
             if let Some(config) = &self.extensions.desktop {
                 let proxy = self.proxy.clone();
-                self.desktop_host = Some(super::system::macos::DesktopHost::install(
+                self.desktop_host = Some(super::system::DesktopHost::install(
                     config,
                     move |event| {
-                        use super::system::macos::DesktopEvent;
+                        use super::system::DesktopEvent;
                         let _ = proxy.send_event(match event {
                             DesktopEvent::Command(id) => HostEvent::Command(id),
                             DesktopEvent::Quit => HostEvent::Close(CloseReason::Quit),
@@ -2453,6 +2556,8 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
             if try_gpu {
                 match super::gpu::GpuPresenter::new(w.clone(), surface_transparency(self.options.background, self.options.chrome)) {
                     Ok(gpu)=>{
+                        #[cfg(target_os = "linux")]
+                        w.set_transparent(gpu.is_transparent());
                         // Match winit's native startup ordering (and Volt
                         // Terminal): prepare blur/material before first show.
                         // GPU admission stays first so a software fallback
@@ -2508,7 +2613,10 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         {
             self.linux_backdrop = None;
         }
-        #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+        #[cfg(all(
+            feature = "native-desktop",
+            any(target_os = "macos", target_os = "linux")
+        ))]
         {
             // Drop the previous menu before resumed installs its replacement.
             self.desktop_host = None;
@@ -2527,6 +2635,7 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
         self.pending_release = None;
         self.access = None;
         self.access_ids.clear();
+        self.access_updates.invalidate();
         self.window = None;
         self.ime_allowed = false;
         self.runtime.cancel_input();
@@ -2537,6 +2646,11 @@ impl<C: 'static> ApplicationHandler<HostEvent> for App<C> {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
+        }
+        // Painting ambient effects does not change semantic values or hit
+        // geometry. Input, focus, resize and actual layouts still invalidate.
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            self.access_updates.invalidate();
         }
         if let (Some(access), Some(window)) = (self.access.as_mut(), self.window.as_ref()) {
             access.process_event(window, &event);
@@ -3339,6 +3453,26 @@ fn motion_needs_final_frame(
     changed && after != Some(Duration::ZERO) && (after.is_none() || before == Some(Duration::ZERO))
 }
 
+/// Publish semantic changes, not identical trees on every decorative frame.
+/// Keep the initial dirty flag until AccessKit actually invokes its builder;
+/// inactive adapters must still receive a complete first tree when activated.
+struct AccessUpdates {
+    dirty: bool,
+}
+impl Default for AccessUpdates {
+    fn default() -> Self {
+        Self { dirty: true }
+    }
+}
+impl AccessUpdates {
+    fn invalidate(&mut self) {
+        self.dirty = true;
+    }
+    fn published(&mut self) {
+        self.dirty = false;
+    }
+}
+
 /// Paces animation frames. Under vsync (GPU, FIFO presentation) the display
 /// sets the rate: the next frame is requested right after each present and
 /// the swap chain waits for the next refresh — 120 Hz on ProMotion — with no
@@ -3610,6 +3744,23 @@ mod tests {
         assert_eq!(clock.deadline(start, true), None);
         assert_eq!(clock.deadline(start, false), None);
     }
+    #[test]
+    fn accessibility_updates_stay_dirty_until_published_and_coalesce_frames() {
+        let mut updates = AccessUpdates::default();
+        assert!(updates.dirty);
+        // Merely checking an inactive adapter must not consume initial work.
+        assert!(updates.dirty);
+        updates.published();
+        for _ in 0..120 {
+            assert!(!updates.dirty);
+        }
+        updates.invalidate(); // input/layout/focus or a fresh tree request
+        updates.invalidate(); // coalesce changes before the next painted frame
+        assert!(updates.dirty);
+        updates.published();
+        assert!(!updates.dirty);
+    }
+
     #[test]
     fn animation_clock_waits_when_idle_and_bounds_active_frame_pacing() {
         let start = Instant::now();

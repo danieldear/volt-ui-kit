@@ -29,6 +29,7 @@ pub(super) type CommandCallback<C> = Box<dyn FnMut(&mut C, &str)>;
 pub(super) type CloseCallback<C> = Box<dyn FnMut(&mut C, CloseReason) -> CloseDecision>;
 pub(super) type WindowVisible<C> = Box<dyn Fn(&C) -> bool>;
 pub(super) type BackdropCallback<C> = Box<dyn FnMut(&mut C, super::BackdropStatus)>;
+pub(super) type DiagnosticsFn<C> = Box<dyn FnMut(&mut C, super::WindowDiagnostics)>;
 pub(super) type ChromeFn<C> = Box<dyn Fn(&C) -> WindowChrome>;
 pub(super) type WindowStateFn<C> = Box<dyn FnMut(&mut C, super::WindowState)>;
 pub(super) type WindowActionPump = Box<dyn Messages<Vec<crate::ui::WindowAction>>>;
@@ -47,6 +48,10 @@ pub(super) fn dev_dir() -> Option<std::path::PathBuf> {
 }
 pub(super) type LaunchHook<C> = Box<dyn FnOnce(&mut C)>;
 pub(super) struct HostExtensions<C> {
+    pub app_id: Option<String>,
+    pub linux_backend: Option<super::LinuxBackend>,
+    pub diagnostics: Option<DiagnosticsFn<C>>,
+    pub last_diagnostics: Option<super::WindowDiagnostics>,
     pub renderer: Option<RendererPreference>,
     pub window_visible: Option<WindowVisible<C>>,
     pub last_window_visible: Option<bool>,
@@ -76,6 +81,10 @@ pub(super) struct HostExtensions<C> {
 impl<C> Default for HostExtensions<C> {
     fn default() -> Self {
         Self {
+            app_id: None,
+            linux_backend: None,
+            diagnostics: None,
+            last_diagnostics: None,
             renderer: None,
             window_visible: None,
             last_window_visible: None,
@@ -236,6 +245,29 @@ impl<C: 'static> Application<C> {
         self.extensions.window_actions = Some(pump);
         self
     }
+    /// Stable Linux Wayland app_id and X11 WM_CLASS. Match your .desktop filename.
+    /// Other platforms still need their own bundle/package identity; this does not
+    /// change signing, install a launcher or create a dialog/parent relationship.
+    pub fn app_id(mut self, id: impl Into<String>) -> Self {
+        self.extensions.app_id = Some(id.into());
+        self
+    }
+    /// Constrain Linux window creation, rather than guessing from the desktop.
+    /// Auto uses winit's normal preference. A requested backend never falls back.
+    /// Non-Linux accepts only Auto. An explicit value overrides VOLT_UI_BACKEND.
+    pub fn linux_backend(mut self, backend: super::LinuxBackend) -> Self {
+        self.extensions.linux_backend = Some(backend);
+        self
+    }
+    /// Observe actual backend, renderer, chrome, scale and requested blur state.
+    /// Called on changes on the UI thread, never on a polling worker.
+    pub fn on_window_diagnostics(
+        mut self,
+        callback: impl FnMut(&mut C, super::WindowDiagnostics) + 'static,
+    ) -> Self {
+        self.extensions.diagnostics = Some(Box::new(callback));
+        self
+    }
     /// Change chrome after UI actions without restarting or replacing the window.
     pub fn chrome_from_state(mut self, chrome: impl Fn(&C) -> WindowChrome + 'static) -> Self {
         self.extensions.chrome = Some(Box::new(chrome));
@@ -370,7 +402,8 @@ impl<C: 'static> Application<C> {
         self.extensions.before_launch = Some(Box::new(setup));
         self
     }
-    /// Optional native menus/tray. Requires `native-desktop` on macOS.
+    /// Optional native menus/tray. Requires `native-desktop` on macOS or Linux.
+    /// Linux supplies the tray host, not a native global menu bar.
     pub fn desktop(
         mut self,
         config: super::system::DesktopConfig,
@@ -401,13 +434,22 @@ impl<C: 'static> Application<C> {
             return Err("invalid application title or window size".into());
         }
         window::validate_options(&self.options)?;
+        if let Some(id) = &self.extensions.app_id {
+            super::identity::validate_app_id(id)?;
+        }
+        if let Some(backend) = self.extensions.linux_backend {
+            super::identity::backend_preference(Some(backend), None)?;
+        }
         self.renderer_preference()
             .policy(cfg!(feature = "native-gpu"))?;
         self.extensions.commands.validate()?;
         if let Some(desktop) = &self.extensions.desktop {
             desktop.validate()?;
-            if !super::system::capabilities().native_menu {
-                return Err("native desktop integration requires native-desktop on macOS".into());
+            let capabilities = super::system::capabilities();
+            if !capabilities.native_menu && !capabilities.tray_icon {
+                return Err(
+                    "native desktop integration requires native-desktop on macOS or Linux".into(),
+                );
             }
         }
         Ok(())
@@ -453,6 +495,74 @@ impl<C: 'static> Application<C> {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    #[test]
+    fn desktop_validation_accepts_the_compiled_host_without_creating_resources() {
+        use crate::native::system::{DesktopCommand, DesktopConfig, DesktopMenu, TrayConfig};
+        use crate::ui::spacer;
+        let desktop = DesktopConfig::new("Desktop validation")
+            .menu(DesktopMenu::new(
+                "Actions",
+                [DesktopCommand::new("count", "Count")],
+            ))
+            .tray(TrayConfig {
+                tooltip: "Desktop validation".into(),
+                rgba: vec![255; 4],
+                width: 1,
+                height: 1,
+                template: false,
+                commands: vec![DesktopCommand::new("count", "Count")],
+            });
+        // This calls the same validation as run(), without a window, session bus,
+        // notification permission or running tray watcher. Linux deliberately has
+        // no native global menu, but its tray host must still pass startup.
+        let result = Application::new("Desktop validation", (), |_| spacer().into())
+            .desktop(desktop, |_, _| {})
+            .validate();
+        assert_eq!(
+            result.is_ok(),
+            cfg!(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            )),
+            "desktop startup validation: {result:?}"
+        );
+    }
+
+    #[test]
+    fn desktop_validation_still_rejects_invalid_configuration() {
+        use crate::native::system::DesktopConfig;
+        use crate::ui::spacer;
+        let error = Application::new("Desktop validation", (), |_| spacer().into())
+            .desktop(DesktopConfig::new(""), |_, _| {})
+            .validate()
+            .unwrap_err();
+        assert!(error.contains("invalid desktop app/menu label"), "{error}");
+    }
+
+    #[test]
+    fn app_identity_and_diagnostics_configuration_is_additive() {
+        use crate::ui::spacer;
+        assert!(Application::new("Identity", (), |_| spacer().into())
+            .app_id("dev.volt.test_app")
+            .validate()
+            .is_ok());
+        assert!(Application::new("Identity", (), |_| spacer().into())
+            .app_id("bad\nExec=anything")
+            .validate()
+            .is_err());
+        let mut app = Application::new("Identity", None, |_| spacer().into())
+            .on_window_diagnostics(|state, diagnostics| *state = Some(diagnostics));
+        let value = super::super::WindowDiagnostics {
+            backend: super::super::WindowBackend::Wayland,
+            app_id: "dev.volt.test_app".into(),
+            renderer: "gpu",
+            chrome: WindowChrome::Custom,
+            backdrop: super::super::BackdropStatus::Disabled,
+            scale_factor: 1.25,
+        };
+        app.extensions.diagnostics.as_mut().unwrap()(&mut app.context, value.clone());
+        assert_eq!(app.context, Some(value));
+    }
     #[test]
     fn dev_handoff_restores_state_and_window_frame_only_when_opted_in() {
         use crate::ui::spacer;

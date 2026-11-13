@@ -143,3 +143,96 @@ fn disabled_maximize_has_no_pointer_or_accessibility_activation() {
     );
     assert!(out.is_empty());
 }
+
+#[test]
+fn integrated_header_styles_keep_intents_and_geometry_at_fractional_scale() {
+    for style in [
+        WindowControlStyle::Symbols,
+        WindowControlStyle::TrafficLights,
+    ] {
+        for scale in [1., 1.25, 2.] {
+            let ui: Element<Vec<WindowAction>> = window_header(
+                text("Workspace").key("title"),
+                window_controls_with_style(false, style, |out: &mut Vec<WindowAction>, a| {
+                    out.push(a)
+                }),
+            )
+            .key("existing-header")
+            .padding(12., Edge::Horizontal)
+            .into();
+            let (doc, mut handlers) = ui.build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            r.layout(
+                Viewport::new(640. * scale, 120. * scale, scale).unwrap(),
+                &Bindings::default(),
+                &mut Metrics,
+            )
+            .unwrap();
+            let header = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == "existing-header")
+                .unwrap()
+                .bounds
+                .bounds();
+            assert_eq!(header[1], 0.);
+            assert_eq!(header[3], 56. * scale);
+            let mut out = vec![];
+            for (label, action) in [
+                ("Close window", WindowAction::Close),
+                ("Minimize window", WindowAction::Minimize),
+                ("Maximize window", WindowAction::ToggleMaximize),
+            ] {
+                let n = r
+                    .accessibility_nodes()
+                    .into_iter()
+                    .find(|n| n.label == label)
+                    .unwrap();
+                assert!(
+                    r.accessibility_activate(&n.id, &mut handlers, &mut out)
+                        .unwrap()
+                        .activated
+                );
+                assert_eq!(out.last(), Some(&action));
+            }
+        }
+    }
+}
+
+#[test]
+fn both_control_styles_honor_all_availability_flags() {
+    for style in [
+        WindowControlStyle::Symbols,
+        WindowControlStyle::TrafficLights,
+    ] {
+        let state = WindowControlsState {
+            can_minimize: false,
+            can_maximize: false,
+            can_close: false,
+            ..Default::default()
+        };
+        let ui: Element<Vec<WindowAction>> =
+            window_controls_with_style(state, style, |out: &mut Vec<WindowAction>, a| out.push(a))
+                .into();
+        let (doc, mut handlers) = ui.build().unwrap().into_parts();
+        let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        r.layout(
+            Viewport::new(320., 60., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+        let mut out = vec![];
+        for node in r.accessibility_nodes() {
+            if ["Close window", "Minimize window", "Maximize window"].contains(&node.label.as_str())
+            {
+                assert!(
+                    !r.accessibility_activate(&node.id, &mut handlers, &mut out)
+                        .unwrap()
+                        .activated
+                );
+            }
+        }
+        assert!(out.is_empty());
+    }
+}

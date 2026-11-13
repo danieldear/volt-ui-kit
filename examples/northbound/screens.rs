@@ -237,12 +237,13 @@ pub(super) fn top_bar(app: &App, macos: bool) -> Element<App> {
     {
         return header_row(app, None);
     }
-    let controls = window_controls(
+    let controls = window_controls_with_style(
         WindowControlsState {
             maximized: app.window_state.maximized,
             can_maximize: app.window_state.resizable,
             ..Default::default()
         },
+        app.window_control_style,
         |app: &mut App, action| {
             if let Some(sender) = &app.window_actions {
                 let _ = sender.send(action);

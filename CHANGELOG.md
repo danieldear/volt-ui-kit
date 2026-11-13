@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+- Reduce animation-frame allocation by sharing immutable vector artwork between
+  paint snapshots and avoiding a second styled-node clone. Coalesce native
+  accessibility publication until input, layout, focus or an initial tree request
+  changes semantics; decorative frames retain their existing timing and appearance.
+- Make GPU tile-command admission linear in covered rows plus viewport tiles,
+  preserving the same admission totals and safety limits. Release cache-only image
+  textures and obsolete resized band targets, while keeping application-owned
+  images and same-viewport strip targets warm. Add regression and actual-GPU
+  readback tests; no public API, dependency, antialiasing or frame-rate changes.
+
+- Anchor package metadata-file patterns to the repository root so ignored local
+  tooling readmes/licenses cannot accidentally enter a release archive.
+
+- Include merge-resolution diffs in redacted history secret scanning, with a
+  workflow regression check. Keep PR tokens read-only and main protection intact.
+
+- Harden Linux portal dispatch against named-pipe worker exhaustion: reject
+  special files, open descriptors nonblocking and recheck their type. Add a
+  FIFO regression while preserving regular-file/directory dispatch.
+- Update locked `async-executor` to 1.14.1 (fixes the yanked 1.14.0 teardown
+  use-after-free), `clipboard-win` to non-yanked 5.4.3, and affected root/mobile/iOS
+  Tokio locks to 1.53.3 for RUSTSEC-2026-0386. Keep GPU/text pins and Rust 1.89.
+
+- Fix Custom/Borderless GPU startup on X11 surfaces without transparent alpha:
+  negotiate an opaque/inherited GPU surface instead of failing or forcing CPU
+  drawing. Use actual negotiated alpha for the clear, corner mask and native
+  transparency during startup, live chrome/background changes and recovery.
+  Preserve alpha-capable desktop and platform-owned mobile/web surface policies;
+  X11 backdrop blur remains unsupported.
+
+- Fix Linux desktop application startup: `Application::validate()` accepts the
+  compiled tray host without requiring a macOS-style global menu. Preserve
+  invalid-configuration and missing-adapter rejection, add platform-aware startup
+  regressions, and correct the Catalog launcher's Linux capability message.
+
+- Add optional Rust-only Linux desktop services: nonblocking XDG portal file/folder
+  dialogs, default-app file/URL dispatch, file-manager reveal, immediate silent
+  notifications/removal, checked freedesktop Trash, and StatusNotifierItem/DBusMenu
+  tray commands. Preserve macOS APIs and explicit unsupported capabilities. Add
+  Catalog workflows, private-bus portal race/cancel tests and Trash regressions.
+  Linux scheduling, combined file-or-folder dialogs, notification actions and
+  global menu bars remain unsupported; GNOME tray visibility needs a tray host.
+
+- Add explicit per-user `cargo volt install-linux` registration with matched
+  desktop/app IDs and app-specific icons for Catalog, Northbound and generated
+  starters. Launchers point directly to the selected executable, safely escaping
+  paths without a shell. No automatic installation, sudo or dependency changes;
+  updates require `--replace` and a managed registration. Add collision, injection,
+  symlink and scaffold regression tests. KDE Wayland blur was manually confirmed
+  in VM QA; hardware GPU performance and other-desktop acceptance remain separate.
+
+- Make Catalog Window settings available in the existing header at every width,
+  with live mode selection, optional app-drawn TrafficLights/Symbols and actual
+  backend diagnostics. Share configurable `window_header` composition and control
+  styles across Catalog, Northbound and all desktop `cargo volt new` templates.
+  Native macOS controls and existing legacy defaults remain intact; no global
+  title strip is inserted. Add validated Linux app identity/WM_CLASS, explicit
+  Wayland/X11 backend selection, event-driven host diagnostics and opt-in matching
+  desktop launchers in generated projects, with `--chrome`, `--control-style`
+  and `--app-id` creation options. CI compiles all ten desktop starters.
+  Linux compositor visual/runtime acceptance remains a separate release gate.
+
 - Port eight runnable Button, Select and Table recipes into the current Catalog
   without changing its design or shared rounded/square Table selection and sort.
   Their Code panels and web reference show complete cached Rust programs; the

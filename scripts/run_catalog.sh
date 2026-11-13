@@ -60,6 +60,9 @@ if [ "$(uname -s)" = Darwin ]; then
     /usr/bin/open -W -n "$app"
   fi
 elif [ "${1:-}" != --check ]; then
-  echo 'Local notifications are currently macOS-only; other demos remain available.'
+  case "$(uname -s)" in
+    Linux) echo 'Opening Catalog with Linux desktop services; portals, notifications and tray need desktop session services.' ;;
+    *) echo 'Native desktop services are available on macOS and Linux; other demos remain available.' ;;
+  esac
   "$binary"
 fi

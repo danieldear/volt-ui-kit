@@ -369,6 +369,7 @@ fn custom_window_controls_fit_existing_header_and_reset_preserves_host_state() {
     use volt_ui_kit::native::{WindowChrome, WindowState};
     let mut app = App::new();
     app.chrome = WindowChrome::Custom;
+    app.window_control_style = volt_ui_kit::ui::WindowControlStyle::TrafficLights;
     app.window_state.resizable = true;
     for macos in [false, true] {
         for size in [[560., 460.], [760., 900.], [1320., 900.]] {
@@ -416,6 +417,10 @@ fn custom_window_controls_fit_existing_header_and_reset_preserves_host_state() {
     let before = app.window_state;
     app.reset();
     assert_eq!(app.chrome, WindowChrome::Custom);
+    assert_eq!(
+        app.window_control_style,
+        volt_ui_kit::ui::WindowControlStyle::TrafficLights
+    );
     assert_eq!(app.window_state, before);
     app.window_state.fullscreen = true;
     let runtime = mount(&app, [1320., 900.]);

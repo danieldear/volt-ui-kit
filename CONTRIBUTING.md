@@ -48,6 +48,8 @@ Catalog. This check opens no windows and uses the existing build cache:
 ```sh
 cargo build --locked --features native --example samples
 python3 scripts/check_sample_sources.py
+cargo build --locked --features dev-tools --bin cargo-volt
+python3 scripts/check_scaffold_sources.py
 ```
 
 It honors `CARGO_TARGET_DIR`, uses the repository lockfile to seed an isolated
@@ -72,7 +74,10 @@ On Linux, install a font (for example `fonts-dejavu-core`) for the text tests.
   `unicode-width`. New dependencies belong behind a feature.
 - **Stay on Rust 1.89.** Don't take dependency updates that raise the minimum
   version without discussing it first.
-- **No `unsafe`.** The crate forbids it; platform code goes through safe bindings.
+- **Keep `unsafe` fenced.** Non-Linux/non-native builds forbid it. Linux native
+  builds deny it except for the documented raw Wayland-handle bridge, whose
+  ownership/drop-order safety invariants must be reviewed. Other platform calls
+  use safe bindings; do not broaden the exception for ordinary features.
 - **Bound every input.** Sizes, counts, text lengths and caches have explicit
   limits, and invalid input is an error, not a panic.
 - **Test rendering changes visually.** Use headless snapshots
