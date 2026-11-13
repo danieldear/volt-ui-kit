@@ -350,8 +350,23 @@ pub struct VisualStyle {
     pub(crate) shadow: Option<Shadow>,
     pub(crate) glow: Option<Glow>,
     pub(crate) offset: Option<[f32; 2]>,
+    pub(crate) transform: Option<crate::motion::Transform2D>,
 }
 impl VisualStyle {
+    /// A complete 2D pose; unlike decorative offsets it also transforms input.
+    pub fn transform(mut self, value: crate::motion::Transform2D) -> Self {
+        self.transform = Some(value);
+        self
+    }
+    pub fn scale(mut self, x: f32, y: f32) -> Self {
+        self.transform = Some(self.transform.unwrap_or_default().scale(x, y));
+        self
+    }
+    pub fn rotate(mut self, degrees: f32) -> Self {
+        self.transform = Some(self.transform.unwrap_or_default().rotate(degrees));
+        self
+    }
+
     /// Translate the element (logical px) in this state, e.g. a hover lift
     /// `offset(0., -2.)`; animates with the state's animation.
     pub fn offset(mut self, x: f32, y: f32) -> Self {
@@ -461,6 +476,11 @@ pub(crate) struct Effects {
     pub disabled: VisualStyle,
     pub animations: [Option<Animation>; 3],
     pub animation: Option<Animation>,
+    pub layout_animation: Option<Animation>,
+    pub shared: Option<String>,
+    pub drag_motion: Option<crate::motion::DragMotion>,
+    pub timeline: Option<crate::motion::Timeline>,
+    pub text_effect: Option<crate::motion::TextEffect>,
     pub transition: Option<Transition>,
     pub transition_revision: u64,
     pub ambient: Option<Ambient>,
@@ -471,6 +491,28 @@ pub(crate) struct Effects {
 }
 impl Effects {
     pub fn validate(&self, path: &str) -> Result<(), DocumentError> {
+        if self.layout_animation.is_some_and(|a| !a.valid())
+            || self.shared.as_ref().is_some_and(|s| {
+                s.is_empty()
+                    || s.len() > 128
+                    || !s
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+        {
+            return Err(DocumentError(format!(
+                "{path}: invalid layout animation/shared identity"
+            )));
+        }
+        if self.drag_motion.is_some_and(|d| !d.valid()) {
+            return Err(DocumentError(format!("{path}: invalid drag motion")));
+        }
+        if self.timeline.as_ref().is_some_and(|t| !t.is_valid()) {
+            return Err(DocumentError(format!("{path}: invalid timeline")));
+        }
+        if self.text_effect.is_some_and(|t| !t.valid()) {
+            return Err(DocumentError(format!("{path}: invalid text effect")));
+        }
         let invalid = || DocumentError(format!("{path}: invalid effect value"));
         if self.shadows.len() > 8 || self.shadows.iter().any(|s| !s.valid()) {
             return Err(DocumentError(format!(
@@ -484,6 +526,9 @@ impl Effects {
             .chain(&self.states)
             .chain(std::iter::once(&self.disabled))
         {
+            if style.transform.is_some_and(|t| !t.is_valid()) {
+                return Err(invalid());
+            }
             for color in [&style.color, &style.background, &style.border_color]
                 .into_iter()
                 .flatten()

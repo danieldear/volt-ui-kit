@@ -924,8 +924,14 @@ impl<C: 'static> App<C> {
             self.animation_clock.reset();
             return false;
         }
-        self.runtime
-            .advance_animations(self.animation_clock.elapsed(now))
+        let was_geometry = self.runtime.has_animated_geometry();
+        let changed = self
+            .runtime
+            .advance_animations(self.animation_clock.elapsed(now));
+        if changed && (was_geometry || self.runtime.has_animated_geometry()) {
+            self.access_updates.invalidate();
+        }
+        changed
     }
     fn settle_animations(&mut self) {
         self.runtime

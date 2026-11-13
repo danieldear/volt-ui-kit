@@ -92,8 +92,9 @@ the primary supported host.
 - **App-owned navigation.** Typed route links, bounded Back/Forward history and
   standalone keyboard-accessible web links. Browser opening is explicit; see
   [navigation and links](docs/components.md#typed-navigation-and-web-links).
-- **Deliberate motion.** Finite spring responses, staggered entrances and explicit
-  replay, with reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
+- **Deliberate motion.** Interactive 2D transforms, keyed/shared layout transitions,
+  bounded drag momentum, pose timelines and animated text, alongside spring
+  responses and staggered entrances. Logical-pixel scaling and reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
 - **A fast dev loop.** `cargo volt dev` rebuilds on save and restarts the app
   with its state and window position intact.
 

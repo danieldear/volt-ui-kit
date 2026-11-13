@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add opt-in 2D subtree transforms with matching hit tests, keyed/shared-element
+  layout transitions, bounded analytic drag momentum, pose timelines with
+  pause/reverse/seek, and typing/crossfade/rolling-number/shimmer text presets.
+  Keep logical coordinates, reduced-motion behavior, GPU vector antialiasing and
+  bounded density-aware software composition. Add five Catalog motion sections
+  and fractional-DPI/input/CPU-GPU regressions; existing motion defaults remain.
+  Custom DocumentPainter adapters must implement the new default transform hook
+  to render these effects; native Shape gains a Transformed variant.
+
+
 - Reduce animation-frame allocation by sharing immutable vector artwork between
   paint snapshots and avoiding a second styled-node clone. Coalesce native
   accessibility publication until input, layout, focus or an initial tree request

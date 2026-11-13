@@ -236,7 +236,8 @@ for explicit native opening. Try both workflows on the Catalog's Navigation page
 
 See [animation and transitions](styling-and-themes.md#animation-and-transitions)
 for finite springs, staggered entrances, replay revisions, interaction feedback
-and reduced-motion behavior. Try the Catalog’s **Effects & motion** page.
+and reduced-motion behavior. Interactive 2D transforms, keyed/shared geometry,
+bounded drag momentum, timeline playback and animated text are covered there too. Try the Catalog’s **Effects & motion** page.
 
 ## Customizing component spacing
 
@@ -633,4 +634,6 @@ alternate.build()?;
   Up/Down navigation through results yet.
 - Submenus open in place rather than cascading.
 - `.offset(..)` and slide/ambient motion move pixels only; layout and hit
-  targets stay where they were.
+  targets stay where they were. Use `.transform(..)`, `.layout_animation(..)` or
+  `.drag_motion(..)` when input must follow the animated content. Text morphing
+  is a shaped-label crossfade, not arbitrary font-outline deformation.

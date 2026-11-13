@@ -72,11 +72,12 @@ impl Runtime {
             .find(|b| b.id == id && b.enabled && b.slider.is_some())
             .map(|b| b.id.clone())
     }
-    fn slider_pointer_value(&self, id: &str, x: f32) -> Option<f32> {
+    fn slider_pointer_value(&self, id: &str, x: f32, y: f32) -> Option<f32> {
         if !x.is_finite() {
             return None;
         }
         let b = self.boxes.iter().find(|b| b.id == id && b.enabled)?;
+        let [x, _] = self.input_point(b, x, y)?;
         let props = b.slider.as_ref()?;
         let (left, width, _) = slider_geometry(b, self.scale);
         let ratio = if width > 0. {
@@ -189,7 +190,7 @@ impl Runtime {
         self.focused = Some(id.clone());
         self.focus_visible = false;
         self.hovered = Some(id.clone());
-        let value = self.slider_pointer_value(&id, x);
+        let value = self.slider_pointer_value(&id, x, y);
         if let (Some(v), Some(props)) = (
             value,
             self.boxes
@@ -214,7 +215,7 @@ impl Runtime {
     pub(super) fn slider_pointer_move<C>(
         &mut self,
         x: f32,
-        _y: f32,
+        y: f32,
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<Option<InputOutcome>, DocumentError> {
@@ -232,7 +233,7 @@ impl Runtime {
                 activated: false,
             }));
         }
-        let activated = match self.slider_pointer_value(&id, x) {
+        let activated = match self.slider_pointer_value(&id, x, y) {
             Some(value) => self.emit_slider(&id, value, handlers, context)?,
             None => false,
         };
@@ -579,7 +580,10 @@ impl Runtime {
             return Ok(None);
         };
         let r = handle.bounds.bounds();
-        let coordinate = [x, y][axis];
+        let Some(point) = self.input_point(handle, x, y) else {
+            return Ok(None);
+        };
+        let coordinate = point[axis];
         let grab_offset = coordinate - (r[axis] + r[axis + 2] * 0.5);
         self.split_capture = Some(SplitCapture {
             handle: id.clone(),
@@ -623,7 +627,8 @@ impl Runtime {
         if !x.is_finite() || !y.is_finite() {
             return Ok(Some(InputOutcome::default()));
         }
-        let Some((_, props, axis, origin, total, available)) = self.split_geometry(&capture.owner)
+        let Some((owner, props, axis, origin, total, available)) =
+            self.split_geometry(&capture.owner)
         else {
             return Ok(Some(InputOutcome::default()));
         };
@@ -631,7 +636,10 @@ impl Runtime {
             return Ok(Some(InputOutcome::default()));
         }
         let handle = split_sizes(total, &props, self.scale)[1];
-        let ratio = ([x, y][axis] - capture.grab_offset - origin - handle * 0.5) / available;
+        let Some(point) = self.input_point(&owner, x, y) else {
+            return Ok(Some(InputOutcome::default()));
+        };
+        let ratio = (point[axis] - capture.grab_offset - origin - handle * 0.5) / available;
         let changed = self.emit_split(&capture.owner, ratio, handlers, context)?;
         if changed {
             if let Some(c) = self.split_capture.as_mut() {

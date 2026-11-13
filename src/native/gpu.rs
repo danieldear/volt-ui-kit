@@ -174,24 +174,29 @@ fn image_admission(
     batches: &[PaintBatch<Shape, Glyph>],
     max_side: u32,
 ) -> Result<HashSet<usize>, &'static str> {
-    admit_images(
-        batches
-            .iter()
-            .flat_map(|b| &b.shapes)
-            .filter_map(|s| match s {
+    let mut specs = Vec::new();
+    let mut stack = vec![(batches, 0usize)];
+    while let Some((batches, depth)) = stack.pop() {
+        if depth > 24 {
+            return Err("transform depth");
+        }
+        for shape in batches.iter().flat_map(|b| &b.shapes) {
+            match shape {
                 Shape::Image(_, background, _) => {
                     let image = &background.image;
-                    Some((
+                    specs.push((
                         image.pixels().as_ptr() as usize,
                         image.width(),
                         image.height(),
                         image.pixels().len(),
-                    ))
+                    ));
                 }
-                _ => None,
-            }),
-        max_side,
-    )
+                Shape::Transformed(_, content, _) => stack.push((content, depth + 1)),
+                _ => {}
+            }
+        }
+    }
+    admit_images(specs.into_iter(), max_side)
 }
 
 fn admit_images(

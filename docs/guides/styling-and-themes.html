@@ -131,16 +131,17 @@ let task: Element&lt;()&gt; = panel![text(&quot;Ready for review&quot;)].key(&qu
     .into();
 task.build().unwrap();</code></pre></div><p><code>.animation(..)</code> interpolates appearance and offset changes for a stable key.
 <code>animate_on(Interaction::Hover, ..)</code> (also Pressed or Focus) supplies timing for
-interaction patches. Interruptions start from the current painted value. Only
-position overshoots; opacity, colors and border widths stay bounded. Existing
+interaction patches. Interruptions start from the current painted value. Geometry can overshoot with spring easing; opacity, colors and border widths
+stay bounded. Existing
 linear/ease-in/ease-out/ease-in-out and <code>Easing::CubicBezier(..)</code> curves remain
 available. Explicit <code>.easing(..)</code> replaces any spring timing on that animation.</p>
 <p><code>Animation::spring_with(Spring::new().damping_ratio(0.7))</code> tunes bounce. The valid
 damping range is 0.4..=2, default 0.8; 1 is critically damped. This is a finite,
 normalized damped response: duration controls settling time, and interruptions
-preserve position <strong>not physical velocity</strong>. It is not a layout/sizing animation
-or a physics simulation. Small offsets suit controls; larger movement is best
-kept to decorative or noninteractive content because hit targets do not move.</p>
+preserve position <strong>not physical velocity</strong>. It is not a physical spring integration.
+<code>.animation(..)</code> changes appearance/pose, not measured layout; use the explicit
+<code>.layout_animation(..)</code> API below for geometry. Decorative <code>.offset(..)</code> leaves
+hit targets in place; use <code>.transform(..)</code> when input must follow larger movement.</p>
 <h3 id="entrances-exits-and-stagger">Entrances, exits and stagger</h3>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
 let replay_revision = 0u64; // owned by the application
@@ -169,8 +170,100 @@ never generate it from the clock inside <code>view</code>.</li>
 <li>Departing subtrees are paint-only snapshots. Removed controls cannot activate
 through pointer, keyboard or accessibility, even while their exit is visible.</li>
 <li><code>.offset</code>, slide and ambient effects move pixels, <strong>not layout or hit targets</strong>.
-No scale/rotation transforms, layout tweening or automatic FLIP are implied.</li>
+Use the explicit 2D transform and layout APIs below when input must follow the motion.</li>
 </ul>
+<h3 id="interactive-2d-transforms-and-automatic-layout">Interactive 2D transforms and automatic layout</h3>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let card: Element&lt;()&gt; = panel![button(&quot;Open&quot;).on_click(|_: &amp;mut ()| {})]
+    .key(&quot;card&quot;)
+    .transform(Transform2D::new().scale(1.05, 1.05).rotate(-3.).origin(0.5, 0.5))
+    .animation(Animation::ease_out().duration_ms(240))
+    .layout_animation(Animation::spring().duration_ms(420))
+    .into();
+card.build().unwrap();</code></pre></div><ul>
+<li><code>.scale(x, y)</code> and <code>.rotate(degrees)</code> are convenient transform modifiers.
+<code>Transform2D::translate(x, y)</code> uses <strong>logical pixels</strong>; origins are fractions
+of the node&#39;s box. Negative scales reflect; zero scale draws no area and
+cannot capture a pointer. All parameters are finite and bounded.</li>
+<li>Transforms compose over the subtree. Paint, pointer coordinates, clipping,
+editor candidate bounds and accessibility bounds follow the same sampled
+geometry. Unlike <code>.offset</code>, transformed controls remain interactive where drawn.</li>
+<li><code>.layout_animation(animation)</code> interpolates keyed geometry after recomposition,
+without rerunning layout on every frame. Nested tracks avoid applying their
+parent&#39;s movement twice. Retargeting preserves sampled position, not velocity.
+Changing DPI resets geometry tracks instead of tweening stale physical pixels.</li>
+<li><code>.shared_element(&quot;selection-indicator&quot;)</code> pairs the previous and next geometry
+across different node keys. The identifier must be unique in the mounted tree;
+apply <code>.layout_animation(..)</code> too. The new mounted node owns input. This is
+geometry matching, <strong>not</strong> a screenshot transition or arbitrary content morph.</li>
+</ul>
+<h3 id="drag-momentum-and-timelines">Drag momentum and timelines</h3>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let draggable: Element&lt;()&gt; = panel![text(&quot;Drag me&quot;)].key(&quot;card&quot;)
+    .drag_motion(DragMotion::new().bounds([0., 0.], [180., 40.]).friction(7.))
+    .into();
+let sequence: Element&lt;()&gt; = text(&quot;Ready&quot;).key(&quot;status&quot;)
+    .timeline(Timeline::new(900)
+        .keyframe(0., MotionPose::new())
+        .keyframe(0.5, MotionPose::new().translate(80., 0.).scale(1.1, 1.1))
+        .keyframe(1., MotionPose::new().translate(160., 0.).rotate(6.))
+        .playback(TimelinePlayback::Play)
+        .revision(0))
+    .into();
+draggable.build().unwrap();
+sequence.build().unwrap();</code></pre></div><p>Drag motion uses pointer capture and analytic exponential inertia, not per-frame
+Euler integration: the same elapsed time produces the same position at 60 Hz
+and 120 Hz. Bounds are offsets in local logical axes. A new press stops momentum;
+stale velocity samples do not launch a flick. <code>.momentum(false)</code> keeps direct
+manipulation without the release animation. Reduced motion also disables momentum.
+<code>DragGesture</code> and <code>Inertia</code> are available for application-owned motion.</p>
+<p>A <code>Timeline</code> supports translation, scale, rotation and opacity at 2–128 ordered
+keyframes, up to 60 seconds. <code>TimelinePlayback::{Paused, Play, Reverse, Seek(fraction)}</code>
+pauses, resumes, reverses or seeks the current sequence. Seeking pauses; increment
+<code>.revision(..)</code> to replay. Use stable keys and revisions, not time-dependent values
+inside <code>view</code>. <code>TimelinePlayer</code> exposes the same deterministic clock-driven engine
+for custom hosts. There is no global timer or additional thread per animation.</p>
+<h3 id="text-presets">Text presets</h3>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+let labels: Element&lt;()&gt; = vstack![
+    typing_text(&quot;Native, not a webview.&quot;)
+        .key(&quot;intro&quot;).text_effect(TextEffect::typing().duration_ms(1400).revision(0)),
+    morphing_text(&quot;Connected&quot;).key(&quot;status&quot;),
+    rolling_number(2048).key(&quot;count&quot;).font_size(28.),
+    shimmer_text(&quot;Preparing workspace&quot;).key(&quot;loading&quot;)
+].into();
+labels.build().unwrap();</code></pre></div><p>Typing reveals Unicode grapheme clusters; accessibility and copy retain the full
+value (not suitable for hiding secrets). Morphing text crossfades shaped labels;
+it does <strong>not</strong> deform font outlines. Rolling numbers use independently clipped,
+monospaced digit transitions with fractional scene movement. Morph/rolling presets
+start when the value changes, not on every render. Shimmer is a moving opacity
+highlight; remove it when work finishes. Offscreen shimmer/ambient effects do not
+keep an otherwise idle host redrawing. Reduced motion shows complete text and
+stops decorative animation.</p>
+<h3 id="dpi-antialiasing-and-host-compatibility">DPI, antialiasing and host compatibility</h3>
+<p>All motion APIs use logical pixels. Native and web hosts apply their scale once;
+do not multiply transforms by the device scale. GPU motion appends vector scenes
+and outlines under affine transforms, preserving antialiasing without uploading
+CPU framebuffers. Opted-in transform/text-motion scopes keep outline hinting
+consistent through the animation, avoiding a hinted/unhinted switch at rest.
+Transformed subscenes share the root image/font/glyph caches and frame-image
+admission identities rather than multiplying cache budgets per element.
+Software motion renders at a density appropriate to magnification, then composites
+with bicubic filtering. Software transform staging is bounded (16 megapixels per
+layer, 64 MiB cumulative staging, 24 nested scopes); very large scenes can exceed
+those limits and return an explicit rendering error.</p>
+<p>Legacy <code>Painter</code> implementations remain source-compatible. A custom
+<code>DocumentPainter</code> must implement <code>ui_transform_batches</code> to display these new
+transform-based effects; its default preserves legacy drawing, not affine motion.
+The toolkit&#39;s raster/GPU adapters implement it. The public native <code>Shape</code> enum
+adds a <code>Transformed</code> variant; downstream exhaustive matches need to handle it.
+Existing <code>.offset</code>, transition defaults, table behavior and chrome are unchanged.
+Portaled popovers/tooltips still use layout anchors; keep an anchor stationary
+while its popup is open or explicitly manage the popup position. Portals are not
+automatically shared elements.
+This is 2D motion: 3D transforms, pinch/rotation recognizers and path-outline morphing
+are not included. Smoothness still depends on scene complexity and host hardware;
+no fixed frame rate is promised by these APIs.</p>
 <h3 id="built-in-component-motion">Built-in component motion</h3>
 <p>Overlay and disclosure components animate by default. Timing comes from the
 <code>tokens::motion</code> presets: roughly 100–220 ms, ease-out, no overshoot.</p>
@@ -263,4 +356,4 @@ SVG path data.</li>
 clicks follow the same shape. <code>.clip_contents(true)</code> clips to the rounded
 corners.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/styling-and-themes.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#modifiers-and-inheritance">Modifiers and inheritance</a><a href="#theme-colours">Theme colours</a><a href="#built-in-palettes">Built-in palettes</a><a href="#custom-themes">Custom themes</a><a href="#typography-and-fonts">Typography and fonts</a><a href="#effects-and-interaction-states">Effects and interaction states</a><a href="#animation-and-transitions">Animation and transitions</a><a href="#entrances-exits-and-stagger">Entrances, exits and stagger</a><a href="#built-in-component-motion">Built-in component motion</a><a href="#reduced-motion-and-idle">Reduced motion and idle</a><a href="#images">Images</a><a href="#vector-drawing-and-clipping">Vector drawing and clipping</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/styling-and-themes.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#modifiers-and-inheritance">Modifiers and inheritance</a><a href="#theme-colours">Theme colours</a><a href="#built-in-palettes">Built-in palettes</a><a href="#custom-themes">Custom themes</a><a href="#typography-and-fonts">Typography and fonts</a><a href="#effects-and-interaction-states">Effects and interaction states</a><a href="#animation-and-transitions">Animation and transitions</a><a href="#entrances-exits-and-stagger">Entrances, exits and stagger</a><a href="#interactive-2d-transforms-and-automatic-layout">Interactive 2D transforms and automatic layout</a><a href="#drag-momentum-and-timelines">Drag momentum and timelines</a><a href="#text-presets">Text presets</a><a href="#dpi-antialiasing-and-host-compatibility">DPI, antialiasing and host compatibility</a><a href="#built-in-component-motion">Built-in component motion</a><a href="#reduced-motion-and-idle">Reduced motion and idle</a><a href="#images">Images</a><a href="#vector-drawing-and-clipping">Vector drawing and clipping</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

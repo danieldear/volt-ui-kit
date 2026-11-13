@@ -2367,6 +2367,11 @@ fn effects_doc(app: &App) -> Doc {
     .gap(12., Axis::Vertical);
     Doc {
         sections: vec![
+            super::motion_lab::transforms(app),
+            super::motion_lab::layout(app),
+            super::motion_lab::gestures(app),
+            super::motion_lab::timeline(app),
+            super::motion_lab::text_presets(app),
             super::motion_lab::workspace(app),
             super::motion_lab::sequence(app),
             super::motion_lab::feedback(app),
@@ -2397,6 +2402,26 @@ fn effects_doc(app: &App) -> Doc {
             ),
         ],
         api: vec![
+            (
+                ".transform(Transform2D) / .scale(x, y) / .rotate(degrees)",
+                "Interactive logical-pixel 2D subtree poses; paint and input move together",
+            ),
+            (
+                ".layout_animation(Animation).shared_element(key)",
+                "Keyed geometry transitions; unique shared keys pair geometry across identities",
+            ),
+            (
+                ".drag_motion(DragMotion)",
+                "Captured direct manipulation with bounded analytic release momentum",
+            ),
+            (
+                ".timeline(Timeline)",
+                "Finite pose keyframes with replay, pause, reverse and seek",
+            ),
+            (
+                "typing_text / morphing_text / rolling_number / shimmer_text",
+                "Grapheme reveal, shaped crossfade, rolling digits and opacity shimmer",
+            ),
             (
                 "Animation::spring() / spring_with(Spring)",
                 "Finite damped response; positional overshoot, bounded colors/opacity",

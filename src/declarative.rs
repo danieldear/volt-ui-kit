@@ -430,6 +430,11 @@ pub use effects::{
     Ambient, Animation, Easing, Glow, Interaction, Motion, Shadow, Spring, Transition, VisualStyle,
 };
 mod motion;
+mod motion_geometry;
+mod motion_gesture;
+#[cfg(feature = "rust-ui")]
+mod motion_text;
+mod motion_timeline;
 mod runtime;
 pub use document::{
     Align, Bindings, Document, DocumentError, EditorHighlights, Flow, Kind, Node, Rounding, Scroll,

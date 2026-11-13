@@ -910,20 +910,23 @@ impl Runtime {
     ) -> Result<bool, DocumentError> {
         let mut events = Vec::new();
         for b in &self.layout_boxes {
+            let transform = self.world_transform(b);
             let (Some(name), Some(e)) = (&b.on_selection, self.editors.get_mut().get_mut(&b.id))
             else {
                 continue;
             };
             let [x, y, _, _] = inner_geometry(b, self.scale);
             let line = editor_line_height(&b.text_style);
-            let caret = [
-                (x + e.paint_caret[0] - e.offset[0]) / self.scale,
-                (y + e.paint_caret[1] - e.offset[1]) / self.scale,
-                1.,
-                line / self.scale,
-            ];
+            let caret = transform
+                .bounds([
+                    x + e.paint_caret[0] - e.offset[0],
+                    y + e.paint_caret[1] - e.offset[1],
+                    self.scale,
+                    line,
+                ])
+                .map(|v| v / self.scale);
             let range = e.range();
-            let bounds = b.bounds.bounds().map(|v| v / self.scale);
+            let bounds = transform.bounds(b.bounds.bounds()).map(|v| v / self.scale);
             let top_row = (e.offset[1] / line.max(1.)).floor() as usize;
             let top = e.rows.get(top_row).map_or(0, |r| r.start);
             let report = (
@@ -1292,12 +1295,12 @@ impl Runtime {
         let e = editors.get(&b.id)?;
         let p = e.paint_caret;
         let [x, y, _, _] = self.editor_inner(b);
-        Some([
+        Some(self.world_transform(b).bounds([
             x + p[0] - e.offset[0],
             y + p[1] - e.offset[1],
             self.scale,
             editor_line_height(&b.text_style),
-        ])
+        ]))
     }
     pub fn editor_scroll_offset(&self, id: &str) -> Option<[f32; 2]> {
         self.editors
@@ -1358,6 +1361,7 @@ impl Runtime {
         let Some(b) = self.boxes.iter().find(|b| b.id == id && b.editor.is_some()) else {
             return false;
         };
+        let [x, y] = self.input_point(b, x, y).unwrap_or([x, y]);
         let [bx, by, _, _] = self.editor_inner(b);
         let Some(e) = self.editors.get_mut().get_mut(&id) else {
             return false;
@@ -1384,6 +1388,7 @@ impl Runtime {
         let Some(b) = self.boxes.iter().find(|b| b.id == id && b.editor.is_some()) else {
             return false;
         };
+        let [x, y] = self.input_point(b, x, y).unwrap_or([x, y]);
         let [bx, by, _, _] = self.editor_inner(b);
         let Some(e) = self.editors.get_mut().get_mut(&id).filter(|e| e.drag) else {
             return false;

@@ -502,9 +502,7 @@ impl Runtime {
         let top = self.boxes.iter().rev().find(|b| {
             self.scope_allows_id(&b.id)
                 && !self.portal_passthrough(&b.id)
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && self.hit_clip(b, x, y)
                 && self.input_contains(b, x, y)
                 && self.input_surface(b)
         })?;
@@ -531,7 +529,7 @@ impl Runtime {
                 .get(&b.id)
                 .map_or(0., |st| st.offset[1]);
             self.code_scrollbar(b, b.ext.code.as_deref().unwrap(), offset)
-                .is_some_and(|[left, ..]| x >= left)
+                .is_some_and(|[left, ..]| self.input_point(b, x, y).is_some_and(|p| p[0] >= left))
         })
     }
     /// Whether a press at physical `x`, `y` lands on a code view.
@@ -584,6 +582,7 @@ impl Runtime {
         y: f32,
         character: bool,
     ) -> CodePosition {
+        let [x, y] = self.input_point(b, x, y).unwrap_or([x, y]);
         let props = b.ext.code.as_deref().unwrap();
         let states = self.code_views.borrow();
         let default = CodeViewState::default();
@@ -689,6 +688,7 @@ impl Runtime {
         let Some(b) = self.code_box_at(x, y).cloned() else {
             return Ok(None);
         };
+        let [px, py] = self.input_point(&b, x, y).unwrap_or([x, y]);
         // The scrollbar strip: hold the thumb and drag it, or press the
         // track to bring the thumb under the pointer and keep dragging.
         let props = b.ext.code.as_deref().unwrap();
@@ -698,9 +698,9 @@ impl Runtime {
             .get(&b.id)
             .map_or(0., |st| st.offset[1]);
         if let Some([left, _, _, length, thumb]) = self.code_scrollbar(&b, props, offset) {
-            if x >= left {
-                let grab = if (thumb..thumb + length).contains(&y) {
-                    y - thumb
+            if px >= left {
+                let grab = if (thumb..thumb + length).contains(&py) {
+                    py - thumb
                 } else {
                     length / 2.
                 };
@@ -709,7 +709,7 @@ impl Runtime {
                     .entry(b.id.clone())
                     .or_default()
                     .thumb = Some(grab);
-                let changed = self.code_drag_thumb(&b, props, y, grab);
+                let changed = self.code_drag_thumb(&b, props, py, grab);
                 return Ok(Some(InputOutcome {
                     changed: true,
                     activated: changed,
@@ -723,7 +723,7 @@ impl Runtime {
             let states = self.code_views.borrow();
             let frame = self.code_frame(&b, props, states.get(&b.id).unwrap_or(&default));
             let right = frame.bounds[0] + frame.gutter;
-            if x >= right - 17. * frame.scale && x < right {
+            if px >= right - 17. * frame.scale && px < right {
                 let name = props.on_fold.clone();
                 drop(states);
                 if let Some(name) = name {
@@ -903,7 +903,8 @@ impl Runtime {
             else {
                 return Ok(None);
             };
-            let changed = self.code_drag_thumb(&b, b.ext.code.as_deref().unwrap(), y, grab);
+            let py = self.input_point(&b, x, y).map_or(y, |p| p[1]);
+            let changed = self.code_drag_thumb(&b, b.ext.code.as_deref().unwrap(), py, grab);
             return Ok(Some(InputOutcome {
                 changed,
                 activated: changed,
@@ -932,10 +933,11 @@ impl Runtime {
         }
         // Past the top or bottom edge, scroll toward the pointer.
         let [_, by, _, bh] = b.bounds.bounds();
-        let edge = if y < by {
-            (y - by) / self.scale
-        } else if y > by + bh {
-            (y - by - bh) / self.scale
+        let [px, py] = self.input_point(&b, x, y).unwrap_or([x, y]);
+        let edge = if py < by {
+            (py - by) / self.scale
+        } else if py > by + bh {
+            (py - by - bh) / self.scale
         } else {
             0.
         };
@@ -949,7 +951,10 @@ impl Runtime {
             let st = states.get_mut(&b.id).unwrap();
             st.offset[1] = (st.offset[1] + edge.clamp(-60., 60.)).clamp(0., max[1]);
         }
-        let at = self.code_position_at(&b, x, y.clamp(by, by + bh - 1.));
+        let [wx, wy] = self
+            .world_transform(&b)
+            .point([px, py.clamp(by, by + bh - 1.)]);
+        let at = self.code_position_at(&b, wx, wy);
         let (outcome, _) = self.dispatch_code(&b.id, CodeInput::Drag { at }, handlers, ctx)?;
         Ok(Some(outcome))
     }
@@ -1184,12 +1189,12 @@ impl Runtime {
             .get(&head.line)
             .and_then(|s| s.get(head.column).copied())
             .unwrap_or(head.column as f32 * f.advance / f.scale);
-        Some([
+        Some(self.world_transform(b).bounds([
             f.text_x + (x - st.offset[0]) * f.scale,
             f.bounds[1] + (head.line as f32 * props.line_height - st.offset[1]) * f.scale,
             f.scale,
             f.line_height,
-        ])
+        ]))
     }
 
     // ---- Painting ----------------------------------------------------------

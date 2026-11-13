@@ -12,6 +12,13 @@ use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, PartialEq)]
 pub enum Shape {
+    /// Retained, normalized subtree. GPU adapters append vector scenes;
+    /// software composites at an adequate raster density before transforming.
+    Transformed(
+        crate::motion::Affine2D,
+        std::sync::Arc<Vec<PaintBatch<Shape, Glyph>>>,
+        [u32; 2],
+    ),
     Rectangle([f32; 4], [f32; 4]),
     Triangle([[f32; 2]; 3], [f32; 4]),
     Rounded([f32; 4], f32, [f32; 4]),
@@ -150,6 +157,16 @@ fn translated_batch(
     result.clip = crate::Rect::new(x + dx, y + dy, w, h).expect("translation preserves dimensions");
     for shape in &mut result.shapes {
         match shape {
+            Shape::Transformed(matrix, ..) => {
+                *matrix = matrix.then(crate::motion::Affine2D([
+                    1.,
+                    0.,
+                    0.,
+                    1.,
+                    f64::from(dx),
+                    f64::from(dy),
+                ]));
+            }
             Shape::Rectangle(b, _)
             | Shape::Rounded(b, _, _)
             | Shape::Corners(b, _, _)
@@ -410,6 +427,8 @@ pub struct RasterPainter {
     effect_bytes: usize,
     effect_tint_bytes: usize,
     layer_pool: Vec<Pixmap>,
+    transform_depth: usize,
+    transform_bytes: u64,
     /// Pixel region [x0, y0, x1, y1] being repainted by an incremental frame;
     /// every write is confined to it through the clip masks.
     damage: Option<[usize; 4]>,
@@ -457,6 +476,7 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
         [x0, y0, x1 - x0, y1 - y0]
     };
     Some(match s {
+        Shape::Transformed(m, _, size) => m.bounds([0., 0., size[0] as f32, size[1] as f32]),
         Shape::Rectangle(b, _)
         | Shape::Rounded(b, ..)
         | Shape::Corners(b, ..)
@@ -859,6 +879,8 @@ impl RasterPainter {
             effect_bytes: 0,
             effect_tint_bytes: 0,
             layer_pool: Vec::new(),
+            transform_depth: 0,
+            transform_bytes: 0,
             damage: None,
             raster_origin: [0; 2],
             last: None,
@@ -1831,6 +1853,10 @@ impl RasterPainter {
                     _ => &rect_mask,
                 };
                 match shape {
+                    Shape::Transformed(matrix, content, size) => {
+                        self.draw_transformed(&mut pixmap, mask, *matrix, content, *size)?;
+                        continue;
+                    }
                     Shape::ClipBegin(region) => {
                         if clips.len() >= 48 {
                             return Err("clip depth exceeds limit".into());
@@ -2126,7 +2152,8 @@ impl RasterPainter {
                         };
                         (path, *c)
                     }
-                    Shape::Outline(..)
+                    Shape::Transformed(..)
+                    | Shape::Outline(..)
                     | Shape::Gradient(..)
                     | Shape::Shadow(..)
                     | Shape::InnerShadow(..)
@@ -2859,6 +2886,15 @@ impl Painter for RasterPainter {
     }
 }
 impl DocumentPainter for RasterPainter {
+    fn ui_transform_batches(
+        &mut self,
+        batches: Vec<PaintBatch<Shape, Glyph>>,
+        matrix: crate::motion::Affine2D,
+        ancestor_clip: crate::Rect,
+    ) -> Vec<PaintBatch<Shape, Glyph>> {
+        transform::group(self, batches, matrix, ancestor_clip)
+    }
+
     fn ui_clip_begin(&mut self, out: &mut Vec<Shape>, clip: ClipRegion) {
         out.push(Shape::ClipBegin(clip));
     }
@@ -5111,3 +5147,6 @@ mod emoji_tests {
         assert_eq!(face.families[0].0, family);
     }
 }
+
+#[path = "raster_transform.rs"]
+mod transform;

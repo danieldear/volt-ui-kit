@@ -1041,6 +1041,22 @@ macro_rules! modifiers {
             /// Draw the border only on these edges (straight edges; corners stay square).
             pub fn border_sides(mut self, sides: Sides) -> Self { self.$($field)*.ext.border_sides = Some(sides); self }
             pub fn border_style(mut self, style: BorderStyle) -> Self { self.$($field)*.ext.border_style = style; self }
+
+
+            /// Interpolate keyed position/size changes. Nested layout motion
+            /// composes with its parent's transform; use stable keys.
+            pub fn layout_animation(mut self,animation:Animation)->Self {self.$($field)*.effects.layout_animation=Some(animation);self}
+            /// Match geometry across differently keyed instances/parents.
+            pub fn shared_element(mut self,key:impl Into<String>)->Self {self.$($field)*.effects.shared=Some(key.into());self}
+            /// Pointer-captured direct manipulation with bounded optional momentum.
+            pub fn drag_motion(mut self,policy:crate::motion::DragMotion)->Self {self.$($field)*.effects.drag_motion=Some(policy);self}
+            /// A finite, seekable clock-driven sequence. The same revision
+            /// preserves playback across ordinary recomposition.
+            pub fn timeline(mut self,sequence:crate::motion::Timeline)->Self {self.$($field)*.effects.timeline=Some(sequence);self}
+            /// Apply a logical 2D transform to this subtree, including input.
+            pub fn transform(mut self,value:crate::motion::Transform2D)->Self {self.$($field)*.effects.base.transform=Some(value);self}
+            pub fn scale(mut self,x:f32,y:f32)->Self {let t=self.$($field)*.effects.base.transform.unwrap_or_default();self.$($field)*.effects.base.transform=Some(t.scale(x,y));self}
+            pub fn rotate(mut self,degrees:f32)->Self {let t=self.$($field)*.effects.base.transform.unwrap_or_default();self.$($field)*.effects.base.transform=Some(t.rotate(degrees));self}
             /// A linear or radial gradient fill, resolved from theme tokens.
             pub fn background_gradient(mut self, gradient: Gradient) -> Self { self.$($field)*.ext.gradient = Some(gradient); self }
             /// Remove a component's fixed-width default; use the parent's cross-axis allocation.
@@ -1749,6 +1765,8 @@ macro_rules! tab_bar { ($($item:expr),* $(,)?) => { $crate::ui::tab_bar(vec![$($
 macro_rules! tabs { ($($item:expr),* $(,)?) => { $crate::ui::tabs(vec![$($item),*]) }; }
 pub use crate::{button_bar, tab_bar, tabs, toolbar};
 /// Import component functions, types and layout macros together.
+mod text_motion;
+pub use text_motion::{morphing_text, rolling_number, shimmer_text, typing_text};
 pub mod prelude {
     pub use super::{
         accordion, alert, avatar, avatar_group, bar_chart, breadcrumb, carousel, collapsible,
@@ -1792,6 +1810,7 @@ pub mod prelude {
         link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
         NavigationHistory, NavigationLink, NavigationSnapshot, UrlError,
     };
+    pub use super::{morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
     pub use super::{
@@ -1802,5 +1821,9 @@ pub mod prelude {
     pub use super::{
         InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
         PointerPhase, PressedKey,
+    };
+    pub use crate::motion::{
+        Affine2D, DragGesture, DragMotion, Inertia, InertiaPlayer, MotionPose, TextEffect,
+        Timeline, TimelinePlayback, TimelinePlayer, Transform2D,
     };
 }

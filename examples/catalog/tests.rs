@@ -2610,3 +2610,112 @@ fn linux_header_controls_stay_inside_the_existing_compact_toolbar() {
         }
     }
 }
+
+#[test]
+fn new_motion_recipes_preserve_typed_actions_and_reduce_motion() {
+    use volt_ui_kit::ui::prelude::*;
+    let mut app = App::new();
+    for (recipe, actions) in [
+        (
+            motion_lab::transforms as fn(&App) -> pages::Section,
+            vec!["motion-transform-toggle", "motion-affine-button"],
+        ),
+        (
+            motion_lab::layout,
+            vec!["motion-reorder", "motion-resize", "motion-layout-tab-2"],
+        ),
+        (
+            motion_lab::timeline,
+            vec![
+                "motion-replay-timeline",
+                "motion-pause-timeline",
+                "motion-resume-timeline",
+                "motion-reverse-timeline",
+            ],
+        ),
+        (
+            motion_lab::text_presets,
+            vec!["motion-replay-text", "motion-change-text"],
+        ),
+    ] {
+        let section = recipe(&app);
+        let (d, mut h) = section.demo.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        let vp = Viewport::new(1000., 800., 1.25).unwrap();
+        let mut p = RasterPainter::new(vp);
+        r.layout(vp, &Bindings::default(), &mut p).unwrap();
+        for action in actions {
+            assert!(
+                r.accessibility_activate(action, &mut h, &mut app)
+                    .unwrap()
+                    .activated,
+                "{action}"
+            );
+            let (d, next) = recipe(&app).demo.build().unwrap().into_parts();
+            r.replace_document(d, &next, &Bindings::default()).unwrap();
+            h = next;
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            let batches = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            p.rasterize(&batches, [0.; 4]).unwrap();
+        }
+        r.set_reduced_motion(true);
+        assert_eq!(r.animation_wait(), None);
+    }
+    assert!(
+        app.motion.rotated && app.motion.reordered && app.motion.compact && app.motion.text_changed
+    );
+    assert_eq!(app.motion.transform_actions, 1);
+    assert_eq!(app.motion.selected, 2);
+    assert_eq!(app.motion.text_revision, 1);
+    assert_eq!(app.motion.timeline_revision, 1);
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires a real GPU; fractional DPI vector transforms, geometry, text and clips"]
+fn new_motion_recipes_render_on_gpu_at_fractional_dpi_without_framebuffer_uploads() {
+    use std::time::Duration;
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().unwrap();
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 1.25, 1.5, 2.] {
+            let mut app = App::new();
+            for recipe in [
+                motion_lab::transforms,
+                motion_lab::layout,
+                motion_lab::gestures,
+                motion_lab::timeline,
+                motion_lab::text_presets,
+            ] {
+                let section = recipe(&app);
+                let id = section.id;
+                let (d, h) = section.demo.build().unwrap().into_parts();
+                let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+                let vp = Viewport::new(800. * scale, 620. * scale, scale).unwrap();
+                let mut p = RasterPainter::new(vp);
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                r.paint_ui(&mut p, &theme(&app, mode));
+                app.motion.rotated = !app.motion.rotated;
+                app.motion.reordered = !app.motion.reordered;
+                app.motion.compact = !app.motion.compact;
+                app.motion.text_changed = !app.motion.text_changed;
+                app.motion.number += 1234;
+                let (d, h) = recipe(&app).demo.build().unwrap().into_parts();
+                r.replace_document(d, &h, &Bindings::default()).unwrap();
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                for t in [85, 210, 1800] {
+                    r.advance_animations(Duration::from_millis(t));
+                    let batches = r.paint_ui(&mut p, &theme(&app, mode));
+                    let frame = gpu
+                        .render(&mut p, &batches, theme(&app, mode).palette.base[0])
+                        .unwrap();
+                    assert_eq!(gpu.last_over_budget(), None, "{id} {mode:?} {scale} {t}");
+                    assert_eq!(gpu.framebuffer_upload_bytes(), 0);
+                    assert!(frame.pixels().iter().any(|p| p.alpha() > 0));
+                }
+                r.set_reduced_motion(true);
+                assert_eq!(r.animation_wait(), None);
+            }
+        }
+    }
+}

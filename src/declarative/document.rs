@@ -776,14 +776,21 @@ impl Document {
         spacer_defaults(&mut doc.root, &raw["root"]);
         let mut ids = BTreeSet::new();
         let mut count = 0;
-        check_node(&doc.root, "root", 0, &mut count, &mut ids)?;
+        check_node(
+            &doc.root,
+            "root",
+            0,
+            &mut count,
+            &mut ids,
+            &mut BTreeSet::new(),
+        )?;
         Ok(Self { root: doc.root })
     }
     /// Constructs the same validated tree as JSON, without serializing Rust UI.
     #[cfg(feature = "rust-ui")]
     pub(crate) fn from_node(root: Node) -> Result<Self, DocumentError> {
         let mut ids = BTreeSet::new();
-        check_node(&root, "root", 0, &mut 0, &mut ids)?;
+        check_node(&root, "root", 0, &mut 0, &mut ids, &mut BTreeSet::new())?;
         fn references(
             node: &Node,
             ids: &BTreeSet<String>,
@@ -1168,8 +1175,24 @@ fn check_node(
     depth: usize,
     count: &mut usize,
     ids: &mut BTreeSet<String>,
+    shared: &mut BTreeSet<String>,
 ) -> Result<(), DocumentError> {
     n.effects.validate(path)?;
+    if n.effects
+        .shared
+        .as_ref()
+        .is_some_and(|key| !shared.insert(key.clone()))
+    {
+        return Err(error(path, "duplicate shared element identity"));
+    }
+    if n.effects.text_effect.is_some()
+        && (n.kind != Kind::Text
+            || !n.ext.spans.is_empty()
+            || n.text.as_ref().is_some_and(|t| t.len() > 8192))
+    {
+        return Err(error(path, "text effects require plain text up to 8 KiB"));
+    }
+
     if n.hover_link
         .as_ref()
         .is_some_and(|key| key.is_empty() || key.len() > 128)
@@ -1490,6 +1513,7 @@ fn check_node(
             depth + 1,
             count,
             ids,
+            shared,
         )?;
     }
     Ok(())
