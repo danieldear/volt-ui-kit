@@ -13,6 +13,18 @@ from check_repo import Site, check_link, inspect_site
 import configure_github
 
 
+class PackageBoundaryTests(unittest.TestCase):
+    def test_metadata_basename_patterns_are_anchored_to_the_package_root(self):
+        manifest = (build_docs_site.ROOT / "Cargo.toml").read_text()
+        include = json.loads(next(line.partition("=")[2].strip()
+                                  for line in manifest.splitlines()
+                                  if line.startswith("include =")))
+        for name in ("Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md"):
+            self.assertIn("/" + name, include)
+            self.assertNotIn(name, include,
+                             "unanchored basenames can package ignored tooling files")
+
+
 class SecurityWorkflowTests(unittest.TestCase):
     def test_history_scan_includes_merge_resolution_diffs_and_redacts_values(self):
         workflow = (build_docs_site.ROOT / ".github/workflows/security.yml").read_text()

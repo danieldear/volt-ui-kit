@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Anchor package metadata-file patterns to the repository root so ignored local
+  tooling readmes/licenses cannot accidentally enter a release archive.
+
 - Include merge-resolution diffs in redacted history secret scanning, with a
   workflow regression check. Keep PR tokens read-only and main protection intact.
 
