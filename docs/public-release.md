@@ -1,49 +1,212 @@
-# Public-release checklist
+# Release readiness checklist
 
 This is an operational checklist, not a security certification. A merged PR,
 package version or Git tag does not publish a crate. Repository settings and
 registry availability can change; verify them again before each release.
 
-## Verified snapshot: 2026-10-17
+Use this checklist for release engineering. Use the separate
+[announcements and live projects checklist](announcements-and-projects.md) for
+community introductions, editorial submissions and adoption examples.
+
+## Verified snapshot: 2026-11-12
+
+This integration review covers `feat/chrome-app-integration`, based on code
+revision `da03454`, plus the security fixes in its integration PR. It is not a
+published release or a claim that these changes have already reached `main`.
+Refresh the evidence on the final merged release revision.
 
 | Setting | Verified state |
 | --- | --- |
-| Repository visibility / default branch | Public / `main` |
-| Main protection | Enforced for administrators; PRs, up-to-date checks and resolved conversations required |
+| Repository visibility / default branch | Public / `main` (`c3a125e` at review time) |
+| Main protection | Administrator enforcement, PRs, up-to-date checks and resolved conversations required |
 | Outside approvals | Zero required, for the solo maintainer |
 | Force pushes / branch deletion | Disabled on `main` |
 | Required checks | Three OS `validate` jobs, `Repo hygiene`, `Secret scan`, `Dependency audit` |
-| Merged PR #22 checks | All six succeeded |
-| Actions default token / PR approval | Read-only / cannot approve PRs |
-| Actions SHA pinning | Required by repository policy |
-| Secret scanning / push protection | Enabled / enabled |
-| Automatic Dependabot security updates | Disabled in repository settings; scheduled dependency PRs are configured separately |
-| Delete merged branches | Enabled |
-| GitHub Pages | API reports `built`, with legacy deployment source; not the manual Actions source described below |
-| crates.io | No `volt-ui-kit` entry returned by the registry API; 0.6.0 is prepared, not published |
+| PR #44 | Merged; subsequent chrome/Linux services changes require a separate integration PR |
+| Secret scanning / push protection / private reporting | Enabled / enabled / enabled |
+| Automatic Dependabot security updates | Disabled; scheduled dependency PRs exist and require review |
+| GitHub Pages | Actions deployment source; the final integration revision must be deployed after merge |
+| crates.io | Registry API returned no `volt-ui-kit` entry; repository version 0.6.0 is not a publication |
 
-The Pages URL is <https://danieldear.github.io/volt-ui-kit/>. The API build state
-alone does not establish which revision is deployed. Review the actual site
-before announcing it or changing the repository homepage.
+The Pages URL is <https://danieldear.github.io/volt-ui-kit/>. Check the actual
+site and deployed revision before an announcement; an old successful deployment
+is not acceptance of this candidate.
+
+## Verified candidate baseline
+
+Checked items are scoped evidence from this review, not final frozen-main gates,
+physical-device acceptance, a security certification or Windows UI acceptance.
+
+- [x] Local all-feature/all-target tests: 1,052 passed; 32 explicitly ignored.
+- [x] Local doctests: 62 passed; seven explicitly ignored.
+- [x] macOS all-target Clippy and Rust 1.89 all-target checks pass; Linux-target
+  library Clippy/MSRV and WASM/mobile host build checks pass.
+- [x] All eight exact copied Catalog programs and ten desktop starter variants
+  compile independently. This is not proof of a clean public-registry install.
+- [x] Volt consumer fixture: 255 compatibility tests passed; two ignored.
+- [x] Reachable-history secret scan including merge diffs: 369 commits scanned,
+  no leaks found; the previous non-merge scan covered 290. Final
+  integration refs and the working diff must be rescanned before release.
+- [x] Dependency audit after targeted lock updates: zero vulnerability-category,
+  unsoundness or yanked-package entries; seven maintenance warnings remain visible.
+  Their disposition is documented below, not suppressed in CI.
+- [x] Rust dependency license metadata reviewed (404 resolved packages): no
+  missing license expressions. MPL-2.0 obligations and permissive alternatives
+  still require distributor notices; this is not a legal certification.
+- [x] Live main protection, secret scanning/push protection and private
+  vulnerability reporting checked without changing repository settings.
+- [x] User-reported Linux desktop services acceptance, including notification
+  delivery/removal, file dialogs and tray commands. Prior KDE/GNOME/COSMIC checks
+  and X11 opaque Custom rendering are recorded as user acceptance, not automated
+  physical-device proof. X11 transparency/blur remains unsupported/pending.
+- [x] Linux VM previously passed the Catalog/library suites and X11/Wayland
+  startup checks at `da03454`; the final portal special-file regression must
+  additionally pass Ubuntu CI after the VM became unavailable over SSH.
+- [x] Record a candidate performance baseline on Apple M4 Pro / 24 GiB /
+  macOS 27.0.1: native idle CPU/RSS, Metal presentation traces, synthetic button
+  actions and Table scroll frames at 100%, 125% and 200% scale. GPU headless
+  timings include readback, not on-screen latency or app-attributed GPU/power.
+  Raw logs/measurements stay in ignored local QA artifacts; Windows/Linux hardware
+  performance and long-running memory/power acceptance remain separate.
+
+### Dependency review decisions
+
+- `async-executor` 1.14.0 was yanked; [upstream 1.14.1](https://github.com/smol-rs/async-executor/blob/master/CHANGELOG.md)
+  fixes its executor-teardown use-after-free. The integration lock selects 1.14.1, including the Linux
+  accessibility/D-Bus dependency graph.
+- Replace yanked `clipboard-win` 5.4.1 with non-yanked 5.4.3. The registry did not
+  provide a yank reason; do not invent one. Windows runtime acceptance is separate.
+- Root, shared mobile and iOS example locks use Tokio 1.53.3 for
+  [RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html).
+  Reachability was through the unstable Emscripten/Tokio configuration of
+  wasm-bindgen-futures, not the standard desktop host; patch it rather than
+  globally ignoring the advisory. Web locks already select patched 1.54.1.
+- Seven maintenance warnings remain: rustybuzz, three ttf-parser versions,
+  zbus_names, zvariant and zvariant_derive. They are maintenance risk, not proof
+  of an exploitable vulnerability. Retain the validated text/GPU/native API pins
+  during this scoped integration; track upstream replacements and require a
+  maintainer decision before any production-readiness claim.
 
 ## Before a release
 
-1. Merge the reviewed release PR with all required checks passing. Do not
-   weaken branch protection to work around failures.
-2. Fetch the intended branches and tags, then run `cargo audit` and
-   `gitleaks git --log-opts="--all" --redact=100 .`. Scans cover reachable local
-   refs, not every hidden PR ref, unreachable object, attachment or release asset.
-3. Review retained history, author emails, PR/issue text, Actions logs/artifacts
-   and screenshots for private information. A secret scan is not a personal-data
-   audit. Review historical workflows before enabling fork PRs.
-4. Rotate exposed credentials before a coordinated history cleanup. Deleting a
-   current file or adding `.gitignore` does not remove historical disclosure.
-5. Review [third-party obligations](third-party.md), [SECURITY](../SECURITY.md),
-   ownership, release artifacts and account 2FA/recovery. The owner must check
-   account MFA, collaborators and registry access; local checks cannot attest them.
-6. Keep version references, [changelog](../CHANGELOG.md), README, guides and
-   generated HTML synchronized. Follow [site maintenance](site-maintenance.md)
-   and [contribution checks](../CONTRIBUTING.md#checks).
+All unchecked items remain pending. Record the tested revision, date, platform
+and result when completing a gate. A documented exception needs a reason and
+an owner; never turn a failed check into a checked box by hiding it.
+
+### 1. Integrate and freeze the release candidate
+
+- [x] PR #44 merged as `c3a125e` on 2026-11-11 with all nine checks passing,
+  including browser tests. Copied locks and the pinned browser runtime are fixed;
+  no tests were disabled and main protection was not weakened.
+- [ ] Merge subsequent reviewed candidate changes with all applicable CI passing
+  and review conversations resolved. Do not bypass checks or branch protection.
+- [ ] Choose the release version and scope; fold the appropriate Unreleased
+  entries into dated release notes, documenting breaking API changes.
+- [ ] Freeze a clean, merged `main` revision for all final checks and artifacts.
+- [ ] Verify intended changes are included, with no private files, unrelated
+  worktree changes or coauthor trailers in release commits.
+
+### 2. Complete security and dependency review
+
+- [x] Review/update locked yanked `async-executor` and `clipboard-win` packages;
+  upstream executor fix and unknown clipboard yank reason are recorded above.
+- [x] Patch Tokio advisory RUSTSEC-2026-0386 in the affected root/mobile/iOS locks;
+  retain the target-reachability explanation and rerun the final release audit.
+- [x] Record maintenance-warning decisions without changing validated GPU/text
+  pins or dropping Rust 1.89 compatibility. Final production-risk acceptance
+  remains a maintainer decision, not an automated approval.
+- [ ] Rerun dependency and redacted history secret scans on final refs. Scans
+  do not cover every hidden PR ref, unreachable object, attachment or asset.
+- [ ] Review author emails, history, issues/PRs, logs, screenshots and release
+  assets for private information; rotate any exposed credentials first.
+- [ ] Review licenses and [third-party obligations](third-party.md), including
+  bundled fonts, notices and native libraries for the actual distribution.
+- [ ] Owner verifies GitHub/crates.io account MFA, recovery, collaborators and
+  registry permissions; no credentials belong in chat, source or shell history.
+
+### 3. Verify applications and supported platforms
+
+- [ ] Rerun the [contribution checks](../CONTRIBUTING.md#checks) on the frozen
+  revision, including copied samples and warning-free documentation builds.
+- [ ] Create a fresh desktop project using `cargo volt new`, following only the
+  documented instructions; run it outside the toolkit checkout.
+- [ ] Test a fresh consumer against the packaged crate, including `native`,
+  `native-gpu` and intended desktop adapters; retain Volt compatibility coverage.
+- [ ] Verify navigation, editing/IME, scrolling, sorting/selection, overlays,
+  keyboard focus and accessibility in native windows, not just headless renders.
+- [ ] Test Linux fonts, text/border smoothness, corners and inline controls at
+  100% and 125% scaling; cover KDE and the other desktops we claim to support.
+- [ ] Verify blur capabilities/fallbacks per compositor; do not promise blur
+  where the desktop does not support it.
+- [ ] Validate Windows native behavior for any supported claims. If Linux or
+  Windows acceptance remains incomplete, label those paths experimental and
+  list known issues rather than claiming production parity.
+- [ ] Record idle CPU, representative scrolling/frame cost and memory with
+  hardware, scale, build mode and renderer; separate measurements from estimates.
+- [ ] Keep web, iOS, Android and maps prototype limitations explicit; confirm
+  which hosts/templates require a repository checkout or unpublished subcrate.
+
+#### Mobile application scaffolding
+
+These gates apply to advertised mobile readiness. Incomplete mobile work must
+remain explicitly experimental; it need not block a scoped desktop release.
+
+- [ ] Extend the existing iOS/Android generators rather than duplicating their
+  shared native host; offer distinct minimal, navigation, tabs and settings
+  presets while preserving desktop defaults and Volt compatibility.
+- [ ] Generate a usable, customizable header/body/footer composition. Header,
+  footer and bottom navigation are optional; do not force another title bar or
+  a fixed application design on developers.
+- [ ] Verify safe areas, system bars, keyboard avoidance, scrolling, rotation,
+  page selection and platform Back behavior in the generated applications.
+- [ ] Generate app identity, bundle/package IDs, icons, theme defaults and
+  appropriate native project configuration with clear signing instructions.
+- [ ] Add explicit capability/permission choices with no unnecessary permissions
+  or startup prompts by default. Platform declarations alone do not implement
+  native capabilities or request permission at runtime.
+- [ ] For each supported permission, implement/check native status, contextual
+  requests and granted/denied/revoked/unavailable results. Unsupported choices
+  must be reported, not silently scaffolded as working features.
+- [ ] Provide prerequisite diagnostics and documented build/run paths; keep
+  signing, private credentials and personal devices developer-owned.
+- [ ] Validate the complete generate/build/run/customize workflow on iOS and
+  Android, including generated navigation, editable-form and scroll tests.
+- [ ] Test physical-device lifecycle/input/rendering behavior before making
+  production claims; publish known limitations and emulator/device coverage.
+
+### 4. Finalize documentation and the live Catalog
+
+- [ ] Synchronize manifests/lockfiles, README, changelog, installation commands,
+  guides, platform matrix and generated HTML with the chosen release version.
+- [ ] Refresh this snapshot/security assessment and remove completed or stale
+  roadmap entries; do not describe prepared code as registry-published code.
+- [ ] Review public API documentation and migration notes for new/breaking APIs.
+- [ ] Ship version-matched agent-readable references and the shared Volt skill;
+  verify generated examples, public Markdown links and `llms.txt` discovery.
+- [ ] Validate the Claude Code and Codex plugin packages against the released
+  toolkit, including clean installation and recorded agent-driven application
+  tests. Follow the [agent delivery checklist](announcements-and-projects.md#3-support-coding-agents-with-skills-and-plugins).
+- [ ] Keep agent/plugin installation optional, permission-preserving and separate
+  from registry publication or public plugin-directory submission approval.
+- [ ] Regenerate and validate docs using [site maintenance](site-maintenance.md).
+- [ ] Deploy the approved merged revision through GitHub Pages Actions.
+- [ ] Verify deployed revision, JS/WASM MIME types, links and interactive
+  components, including keyboard/input behavior, in supported browsers.
+
+### 5. Approve and publish
+
+- [ ] Owner verifies crate-name availability, verified registry email and Cargo
+  authentication. A dry run does not reserve the name or prove upload rights.
+- [ ] Review `cargo package --locked --list`; exclude private/local artifacts.
+- [ ] Rerun both publication dry runs below from the clean release revision.
+- [ ] Obtain explicit approval for the registry upload, tag and GitHub release.
+- [ ] Publish only the approved crate/version; verify registry archive and
+  docs.rs builds, then test installation in a new consumer project.
+- [ ] Tag the exact approved source revision and create matching release notes;
+  verify provenance/checksums and signing where distributing native binaries.
+- [ ] Update publication status/install instructions only after upload succeeds.
+- [ ] Complete the announcement checklist; leave an issue tracker, known-issues
+  list and patch-release plan ready for external users.
 
 ## Protect main
 
@@ -145,12 +308,26 @@ and [the publishing guide](https://doc.rust-lang.org/cargo/reference/publishing.
 
 ## Security assessment and limits
 
-The 2026-10-17 `cargo audit` run reported **zero known vulnerabilities** and seven
-unmaintained-package warnings: `RUSTSEC-2026-0206` (rustybuzz),
+Before these integration patches, the 2026-11-11 `cargo audit` run reported
+zero entries in its vulnerability category, but **not a warning-free graph**: seven unmaintained-package warnings,
+one unsoundness advisory for Tokio 1.53.2 and two yanked packages
+(`async-executor` 1.14.0 and `clipboard-win` 5.4.1).
+
+[RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html)
+The 2026-11-12 audit after the targeted lock updates reported zero vulnerability,
+unsoundness and yanked-package entries, with the same seven maintenance warnings.
+
+The Tokio advisory concerns `AsyncFd` I/O safety. Reachability here was through
+`wasm-bindgen-futures` under `cfg(all(target_os = "emscripten",
+wasm_bindgen_unstable_tokio))`; it is not selected by the checked native macOS,
+Linux or `wasm32-unknown-unknown` builds. This scoped reachability finding is
+not a blanket safety guarantee or permission to suppress the advisory.
+
+Maintenance warnings remain `RUSTSEC-2026-0206` (rustybuzz),
 `RUSTSEC-2026-0192` (three ttf-parser versions), and `RUSTSEC-2026-0370`,
 `RUSTSEC-2026-0371`, `RUSTSEC-2026-0372` (zvariant, zbus_names, zvariant_derive).
-Track these separately from exploitable-vulnerability findings. Refresh the audit
-before upload; do not casually change validated GPU/text pins or Rust 1.89 support.
+Refresh and triage the graph before upload; preserve validated GPU/text behavior
+and Rust 1.89 support when updating dependencies.
 
 Passing tests and scanners are not a full penetration test or fuzzing campaign.
 Native runtime, accessibility, other operating systems and real Volt consumer

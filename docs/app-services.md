@@ -486,6 +486,11 @@ runtime probe to check those services.
 | Tray and menu | StatusNotifierItem + DBusMenu with bounded, state-aware commands. Watcher changes trigger re-registration; no idle polling. No tray host means no tray icon—Volt does not install GNOME extensions or alter the desktop. Close-to-tray window hiding/focus still needs Wayland-specific acceptance. |
 | Global native menu bar | Not supplied on Linux. Use Volt's in-app menu/toolbar components. |
 
+Portal file dispatch admits regular files and directories only. Named pipes,
+devices and other special files are rejected; nonblocking descriptor opening
+prevents a FIFO replacement race from occupying a worker while waiting for a
+writer. This does not impose a time bound on arbitrary filesystem or mount I/O.
+
 Linux tracks up to 64 notification IDs per process; replacement/removal tracking
 is not persisted across application restarts. OS acceptance is not visible delivery.
 

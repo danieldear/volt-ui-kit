@@ -33,7 +33,15 @@ Rust examples in these guides are covered by `cargo test --all-features --doc`.
 Some are compile-only or explicitly ignored; a passing doctest run is not
 proof that every example was exercised in a native window.
 
-Maintainers: [public-release checklist](public-release.md). Distributors: [third-party notes](third-party.md).
+## Maintainer checklists
+
+1. [Release readiness](public-release.md): verified baseline, open gates, platform
+   acceptance, dependency review, packaging, publication and final docs checks.
+2. [Announcements and live projects](announcements-and-projects.md): runnable
+   applications, egui/Iced evaluation guides, community/news submissions and
+   support for external adopters.
+
+Distributors: [third-party notes](third-party.md).
 
 Repository maintenance: [low-disk Git identity correction](git-identity.md).
 

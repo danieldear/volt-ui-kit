@@ -10,6 +10,8 @@
   settle.
 - **Publication readiness.** Maintain the public repository, protected CI and
   generated documentation; publish to crates.io only after release approval.
+  Track the [release readiness checklist](docs/public-release.md), then the
+  [announcements and live projects checklist](docs/announcements-and-projects.md).
 
 ## Next
 
@@ -21,7 +23,9 @@
 - Keyboard navigation through combobox and command palette results;
   independent range-slider thumbs for assistive technology.
 - Multiple windows, state restoration and the full OS quit lifecycle.
-- File panels and notifications on Windows and Linux.
+- File panels and notifications on Windows. Linux portal panels, immediate
+  notifications and tray commands are implemented; expand recorded desktop
+  acceptance and keep unsupported compositor capabilities explicit.
 
 ## Later
 

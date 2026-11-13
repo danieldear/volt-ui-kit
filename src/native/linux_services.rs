@@ -293,12 +293,33 @@ pub(super) fn choose(
         Err(e) => Err(e),
     }
 }
+// A named pipe must not block a worker indefinitely before the portal's own
+// timeout even starts. Check before and after opening, with NONBLOCK so a type
+// replacement race cannot turn the open into a wait for a FIFO writer.
+#[cfg(feature = "native-desktop")]
+fn open_portal_file(path: &Path) -> Result<std::fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let regular_or_directory =
+        |metadata: std::fs::Metadata| metadata.is_file() || metadata.is_dir();
+    if !regular_or_directory(std::fs::metadata(path).map_err(|e| e.to_string())?) {
+        return Err("portal dispatch requires a regular file or directory".into());
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags((rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::NOCTTY).bits() as i32)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    if !regular_or_directory(file.metadata().map_err(|e| e.to_string())?) {
+        return Err("portal dispatch requires a regular file or directory".into());
+    }
+    Ok(file)
+}
 /// Dispatch a local file/directory to its default application. Worker-only;
 /// success means portal acceptance, not that another app rendered the file.
 #[cfg(feature = "native-desktop")]
 pub fn open_path(path: &Path) -> Result<(), String> {
     path_uri(path)?;
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let file = open_portal_file(path)?;
     request(
         &bounded_connection()?,
         "org.freedesktop.portal.OpenURI",
@@ -339,7 +360,7 @@ pub(super) fn reveal(path: &Path) -> Result<(), String> {
     if meta.file_type().is_symlink() {
         return Err("portal reveal cannot preserve symbolic-link selection".into());
     }
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let file = open_portal_file(path)?;
     request(
         &c,
         "org.freedesktop.portal.OpenURI",
@@ -354,6 +375,54 @@ pub(super) fn reveal(path: &Path) -> Result<(), String> {
 #[cfg(all(test, feature = "native-desktop"))]
 mod tests {
     use super::*;
+    #[test]
+    fn portal_file_dispatch_rejects_special_files_without_waiting_for_a_writer() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let directory = std::env::temp_dir().join(format!(
+            "volt-portal-file-{}-{}",
+            std::process::id(),
+            TOKENS.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let pipe = directory.join("named-pipe");
+        rustix::fs::mkfifoat(rustix::fs::CWD, &pipe, rustix::fs::Mode::RWXU).unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let input = pipe.clone();
+        let worker = std::thread::spawn(move || {
+            send.send(open_portal_file(&input).is_err()).unwrap();
+        });
+        let result = receive.recv_timeout(Duration::from_secs(2));
+        // Rescue the old blocking implementation before asserting: a failing
+        // regression test must not leave its worker blocked or hang the suite.
+        let _writer = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+            .open(&pipe);
+        worker.join().unwrap();
+        std::fs::remove_file(&pipe).unwrap();
+        let regular = directory.join("regular.txt");
+        std::fs::write(&regular, "generated portal QA").unwrap();
+        assert!(open_portal_file(&regular)
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .is_file());
+        assert!(open_portal_file(&directory)
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .is_dir());
+        std::fs::remove_file(&regular).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
+        assert_eq!(
+            result,
+            Ok(true),
+            "special files must never occupy a portal worker"
+        );
+        assert!(open_portal_file(Path::new("/dev/null")).is_err());
+    }
+
     #[test]
     fn local_uris_are_byte_preserving_and_reject_remote_or_malformed_paths() {
         for p in ["/tmp/a b#?%", "/tmp/unicode-é"] {

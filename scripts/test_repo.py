@@ -13,6 +13,16 @@ from check_repo import Site, check_link, inspect_site
 import configure_github
 
 
+class SecurityWorkflowTests(unittest.TestCase):
+    def test_history_scan_includes_merge_resolution_diffs_and_redacts_values(self):
+        workflow = (build_docs_site.ROOT / ".github/workflows/security.yml").read_text()
+        command = next(line for line in workflow.splitlines()
+                       if 'gitleaks" git ' in line)
+        self.assertIn('--log-opts="--all -m"', command)
+        self.assertIn('--redact=100', command)
+        self.assertIn('contents: read', workflow)
+
+
 class AttributionTests(unittest.TestCase):
     def test_shared_settings_disable_commit_pr_and_session_attribution(self):
         settings = json.loads((build_docs_site.ROOT / ".claude/settings.json").read_text())

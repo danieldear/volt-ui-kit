@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Include merge-resolution diffs in redacted history secret scanning, with a
+  workflow regression check. Keep PR tokens read-only and main protection intact.
+
+- Harden Linux portal dispatch against named-pipe worker exhaustion: reject
+  special files, open descriptors nonblocking and recheck their type. Add a
+  FIFO regression while preserving regular-file/directory dispatch.
+- Update locked `async-executor` to 1.14.1 (fixes the yanked 1.14.0 teardown
+  use-after-free), `clipboard-win` to non-yanked 5.4.3, and affected root/mobile/iOS
+  Tokio locks to 1.53.3 for RUSTSEC-2026-0386. Keep GPU/text pins and Rust 1.89.
+
 - Fix Custom/Borderless GPU startup on X11 surfaces without transparent alpha:
   negotiate an opaque/inherited GPU surface instead of failing or forcing CPU
   drawing. Use actual negotiated alpha for the clear, corner mask and native

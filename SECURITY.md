@@ -41,9 +41,11 @@ revision and monitor advisories and updates.
   it; signal termination (including Ctrl-C), a crash or a forced kill can leave
   it behind. Never serialize credentials
   or sensitive documents as dev-state. Password fields are not a secret vault.
-- Platform adapters and dependencies contain native FFI even though this
-  crate forbids `unsafe` Rust. GPU drivers and OS permission prompts remain
-  outside the toolkit's security boundary.
+- Platform adapters and dependencies contain native FFI. Non-Linux/non-native
+  builds forbid `unsafe` Rust in this crate; Linux native builds deny it except
+  for the narrowly fenced Wayland handle imports with documented ownership and
+  drop-order invariants. This is not a claim that every dependency or GPU driver
+  is memory-safe. OS permission prompts remain outside the toolkit's boundary.
 - Compositor blur uses a private macOS API and is opt-in; prefer the public
   Material mode for normal applications and distribution compatibility.
 
@@ -52,5 +54,9 @@ revision and monitor advisories and updates.
 Run `cargo audit`, a redacted Gitleaks history scan, normal regression tests and
 repository checks before release. Maintenance warnings are tracked, not
 silenced. Automated scans do not constitute an independent security audit.
+Use `gitleaks git --log-opts="--all -m" --redact=100 --no-banner .` to include
+merge-resolution diffs; a default non-merge history scan can miss content added
+only while resolving a merge. Hidden/unfetched refs and unreachable objects
+still require separate consideration.
 GitHub security features and branch protection must be verified in the live
 repository; committed configuration alone does not enable them.
