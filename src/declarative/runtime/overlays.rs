@@ -556,20 +556,24 @@ impl Runtime {
         })
     }
     pub(super) fn scope_allows_id(&self, id: &str) -> bool {
-        self.overlays
-            .scopes
-            .last()
-            .is_none_or(|scope| scope.ids.contains(id))
+        !self.transform_index.inert(id)
+            && self
+                .overlays
+                .scopes
+                .last()
+                .is_none_or(|scope| scope.ids.contains(id))
     }
     /// Copy menus may coexist with a read-only selection. A modal, however,
     /// must never expose a selection belonging to content behind that modal.
     pub(super) fn selection_scope_allows_id(&self, id: &str) -> bool {
-        self.overlays
-            .scopes
-            .iter()
-            .rev()
-            .find(|scope| scope.options.kind == OverlayKind::Modal)
-            .is_none_or(|scope| scope.ids.contains(id))
+        !self.transform_index.inert(id)
+            && self
+                .overlays
+                .scopes
+                .iter()
+                .rev()
+                .find(|scope| scope.options.kind == OverlayKind::Modal)
+                .is_none_or(|scope| scope.ids.contains(id))
     }
     pub(super) fn overlay_active(&self) -> bool {
         !self.overlays.scopes.is_empty()

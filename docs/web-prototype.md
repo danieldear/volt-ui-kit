@@ -2,14 +2,21 @@
 
 **Experimental.** The landing page and component reference now draw the
 **original Catalog Rust builders and callbacks** in browser canvases, instead
-of loading component screenshots. All 125 published sections have a live slot;
+of loading component screenshots. All 140 published sections have a live slot;
 OS-specific lifecycle, document and desktop-service sections show an explicit
 native-only capability card. These notices do not emulate file access,
 notifications or tray icons. This is not a claim of full web/desktop parity.
 
-The directory draws 49 source-backed canvas thumbnails once; open a component
+The directory draws 51 source-backed canvas thumbnails once; open a component
 page for its interactive examples, usage snippets and API notes. The landing
 page also reuses the original dashboard, counter and plan-card builders.
+
+Motion studio, Instruments and Image use the same Rust declarations as native:
+retained sliding carousels, sheets, speed dials, card/viewport reveals, pointer
+reactions, gauges/knobs and alpha-mask/color-blend examples. Source snippets are
+excerpts, not separate JavaScript recreations. Each preview keeps independent
+state and respects browser reduced motion. Device instruments are simulations;
+the examples do not add a new mobile/embedded host or hardware integration.
 
 ## Architecture
 

@@ -474,6 +474,11 @@ impl Ambient {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Effects {
     pub scroll_passthrough: bool,
+    pub wheel_passthrough: bool,
+    pub isolate: bool,
+    pub inert: bool,
+    pub carousel_slot: Option<i16>,
+    pub scroll_reveal: Option<Transition>,
     pub base: VisualStyle,
     pub states: [VisualStyle; 3],
     /// Applied while the element is disabled.
@@ -488,6 +493,8 @@ pub(crate) struct Effects {
     pub transition: Option<Transition>,
     pub transition_revision: u64,
     pub ambient: Option<Ambient>,
+    pub blend: crate::graphics::BlendMode,
+    pub dial: Option<crate::graphics::DialStyle>,
     pub drag_region: bool,
     /// Further drop and inner shadows (`.shadows`), drawn in order; not
     /// animated.
@@ -495,7 +502,8 @@ pub(crate) struct Effects {
 }
 impl Effects {
     pub(crate) fn has_geometry(&self) -> bool {
-        self.layout_animation.is_some()
+        self.carousel_slot.is_some()
+            || self.layout_animation.is_some()
             || self.drag_motion.is_some()
             || self.timeline.is_some()
             || std::iter::once(&self.base)
@@ -504,6 +512,15 @@ impl Effects {
                 .any(|style| style.transform.is_some())
     }
     pub fn validate(&self, path: &str) -> Result<(), DocumentError> {
+        if self
+            .scroll_reveal
+            .is_some_and(|t| !t.0.valid() || !t.1.iter().all(|v| v.is_finite() && v.abs() <= 4096.))
+        {
+            return Err(DocumentError(format!("{path}: invalid scroll reveal")));
+        }
+        if self.dial.is_some_and(|d| !d.valid()) {
+            return Err(DocumentError(format!("{path}: invalid dial style")));
+        }
         if self.layout_animation.is_some_and(|a| !a.valid())
             || self.shared.as_ref().is_some_and(|s| {
                 s.is_empty()
@@ -582,6 +599,7 @@ impl Effects {
             .copied()
             .chain(self.animation)
             .chain(self.transition.map(|v| v.0))
+            .chain(self.scroll_reveal.map(|v| v.0))
         {
             if a.duration > 10_000 || !a.valid() {
                 return Err(invalid());

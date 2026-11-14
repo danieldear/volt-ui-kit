@@ -20,7 +20,19 @@ pub fn slider<C>(value: f32) -> Slider<C> {
     });
     Slider(element)
 }
+/// A rotary slider with the same controlled range, step, keyboard and AT behavior.
+pub fn knob<C>(value: f32) -> Slider<C> {
+    let mut k = slider(value);
+    k.0.node.width = Some(112.);
+    k.0.node.height = Some(112.);
+    k.0.node.effects.dial = Some(crate::graphics::DialStyle::default());
+    k
+}
 impl<C> Slider<C> {
+    pub fn dial_style(mut self, style: crate::graphics::DialStyle) -> Self {
+        self.0.node.effects.dial = Some(style);
+        self
+    }
     pub fn range(mut self, range: RangeInclusive<f32>) -> Self {
         let props = self.0.node.slider.as_mut().expect("slider metadata");
         props.min = *range.start();

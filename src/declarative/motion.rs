@@ -141,6 +141,7 @@ pub(crate) struct Motion {
     tracks: BTreeMap<String, Track>,
     seen: BTreeMap<String, (Kind, u64)>,
     mounts: BTreeMap<String, Fade>,
+    reveals: BTreeMap<String, u64>,
     pub exits: Vec<Exit>,
     /// Frame sequences by element id: revision, start and length.
     frames: BTreeMap<String, (u64, Duration, Duration)>,
@@ -292,6 +293,26 @@ impl Motion {
                 }
             }
         }
+        for b in boxes {
+            if let Some(transition) = b.effects.scroll_reveal.filter(|_| b.layout_visible) {
+                if self.reveals.get(&b.id) != Some(&b.effects.transition_revision) {
+                    self.reveals
+                        .insert(b.id.clone(), b.effects.transition_revision);
+                    if !self.reduced {
+                        self.mounts.insert(
+                            b.id.clone(),
+                            Fade {
+                                start: self.now,
+                                animation: transition.0,
+                                from: 0.,
+                                slide: transition.1,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        self.reveals.retain(|id, _| live.contains_key(id));
         self.mounts.retain(|id, _| live.contains_key(id));
         // A new revision (or a new element) starts its sequence now; the
         // same revision keeps playing across recompositions.
@@ -425,6 +446,7 @@ impl Motion {
         while self.exits.iter().map(|e| e.boxes.len()).sum::<usize>() > super::document::MAX_NODES {
             self.exits.remove(0);
         }
+        self.reveals.retain(|id, _| next.contains(id));
         self.seen.retain(|id, _| next.contains(id));
         self.mounts.retain(|id, _| next.contains(id));
         self.prune();

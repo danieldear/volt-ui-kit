@@ -57,6 +57,11 @@ requested only when you click the notification permission button. Use
 `--check` to build/verify without opening it. Requires Cargo, Python 3 and, on
 macOS, the command-line tools. Individual library features remain optional.
 
+For the new interactive recipes, choose **Motion studio**, **Instruments** or
+**Image** in the Catalog. The same Rust examples run in the
+[live component reference](https://danieldear.github.io/volt-ui-kit/reference/)
+after the corresponding documentation revision is deployed.
+
 ## Experimental Rust-first iOS apps
 
 [Field Notes](docs/ios-prototype.md) is an opt-in iOS integration prototype:
@@ -94,7 +99,9 @@ the primary supported host.
   [navigation and links](docs/components.md#typed-navigation-and-web-links).
 - **Deliberate motion.** Interactive 2D transforms, keyed/shared layout transitions,
   bounded drag momentum, pose timelines and animated text, alongside spring
-  responses and staggered entrances. Logical-pixel scaling and reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
+  responses and staggered entrances. Sliding carousels, scroll-triggered reveals,
+  bottom sheets and floating quick actions are showcased in Motion studio.
+  Logical-pixel scaling and reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
 - **A fast dev loop.** `cargo volt dev` rebuilds on save and restarts the app
   with its state and window position intact.
 

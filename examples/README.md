@@ -38,6 +38,22 @@ cargo run --locked --features native --example rust_counter
 cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page dashboard --theme dark --accent violet
 ```
 
+New toolkit capability pages (not separate apps):
+
+```sh
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page motion-studio
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page instruments
+cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --page image
+```
+
+Motion studio exercises carousel travel, card expand/collapse, bottom sheets,
+quick actions, pointer reactions and one-shot viewport reveals. Instruments uses
+simulated radial progress and a keyboard/pointer-adjustable rotary slider. Image
+adds alpha-coverage mask operations, feathering and isolated color blends. These
+declarations also power the live WASM docs; they are not JavaScript recreations.
+Reduced motion stops the finite animations. No device hardware or certified
+automotive host is provided by the instrument examples.
+
 Window settings is always available in the Catalog's existing header, including
 compact windows. Choose Native / Custom / Borderless and Symbols / Traffic lights;
 macOS retains native traffic lights. For direct Linux testing:

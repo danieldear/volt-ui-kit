@@ -164,6 +164,15 @@ pub trait DocumentPainter: Painter + TextMetrics {
     /// adapters supporting effects override both hooks.
     fn ui_layer_begin(&mut self, _out: &mut Vec<Self::Shape>, _opacity: f32) {}
     fn ui_layer_end(&mut self, _out: &mut Vec<Self::Shape>) {}
+    /// Legacy adapters retain ordinary group opacity when blending is unavailable.
+    fn ui_blend_begin(
+        &mut self,
+        out: &mut Vec<Self::Shape>,
+        opacity: f32,
+        _mode: crate::graphics::BlendMode,
+    ) {
+        self.ui_layer_begin(out, opacity);
+    }
     /// Optional surface capabilities; old adapters remain source compatible.
     fn ui_clip_begin(&mut self, _out: &mut Vec<Self::Shape>, _clip: ClipRegion) {}
     fn ui_clip_end(&mut self, _out: &mut Vec<Self::Shape>) {}
@@ -1235,17 +1244,9 @@ impl Runtime {
             b.ext.links = links;
         }
         self.has_transforms = boxes.iter().any(|b| {
-            if b.effects.layout_animation.is_some()
-                || b.effects.drag_motion.is_some()
-                || b.effects.timeline.is_some()
+            b.effects.has_geometry()
                 || b.effects.text_effect.is_some()
-            {
-                return true;
-            }
-            std::iter::once(&b.effects.base)
-                .chain(&b.effects.states)
-                .chain(std::iter::once(&b.effects.disabled))
-                .any(|s| s.transform.is_some())
+                || b.effects.scroll_reveal.is_some()
         });
         self.layout_boxes = boxes;
         self.roving_focus.retain(|group, member| {
@@ -2280,6 +2281,14 @@ impl Runtime {
         let Some((id, name, _)) = self.pointer_surface_at(x, y) else {
             return Ok(None);
         };
+        if phase == PointerPhase::Wheel
+            && self
+                .boxes
+                .iter()
+                .any(|b| b.id == id && b.effects.wheel_passthrough)
+        {
+            return Ok(None);
+        }
         let at = self.surface_local(&id, x, y);
         let mut event = Pointer::new(phase, at, self.pointer_modifiers);
         event.delta = delta;
@@ -3137,11 +3146,12 @@ impl Runtime {
             || list.iter().any(|b| {
                 b.ext.offset != [0.; 2]
                     || b.effects.transition.is_some_and(|t| t.1 != [0.; 2])
+                    || b.effects.scroll_reveal.is_some_and(|t| t.1 != [0.; 2])
                     || std::iter::once(&b.effects.base)
                         .chain(&b.effects.states)
                         .any(|s| s.offset.is_some())
             });
-        if moving {
+        if moving && !p.ui_supports_transforms() {
             let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
             for i in 0..list.len() {
                 // Both paint passes must resolve the same target. Otherwise
@@ -3309,7 +3319,29 @@ impl Runtime {
             } else {
                 matrix
             };
-            let declared = floating.is_some()
+            let offset_scope = p.ui_supports_transforms()
+                && (source.ext.offset != [0.; 2]
+                    || source.effects.transition.is_some_and(|t| t.1 != [0.; 2])
+                    || source.effects.scroll_reveal.is_some_and(|t| t.1 != [0.; 2])
+                    || std::iter::once(&source.effects.base)
+                        .chain(&source.effects.states)
+                        .chain(std::iter::once(&source.effects.disabled))
+                        .any(|s| s.offset.is_some()));
+            let matrix = if offset_scope {
+                matrix.then(crate::motion::Affine2D([
+                    1.,
+                    0.,
+                    0.,
+                    1.,
+                    f64::from(visual.offset[0]),
+                    f64::from(visual.offset[1]),
+                ]))
+            } else {
+                matrix
+            };
+            let declared = source.effects.carousel_slot.is_some()
+                || floating.is_some()
+                || offset_scope
                 || source.effects.text_effect.is_some()
                 || source.effects.layout_animation.is_some()
                 || source.effects.timeline.is_some()
@@ -3329,7 +3361,7 @@ impl Runtime {
                 children[0].transform_suppressed = true;
                 let mut batches = Vec::new();
                 self.paint_nodes(p, ui, &children, motion, &mut batches, inherited);
-                let clip = if floating.is_some() {
+                let clip = if floating.is_some() || offset_scope {
                     source.effect_clip
                 } else {
                     source.ancestor_clip
@@ -3343,10 +3375,13 @@ impl Runtime {
             }
             // A masked container draws into a layer of its own, so the mask
             // cuts only its content.
-            let layered = visual.opacity < 1. || original.ext.masked;
+            let layered = visual.opacity < 1.
+                || original.ext.masked
+                || original.effects.isolate
+                || original.effects.blend != crate::graphics::BlendMode::Normal;
             if layered {
                 let mut shapes = vec![];
-                p.ui_layer_begin(&mut shapes, visual.opacity);
+                p.ui_blend_begin(&mut shapes, visual.opacity, original.effects.blend);
                 out.push(PaintBatch {
                     clip: original.effect_clip,
                     shapes,
@@ -4167,6 +4202,11 @@ fn visual_target(b: &LayoutBox, state: ButtonState, ui: &UiTheme, scale: f32) ->
         v.color[3] *= 0.45;
     }
     v.background[3] *= b.style.background_opacity;
+    if let Some(slot) = b.effects.carousel_slot {
+        v.transform = v
+            .transform
+            .translate(f32::from(slot) * b.bounds.bounds()[2] / scale, 0.);
+    }
     v
 }
 fn state_surface(mut surface: [f32; 4], state: ButtonState, theme: &Theme) -> [f32; 4] {

@@ -17,6 +17,66 @@ Colours are `#RRGGBB`, `#RRGGBBAA` (alpha last) or theme roles, below.
 Use `rounded(Rounding::Full)` for pills and circles, and
 `rounded_on(12., Corners::Left)` or a list of `Corner`s for selected corners.
 
+## Image compositing and masks
+
+Use `.blend_mode(BlendMode::Multiply)` on the foreground element and
+`.isolate(true)` on its containing stack to keep blending local. The native GPU
+and software renderers support `Normal`, `Multiply`, `Screen`, `Overlay`,
+`ColorBurn`, `Difference`, `DestinationOut` and `Xor`. Group `.opacity(..)` still
+applies. Color difference and alpha subtraction are different operations.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let image_effect: Element<()> = zstack![
+    vstack![].width(160.).height(100.).background("#306580"),
+    vstack![].width(160.).height(100.).background("#DDAA55")
+        .blend_mode(BlendMode::Overlay),
+].width(160.).height(100.).isolate(true).rounded(12.).clip_contents(true).into();
+image_effect.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+Mask composition helpers are `mask_union(masks)`, `mask_intersection(a, b)`,
+`mask_difference(a, b)` and `mask_exclude(a, b)`. Pass their result to
+`.mask(result, MaskMode::Alpha)`. These combine antialiased **alpha coverage**;
+they do not generate editable boolean vector paths. Gradient alpha masks provide
+feathered edges. Place masks in matching logical dimensions, or use fractional
+widths for both the content and mask. See the Catalog **Image** page for the
+actual image/mask/overlay examples, also rendered live in the browser.
+
+Custom `DocumentPainter` adapters remain source-compatible: the default
+`ui_blend_begin` delegates to `ui_layer_begin`, preserving ordinary opacity but
+not blend semantics. Override it to support blending. Adapters matching native
+`Shape` exhaustively must handle the new `BlendBegin(opacity, mode)` marker,
+paired with `LayerEnd`. Existing layer depth/memory admission limits still apply.
+
+## Viewport entrances and pointer reactions
+
+`.reveal_on_scroll(Transition::slide(0., 24.).duration_ms(420))` starts one finite
+entrance when the element's layout box first intersects the viewport/ancestor
+clip. Keep a stable `.key(..)`. It stays revealed when scrolling away and back;
+increment `.transition_revision(..)` to explicitly replay. Unmounting forgets
+its history. Offscreen, not-yet-revealed items schedule no reveal timer. Reduced
+motion shows content immediately. This never changes wheel deltas, momentum,
+scroll position or scroll snapping. Decorative slide offsets do not move input
+targets; use `Transform2D` for interactive content which must move with its pose.
+
+For a spotlight or pointer-following artwork, use `.on_pointer(..)` and retained
+children with `.transform(..).animation(..)`. `.wheel_passthrough(true)` lets
+normal ancestor scrolling handle the wheel over that surface without losing
+hover/drag events. The default is false, preserving drawing-canvas wheel input.
+Do not hide or replace the operating-system cursor. Touch can drive Press/Drag
+callbacks; a device without hover needs an explicit action or static fallback.
+
+`carousel(slides, index).slide_animation(animation)` retains up to 32 pages and
+uses the resolved viewport width, not a hardcoded travel distance. Inactive
+pages remain painted for travel but cannot receive input or publish portals.
+It has no autoplay timer. Keep page keys stable and control the index through
+`.on_change(..)`. Existing carousels keep their short crossfade; `.transition(..)`
+customizes that enter/exit route. `.motion(false)` and application reduced-motion
+settings settle motion immediately. Close anchored popups before changing pages;
+moving popup anchors are not a shared-element popup animation API.
+
 ## Theme colours
 
 Use semantic roles instead of fixed colours and the whole interface follows

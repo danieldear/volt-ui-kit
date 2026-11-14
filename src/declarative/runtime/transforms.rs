@@ -10,6 +10,7 @@ pub(super) struct TransformIndex {
     ids: HashMap<String, usize>,
     parents: Vec<Option<usize>>,
     affected: Vec<bool>,
+    inert: Vec<bool>,
     paint: Vec<bool>,
 }
 impl TransformIndex {
@@ -22,6 +23,8 @@ impl TransformIndex {
             }
             let parent = stack.last().copied();
             let affected = parent.is_some_and(|p| result.affected[p]) || b.effects.has_geometry();
+            let inert = b.effects.inert || parent.is_some_and(|p| result.inert[p]);
+            result.inert.push(inert);
             result.ids.insert(b.id.clone(), i);
             result.parents.push(parent);
             result.affected.push(affected);
@@ -38,6 +41,9 @@ impl TransformIndex {
             }
         }
         result
+    }
+    pub fn inert(&self, id: &str) -> bool {
+        self.ids.get(id).is_some_and(|i| self.inert[*i])
     }
     pub fn affected(&self, id: &str) -> bool {
         self.ids.get(id).is_some_and(|i| self.affected[*i])

@@ -172,6 +172,147 @@ fn slugs_are_unique_and_every_theme_is_valid() {
 }
 
 #[test]
+fn gallery_workflows_recompose_and_settle_at_fractional_dpi() {
+    use std::time::Duration;
+    use volt_ui_kit::ui::prelude::*;
+    for scale in [1., 1.25, 2.] {
+        for (page, section, action) in [
+            (
+                Page::MotionStudio,
+                "studio-carousel",
+                "studio-carousel-control-next",
+            ),
+            (Page::MotionStudio, "studio-card", "studio-card-reveal"),
+            (Page::MotionStudio, "studio-sheet", "studio-sheet-open"),
+            (Page::MotionStudio, "studio-fab", "studio-speed-dial-toggle"),
+            (
+                Page::MotionStudio,
+                "studio-scroll-reveal",
+                "studio-scroll-replay",
+            ),
+            (
+                Page::Instruments,
+                "instruments-controls",
+                "instrument-charge",
+            ),
+            (Page::Image, "image-blend", "image-blend-mode-4"),
+        ] {
+            let mut app = App::new();
+            let demo = |app: &App| -> Element<App> {
+                vstack![
+                    pages::doc(page, app)
+                        .sections
+                        .into_iter()
+                        .find(|s| s.id == section)
+                        .unwrap()
+                        .demo
+                ]
+                .fill_width()
+                .into()
+            };
+            let (doc, mut h) = demo(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(700. * scale, 650. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            assert!(
+                r.accessibility_activate(action, &mut h, &mut app)
+                    .unwrap()
+                    .activated,
+                "{section}: {action}"
+            );
+            match section {
+                "studio-carousel" => assert_eq!(app.gallery.slide, 1),
+                "studio-card" => assert!(app.gallery.expanded),
+                "studio-sheet" => assert!(app.gallery.sheet),
+                "studio-fab" => assert!(app.gallery.dial_open),
+                "studio-scroll-reveal" => assert_eq!(app.gallery.reveals, 1),
+                "instruments-controls" => assert!((app.gallery.battery - 0.77).abs() < 0.001),
+                "image-blend" => assert_eq!(app.gallery.blend, BlendMode::ColorBurn),
+                _ => unreachable!(),
+            }
+            let (doc, next) = demo(&app).build().unwrap().into_parts();
+            r.replace_document(doc, &next, &Bindings::default())
+                .unwrap();
+            h = next;
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            for time in [1, 90, 220, 600, 1000] {
+                r.advance_animations(Duration::from_millis(time));
+                let b = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+                p.rasterize(&b, [1.; 4]).expect(section);
+            }
+            assert!(!r.is_animating(), "{section} must become idle");
+            if section == "studio-sheet" {
+                assert!(
+                    !r.accessibility_activate("studio-sheet-open", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(
+                    r.accessibility_activate("studio-sheet-confirm", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(!app.gallery.sheet);
+            }
+            if section == "studio-fab" {
+                assert!(
+                    r.accessibility_activate("studio-speed-dial-action-1", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(!app.gallery.dial_open);
+                assert_eq!(app.gallery.action, "Waypoint added");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires real GPU readback; not native presentation timing"]
+fn gallery_gpu_compact_dpi_masks_and_inflight_motion_stay_admitted() {
+    use std::time::Duration;
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().expect("real GPU required");
+    for scale in [1., 1.25, 2.] {
+        for mode in [ThemeMode::Light, ThemeMode::Dark] {
+            for width in [300., 700.] {
+                let mut app = App::new();
+                app.mode = mode;
+                app.gallery.expanded = true;
+                app.gallery.dial_open = true;
+                let sections = motion_showcase::doc(&app)
+                    .sections
+                    .into_iter()
+                    .chain(motion_showcase::instruments(&app).sections)
+                    .chain(motion_showcase::image_sections(&app));
+                for s in sections {
+                    let id = s.id;
+                    let demo: Element<App> = vstack![s.demo].fill_width().into();
+                    let (doc, h) = demo.build().unwrap().into_parts();
+                    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                    let vp = Viewport::new(width * scale, 600. * scale, scale).unwrap();
+                    let mut p = RasterPainter::new(vp);
+                    r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                    for time in [0, 80, 500] {
+                        r.advance_animations(Duration::from_millis(time));
+                        let b = r.paint_ui(&mut p, &theme(&app, mode));
+                        gpu.render(&mut p, &b, [0.; 4])
+                            .unwrap_or_else(|e| panic!("{id}: {e}"));
+                        assert_eq!(gpu.last_over_budget(), None, "{id} {scale}x {width}");
+                        assert_eq!(gpu.framebuffer_upload_bytes(), 0);
+                    }
+                    r.set_reduced_motion(true);
+                    assert_eq!(r.animation_wait(), None, "{id}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn worker_progress_ignores_stale_generations() {
     let mut app = App::new();
     app.job_running = true;
@@ -2729,7 +2870,12 @@ fn new_motion_recipes_render_on_gpu_at_fractional_dpi_without_framebuffer_upload
 #[ignore = "local scroll-stage timing report; not a portable performance threshold"]
 fn motion_scroll_stage_profile() {
     use std::time::{Duration, Instant};
-    for page in [Page::Effects, Page::Table] {
+    for page in [
+        Page::Effects,
+        Page::MotionStudio,
+        Page::Instruments,
+        Page::Table,
+    ] {
         for scale in [1.25, 2.] {
             let mut app = App::new();
             app.go(page);

@@ -242,6 +242,7 @@ pub struct Drawer<C> {
     on_dismiss: Option<Click<C>>,
     motion: bool,
     header_leading_inset: f32,
+    radius: f32,
 }
 pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
     Drawer {
@@ -255,9 +256,16 @@ pub fn drawer<C>(content: impl Into<Element<C>>) -> Drawer<C> {
         on_dismiss: None,
         motion: true,
         header_leading_inset: 0.,
+        radius: 0.,
     }
 }
 impl<C> Drawer<C> {
+    /// Corner radius in logical pixels; the existing default remains square.
+    pub fn corner_radius(mut self, pixels: f32) -> Self {
+        self.radius = pixels;
+        self
+    }
+
     root_spacing_methods!();
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
@@ -362,7 +370,8 @@ impl<C: 'static> From<Drawer<C>> for Element<C> {
         .border_sides(sides)
         .border_color(ColorToken::Border)
         .border_width(1.)
-        .shadow(tokens::shadow::xl());
+        .shadow(tokens::shadow::xl())
+        .rounded(d.radius);
         card = if horizontal {
             card.width(d.size)
         } else {

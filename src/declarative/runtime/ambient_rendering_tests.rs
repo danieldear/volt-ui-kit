@@ -89,6 +89,43 @@ fn ambient_clock_keeps_submillisecond_phase_and_long_uptime_precision() {
 }
 
 #[test]
+fn slide_reveal_keeps_fractional_text_origins_and_fixed_semantics() {
+    for scale in [1., 1.25, 1.5, 2., 3.] {
+        let tree: Element<()> = vstack![text("Floating").key("label").font_size(20.)]
+            .key("slide")
+            .width(180.)
+            .height(60.)
+            .padding(15., Edge::All)
+            .reveal_on_scroll(
+                Transition::slide(24., 0.).animation(Animation::linear().duration_ms(1000)),
+            )
+            .into();
+        let (d, h) = tree.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        let vp = Viewport::new(300. * scale, 150. * scale, scale).unwrap();
+        let mut p = RasterPainter::new(vp);
+        r.layout(vp, &Bindings::default(), &mut p).unwrap();
+        let semantics = r.accessibility_nodes();
+        let mut last: Option<f32> = None;
+        for i in 0..8 {
+            r.advance_animations(Duration::from_secs_f64(f64::from(i) / 120.));
+            let batches = r.paint_ui(&mut p, &UiTheme::light());
+            let x = text_origin(&batches, Affine2D::IDENTITY).unwrap()[0];
+            if let Some(previous) = last {
+                assert!(
+                    (previous - x - 0.2 * scale).abs() < 0.001,
+                    "slide text quantized at {scale}x: {previous} -> {x}"
+                );
+            }
+            last = Some(x);
+            assert_eq!(semantics, r.accessibility_nodes());
+        }
+        r.set_reduced_motion(true);
+        assert_eq!(r.animation_wait(), None);
+    }
+}
+
+#[test]
 fn fractional_floating_cards_keep_padding_edges_and_real_ancestor_clips() {
     for scale in [1., 1.25, 2.] {
         for clipped in [false, true] {

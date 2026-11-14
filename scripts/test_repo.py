@@ -147,7 +147,9 @@ class SiteTests(unittest.TestCase):
     def test_directory_and_reference_previews_are_source_backed_canvases(self):
         docs = build_docs_site.ROOT / 'docs'
         directory = (docs / 'reference/index.html').read_text()
-        self.assertEqual(directory.count('data-volt-mode="directory"'), 49)
+        catalog = json.loads((docs / "assets/catalog-data.json").read_text())
+        self.assertEqual(directory.count('data-volt-mode="directory"'),
+                         sum(bool(page['sections']) for page in catalog))
         self.assertNotIn('images/components/', directory)
         slots = 0
         for path in (docs / 'reference').glob('*.html'):
@@ -266,7 +268,7 @@ class SiteTests(unittest.TestCase):
         docs = build_docs_site.ROOT / "docs"
         catalog = json.loads((docs / "assets/catalog-data.json").read_text())
         manifest = set(build_docs_site.generated_files(build_docs_site.ROOT))
-        self.assertEqual(len(catalog), 50)
+        self.assertEqual(len(catalog), 52)
         for page in catalog:
             target = f"reference/{page['slug']}.html"
             self.assertIn(target, manifest)
@@ -279,10 +281,17 @@ class SiteTests(unittest.TestCase):
                 self.assertIn(f'data-volt-page="{page["slug"]}"', html)
                 self.assertIn(f'data-volt-section="{section["id"]}"', html)
                 self.assertIn('src="../live/catalog-previews.js"', html)
-                data = (docs / image).read_bytes()
-                self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
-                self.assertEqual(int.from_bytes(data[16:20], 'big'), section['width'])
-                self.assertEqual(int.from_bytes(data[20:24], 'big'), section['height'])
+                self.assertGreater(section['width'], 0)
+                self.assertGreater(section['height'], 0)
+                height = max(160, min(760, section['height']))
+                self.assertIn(f'data-volt-section="{section["id"]}" data-volt-height="{height}"', html)
+                # Old PNGs are archival, not a requirement for new live previews.
+                # Pixel rendering of every section is covered by real-browser QA.
+                if (docs / image).is_file():
+                    data = (docs / image).read_bytes()
+                    self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
+                    self.assertEqual(int.from_bytes(data[16:20], 'big'), section['width'])
+                    self.assertEqual(int.from_bytes(data[20:24], 'big'), section['height'])
 
     def test_cross_page_html_anchor_checked(self):
         root = build_docs_site.ROOT

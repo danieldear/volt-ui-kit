@@ -361,7 +361,7 @@ fn opacity_layer_bounds(batches: &[PaintBatch<Shape, Glyph>]) -> Vec<Rect> {
         let clip = rect(batch.clip.bounds());
         for s in &batch.shapes {
             match s {
-                Shape::LayerBegin(_) => {
+                Shape::LayerBegin(_) | Shape::BlendBegin(..) => {
                     open.push((out.len(), None));
                     out.push(Rect::ZERO);
                 }
@@ -705,6 +705,7 @@ impl GpuSceneEncoder {
                 if matches!(
                     s,
                     Shape::LayerBegin(_)
+                        | Shape::BlendBegin(..)
                         | Shape::LayerEnd
                         | Shape::MaskBegin(_)
                         | Shape::MaskEnd
@@ -715,14 +716,31 @@ impl GpuSceneEncoder {
                         self.pop_layer();
                     }
                     match s {
-                        Shape::LayerBegin(alpha) => {
+                        Shape::LayerBegin(alpha) | Shape::BlendBegin(alpha, _) => {
                             if !alpha.is_finite() || !(0. ..=1.).contains(alpha) || layers >= 24 {
                                 return Err("invalid GPU layer opacity/depth".into());
                             }
                             // Pixel-aligned so edge antialiasing is never cut.
                             let content = layer_areas.next().unwrap_or(viewport).expand();
                             let area = bounds.last().unwrap().intersect(content);
-                            self.layer(Mix::Normal, *alpha, &area);
+                            let mode: vello::peniko::BlendMode = match s {
+                                Shape::BlendBegin(_, mode) => match mode {
+                                    crate::graphics::BlendMode::DestinationOut => {
+                                        Compose::DestOut.into()
+                                    }
+                                    crate::graphics::BlendMode::Xor => Compose::Xor.into(),
+                                    crate::graphics::BlendMode::Normal => Mix::Normal.into(),
+                                    crate::graphics::BlendMode::Multiply => Mix::Multiply.into(),
+                                    crate::graphics::BlendMode::Screen => Mix::Screen.into(),
+                                    crate::graphics::BlendMode::Overlay => Mix::Overlay.into(),
+                                    crate::graphics::BlendMode::ColorBurn => Mix::ColorBurn.into(),
+                                    crate::graphics::BlendMode::Difference => {
+                                        Mix::Difference.into()
+                                    }
+                                },
+                                _ => Mix::Normal.into(),
+                            };
+                            self.layer(mode, *alpha, &area);
                             bounds.push(area);
                             stack.push(Open::Layer);
                             layers += 1;

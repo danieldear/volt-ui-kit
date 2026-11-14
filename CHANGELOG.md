@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Add opt-in sliding carousels, viewport-triggered reveals, bottom sheets,
+  floating action/speed-dial controls, rotary sliders and radial gauges. Reuse
+  controlled state, keyboard/accessibility semantics, logical coordinates and
+  reduced-motion scheduling. Inactive carousel pages cannot activate controls
+  or open portals; existing crossfade and drawer defaults remain unchanged.
+- Add isolated color blending and composable alpha-mask union, intersection,
+  difference and exclusion in the software and Vello renderers. Extend the
+  subpixel compositor to decorative slide offsets without moving hit geometry.
+  Legacy DocumentPainter adapters keep ordinary opacity through a default hook;
+  native Shape gains BlendBegin for adapters with exhaustive shape matches.
+- Showcase these capabilities in Motion studio, Instruments and Image Catalog
+  pages, shared with the live Rust/WASM documentation. Pointer previews pass
+  wheel input through to scrolling; viewport reveals never drive scroll position.
+  Instrument values are simulations, not device or automotive host support.
+
 - Keep decorative floating text, borders and backgrounds together under a
   subpixel affine compositor instead of rounding moving text origins. Preserve
   legacy painter fallback, fixed hit geometry, clipping and reduced motion.
