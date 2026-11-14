@@ -40,6 +40,8 @@ pub enum Page {
     Canvas,
     Image,
     Effects,
+    MotionStudio,
+    Instruments,
     BackgroundTasks,
     ApplicationLifecycle,
     Documents,
@@ -59,7 +61,7 @@ pub enum Page {
     RichText,
 }
 use Page::*;
-pub const PAGES: [Page; 50] = [
+pub const PAGES: [Page; 52] = [
     Introduction,
     Theming,
     ThemeEditor,
@@ -103,6 +105,8 @@ pub const PAGES: [Page; 50] = [
     DataDisplay,
     Charts,
     Effects,
+    MotionStudio,
+    Instruments,
     BackgroundTasks,
     ApplicationLifecycle,
     Documents,
@@ -147,6 +151,8 @@ impl Page {
             Canvas => "Canvas",
             Image => "Image",
             Effects => "Effects & motion",
+            MotionStudio => "Motion studio",
+            Instruments => "Instruments",
             BackgroundTasks => "Background tasks",
             ApplicationLifecycle => "Application lifecycle",
             Documents => "Documents",
@@ -186,7 +192,9 @@ impl Page {
     pub fn is_new(self) -> bool {
         matches!(
             self,
-            Accessibility
+            MotionStudio
+                | Instruments
+                | Accessibility
                 | Utilities
                 | ThemeEditor
                 | Dashboard
@@ -251,6 +259,8 @@ impl Page {
             SplitPane => "Two panes divided by a draggable handle.",
             Canvas => "Retained vector paths: fills, strokes and transforms.",
             Image => "Image backgrounds with fit, position, opacity and clipping.",
+            MotionStudio => "Carousels, sheets, card reveals, pointer reactions and viewport entrances.",
+            Instruments => "Touch-sized radial gauges and rotary controls with native input semantics.",
             Effects => "Finite spring motion, staggered entrances, interaction feedback, shadows and glows.",
             BackgroundTasks => "Worker threads report progress through a bounded message queue.",
             ApplicationLifecycle => "State-aware commands and guarded closing for unsaved work.",
@@ -356,6 +366,8 @@ pub fn doc(page: Page, app: &App) -> Doc {
         Canvas => canvas_doc(),
         Image => image_doc(app),
         Effects => effects_doc(app),
+        MotionStudio => super::motion_showcase::doc(app),
+        Instruments => super::motion_showcase::instruments(app),
         BackgroundTasks => tasks_doc(app),
         #[cfg(feature = "native")]
         ApplicationLifecycle => super::lifecycle::doc(app),
@@ -2273,7 +2285,10 @@ fn image_doc(app: &App) -> Doc {
                 r#".clip(Clip::Circle)
 .clip(Clip::Path(diamond))"#,
             ),
-        ],
+        ]
+        .into_iter()
+        .chain(super::motion_showcase::image_sections(app))
+        .collect(),
         api: vec![
             (
                 "native::load_image(path) / decode_image(bytes)",
@@ -2367,6 +2382,11 @@ fn effects_doc(app: &App) -> Doc {
     .gap(12., Axis::Vertical);
     Doc {
         sections: vec![
+            super::motion_lab::transforms(app),
+            super::motion_lab::layout(app),
+            super::motion_lab::gestures(app),
+            super::motion_lab::timeline(app),
+            super::motion_lab::text_presets(app),
             super::motion_lab::workspace(app),
             super::motion_lab::sequence(app),
             super::motion_lab::feedback(app),
@@ -2397,6 +2417,26 @@ fn effects_doc(app: &App) -> Doc {
             ),
         ],
         api: vec![
+            (
+                ".transform(Transform2D) / .scale(x, y) / .rotate(degrees)",
+                "Interactive logical-pixel 2D subtree poses; paint and input move together",
+            ),
+            (
+                ".layout_animation(Animation).shared_element(key)",
+                "Keyed geometry transitions; unique shared keys pair geometry across identities",
+            ),
+            (
+                ".drag_motion(DragMotion)",
+                "Captured direct manipulation with bounded analytic release momentum",
+            ),
+            (
+                ".timeline(Timeline)",
+                "Finite pose keyframes with replay, pause, reverse and seek",
+            ),
+            (
+                "typing_text / morphing_text / rolling_number / shimmer_text",
+                "Grapheme reveal, shaped crossfade, rolling digits and opacity shimmer",
+            ),
             (
                 "Animation::spring() / spring_with(Spring)",
                 "Finite damped response; positional overshoot, bounded colors/opacity",

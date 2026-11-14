@@ -97,6 +97,7 @@ jobs:
           export VOLT_WEB_URL=http://127.0.0.1:8768/volt-ui-kit
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_web.cjs
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_catalog_web.cjs
+          NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_motion_gallery_web.cjs
           NODE_PATH="$PWD/target/web-test-tools/node_modules" node scripts/test_web_input.cjs
           BROWSER_TESTS
       - name: Save build cache

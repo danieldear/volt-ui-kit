@@ -1977,6 +1977,33 @@
         "note": "Circles, rounded rectangles and arbitrary paths.",
         "title": "Clipping",
         "width": 1000
+      },
+      {
+        "code": "photo.mask(mask_union([left_mask(), right_mask()]), MaskMode::Alpha);\nphoto.mask(mask_difference(left_mask(), right_mask()), MaskMode::Alpha);\n// Also: mask_intersection(a, b), mask_exclude(a, b).",
+        "height": 210,
+        "id": "image-mask-operations",
+        "image": "image-image-mask-operations.png",
+        "note": "Reusable alpha-coverage union, intersection, subtraction and exclusion. These compose masks; they do not generate boolean vector-path geometry.",
+        "title": "Cutouts with clear edges",
+        "width": 1000
+      },
+      {
+        "code": "photo.mask(mask.background_gradient(Gradient::linear(90., [\n    (0., \"#FFFFFF00\"), (0.25, \"#FFFFFFFF\"),\n    (0.75, \"#FFFFFFFF\"), (1., \"#FFFFFF00\"),\n])), MaskMode::Alpha)",
+        "height": 274,
+        "id": "image-feather",
+        "image": "image-image-feather.png",
+        "note": "Gradient alpha masks blend an image into its surface without a pre-rendered asset.",
+        "title": "A softer edge",
+        "width": 1000
+      },
+      {
+        "code": "zstack![photo, tint.blend_mode(BlendMode::ColorBurn)]\n    .isolate(true).clip_contents(true);\n// BlendMode::Difference is colour difference, not alpha subtraction.",
+        "height": 338,
+        "id": "image-blend",
+        "image": "image-image-blend.png",
+        "note": "Normal, multiply, screen, overlay, color burn and difference run on both GPU and software. Isolation keeps compositing inside this preview.",
+        "title": "Overlays that belong to the image",
+        "width": 1000
       }
     ],
     "slug": "image",
@@ -2197,6 +2224,26 @@
   {
     "api": [
       [
+        ".transform(Transform2D) / .scale(x, y) / .rotate(degrees)",
+        "Interactive logical-pixel 2D subtree poses; paint and input move together"
+      ],
+      [
+        ".layout_animation(Animation).shared_element(key)",
+        "Keyed geometry transitions; unique shared keys pair geometry across identities"
+      ],
+      [
+        ".drag_motion(DragMotion)",
+        "Captured direct manipulation with bounded analytic release momentum"
+      ],
+      [
+        ".timeline(Timeline)",
+        "Finite pose keyframes with replay, pause, reverse and seek"
+      ],
+      [
+        "typing_text / morphing_text / rolling_number / shimmer_text",
+        "Grapheme reveal, shaped crossfade, rolling digits and opacity shimmer"
+      ],
+      [
         "Animation::spring() / spring_with(Spring)",
         "Finite damped response; positional overshoot, bounded colors/opacity"
       ],
@@ -2231,6 +2278,51 @@
     ],
     "group": "Components",
     "sections": [
+      {
+        "code": "button(\"Press me\").key(\"action\")\n    .transform(Transform2D::new().rotate(angle).scale(zoom, zoom))\n    .animation(Animation::ease_out().duration_ms(320))\n    .on_click(|app: &mut App| app.presses += 1)",
+        "height": 270,
+        "id": "fx-transforms",
+        "image": "effects-motion-fx-transforms.png",
+        "note": "Logical 2D scale and rotation, shaped GPU text and inverse-mapped pointer input at fractional DPI.",
+        "title": "Transforms that keep input aligned",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"workspace\")\n    .layout_animation(Animation::ease_out().duration_ms(320));\nindicator.key(format!(\"indicator-{selected}\"))\n    .shared_element(\"active-indicator\")\n    .layout_animation(Animation::ease_out().duration_ms(320));",
+        "height": 308,
+        "id": "fx-layout",
+        "image": "effects-motion-fx-layout.png",
+        "note": "Keyed cards interpolate position and size. One shared identity connects the indicator across tab containers.",
+        "title": "Layout and shared geometry",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"draggable\")\n    .drag_motion(DragMotion::new()\n        .bounds([0., 0.], [128., 0.])\n        .friction(7.)); // .momentum(false) for direct manipulation only",
+        "height": 232,
+        "id": "fx-gestures",
+        "image": "effects-motion-fx-gestures.png",
+        "note": "Captured pointer gestures in logical coordinates, with analytical frame-rate-independent inertia and explicit bounds.",
+        "title": "Direct manipulation and momentum",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"sequence\").timeline(Timeline::new(1600)\n    .keyframe(0., MotionPose::new())\n    .keyframe(0.5, MotionPose::new().translate(150., 0.).rotate(12.))\n    .keyframe(1., MotionPose::new())\n    .playback(TimelinePlayback::Play)\n    .revision(replay_revision));",
+        "height": 304,
+        "id": "fx-timeline",
+        "image": "effects-motion-fx-timeline.png",
+        "note": "Finite keyframe sequences with pause, resume, reverse, seek and explicit replay. No app-owned animation timer.",
+        "title": "One clock, a composed sequence",
+        "width": 1000
+      },
+      {
+        "code": "typing_text(\"Hello, native world\").key(\"typing\")\n    .text_effect(TextEffect::typing().duration_ms(1400).revision(replay));\nmorphing_text(status).key(\"status\");\nrolling_number(count).key(\"count\");\nshimmer_text(\"Preparing workspace\").key(\"working\");",
+        "height": 315,
+        "id": "fx-text",
+        "image": "effects-motion-fx-text.png",
+        "note": "Selectable semantic text remains intact. Typing reveals whole graphemes, morphing crossfades shaped text, numbers roll and shimmer sweeps opacity across glyphs.",
+        "title": "Text that stays text",
+        "width": 1000
+      },
       {
         "code": "panel![task_content(app)].key(\"task\")\n    .offset(if app.ready { 64. } else { 0. }, 0.)\n    .animation(Animation::spring().duration_ms(520));\n// Or tune the response without adding a timer:\n// Animation::spring_with(Spring::new().damping_ratio(0.7))\n// Retargeting preserves painted position, not physical velocity.",
         "height": 451,
@@ -2289,6 +2381,113 @@
     "slug": "effects-motion",
     "summary": "Finite spring motion, staggered entrances, interaction feedback, shadows and glows.",
     "title": "Effects & motion"
+  },
+  {
+    "api": [
+      [
+        "carousel(...).slide_animation(animation)",
+        "Responsive retained slides; shared paint/input transforms"
+      ],
+      [
+        "bottom_sheet(body) / speed_dial(label, actions)",
+        "Controlled modal and non-modal touch-sized actions"
+      ],
+      [
+        ".reveal_on_scroll(transition)",
+        "One entry reveal per key/revision; never drives the scroll position"
+      ],
+      [
+        ".on_pointer(...) / .wheel_passthrough(true)",
+        "Pointer reactions without swallowing wheel scrolling"
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "carousel(slides, app.slide).key(\"journey\").height(240.)\n    .slide_animation(Animation::ease_out().duration_ms(380))\n    .controls_below(true).on_change(|app, i| app.slide = i)",
+        "height": 378,
+        "id": "studio-carousel",
+        "image": "motion-studio-studio-carousel.png",
+        "note": "Retained pages travel by the resolved viewport width. Buttons, focus and hit targets follow the same pose; no autoplay timer.",
+        "title": "A carousel with real page motion",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"kit\").height(if app.expanded { 294. } else { 180. })\n    .layout_animation(Animation::spring().duration_ms(400));\n// Mount details with a stable key and a finite enter/exit slide.\n// details.key(\"details\").transition(Transition::slide(0., 18.))",
+        "height": 432,
+        "id": "studio-card",
+        "image": "motion-studio-studio-card.png",
+        "note": "The card changes size with keyed layout motion. Details slide in and out; removed content cannot receive input.",
+        "title": "Reveal what matters",
+        "width": 1000
+      },
+      {
+        "code": "bottom_sheet(order_form()).key(\"checkout\").title(\"Review your order\")\n    .size(340.).open(app.checkout_open)\n    .on_dismiss(|app| app.checkout_open = false)",
+        "height": 540,
+        "id": "studio-sheet",
+        "image": "motion-studio-studio-sheet.png",
+        "note": "A real modal: focus containment, Escape, backdrop dismissal and a scrollable body reuse the drawer contract.",
+        "title": "Bottom sheets, not another window",
+        "width": 1000
+      },
+      {
+        "code": "speed_dial(\"quick actions\", [(Action::Note, \"New note\"), (Action::Pin, \"Add waypoint\")])\n    .key(\"quick-actions\").open(app.quick_open)\n    .on_open_change(|app, open| app.quick_open = open)\n    .on_action(|app, action| app.perform(action))",
+        "height": 412,
+        "id": "studio-fab",
+        "image": "motion-studio-studio-fab.png",
+        "note": "A controlled, non-modal speed dial. Touch-sized buttons, staggered entrances, explicit close and Escape; no hidden side effects.",
+        "title": "Quick actions within reach",
+        "width": 1000
+      },
+      {
+        "code": "surface.wheel_passthrough(true).on_pointer(|app, p| match p.phase {\n    PointerPhase::Hover | PointerPhase::Press | PointerPhase::Drag => app.pointer = p.at,\n    _ => {},\n});\n// Move retained children using Transform2D + Animation; do not replace the OS cursor.",
+        "height": 354,
+        "id": "studio-pointer",
+        "image": "motion-studio-studio-pointer.png",
+        "note": "A spotlight, spring-like following ring and restrained 2D card response. Touch/drag works too; wheel input still scrolls the page.",
+        "title": "Follow, without replacing the cursor",
+        "width": 1000
+      },
+      {
+        "code": "section.key(\"story-step\").reveal_on_scroll(Transition::slide(0., 24.).duration_ms(420))\n    .transition_revision(app.replay_revision);\n// Normal scrolling stays in control; this is not scroll snapping or scroll hijacking.",
+        "height": 720,
+        "id": "studio-scroll-reveal",
+        "image": "motion-studio-studio-scroll-reveal.png",
+        "note": "One entrance per key/revision when a box first becomes visible. Offscreen items do not run an animation timer. Reduced motion shows content immediately.",
+        "title": "Reveals that follow your reading",
+        "width": 1000
+      }
+    ],
+    "slug": "motion-studio",
+    "summary": "Carousels, sheets, card reveals, pointer reactions and viewport entrances.",
+    "title": "Motion studio"
+  },
+  {
+    "api": [
+      [
+        "gauge(fraction) / knob(value)",
+        "Read-only progress and interactive numeric slider"
+      ],
+      [
+        "DialStyle::new().start_angle(...).sweep(...).ticks(...)",
+        "Validated, bounded logical geometry; normal GPU antialiasing"
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "gauge(app.battery).accessible_label(\"Battery charge\")\n    .dial_style(DialStyle::new().ticks(13).stroke_width(7.));\nknob(app.temperature).key(\"temperature\").range(16.0..=30.0).step(0.5)\n    .accessible_label(\"Cabin temperature, degrees Celsius\")\n    .on_change(|app, value| app.temperature = value);",
+        "height": 472,
+        "id": "instruments-controls",
+        "image": "instruments-instruments-controls.png",
+        "note": "Real progress and slider semantics. The rotary control supports captured pointer input, keyboard steps, disabled state and assistive adjustment. Values here are simulated.",
+        "title": "A panel made for touch",
+        "width": 1000
+      }
+    ],
+    "slug": "instruments",
+    "summary": "Touch-sized radial gauges and rotary controls with native input semantics.",
+    "title": "Instruments"
   },
   {
     "api": [
@@ -2380,7 +2579,7 @@
     "sections": [
       {
         "code": "Application::new(\"Documents\", app, view)\n    .commands(commands())\n    .requests(|app, sender| app.requests = Some(sender))\n    .on_close_request(|app, reason| {\n        if app.dirty() {\n            app.close_prompt = Some(reason);\n            CloseDecision::KeepOpen\n        } else { CloseDecision::Close }\n    })\n    .run()?;\n// Save / Discard: update app state, then enqueue Close(reason).\n// Cancel: dismiss the dialog without closing or clearing the draft.",
-        "height": 734,
+        "height": 720,
         "id": "application-document",
         "image": "application-lifecycle-application-document.png",
         "note": "Edit the draft, use Save or Cmd/Ctrl+S, then request closing. Dirty work opens Save / Discard / Cancel. Saving here is in memory, not disk persistence.",
@@ -2463,7 +2662,7 @@
     "sections": [
       {
         "code": "let caps = notifications::capabilities();\nif caps.authorization {\n    // macOS: native-notifications + identified .app.\n    notifications::request_authorization(move |decision| {\n        // Marshal to UiSender. Send from the UI after permission is granted.\n    })?;\n} else if caps.local_requests {\n    // Linux: no simulated permission grant; immediate desktop notification.\n    let note = LocalNotification::new(\"build.ready\", \"Build ready\", \"All checks passed.\");\n    notifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;\n}\n// Linux: remove_async(\"build.ready\".into(), callback).\n// macOS alone supports after(Duration); Linux rejects delayed scheduling.",
-        "height": 589,
+        "height": 604,
         "id": "desktop-notifications",
         "image": "desktop-services-desktop-notifications.png",
         "note": "System notifications that appear in Notification Center, unlike in-app toasts. Nothing is requested until you ask.",

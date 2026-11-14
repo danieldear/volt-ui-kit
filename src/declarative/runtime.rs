@@ -35,6 +35,9 @@ mod overlays;
 #[cfg(feature = "rust-ui")]
 mod selection;
 #[cfg(feature = "rust-ui")]
+mod text_motion;
+mod transforms;
+#[cfg(feature = "rust-ui")]
 pub(super) mod value_controls;
 /// Physical-pixel typography resolved from inherited document styles.
 #[derive(Clone, Debug, PartialEq)]
@@ -141,10 +144,35 @@ pub trait DocumentPainter: Painter + TextMetrics {
         size: f32,
         color: [f32; 4],
     );
+    /// Transform a complete subtree in physical coordinates. Legacy adapters
+    /// retain their original drawing; rendering adapters override this hook.
+    fn ui_transform_batches(
+        &mut self,
+        batches: Vec<PaintBatch<Self::Shape, Self::Glyph>>,
+        _matrix: crate::motion::Affine2D,
+        _ancestor_clip: Rect,
+    ) -> Vec<PaintBatch<Self::Shape, Self::Glyph>> {
+        batches
+    }
+    /// Whether `ui_transform_batches` preserves affine/subpixel subtree poses.
+    /// Opting in routes decorative floating motion through that hook instead
+    /// of changing glyph origins. Legacy adapters keep their existing motion.
+    fn ui_supports_transforms(&self) -> bool {
+        false
+    }
     /// Optional subtree group-compositing hooks. Legacy adapters ignore opacity;
     /// adapters supporting effects override both hooks.
     fn ui_layer_begin(&mut self, _out: &mut Vec<Self::Shape>, _opacity: f32) {}
     fn ui_layer_end(&mut self, _out: &mut Vec<Self::Shape>) {}
+    /// Legacy adapters retain ordinary group opacity when blending is unavailable.
+    fn ui_blend_begin(
+        &mut self,
+        out: &mut Vec<Self::Shape>,
+        opacity: f32,
+        _mode: crate::graphics::BlendMode,
+    ) {
+        self.ui_layer_begin(out, opacity);
+    }
     /// Optional surface capabilities; old adapters remain source compatible.
     fn ui_clip_begin(&mut self, _out: &mut Vec<Self::Shape>, _clip: ClipRegion) {}
     fn ui_clip_end(&mut self, _out: &mut Vec<Self::Shape>) {}
@@ -330,12 +358,15 @@ pub struct LayoutBox {
     content_clip: Option<ClipRegion>,
     image: Option<BackgroundImage>,
     canvas: Arc<Canvas>,
+    transform_suppressed: bool,
+    #[cfg(feature = "rust-ui")]
+    pub(super) text_paint: Option<super::motion_text::TextPaint>,
     pub(crate) frames: Option<crate::graphics::CanvasFrames>,
     pub scroll_max: [f32; 2],
     pub scroll_offset: [f32; 2],
     pub scroll: Option<super::Scroll>,
     pub scrollbars: super::Scrollbars,
-    layout_visible: bool,
+    pub(super) layout_visible: bool,
     #[cfg_attr(not(feature = "rust-ui"), allow(dead_code))]
     pub(crate) split: Option<super::document::SplitProps>,
     pub(crate) split_handle: Option<String>,
@@ -435,6 +466,7 @@ struct DragCapture {
     /// The surface's `on_pointer`, if it has one.
     pointer: Option<String>,
     origin: [f32; 2],
+    inverse: crate::motion::Affine2D,
     end: Option<String>,
 }
 /// Shared document layout and event state; owns no window or background tasks.
@@ -493,6 +525,8 @@ pub struct Runtime {
     cache: Option<([f32; 3], Bindings)>,
     last_viewport: Option<[f32; 3]>,
     motion: RefCell<Motion>,
+    has_transforms: bool,
+    transform_index: transforms::TransformIndex,
     /// The last painted palette also governs input occlusion. Layout stores
     /// token/pair specifications, not their active theme's resolved colours.
     input_theme: RefCell<UiTheme>,
@@ -600,6 +634,8 @@ impl Runtime {
             cache: None,
             last_viewport: None,
             motion: RefCell::new(Motion::default()),
+            has_transforms: false,
+            transform_index: transforms::TransformIndex::default(),
             input_theme: RefCell::new(UiTheme::light()),
             scroll_offsets: BTreeMap::new(),
             lazy_heights: BTreeMap::new(),
@@ -652,14 +688,24 @@ impl Runtime {
     }
     /// Host-provided monotonic clock; never calls application handlers or layout.
     pub fn advance_animations(&mut self, now: Duration) -> bool {
-        let changed = self.motion.get_mut().advance(now) || self.ambient_active();
+        let changed = self.motion.get_mut().advance(now);
+        #[cfg(feature = "rust-ui")]
+        self.refresh_motion_visibility();
+        let changed = changed || self.ambient_active();
         #[cfg(feature = "rust-ui")]
         let changed = self.advance_progress(now) || changed;
         changed
     }
     /// Visible ambient motion keeps frames coming (never under reduced motion).
     fn ambient_active(&self) -> bool {
-        !self.motion.borrow().reduced && self.boxes.iter().any(|b| b.effects.ambient.is_some())
+        !self.motion.borrow().reduced
+            && self
+                .boxes
+                .iter()
+                .any(|b| b.effects.ambient.is_some() && self.motion_visible(b))
+    }
+    pub fn has_animated_geometry(&self) -> bool {
+        self.has_transforms && self.motion.borrow().geometry_active()
     }
     pub fn is_animating(&self) -> bool {
         let active = self.motion.borrow().active() || self.ambient_active();
@@ -684,6 +730,10 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         self.set_progress_reduced(reduced);
         let m = self.motion.get_mut();
+        #[cfg(feature = "rust-ui")]
+        if m.reduced && !reduced {
+            m.resume_text();
+        }
         m.reduced = reduced;
         if reduced {
             m.settle();
@@ -702,20 +752,16 @@ impl Runtime {
         if self.boxes.iter().any(|b| {
             interactive_box(b)
                 && (!self.portal_passthrough(&b.id))
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.hit_clip(b, x, y)
+                && self.hit_rounded(b, x, y)
         }) {
             return false;
         }
         let Some(mut index) = self.boxes.iter().rposition(|b| {
             (!self.portal_passthrough(&b.id))
                 && !b.effects.scroll_passthrough
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.hit_clip(b, x, y)
+                && self.hit_rounded(b, x, y)
         }) else {
             return false;
         };
@@ -956,6 +1002,7 @@ impl Runtime {
         self.cache = None;
         self.boxes.clear();
         self.layout_boxes.clear();
+        self.transform_index = transforms::TransformIndex::default();
         self.cancel_input();
         #[cfg(feature = "rust-ui")]
         {
@@ -1046,7 +1093,10 @@ impl Runtime {
             if let Some(node) = target(self.document.root(), &capture.id, values, width)
                 .filter(|n| n.kind == capture.kind && self.scope_allows_id(&capture.id))
             {
-                if node.on_drag.is_some() || node.on_pointer.is_some() {
+                if node.on_drag.is_some()
+                    || node.on_pointer.is_some()
+                    || node.effects.drag_motion.is_some()
+                {
                     // Rebind by node identity, never by the old numeric callback
                     // name (streaming content can insert handlers before a grip).
                     capture.action = node.on_drag.clone();
@@ -1193,6 +1243,11 @@ impl Runtime {
             }
             b.ext.links = links;
         }
+        self.has_transforms = boxes.iter().any(|b| {
+            b.effects.has_geometry()
+                || b.effects.text_effect.is_some()
+                || b.effects.scroll_reveal.is_some()
+        });
         self.layout_boxes = boxes;
         self.roving_focus.retain(|group, member| {
             self.layout_boxes.iter().any(|b| {
@@ -1205,14 +1260,21 @@ impl Runtime {
         self.boxes = self
             .layout_boxes
             .iter()
-            .filter(|b| b.layout_visible)
+            .filter(|b| b.layout_visible || self.has_transforms)
             .cloned()
             .collect();
+        self.rebuild_transform_index();
         #[cfg(feature = "rust-ui")]
         self.layout_editors(metrics);
         #[cfg(feature = "rust-ui")]
         self.refresh_text_selection(metrics);
-        self.motion.get_mut().reconcile(&self.boxes);
+        let motion = self.motion.get_mut();
+        motion
+            .geometry
+            .reconcile(&self.boxes, motion.now, self.scale, motion.reduced);
+        motion.reconcile(&self.boxes);
+        #[cfg(feature = "rust-ui")]
+        self.refresh_motion_visibility();
         let valid = |id: &Option<String>| {
             id.as_ref().is_none_or(|id| {
                 self.layout_boxes
@@ -1383,23 +1445,23 @@ impl Runtime {
             if b.scrollbars == super::Scrollbars::Hidden
                 || !self.scope_allows_id(&b.id)
                 || !b.enabled
-                || !b.clip.contains(x, y)
-                || !b.clip_regions.iter().all(|r| r.contains(x, y))
+                || !self.hit_clip(b, x, y)
             {
                 return None;
             }
+            let [px, py] = self.input_point(b, x, y)?;
             (0..2).find_map(|axis| {
                 let geometry = scrollbar_geometry(b, self.scale, axis)?;
                 // The 8px interaction lane surrounds the visible 3px thumb.
                 let [tx, ty, tw, th] = geometry.track;
-                if x >= tx && y >= ty && x <= tx + tw && y <= ty + th {
+                if px >= tx && py >= ty && px <= tx + tw && py <= ty + th {
                     // A transparent full-window layout wrapper is not a
                     // painted/input surface. Use the same occlusion contract
                     // as text and code selection, including real overlays.
                     if self.input_occluded(index, x, y) {
                         return None;
                     }
-                    let position = if axis == 0 { x } else { y };
+                    let position = [px, py][axis];
                     let thumb_start = geometry.thumb[axis];
                     let thumb_end = thumb_start + geometry.thumb[axis + 2];
                     Some((
@@ -1440,7 +1502,10 @@ impl Runtime {
             return false;
         };
         let axis = capture.axis;
-        let position = if axis == 0 { x } else { y };
+        let Some(point) = self.input_point(b, x, y) else {
+            return false;
+        };
+        let position = point[axis];
         let value =
             ((position - g.start - capture.grab) / g.travel).clamp(0., 1.) * b.scroll_max[axis];
         let offset = self
@@ -1521,7 +1586,7 @@ impl Runtime {
                 b.scroll.is_some()
                     && self.scope_allows_id(&b.id)
                     && b.clip.contains(x, y)
-                    && b.bounds.contains(x, y)
+                    && self.hit_bounds(b, x, y)
             })
             .map_or(LINE * 10., |b| {
                 (b.bounds.bounds()[3] / self.scale - LINE).max(LINE)
@@ -1546,10 +1611,8 @@ impl Runtime {
             self.scope_allows_id(&b.id)
                 && !b.effects.scroll_passthrough
                 && (!self.portal_passthrough(&b.id))
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.hit_clip(b, x, y)
+                && self.hit_rounded(b, x, y)
         }) else {
             return changed;
         };
@@ -1635,13 +1698,24 @@ impl Runtime {
         if !translate_descendants(&mut self.layout_boxes[..end], start, d) {
             return false;
         }
+        self.motion
+            .get_mut()
+            .geometry
+            .translate(&self.layout_boxes[start + 1..end], d);
         self.boxes = self
             .layout_boxes
             .iter()
-            .filter(|b| b.layout_visible)
+            .filter(|b| b.layout_visible || self.has_transforms)
             .cloned()
             .collect();
-        self.motion.get_mut().reconcile(&self.boxes);
+        self.rebuild_transform_index();
+        let motion = self.motion.get_mut();
+        motion
+            .geometry
+            .reconcile(&self.boxes, motion.now, self.scale, motion.reduced);
+        motion.reconcile(&self.boxes);
+        #[cfg(feature = "rust-ui")]
+        self.refresh_motion_visibility();
         self.hovered = None;
         self.visual_hover.clear();
         true
@@ -1684,10 +1758,8 @@ impl Runtime {
             self.boxes.iter().rposition(|b| {
                 self.scope_allows_id(&b.id)
                     && !self.portal_passthrough(&b.id)
-                    && b.clip.contains(x, y)
-                    && b.clip_regions.iter().all(|r| r.contains(x, y))
-                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                    && self.hit_clip(b, x, y)
+                    && self.hit_rounded(b, x, y)
             })
         }) else {
             return Cursor::Default;
@@ -1734,7 +1806,7 @@ impl Runtime {
             return true;
         }
         #[cfg(feature = "rust-ui")]
-        if b.on_drag.is_some() || b.on_pointer.is_some() {
+        if b.on_drag.is_some() || b.on_pointer.is_some() || b.effects.drag_motion.is_some() {
             return true;
         }
         let theme = self.input_theme.borrow();
@@ -1751,10 +1823,10 @@ impl Runtime {
     /// Ancestor clips still constrain it in the callers, as for other input.
     fn input_contains(&self, b: &LayoutBox, x: f32, y: f32) -> bool {
         #[cfg(feature = "rust-ui")]
-        if b.on_drag.is_some() || b.on_pointer.is_some() {
-            return b.bounds.contains(x, y);
+        if b.on_drag.is_some() || b.on_pointer.is_some() || b.effects.drag_motion.is_some() {
+            return self.hit_bounds(b, x, y);
         }
-        b.bounds.contains_corners(b.radii(self.scale), x, y)
+        self.hit_rounded(b, x, y)
     }
     /// Layout boxes are in paint/preorder. Only a later *separate* subtree
     /// can cover a target: a button's own painted children must not block it.
@@ -1766,9 +1838,7 @@ impl Runtime {
             .any(|b| {
                 self.scope_allows_id(&b.id)
                     && !self.portal_passthrough(&b.id)
-                    && b.clip.contains(x, y)
-                    && b.clip_regions.iter().all(|r| r.contains(x, y))
-                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                    && self.hit_clip(b, x, y)
                     && self.input_contains(b, x, y)
                     && self.input_surface(b)
             })
@@ -1783,10 +1853,8 @@ impl Runtime {
                 && interactive_box(b)
                 && b.enabled
                 && !self.portal_passthrough(&b.id)
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.hit_clip(b, x, y)
+                && self.hit_rounded(b, x, y)
         })?;
         let target = &self.boxes[index];
         // Decorated buttons intentionally place passive painted glyphs over
@@ -1805,12 +1873,11 @@ impl Runtime {
         let b = self.boxes.iter().rev().find(|b| {
             self.scope_allows_id(&b.id)
                 && !self.portal_passthrough(&b.id)
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.hit_clip(b, x, y)
+                && self.hit_rounded(b, x, y)
         })?;
         let [bx, by, _, _] = b.bounds.bounds();
+        let [x, y] = self.input_point(b, x, y)?;
         b.ext
             .links
             .iter()
@@ -1833,10 +1900,8 @@ impl Runtime {
             .or_else(|| {
                 self.boxes.iter().rposition(|b| {
                     (!self.portal_passthrough(&b.id))
-                        && b.clip.contains(x, y)
-                        && b.clip_regions.iter().all(|r| r.contains(x, y))
-                        && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                        && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                        && self.hit_clip(b, x, y)
+                        && self.hit_rounded(b, x, y)
                 })
             });
         let Some(mut index) = index else {
@@ -1874,10 +1939,8 @@ impl Runtime {
                 self.scope_allows_id(&b.id)
                     && !self.portal_passthrough(&b.id)
                     && !b.effects.scroll_passthrough
-                    && b.clip.contains(x, y)
-                    && b.clip_regions.iter().all(|r| r.contains(x, y))
-                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
-                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                    && self.hit_clip(b, x, y)
+                    && self.hit_rounded(b, x, y)
             });
             while let Some(index) = leaf {
                 let b = &self.boxes[index];
@@ -1914,8 +1977,10 @@ impl Runtime {
         }
         if let Some(capture) = self.drag_capture.clone() {
             let offset = [
-                (x - capture.origin[0]) / self.scale,
-                (y - capture.origin[1]) / self.scale,
+                (capture.inverse.point([x, y])[0] - capture.inverse.point(capture.origin)[0])
+                    / self.scale,
+                (capture.inverse.point([x, y])[1] - capture.inverse.point(capture.origin)[1])
+                    / self.scale,
             ];
             let surface = self
                 .boxes
@@ -1935,6 +2000,7 @@ impl Runtime {
                     activated: false,
                 });
             }
+            self.motion.get_mut().gesture_move(&capture.id, offset);
             if let Some(action) = &capture.action {
                 handlers
                     .dispatch(
@@ -1948,7 +2014,8 @@ impl Runtime {
                     .map_err(|e| DocumentError(e.to_string()))?;
             }
             if let (Some(pointer), Some([bx, by, _, _])) = (&capture.pointer, surface) {
-                let at = [(x - bx) / self.scale, (y - by) / self.scale];
+                let [px, py] = capture.inverse.point([x, y]);
+                let at = [(px - bx) / self.scale, (py - by) / self.scale];
                 let mut event = Pointer::new(PointerPhase::Drag, at, self.pointer_modifiers);
                 event.offset = offset;
                 handlers
@@ -1957,7 +2024,7 @@ impl Runtime {
             }
             return Ok(InputOutcome {
                 changed: true,
-                activated: true,
+                activated: capture.action.is_some() || capture.pointer.is_some(),
             });
         }
         if let Some(outcome) = self.split_pointer_move(x, y, handlers, context)? {
@@ -2007,13 +2074,11 @@ impl Runtime {
         // drags, unless a control inside it takes the press.
         if self.hit(x, y).is_none() {
             let grip = self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
-                ((b.on_drag.is_some() || b.on_pointer.is_some())
+                ((b.on_drag.is_some() || b.on_pointer.is_some() || b.effects.drag_motion.is_some())
                     && b.enabled
                     && self.scope_allows_id(&b.id)
                     && !self.portal_passthrough(&b.id)
-                    && b.clip.contains(x, y)
-                    && b.clip_regions.iter().all(|r| r.contains(x, y))
-                    && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                    && self.hit_clip(b, x, y)
                     && self.input_contains(b, x, y)
                     && !self.input_occluded(index, x, y))
                 .then_some(b)
@@ -2025,8 +2090,14 @@ impl Runtime {
                     action: b.on_drag.clone(),
                     pointer: b.on_pointer.clone(),
                     origin: [x, y],
+                    inverse: self.world_transform(b).inverse().unwrap_or_default(),
                     end: b.on_drag_end.clone(),
                 };
+                let activated = b.on_drag_start.is_some()
+                    || b.on_drag_from.is_some()
+                    || b.on_pointer.is_some()
+                    || b.on_drag.is_some();
+                self.motion.borrow_mut().gesture_begin(&b.id);
                 if let Some(start) = &b.on_drag_start {
                     handlers
                         .dispatch(start, Event::Activate, context)
@@ -2038,8 +2109,10 @@ impl Runtime {
                         .dispatch(
                             from,
                             Event::ContextRequested {
-                                x_bits: ((x - bx) / self.scale).to_bits(),
-                                y_bits: ((y - by) / self.scale).to_bits(),
+                                x_bits: ((capture.inverse.point([x, y])[0] - bx) / self.scale)
+                                    .to_bits(),
+                                y_bits: ((capture.inverse.point([x, y])[1] - by) / self.scale)
+                                    .to_bits(),
                             },
                             context,
                         )
@@ -2047,7 +2120,8 @@ impl Runtime {
                 }
                 if let Some(pointer) = &b.on_pointer {
                     let [bx, by, _, _] = b.bounds.bounds();
-                    let at = [(x - bx) / self.scale, (y - by) / self.scale];
+                    let [px, py] = capture.inverse.point([x, y]);
+                    let at = [(px - bx) / self.scale, (py - by) / self.scale];
                     let mut event = Pointer::new(PointerPhase::Press, at, self.press_modifiers);
                     event.clicks = self.press_clicks;
                     handlers
@@ -2078,7 +2152,7 @@ impl Runtime {
                 self.keyboard = None;
                 return Ok(InputOutcome {
                     changed: true,
-                    activated: true,
+                    activated,
                 });
             }
         }
@@ -2134,9 +2208,7 @@ impl Runtime {
             (b.enabled
                 && self.scope_allows_id(&b.id)
                 && !self.portal_passthrough(&b.id)
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && self.hit_clip(b, x, y)
                 && self.input_contains(b, x, y)
                 && !self.input_occluded(index, x, y))
             .then(|| (b.id.clone(), name.clone(), b.bounds.bounds()))
@@ -2167,10 +2239,7 @@ impl Runtime {
                 self.hover_surface = None;
                 if let Some(b) = self.boxes.iter().find(|b| b.id == old) {
                     if let Some(name) = b.on_pointer.clone() {
-                        let [bx, by, _, _] = b.bounds.bounds();
-                        let local = at.map_or([0.; 2], |[x, y]| {
-                            [(x - bx) / self.scale, (y - by) / self.scale]
-                        });
+                        let local = at.map_or([0.; 2], |[x, y]| self.surface_local(&b.id, x, y));
                         let event =
                             Pointer::new(PointerPhase::Leave, local, self.pointer_modifiers);
                         handlers
@@ -2181,8 +2250,8 @@ impl Runtime {
                 }
             }
         }
-        if let (Some((id, name, [bx, by, _, _])), Some([x, y])) = (target, at) {
-            let local = [(x - bx) / self.scale, (y - by) / self.scale];
+        if let (Some((id, name, _)), Some([x, y])) = (target, at) {
+            let local = self.surface_local(&id, x, y);
             let event = Pointer::new(PointerPhase::Hover, local, self.pointer_modifiers);
             handlers
                 .dispatch_pointer(&name, event, context)
@@ -2209,10 +2278,18 @@ impl Runtime {
         if self.overlay_active() {
             return Ok(None);
         }
-        let Some((_, name, [bx, by, _, _])) = self.pointer_surface_at(x, y) else {
+        let Some((id, name, _)) = self.pointer_surface_at(x, y) else {
             return Ok(None);
         };
-        let at = [(x - bx) / self.scale, (y - by) / self.scale];
+        if phase == PointerPhase::Wheel
+            && self
+                .boxes
+                .iter()
+                .any(|b| b.id == id && b.effects.wheel_passthrough)
+        {
+            return Ok(None);
+        }
+        let at = self.surface_local(&id, x, y);
         let mut event = Pointer::new(phase, at, self.pointer_modifiers);
         event.delta = delta;
         event.zoom = zoom;
@@ -2379,6 +2456,7 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             if let Some(capture) = self.drag_capture.take() {
+                self.motion.get_mut().gesture_end(&capture.id);
                 let surface = self
                     .boxes
                     .iter()
@@ -2386,12 +2464,17 @@ impl Runtime {
                     .map(|b| b.bounds.bounds());
                 let released = match (&capture.pointer, surface) {
                     (Some(pointer), Some([bx, by, _, _])) if self.scope_allows_id(&capture.id) => {
-                        let at = [(x - bx) / self.scale, (y - by) / self.scale];
+                        let [px, py] = capture.inverse.point([x, y]);
+                        let at = [(px - bx) / self.scale, (py - by) / self.scale];
                         let mut event =
                             Pointer::new(PointerPhase::Release, at, self.pointer_modifiers);
                         event.offset = [
-                            (x - capture.origin[0]) / self.scale,
-                            (y - capture.origin[1]) / self.scale,
+                            (capture.inverse.point([x, y])[0]
+                                - capture.inverse.point(capture.origin)[0])
+                                / self.scale,
+                            (capture.inverse.point([x, y])[1]
+                                - capture.inverse.point(capture.origin)[1])
+                                / self.scale,
                         ];
                         handlers
                             .dispatch_pointer(pointer, event, context)
@@ -3008,7 +3091,21 @@ impl Runtime {
         let mut out = Vec::new();
         let mut motion = self.motion.borrow_mut();
         motion.scale = self.scale;
-        let mut boxes = motion.paint_boxes(&self.boxes);
+        // A pose elsewhere must not disable viewport culling for the entire
+        // document. Keep moving subtrees and their ancestor groups, not every
+        // unrelated section below the viewport. Exits are inserted afterwards.
+        let visible = self.has_transforms.then(|| {
+            self.boxes
+                .iter()
+                .filter(|b| self.transform_index.paint(b))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let live = visible.as_deref().unwrap_or(&self.boxes);
+        let mut boxes = motion.paint_boxes(live);
+        if boxes.is_none() {
+            boxes = visible;
+        }
         // Frame sequences show the frame for now; finished ones keep the
         // final drawing, which layout already holds.
         if motion.frames_playing() {
@@ -3028,7 +3125,18 @@ impl Runtime {
                 .any(|b| b.effects.ambient.is_some())
         {
             let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
-            apply_ambient(&mut list, motion.now, self.scale);
+            apply_ambient(
+                &mut list,
+                motion.now,
+                self.scale,
+                p.ui_supports_transforms(),
+            );
+            boxes = Some(list);
+        }
+        #[cfg(feature = "rust-ui")]
+        if self.boxes.iter().any(|b| b.effects.text_effect.is_some()) {
+            let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
+            motion.apply_text(&mut list);
             boxes = Some(list);
         }
         // Offsets (fixed, hover/press lifts, slide-ins) move whole subtrees at
@@ -3038,11 +3146,12 @@ impl Runtime {
             || list.iter().any(|b| {
                 b.ext.offset != [0.; 2]
                     || b.effects.transition.is_some_and(|t| t.1 != [0.; 2])
+                    || b.effects.scroll_reveal.is_some_and(|t| t.1 != [0.; 2])
                     || std::iter::once(&b.effects.base)
                         .chain(&b.effects.states)
                         .any(|s| s.offset.is_some())
             });
-        if moving {
+        if moving && !p.ui_supports_transforms() {
             let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
             for i in 0..list.len() {
                 // Both paint passes must resolve the same target. Otherwise
@@ -3076,6 +3185,7 @@ impl Runtime {
             boxes.as_deref().unwrap_or(&self.boxes),
             &mut motion,
             &mut out,
+            crate::motion::Affine2D::IDENTITY,
         );
         out
     }
@@ -3087,11 +3197,16 @@ impl Runtime {
         boxes: &[LayoutBox],
         motion: &mut Motion,
         out: &mut Vec<PaintBatch<P::Shape, P::Glyph>>,
+        parent_geometry: crate::motion::Affine2D,
     ) {
         // (depth, clip, layer, scroll, mask begun): what to close when the
         // traversal leaves a box's subtree.
         let mut groups: Vec<(usize, bool, bool, Option<LayoutBox>, bool)> = Vec::new();
-        for source in boxes {
+        let mut geometry_stack: Vec<(usize, crate::motion::Affine2D)> = vec![];
+        let mut source_index = 0;
+        while source_index < boxes.len() {
+            let source = &boxes[source_index];
+            source_index += 1;
             let mut themed = source.clone();
             themed.style.resolve_colors(ui);
             let original = &themed;
@@ -3164,15 +3279,109 @@ impl Runtime {
                     &original.effects,
                 )
             };
+            let timeline = motion.timeline_pose(&source.id);
+            visual.opacity *= timeline.opacity;
+            while geometry_stack
+                .last()
+                .is_some_and(|(depth, _)| *depth >= source.depth)
+            {
+                geometry_stack.pop();
+            }
+            let inherited = geometry_stack.last().map_or(parent_geometry, |(_, g)| *g);
+            let (matrix, next_geometry) = if !self.has_transforms
+                || (!source.departing && !self.transform_index.affected(&source.id))
+            {
+                (crate::motion::Affine2D::IDENTITY, inherited)
+            } else {
+                motion.node_matrix(source, visual.transform, self.scale, inherited)
+            };
+            geometry_stack.push((source.depth, next_geometry));
+            // Keep a floating subtree's local glyph origins stable. The
+            // compositor applies the fractional translation to text, borders
+            // and backgrounds together; input/layout stay decorative-only.
+            let floating = source.effects.ambient.filter(|a| {
+                p.ui_supports_transforms()
+                    && matches!(a.kind, super::effects::AmbientKind::Float(_))
+            });
+            let matrix = if let Some(a) = floating.filter(|_| !motion.reduced) {
+                let super::effects::AmbientKind::Float([x, y]) = a.kind else {
+                    unreachable!()
+                };
+                let angle = a.turns(motion.now) * std::f32::consts::TAU;
+                matrix.then(crate::motion::Affine2D([
+                    1.,
+                    0.,
+                    0.,
+                    1.,
+                    f64::from(x * angle.sin() * self.scale),
+                    f64::from(y * angle.cos() * self.scale),
+                ]))
+            } else {
+                matrix
+            };
+            let offset_scope = p.ui_supports_transforms()
+                && (source.ext.offset != [0.; 2]
+                    || source.effects.transition.is_some_and(|t| t.1 != [0.; 2])
+                    || source.effects.scroll_reveal.is_some_and(|t| t.1 != [0.; 2])
+                    || std::iter::once(&source.effects.base)
+                        .chain(&source.effects.states)
+                        .chain(std::iter::once(&source.effects.disabled))
+                        .any(|s| s.offset.is_some()));
+            let matrix = if offset_scope {
+                matrix.then(crate::motion::Affine2D([
+                    1.,
+                    0.,
+                    0.,
+                    1.,
+                    f64::from(visual.offset[0]),
+                    f64::from(visual.offset[1]),
+                ]))
+            } else {
+                matrix
+            };
+            let declared = source.effects.carousel_slot.is_some()
+                || floating.is_some()
+                || offset_scope
+                || source.effects.text_effect.is_some()
+                || source.effects.layout_animation.is_some()
+                || source.effects.timeline.is_some()
+                || source.effects.drag_motion.is_some()
+                || std::iter::once(&source.effects.base)
+                    .chain(&source.effects.states)
+                    .chain(std::iter::once(&source.effects.disabled))
+                    .any(|s| s.transform.is_some());
+            if !source.transform_suppressed
+                && (declared || matrix != crate::motion::Affine2D::IDENTITY)
+            {
+                let end = boxes[source_index..]
+                    .iter()
+                    .position(|b| b.depth <= source.depth)
+                    .map_or(boxes.len(), |i| source_index + i);
+                let mut children = boxes[source_index - 1..end].to_vec();
+                children[0].transform_suppressed = true;
+                let mut batches = Vec::new();
+                self.paint_nodes(p, ui, &children, motion, &mut batches, inherited);
+                let clip = if floating.is_some() || offset_scope {
+                    source.effect_clip
+                } else {
+                    source.ancestor_clip
+                };
+                out.extend(p.ui_transform_batches(batches, matrix, clip));
+                source_index = end;
+                continue;
+            }
             if let Some(pulse) = original.ext.pulse {
                 visual.opacity *= pulse;
             }
             // A masked container draws into a layer of its own, so the mask
             // cuts only its content.
-            let layered = visual.opacity < 1. || original.ext.masked;
+            let layered = visual.opacity < 1.
+                || original.ext.masked
+                || original.effects.isolate
+                || original.effects.blend != crate::graphics::BlendMode::Normal;
             if layered {
                 let mut shapes = vec![];
-                p.ui_layer_begin(&mut shapes, visual.opacity);
+                p.ui_blend_begin(&mut shapes, visual.opacity, original.effects.blend);
                 out.push(PaintBatch {
                     clip: original.effect_clip,
                     shapes,
@@ -3256,6 +3465,10 @@ impl Runtime {
             #[cfg(feature = "rust-ui")]
             if b.ext.code.is_some() {
                 self.push_code_view(p, ui, b, out);
+                continue;
+            }
+            #[cfg(feature = "rust-ui")]
+            if self.paint_moving_text(p, ui, b, treatment.then_some(visual), out) {
                 continue;
             }
             let batch = self.paint_one(p, ui, b, treatment.then_some(visual));
@@ -3892,6 +4105,9 @@ fn resolved_shadow(shadow: &Shadow, scale: f32, ui: &UiTheme) -> ResolvedShadow 
     }
 }
 fn apply_patch(v: &mut Visual, patch: &VisualStyle, scale: f32, ui: &UiTheme) {
+    if let Some(t) = patch.transform {
+        v.transform = t;
+    }
     if let Some(c) = patch.color.as_deref().and_then(|v| ui.resolve(v)) {
         v.color = c;
     }
@@ -3955,6 +4171,7 @@ fn visual_target(b: &LayoutBox, state: ButtonState, ui: &UiTheme, scale: f32) ->
         base
     };
     let mut v = Visual {
+        transform: crate::motion::Transform2D::new(),
         color,
         background,
         border: b.style.border_color.unwrap_or(c.border),
@@ -3985,6 +4202,11 @@ fn visual_target(b: &LayoutBox, state: ButtonState, ui: &UiTheme, scale: f32) ->
         v.color[3] *= 0.45;
     }
     v.background[3] *= b.style.background_opacity;
+    if let Some(slot) = b.effects.carousel_slot {
+        v.transform = v
+            .transform
+            .translate(f32::from(slot) * b.bounds.bounds()[2] / scale, 0.);
+    }
     v
 }
 fn state_surface(mut surface: [f32; 4], state: ButtonState, theme: &Theme) -> [f32; 4] {
@@ -4625,7 +4847,7 @@ fn translate_descendants(boxes: &mut [LayoutBox], start: usize, d: [f32; 2]) -> 
     true
 }
 /// Paint-time ambient motion: drift subtrees and spin canvases for `now`.
-fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32) {
+fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32, affine_float: bool) {
     use super::effects::AmbientKind;
     for i in 0..boxes.len() {
         let Some(ambient) = boxes[i].effects.ambient else {
@@ -4633,6 +4855,7 @@ fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32) {
         };
         let angle = ambient.turns(now) * std::f32::consts::TAU;
         match ambient.kind {
+            AmbientKind::Float(_) if affine_float => {}
             AmbientKind::Float([ax, ay]) => {
                 // An ellipse: smooth, periodic, never a straight bounce.
                 let d = [ax * angle.sin() * scale, ay * angle.cos() * scale];
@@ -5464,6 +5687,9 @@ fn place(
         content_clip: None,
         image: n.surface.image.clone(),
         canvas: Arc::new(n.surface.canvas.clone()),
+        transform_suppressed: false,
+        #[cfg(feature = "rust-ui")]
+        text_paint: None,
         frames: n.surface.frames.clone(),
         scroll_max: [0.; 2],
         scroll_offset: [0.; 2],
@@ -6926,7 +7152,7 @@ mod ambient_tests {
         let mut motion = r.motion.borrow_mut();
         motion.now = Duration::from_millis(at_ms);
         let mut list = r.boxes.clone();
-        apply_ambient(&mut list, motion.now, r.scale);
+        apply_ambient(&mut list, motion.now, r.scale, false);
         list
     }
     #[test]
@@ -7619,3 +7845,6 @@ mod linked_hover_tests {
         assert_eq!(app, 0);
     }
 }
+
+#[cfg(all(test, feature = "rust-ui", feature = "rendering"))]
+mod ambient_rendering_tests;

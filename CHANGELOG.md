@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- Reject nonfinite rotary pointer coordinates before angle/value calculation,
+  with fractional-DPI regressions. Browser gallery CI explicitly checks adapter
+  availability before GPU-only tests; software workflows remain mandatory.
+
+- Add opt-in sliding carousels, viewport-triggered reveals, bottom sheets,
+  floating action/speed-dial controls, rotary sliders and radial gauges. Reuse
+  controlled state, keyboard/accessibility semantics, logical coordinates and
+  reduced-motion scheduling. Inactive carousel pages cannot activate controls
+  or open portals; existing crossfade and drawer defaults remain unchanged.
+- Add isolated color blending and composable alpha-mask union, intersection,
+  difference and exclusion in the software and Vello renderers. Extend the
+  subpixel compositor to decorative slide offsets without moving hit geometry.
+  Legacy DocumentPainter adapters keep ordinary opacity through a default hook;
+  native Shape gains BlendBegin for adapters with exhaustive shape matches.
+- Showcase these capabilities in Motion studio, Instruments and Image Catalog
+  pages, shared with the live Rust/WASM documentation. Pointer previews pass
+  wheel input through to scrolling; viewport reveals never drive scroll position.
+  Instrument values are simulations, not device or automotive host support.
+
+- Keep decorative floating text, borders and backgrounds together under a
+  subpixel affine compositor instead of rounding moving text origins. Preserve
+  legacy painter fallback, fixed hit geometry, clipping and reduced motion.
+  Retain submillisecond ambient phase precision; fix fractional software
+  translation filtering without changing static text hinting. Make Catalog hero
+  floats, orbit arcs and ticker livelier with Catalog-only timing changes.
+  Add high-refresh/DPI, real-GPU, mask/coverage and hero regressions.
+
+- Fix scroll input latency on motion-heavy pages: index transform ancestry and
+  keep ordinary hit testing/viewport culling for unaffected subtrees. Preserve
+  moving offscreen descendants and ancestor clipping/opacity, with pixel-parity,
+  input and fractional-DPI regressions. Native trackpad deltas and momentum,
+  animation timing, antialiasing and existing layout remain unchanged.
+
+- Add opt-in 2D subtree transforms with matching hit tests, keyed/shared-element
+  layout transitions, bounded analytic drag momentum, pose timelines with
+  pause/reverse/seek, and typing/crossfade/rolling-number/shimmer text presets.
+  Keep logical coordinates, reduced-motion behavior, GPU vector antialiasing and
+  bounded density-aware software composition. Add five Catalog motion sections
+  and fractional-DPI/input/CPU-GPU regressions; existing motion defaults remain.
+  Custom DocumentPainter adapters must implement the new default transform hook
+  to render these effects; native Shape gains a Transformed variant.
+
+
 - Reduce animation-frame allocation by sharing immutable vector artwork between
   paint snapshots and avoiding a second styled-node clone. Coalesce native
   accessibility publication until input, layout, focus or an initial tree request

@@ -57,6 +57,8 @@ pub use button::{Button, ButtonColors};
 mod fasthash;
 pub mod geometry;
 pub mod graphics;
+#[cfg(feature = "declarative")]
+pub mod motion;
 pub mod theme;
 pub use theme::{contrast_ratio, hex, parse_hex, ColorToken, Palette, ThemeMode, UiTheme};
 pub mod panel;

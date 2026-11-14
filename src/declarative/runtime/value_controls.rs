@@ -72,14 +72,29 @@ impl Runtime {
             .find(|b| b.id == id && b.enabled && b.slider.is_some())
             .map(|b| b.id.clone())
     }
-    fn slider_pointer_value(&self, id: &str, x: f32) -> Option<f32> {
-        if !x.is_finite() {
+    fn slider_pointer_value(&self, id: &str, x: f32, y: f32) -> Option<f32> {
+        if !x.is_finite() || !y.is_finite() {
             return None;
         }
         let b = self.boxes.iter().find(|b| b.id == id && b.enabled)?;
+        let [x, y] = self.input_point(b, x, y)?;
         let props = b.slider.as_ref()?;
         let (left, width, _) = slider_geometry(b, self.scale);
-        let ratio = if width > 0. {
+        let ratio = if let Some(dial) = b.effects.dial {
+            let [bx, by, bw, bh] = b.bounds.bounds();
+            let (dx, dy) = (x - bx - bw * 0.5, y - by - bh * 0.5);
+            if dx.hypot(dy) < bw.min(bh) * 0.1 {
+                return Some(self.slider_current(id, props, false));
+            }
+            let angle = (dy.atan2(dx).to_degrees() - dial.start).rem_euclid(360.);
+            f64::from(if angle <= dial.sweep {
+                angle / dial.sweep
+            } else if angle < (dial.sweep + 360.) * 0.5 {
+                1.
+            } else {
+                0.
+            })
+        } else if width > 0. {
             (f64::from(x) - f64::from(left)) / f64::from(width)
         } else {
             0.
@@ -189,7 +204,7 @@ impl Runtime {
         self.focused = Some(id.clone());
         self.focus_visible = false;
         self.hovered = Some(id.clone());
-        let value = self.slider_pointer_value(&id, x);
+        let value = self.slider_pointer_value(&id, x, y);
         if let (Some(v), Some(props)) = (
             value,
             self.boxes
@@ -214,7 +229,7 @@ impl Runtime {
     pub(super) fn slider_pointer_move<C>(
         &mut self,
         x: f32,
-        _y: f32,
+        y: f32,
         handlers: &mut Handlers<'_, C>,
         context: &mut C,
     ) -> Result<Option<InputOutcome>, DocumentError> {
@@ -232,7 +247,7 @@ impl Runtime {
                 activated: false,
             }));
         }
-        let activated = match self.slider_pointer_value(&id, x) {
+        let activated = match self.slider_pointer_value(&id, x, y) {
             Some(value) => self.emit_slider(&id, value, handlers, context)?,
             None => false,
         };
@@ -301,6 +316,35 @@ pub(super) fn paint_slider<P: DocumentPainter>(
             .clamp(0., 1.) as f32
     };
     let start = lower.map_or(0., fraction_of);
+    if let Some(dial) = b.effects.dial {
+        paint_dial(
+            p,
+            shapes,
+            b,
+            ui,
+            scale,
+            fraction_of(value),
+            dial,
+            true,
+            state.disabled,
+        );
+        if state.focused && !state.disabled {
+            let [x, y, w, h] = b.bounds.bounds();
+            p.card_outline(
+                shapes,
+                [
+                    x + scale,
+                    y + scale,
+                    (w - 2. * scale).max(0.),
+                    (h - 2. * scale).max(0.),
+                ],
+                [w.min(h) * 0.5; 4],
+                2. * scale,
+                ui.colors().accent,
+            );
+        }
+        return;
+    }
     let c = ui.colors();
     let [x, y, w, h] = b.bounds.bounds();
     let (left, length, radius) = slider_geometry(b, scale);
@@ -579,7 +623,10 @@ impl Runtime {
             return Ok(None);
         };
         let r = handle.bounds.bounds();
-        let coordinate = [x, y][axis];
+        let Some(point) = self.input_point(handle, x, y) else {
+            return Ok(None);
+        };
+        let coordinate = point[axis];
         let grab_offset = coordinate - (r[axis] + r[axis + 2] * 0.5);
         self.split_capture = Some(SplitCapture {
             handle: id.clone(),
@@ -623,7 +670,8 @@ impl Runtime {
         if !x.is_finite() || !y.is_finite() {
             return Ok(Some(InputOutcome::default()));
         }
-        let Some((_, props, axis, origin, total, available)) = self.split_geometry(&capture.owner)
+        let Some((owner, props, axis, origin, total, available)) =
+            self.split_geometry(&capture.owner)
         else {
             return Ok(Some(InputOutcome::default()));
         };
@@ -631,7 +679,10 @@ impl Runtime {
             return Ok(Some(InputOutcome::default()));
         }
         let handle = split_sizes(total, &props, self.scale)[1];
-        let ratio = ([x, y][axis] - capture.grab_offset - origin - handle * 0.5) / available;
+        let Some(point) = self.input_point(&owner, x, y) else {
+            return Ok(Some(InputOutcome::default()));
+        };
+        let ratio = (point[axis] - capture.grab_offset - origin - handle * 0.5) / available;
         let changed = self.emit_split(&capture.owner, ratio, handlers, context)?;
         if changed {
             if let Some(c) = self.split_capture.as_mut() {
@@ -849,6 +900,24 @@ impl Runtime {
                 glyphs: vec![],
             };
         };
+        if let Some(dial) = b.effects.dial {
+            paint_dial(
+                p,
+                &mut shapes,
+                b,
+                ui,
+                self.scale,
+                props.value.unwrap_or(0.),
+                dial,
+                false,
+                !b.enabled,
+            );
+            return PaintBatch {
+                clip: b.clip,
+                shapes,
+                glyphs: vec![],
+            };
+        }
         let c = ui.colors();
         let mut accent = b.style.accent_color.unwrap_or(c.accent);
         let mut background = b.style.background.unwrap_or(c.selected);
@@ -989,6 +1058,129 @@ impl Runtime {
             clip: b.clip,
             shapes,
             glyphs: vec![],
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_dial<P: DocumentPainter>(
+    p: &mut P,
+    shapes: &mut Vec<P::Shape>,
+    b: &LayoutBox,
+    ui: &UiTheme,
+    scale: f32,
+    value: f32,
+    dial: crate::graphics::DialStyle,
+    knob: bool,
+    disabled: bool,
+) {
+    let [x, y, w, h] = b.bounds.bounds();
+    let (cx, cy) = (x + w * 0.5, y + h * 0.5);
+    let stroke = (dial.stroke * scale).min(w.min(h) * 0.15);
+    let radius = (w.min(h) * 0.5 - stroke - 9. * scale).max(0.);
+    let colors = ui.colors();
+    let mut accent = b.style.accent_color.unwrap_or(colors.accent);
+    let mut track = colors.selected;
+    if disabled {
+        accent[3] *= 0.4;
+        track[3] *= 0.4;
+    }
+    let point = |angle: f32, r: f32| {
+        let a = angle.to_radians();
+        [cx + a.cos() * r, cy + a.sin() * r]
+    };
+    let arc = |from: f32, to: f32| {
+        let n = ((to - from).abs() / 90.).ceil().max(1.) as usize;
+        let step = (to - from) / n as f32;
+        let first = point(from, radius);
+        let mut path = VectorPath::new().move_to(first[0], first[1]);
+        for i in 0..n {
+            let a = from + step * i as f32;
+            let z = a + step;
+            let k = 4. / 3. * (step.to_radians() / 4.).tan() * radius;
+            let (s, c) = a.to_radians().sin_cos();
+            let (sz, cz) = z.to_radians().sin_cos();
+            let v = point(a, radius);
+            let end = point(z, radius);
+            path = path.cubic_to(
+                [v[0] - k * s, v[1] + k * c],
+                [end[0] + k * sz, end[1] - k * cz],
+                end,
+            );
+        }
+        path
+    };
+    for i in 0..dial.ticks {
+        let a = dial.start + dial.sweep * i as f32 / f32::from(dial.ticks.saturating_sub(1).max(1));
+        let a0 = point(a, radius + stroke + 2. * scale);
+        let a1 = point(a, radius + stroke + 5. * scale);
+        p.ui_path(
+            shapes,
+            &VectorPath::new()
+                .move_to(a0[0], a0[1])
+                .line_to(a1[0], a1[1]),
+            colors.border,
+            Some(scale),
+        );
+    }
+    p.ui_path(
+        shapes,
+        &arc(dial.start, dial.start + dial.sweep),
+        track,
+        Some(stroke),
+    );
+    if value > 0. {
+        p.ui_path(
+            shapes,
+            &arc(dial.start, dial.start + dial.sweep * value.clamp(0., 1.)),
+            accent,
+            Some(stroke),
+        );
+    }
+    if knob {
+        let inner = (radius - stroke * 1.6).max(0.);
+        paint_surface(
+            p,
+            shapes,
+            [cx - inner, cy - inner, inner * 2., inner * 2.],
+            inner,
+            b.style.background.unwrap_or(colors.panel),
+        );
+        let a = dial.start + dial.sweep * value.clamp(0., 1.);
+        let tip = point(a, inner * 0.73);
+        let tail = point(a, inner * 0.35);
+        p.ui_path(
+            shapes,
+            &VectorPath::new()
+                .move_to(tail[0], tail[1])
+                .line_to(tip[0], tip[1]),
+            accent,
+            Some((3. * scale).min(inner * 0.3)),
+        );
+    }
+}
+
+#[cfg(all(test, feature = "rendering"))]
+mod pointer_validation_tests {
+    use super::*;
+    use crate::{rendering::RasterPainter, ui::prelude::*};
+
+    #[test]
+    fn rotary_pointer_values_reject_nonfinite_coordinates_before_angle_math() {
+        for scale in [1., 1.25, 2.] {
+            let e: Element<()> = knob(0.5).key("dial").on_change(|_: &mut (), _| {}).into();
+            let (d, h) = e.build().unwrap().into_parts();
+            let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(200. * scale, 160. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                assert_eq!(r.slider_pointer_value("dial", 100. * scale, bad), None);
+                assert_eq!(r.slider_pointer_value("dial", bad, 56. * scale), None);
+            }
+            assert!(r
+                .slider_pointer_value("dial", 100. * scale, 56. * scale)
+                .is_some_and(|v| v.is_finite()));
         }
     }
 }

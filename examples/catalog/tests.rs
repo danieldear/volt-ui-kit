@@ -172,6 +172,147 @@ fn slugs_are_unique_and_every_theme_is_valid() {
 }
 
 #[test]
+fn gallery_workflows_recompose_and_settle_at_fractional_dpi() {
+    use std::time::Duration;
+    use volt_ui_kit::ui::prelude::*;
+    for scale in [1., 1.25, 2.] {
+        for (page, section, action) in [
+            (
+                Page::MotionStudio,
+                "studio-carousel",
+                "studio-carousel-control-next",
+            ),
+            (Page::MotionStudio, "studio-card", "studio-card-reveal"),
+            (Page::MotionStudio, "studio-sheet", "studio-sheet-open"),
+            (Page::MotionStudio, "studio-fab", "studio-speed-dial-toggle"),
+            (
+                Page::MotionStudio,
+                "studio-scroll-reveal",
+                "studio-scroll-replay",
+            ),
+            (
+                Page::Instruments,
+                "instruments-controls",
+                "instrument-charge",
+            ),
+            (Page::Image, "image-blend", "image-blend-mode-4"),
+        ] {
+            let mut app = App::new();
+            let demo = |app: &App| -> Element<App> {
+                vstack![
+                    pages::doc(page, app)
+                        .sections
+                        .into_iter()
+                        .find(|s| s.id == section)
+                        .unwrap()
+                        .demo
+                ]
+                .fill_width()
+                .into()
+            };
+            let (doc, mut h) = demo(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(700. * scale, 650. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            assert!(
+                r.accessibility_activate(action, &mut h, &mut app)
+                    .unwrap()
+                    .activated,
+                "{section}: {action}"
+            );
+            match section {
+                "studio-carousel" => assert_eq!(app.gallery.slide, 1),
+                "studio-card" => assert!(app.gallery.expanded),
+                "studio-sheet" => assert!(app.gallery.sheet),
+                "studio-fab" => assert!(app.gallery.dial_open),
+                "studio-scroll-reveal" => assert_eq!(app.gallery.reveals, 1),
+                "instruments-controls" => assert!((app.gallery.battery - 0.77).abs() < 0.001),
+                "image-blend" => assert_eq!(app.gallery.blend, BlendMode::ColorBurn),
+                _ => unreachable!(),
+            }
+            let (doc, next) = demo(&app).build().unwrap().into_parts();
+            r.replace_document(doc, &next, &Bindings::default())
+                .unwrap();
+            h = next;
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            for time in [1, 90, 220, 600, 1000] {
+                r.advance_animations(Duration::from_millis(time));
+                let b = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+                p.rasterize(&b, [1.; 4]).expect(section);
+            }
+            assert!(!r.is_animating(), "{section} must become idle");
+            if section == "studio-sheet" {
+                assert!(
+                    !r.accessibility_activate("studio-sheet-open", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(
+                    r.accessibility_activate("studio-sheet-confirm", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(!app.gallery.sheet);
+            }
+            if section == "studio-fab" {
+                assert!(
+                    r.accessibility_activate("studio-speed-dial-action-1", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(!app.gallery.dial_open);
+                assert_eq!(app.gallery.action, "Waypoint added");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires real GPU readback; not native presentation timing"]
+fn gallery_gpu_compact_dpi_masks_and_inflight_motion_stay_admitted() {
+    use std::time::Duration;
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().expect("real GPU required");
+    for scale in [1., 1.25, 2.] {
+        for mode in [ThemeMode::Light, ThemeMode::Dark] {
+            for width in [300., 700.] {
+                let mut app = App::new();
+                app.mode = mode;
+                app.gallery.expanded = true;
+                app.gallery.dial_open = true;
+                let sections = motion_showcase::doc(&app)
+                    .sections
+                    .into_iter()
+                    .chain(motion_showcase::instruments(&app).sections)
+                    .chain(motion_showcase::image_sections(&app));
+                for s in sections {
+                    let id = s.id;
+                    let demo: Element<App> = vstack![s.demo].fill_width().into();
+                    let (doc, h) = demo.build().unwrap().into_parts();
+                    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                    let vp = Viewport::new(width * scale, 600. * scale, scale).unwrap();
+                    let mut p = RasterPainter::new(vp);
+                    r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                    for time in [0, 80, 500] {
+                        r.advance_animations(Duration::from_millis(time));
+                        let b = r.paint_ui(&mut p, &theme(&app, mode));
+                        gpu.render(&mut p, &b, [0.; 4])
+                            .unwrap_or_else(|e| panic!("{id}: {e}"));
+                        assert_eq!(gpu.last_over_budget(), None, "{id} {scale}x {width}");
+                        assert_eq!(gpu.framebuffer_upload_bytes(), 0);
+                    }
+                    r.set_reduced_motion(true);
+                    assert_eq!(r.animation_wait(), None, "{id}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn worker_progress_ignores_stale_generations() {
     let mut app = App::new();
     app.job_running = true;
@@ -1028,7 +1169,12 @@ fn compositor_launch_is_explicit_and_defaults_remain_public() {
 
 #[test]
 fn scrolling_pages_by_shifting_matches_a_full_layout() {
-    for page in [Page::Introduction, Page::Table, Page::Settings] {
+    for page in [
+        Page::Introduction,
+        Page::Table,
+        Page::Settings,
+        Page::Effects,
+    ] {
         let mut app = App::new();
         app.go(page);
         app.glass = true;
@@ -2607,6 +2753,178 @@ fn linux_header_controls_stay_inside_the_existing_compact_toolbar() {
                     n.label
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn new_motion_recipes_preserve_typed_actions_and_reduce_motion() {
+    use volt_ui_kit::ui::prelude::*;
+    let mut app = App::new();
+    for (recipe, actions) in [
+        (
+            motion_lab::transforms as fn(&App) -> pages::Section,
+            vec!["motion-transform-toggle", "motion-affine-button"],
+        ),
+        (
+            motion_lab::layout,
+            vec!["motion-reorder", "motion-resize", "motion-layout-tab-2"],
+        ),
+        (
+            motion_lab::timeline,
+            vec![
+                "motion-replay-timeline",
+                "motion-pause-timeline",
+                "motion-resume-timeline",
+                "motion-reverse-timeline",
+            ],
+        ),
+        (
+            motion_lab::text_presets,
+            vec!["motion-replay-text", "motion-change-text"],
+        ),
+    ] {
+        let section = recipe(&app);
+        let (d, mut h) = section.demo.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        let vp = Viewport::new(1000., 800., 1.25).unwrap();
+        let mut p = RasterPainter::new(vp);
+        r.layout(vp, &Bindings::default(), &mut p).unwrap();
+        for action in actions {
+            assert!(
+                r.accessibility_activate(action, &mut h, &mut app)
+                    .unwrap()
+                    .activated,
+                "{action}"
+            );
+            let (d, next) = recipe(&app).demo.build().unwrap().into_parts();
+            r.replace_document(d, &next, &Bindings::default()).unwrap();
+            h = next;
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            let batches = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            p.rasterize(&batches, [0.; 4]).unwrap();
+        }
+        r.set_reduced_motion(true);
+        assert_eq!(r.animation_wait(), None);
+    }
+    assert!(
+        app.motion.rotated && app.motion.reordered && app.motion.compact && app.motion.text_changed
+    );
+    assert_eq!(app.motion.transform_actions, 1);
+    assert_eq!(app.motion.selected, 2);
+    assert_eq!(app.motion.text_revision, 1);
+    assert_eq!(app.motion.timeline_revision, 1);
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires a real GPU; fractional DPI vector transforms, geometry, text and clips"]
+fn new_motion_recipes_render_on_gpu_at_fractional_dpi_without_framebuffer_uploads() {
+    use std::time::Duration;
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().unwrap();
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 1.25, 1.5, 2.] {
+            let mut app = App::new();
+            for recipe in [
+                motion_lab::transforms,
+                motion_lab::layout,
+                motion_lab::gestures,
+                motion_lab::timeline,
+                motion_lab::text_presets,
+            ] {
+                let section = recipe(&app);
+                let id = section.id;
+                let (d, h) = section.demo.build().unwrap().into_parts();
+                let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+                let vp = Viewport::new(800. * scale, 620. * scale, scale).unwrap();
+                let mut p = RasterPainter::new(vp);
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                r.paint_ui(&mut p, &theme(&app, mode));
+                app.motion.rotated = !app.motion.rotated;
+                app.motion.reordered = !app.motion.reordered;
+                app.motion.compact = !app.motion.compact;
+                app.motion.text_changed = !app.motion.text_changed;
+                app.motion.number += 1234;
+                let (d, h) = recipe(&app).demo.build().unwrap().into_parts();
+                r.replace_document(d, &h, &Bindings::default()).unwrap();
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                for t in [85, 210, 1800] {
+                    r.advance_animations(Duration::from_millis(t));
+                    let batches = r.paint_ui(&mut p, &theme(&app, mode));
+                    let frame = gpu
+                        .render(&mut p, &batches, theme(&app, mode).palette.base[0])
+                        .unwrap();
+                    assert_eq!(gpu.last_over_budget(), None, "{id} {mode:?} {scale} {t}");
+                    assert_eq!(gpu.framebuffer_upload_bytes(), 0);
+                    assert!(frame.pixels().iter().any(|p| p.alpha() > 0));
+                }
+                r.set_reduced_motion(true);
+                assert_eq!(r.animation_wait(), None);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "local scroll-stage timing report; not a portable performance threshold"]
+fn motion_scroll_stage_profile() {
+    use std::time::{Duration, Instant};
+    for page in [
+        Page::Effects,
+        Page::MotionStudio,
+        Page::Instruments,
+        Page::Table,
+    ] {
+        for scale in [1.25, 2.] {
+            let mut app = App::new();
+            app.go(page);
+            let (d, mut h) = view(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(1280. * scale, 800. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            r.advance_animations(Duration::from_secs(10));
+            r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            let mut input = vec![];
+            let mut paint = vec![];
+            let mut clock = vec![];
+            for i in 0..160 {
+                let now = Duration::from_secs(10) + Duration::from_secs_f64(f64::from(i) / 120.);
+                let at = Instant::now();
+                r.scroll_outcome(
+                    900. * scale,
+                    500. * scale,
+                    [0., if i < 80 { 24. } else { -24. }],
+                    &mut h,
+                    &mut app,
+                )
+                .unwrap();
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                r.pointer_move(900. * scale, 500. * scale);
+                r.cursor_at(900. * scale, 500. * scale);
+                r.dispatch_hover_regions(Some([900. * scale, 500. * scale]), &mut h, &mut app)
+                    .unwrap();
+                input.push(at.elapsed().as_secs_f64() * 1000.);
+                let at = Instant::now();
+                r.advance_animations(now);
+                r.animation_wait();
+                r.is_animating();
+                clock.push(at.elapsed().as_secs_f64() * 1000.);
+                let at = Instant::now();
+                let batches = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+                std::hint::black_box(batches);
+                paint.push(at.elapsed().as_secs_f64() * 1000.);
+            }
+            let stats = |v: &mut [f64]| {
+                v.sort_by(f64::total_cmp);
+                (
+                    v.iter().sum::<f64>() / v.len() as f64,
+                    v[v.len() / 2],
+                    v[v.len() * 95 / 100],
+                )
+            };
+            println!("SCROLL_PROFILE {page:?} scale={scale} nodes={} input_avg_p50_p95_ms={:?} clock={:?} paint={:?}",r.boxes().len(),stats(&mut input),stats(&mut clock),stats(&mut paint));
         }
     }
 }

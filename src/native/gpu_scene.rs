@@ -107,6 +107,10 @@ pub(crate) struct GpuSceneEncoder {
     /// once. Admission stays exact without touching every covered tile/draw.
     command_edges: Vec<i64>,
     open_tiles: Vec<[usize; 4]>,
+    transform_children: Vec<GpuSceneEncoder>,
+    transform_cursor: usize,
+    transform_depth: u8,
+    viewport_override: Option<[u32; 2]>,
     /// Zero-copy handles to loaded faces; stable ids keep Vello's outline cache warm.
     fonts: HashMap<cosmic_text::fontdb::ID, Option<FontData>>,
     budget: Budget,
@@ -306,6 +310,10 @@ fn image_data(w: u32, h: u32, pixels: Vec<u8>) -> ImageData {
 fn shape_bounds(s: &Shape) -> Option<Rect> {
     let pad = |r: Rect, p: f32| r.inflate(p as f64, p as f64);
     Some(match s {
+        Shape::Transformed(m, _, size) => {
+            let b = m.bounds([0., 0., size[0] as f32, size[1] as f32]);
+            rect(b)
+        }
         Shape::Rectangle(b, _)
         | Shape::Rounded(b, ..)
         | Shape::Corners(b, ..)
@@ -353,7 +361,7 @@ fn opacity_layer_bounds(batches: &[PaintBatch<Shape, Glyph>]) -> Vec<Rect> {
         let clip = rect(batch.clip.bounds());
         for s in &batch.shapes {
             match s {
-                Shape::LayerBegin(_) => {
+                Shape::LayerBegin(_) | Shape::BlendBegin(..) => {
                     open.push((out.len(), None));
                     out.push(Rect::ZERO);
                 }
@@ -393,6 +401,9 @@ impl GpuSceneEncoder {
     }
     /// Record a draw object's footprint in tiles, per-tile commands and bins.
     fn note(&mut self, r: Rect) {
+        self.note_weighted(r, 8);
+    }
+    fn note_weighted(&mut self, r: Rect, words: u32) {
         let r = r.intersect(Rect::new(
             0.,
             0.,
@@ -412,16 +423,16 @@ impl GpuSceneEncoder {
         let y0 = ((r.y0 / 16.).floor() as usize).min(th);
         let y1 = ((r.y1 / 16.).ceil() as usize).min(th);
         for y in y0..y1 {
-            self.budget.row_tiles[y] += (x1 - x0).max(1) as u64;
+            self.budget.row_tiles[y] += (x1 - x0).max(1) as u64 * u64::from(words.div_ceil(8));
             let row = y * (tw + 1);
-            self.command_edges[row + x0] += 8;
-            self.command_edges[row + x1] -= 8;
+            self.command_edges[row + x0] += i64::from(words);
+            self.command_edges[row + x1] -= i64::from(words);
         }
         let bins = span(r.x0, r.x1, 256.);
         let by0 = (r.y0 / 256.).floor() as usize;
         let by1 = ((r.y1 / 256.).ceil() as usize).max(by0 + 1);
         for by in by0..by1.min(self.budget.bin_rows.len()) {
-            self.budget.bin_rows[by] += bins;
+            self.budget.bin_rows[by] += bins * u64::from(words.div_ceil(8));
         }
     }
     /// Area-dependent Vello buffers (blend spill, tiles, tile commands,
@@ -629,9 +640,15 @@ impl GpuSceneEncoder {
         self.bands.clear();
         self.stats = SceneStats::default();
         self.budget = Budget::default();
-        self.frame_images.clear();
+        if self.transform_depth == 0 {
+            self.frame_images.clear();
+        }
         self.clock += 1;
-        let vp = painter.gpu_viewport();
+        let mut vp = painter.gpu_viewport();
+        if let Some([w, h]) = self.viewport_override {
+            vp.width = w as f32;
+            vp.height = h as f32;
+        }
         if vp.width <= 0.
             || vp.height <= 0.
             || vp.width as f64 * vp.height as f64 > raster::MAX_FRAMEBUFFER_PIXELS as f64
@@ -672,6 +689,7 @@ impl GpuSceneEncoder {
         // a fixed buffer, and an overflow drops the entire frame.
         let mut bounds = vec![viewport];
         let mut layer_areas = opacity_layer_bounds(batches).into_iter();
+        self.transform_cursor = 0;
         let mut masks = Vec::<Option<BezPath>>::new();
         let (mut layers, mut clips) = (0, 0);
         // The innermost open batch clip. Consecutive batches usually share one
@@ -687,6 +705,7 @@ impl GpuSceneEncoder {
                 if matches!(
                     s,
                     Shape::LayerBegin(_)
+                        | Shape::BlendBegin(..)
                         | Shape::LayerEnd
                         | Shape::MaskBegin(_)
                         | Shape::MaskEnd
@@ -697,14 +716,31 @@ impl GpuSceneEncoder {
                         self.pop_layer();
                     }
                     match s {
-                        Shape::LayerBegin(alpha) => {
+                        Shape::LayerBegin(alpha) | Shape::BlendBegin(alpha, _) => {
                             if !alpha.is_finite() || !(0. ..=1.).contains(alpha) || layers >= 24 {
                                 return Err("invalid GPU layer opacity/depth".into());
                             }
                             // Pixel-aligned so edge antialiasing is never cut.
                             let content = layer_areas.next().unwrap_or(viewport).expand();
                             let area = bounds.last().unwrap().intersect(content);
-                            self.layer(Mix::Normal, *alpha, &area);
+                            let mode: vello::peniko::BlendMode = match s {
+                                Shape::BlendBegin(_, mode) => match mode {
+                                    crate::graphics::BlendMode::DestinationOut => {
+                                        Compose::DestOut.into()
+                                    }
+                                    crate::graphics::BlendMode::Xor => Compose::Xor.into(),
+                                    crate::graphics::BlendMode::Normal => Mix::Normal.into(),
+                                    crate::graphics::BlendMode::Multiply => Mix::Multiply.into(),
+                                    crate::graphics::BlendMode::Screen => Mix::Screen.into(),
+                                    crate::graphics::BlendMode::Overlay => Mix::Overlay.into(),
+                                    crate::graphics::BlendMode::ColorBurn => Mix::ColorBurn.into(),
+                                    crate::graphics::BlendMode::Difference => {
+                                        Mix::Difference.into()
+                                    }
+                                },
+                                _ => Mix::Normal.into(),
+                            };
+                            self.layer(mode, *alpha, &area);
                             bounds.push(area);
                             stack.push(Open::Layer);
                             layers += 1;
@@ -827,6 +863,10 @@ impl GpuSceneEncoder {
                 if let Some(b) = shape_bounds(s) {
                     self.note(b.intersect(rect(clip)));
                 }
+                if let Shape::Transformed(matrix, content, size) = s {
+                    self.transformed(*matrix, content, *size, painter, images.as_deref_mut())?;
+                    continue;
+                }
                 self.shape(s, images.as_deref_mut())?;
                 self.stats.shapes += 1;
             }
@@ -843,6 +883,7 @@ impl GpuSceneEncoder {
         if !stack.is_empty() {
             return Err("unclosed GPU clip/opacity stream".into());
         }
+        self.transform_children.truncate(self.transform_cursor);
         self.finish_budget();
         Ok(())
     }
@@ -870,6 +911,100 @@ impl GpuSceneEncoder {
             self.layer(Mix::Normal, 1., &r);
         }
         *open = Some((clip, !redundant));
+    }
+    fn transformed(
+        &mut self,
+        matrix: crate::motion::Affine2D,
+        content: &[PaintBatch<Shape, Glyph>],
+        size: [u32; 2],
+        painter: &mut RasterPainter,
+        images: Option<ImageResolver<'_, '_>>,
+    ) -> Result<(), String> {
+        if self.transform_depth >= 24
+            || matrix.inverse().is_none()
+            || size.contains(&0)
+            || size.iter().any(|v| *v > 16384)
+        {
+            return Err("invalid transformed GPU scene".into());
+        }
+        let index = self.transform_cursor;
+        self.transform_cursor += 1;
+        if index == self.transform_children.len() {
+            self.transform_children.push(Self::default());
+        }
+        let child = &mut self.transform_children[index];
+        child.transform_depth = self.transform_depth + 1;
+        child.viewport_override = Some(size);
+        // Retain one cache budget and one frame-image identity set for the
+        // complete scene, not a fresh 64/16 MiB cache per animated element.
+        // Exchange ownership rather than clone image/font data. Restore even
+        // on an invalid child stream so fallback/recovery keeps the caches.
+        macro_rules! exchange_caches {
+            ($($field:ident),*) => { $(std::mem::swap(&mut self.$field, &mut child.$field);)* };
+        }
+        exchange_caches!(
+            images,
+            glyphs,
+            image_bytes,
+            glyph_bytes,
+            clock,
+            fonts,
+            frame_images
+        );
+        let result = child.encode_with(content, painter, images);
+        exchange_caches!(
+            images,
+            glyphs,
+            image_bytes,
+            glyph_bytes,
+            clock,
+            fonts,
+            frame_images
+        );
+        result?;
+        self.scene.append(&child.scene, Some(Affine::new(matrix.0)));
+        self.stats.shapes += child.stats.shapes;
+        self.stats.glyphs += child.stats.glyphs;
+        self.stats.layers += child.stats.layers;
+        self.stats.resource_bytes += child.stats.resource_bytes;
+        self.budget.glyph_lines += child
+            .budget
+            .glyph_lines
+            .saturating_mul(matrix.max_scale().max(1.).ceil() as u64);
+        self.budget.atlas_area += child.budget.atlas_area;
+        self.budget.oversize_image |= child.budget.oversize_image;
+        // Map occupied local tiles conservatively into the parent's physical
+        // tile grid, including nested layer peaks. Never admit an undercount.
+        let tw = child.tiles[0];
+        let occupied: Vec<_> = child
+            .commands
+            .iter()
+            .zip(&child.peak)
+            .enumerate()
+            .filter(|(_, (words, peak))| **words > 0 || **peak > 0)
+            .map(|(i, (words, peak))| {
+                (
+                    matrix.bounds([(i % tw * 16) as f32, (i / tw * 16) as f32, 16., 16.]),
+                    *words,
+                    *peak,
+                )
+            })
+            .collect();
+        for (b, words, peak) in occupied {
+            self.note_weighted(rect(b), words);
+            let [tw, th] = self.tiles;
+            let x0 = (b[0].max(0.) / 16.).floor() as usize;
+            let y0 = (b[1].max(0.) / 16.).floor() as usize;
+            let x1 = ((b[0] + b[2]).max(0.) / 16.).ceil() as usize;
+            let y1 = ((b[1] + b[3]).max(0.) / 16.).ceil() as usize;
+            for y in y0.min(th)..y1.min(th) {
+                for x in x0.min(tw)..x1.min(tw) {
+                    let i = y * tw + x;
+                    self.peak[i] = self.peak[i].max(self.depth[i].saturating_add(peak));
+                }
+            }
+        }
+        Ok(())
     }
     fn shape(&mut self, s: &Shape, images: Option<ImageResolver<'_, '_>>) -> Result<(), String> {
         let scene = &mut self.scene;
@@ -1242,7 +1377,7 @@ impl GpuSceneEncoder {
         }
         // Pixel-grid hinting sharpens text on low-density (1x) displays;
         // Retina text keeps its true outlines, as native macOS text does.
-        let hint = painter.gpu_viewport().scale < 1.5;
+        let hint = self.transform_depth == 0 && painter.gpu_viewport().scale < 1.5;
         for (run, font) in runs.iter().zip(&fonts) {
             let darken = stem_darkening(run.size, run.color);
             for &(_, x, y) in &run.glyphs {
@@ -1419,6 +1554,59 @@ impl GpuSceneEncoder {
 #[cfg(test)]
 mod tile_depth_tests {
     use super::*;
+
+    #[test]
+    fn transformed_scenes_share_cache_and_atlas_budgets_and_restore_them_on_error() {
+        use crate::{motion::Affine2D, Viewport};
+        let mut p = RasterPainter::new(Viewport::new(300., 200., 1.).unwrap());
+        let clip = crate::Rect::new(0., 0., 300., 200.).unwrap();
+        let image = Image::from_rgba(8, 8, vec![255; 8 * 8 * 4]).unwrap();
+        let content = PaintBatch {
+            clip,
+            shapes: vec![Shape::Image([0., 0., 8., 8.], image.background(), 1.)],
+            glyphs: vec![],
+        };
+        let mut scene = GpuSceneEncoder::default();
+        let batches = (0..8)
+            .map(|i| PaintBatch {
+                clip,
+                shapes: vec![Shape::Transformed(
+                    Affine2D([1., 0., 0., 1., f64::from(i * 10), 0.]),
+                    std::sync::Arc::new(vec![content.clone()]),
+                    [300, 200],
+                )],
+                glyphs: vec![],
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..3 {
+            scene.encode(&batches, &mut p).unwrap();
+            assert_eq!(scene.images.len(), 1);
+            assert_eq!(scene.image_bytes, 256);
+            assert_eq!(
+                scene.budget.atlas_area, 100,
+                "one shared image, not one atlas entry per transform"
+            );
+            assert!(scene
+                .transform_children
+                .iter()
+                .all(|c| c.images.is_empty() && c.glyphs.is_empty() && c.fonts.is_empty()));
+        }
+        let mut broken = content;
+        broken.shapes.push(Shape::LayerEnd);
+        let batches = vec![PaintBatch {
+            clip,
+            shapes: vec![Shape::Transformed(
+                Affine2D::IDENTITY,
+                std::sync::Arc::new(vec![broken]),
+                [300, 200],
+            )],
+            glyphs: vec![],
+        }];
+        assert!(scene.encode(&batches, &mut p).is_err());
+        assert_eq!(scene.images.len(), 1);
+        assert_eq!(scene.image_bytes, 256);
+        assert!(scene.transform_children[0].images.is_empty());
+    }
 
     #[test]
     fn rectangle_command_accounting_matches_the_per_tile_oracle() {

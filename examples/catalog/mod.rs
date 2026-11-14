@@ -13,6 +13,7 @@ mod landing;
 #[cfg(feature = "native")]
 pub mod lifecycle;
 pub mod motion_lab;
+pub mod motion_showcase;
 pub mod navigation_links;
 mod pages;
 #[allow(dead_code)]
@@ -172,6 +173,7 @@ pub struct App {
     pub samples: samples::State,
     /// The landing page's live counter demo.
     pub counter: u32,
+    pub gallery: motion_showcase::State,
     #[cfg(not(feature = "native"))]
     pub web_section: String,
     // Background task demo.
@@ -280,6 +282,7 @@ impl App {
                 ..Default::default()
             },
             counter: 0,
+            gallery: motion_showcase::State::default(),
             #[cfg(not(feature = "native"))]
             web_section: String::new(),
             #[cfg(feature = "native")]

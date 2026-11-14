@@ -32,7 +32,9 @@
 - Harden the [experimental web host](docs/web-prototype.md): broaden browser,
   accessibility and input coverage beyond the live Catalog previews.
 - Finer-grained updates and partial GPU redraws.
-- Layout animation, springs and gestures; variable-height virtual lists.
+- Expand 2D keyed/shared layout motion, springs, bounded drag inertia and finite
+  pose timelines with broader platform acceptance; variable-height virtual lists.
+  3D transforms, multi-touch gesture recognition and outline morphing remain later.
 - [Embedded content and extensible maps](#embedded-content-and-extensible-maps-planned).
 - On-device AI integrations on macOS.
 - Publish to crates.io once the APIs have held up in real applications.

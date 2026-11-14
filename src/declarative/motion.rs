@@ -27,6 +27,7 @@ pub(crate) struct Visual {
     pub glow: Option<ResolvedShadow>,
     /// Paint-time translation in physical pixels (hover lift, slide-ins).
     pub offset: [f32; 2],
+    pub transform: crate::motion::Transform2D,
 }
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -55,6 +56,7 @@ impl Visual {
         }
         let bounded = t.clamp(0., 1.);
         Self {
+            transform: self.transform.interpolate(to.transform, t),
             color: color(self.color, to.color, bounded),
             background: color(self.background, to.background, bounded),
             border: color(self.border, to.border, bounded),
@@ -128,17 +130,53 @@ pub(crate) struct Exit {
 #[derive(Default)]
 pub(crate) struct Motion {
     pub now: Duration,
+    pub geometry: super::motion_geometry::GeometryMotion,
+    pub(super) gestures: super::motion_gesture::GestureMotion,
+    pub(super) timelines: super::motion_timeline::Timelines,
+    #[cfg(feature = "rust-ui")]
+    pub(super) texts: super::motion_text::TextMotion,
     pub reduced: bool,
     /// Physical pixels per logical pixel, for slide offsets.
     pub scale: f32,
     tracks: BTreeMap<String, Track>,
     seen: BTreeMap<String, (Kind, u64)>,
     mounts: BTreeMap<String, Fade>,
+    reveals: BTreeMap<String, u64>,
     pub exits: Vec<Exit>,
     /// Frame sequences by element id: revision, start and length.
     frames: BTreeMap<String, (u64, Duration, Duration)>,
 }
 impl Motion {
+    pub fn node_matrix(
+        &self,
+        b: &LayoutBox,
+        pose: crate::motion::Transform2D,
+        scale: f32,
+        parent_geometry: crate::motion::Affine2D,
+    ) -> (crate::motion::Affine2D, crate::motion::Affine2D) {
+        let logical = b.bounds.bounds().map(|v| v / scale);
+        let (geometry, next) = self.geometry.relative(b, self.now, parent_geometry);
+        let d = self.gesture_offset(&b.id).map(|v| v * scale);
+        (
+            // Capture deltas are inverse-mapped into local axes. Apply them
+            // before the pose so a rotated/scaled card follows the pointer.
+            crate::motion::Affine2D([1., 0., 0., 1., f64::from(d[0]), f64::from(d[1])])
+                .then(pose.matrix(logical, scale))
+                .then(self.timeline_pose(&b.id).transform().matrix(logical, scale))
+                .then(geometry),
+            next,
+        )
+    }
+    pub fn input_transform(
+        &self,
+        id: &str,
+        target: crate::motion::Transform2D,
+    ) -> crate::motion::Transform2D {
+        self.tracks
+            .get(id)
+            .map_or(target, |t| t.sample(self.now).transform)
+    }
+
     pub fn value(
         &mut self,
         id: &str,
@@ -212,6 +250,10 @@ impl Motion {
             * self.mounts.get(&b.id).map_or(1., |f| f.value(self.now))
     }
     pub fn reconcile(&mut self, boxes: &[LayoutBox]) {
+        self.reconcile_gestures(boxes);
+        self.reconcile_timelines(boxes);
+        #[cfg(feature = "rust-ui")]
+        self.reconcile_text(boxes);
         let live: BTreeMap<_, _> = boxes
             .iter()
             .map(|b| (b.id.clone(), (b.kind, b.effects.transition_revision)))
@@ -251,6 +293,26 @@ impl Motion {
                 }
             }
         }
+        for b in boxes {
+            if let Some(transition) = b.effects.scroll_reveal.filter(|_| b.layout_visible) {
+                if self.reveals.get(&b.id) != Some(&b.effects.transition_revision) {
+                    self.reveals
+                        .insert(b.id.clone(), b.effects.transition_revision);
+                    if !self.reduced {
+                        self.mounts.insert(
+                            b.id.clone(),
+                            Fade {
+                                start: self.now,
+                                animation: transition.0,
+                                from: 0.,
+                                slide: transition.1,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        self.reveals.retain(|id, _| live.contains_key(id));
         self.mounts.retain(|id, _| live.contains_key(id));
         // A new revision (or a new element) starts its sequence now; the
         // same revision keeps playing across recompositions.
@@ -384,6 +446,7 @@ impl Motion {
         while self.exits.iter().map(|e| e.boxes.len()).sum::<usize>() > super::document::MAX_NODES {
             self.exits.remove(0);
         }
+        self.reveals.retain(|id, _| next.contains(id));
         self.seen.retain(|id, _| next.contains(id));
         self.mounts.retain(|id, _| next.contains(id));
         self.prune();
@@ -465,6 +528,9 @@ impl Motion {
     pub fn advance(&mut self, now: Duration) -> bool {
         let was = self.active();
         self.now = self.now.max(now);
+        self.geometry.advance(self.now);
+        self.advance_gestures();
+        self.advance_timelines();
         self.mounts.retain(|_, f| f.active(self.now));
         self.exits.retain(|e| e.fade.active(self.now));
         self.prune();
@@ -485,6 +551,13 @@ impl Motion {
         if self.reduced {
             return None;
         }
+        if self.gestures_active() || self.timelines_active() {
+            return Some(Duration::ZERO);
+        }
+        #[cfg(feature = "rust-ui")]
+        if let Some(wait) = self.text_wait() {
+            return Some(wait.min(self.geometry.wait(self.now).unwrap_or(wait)));
+        }
         if self.frames_playing() {
             return Some(Duration::ZERO);
         }
@@ -502,6 +575,7 @@ impl Motion {
                     .iter()
                     .filter_map(|e| e.fade.animation.wait(self.now.saturating_sub(e.fade.start))),
             )
+            .chain(self.geometry.wait(self.now))
             .min()
     }
     pub fn has_offsets(&self) -> bool {
@@ -509,14 +583,36 @@ impl Motion {
             .values()
             .any(|track| track.sample(self.now).offset != [0.; 2])
     }
-    pub fn active(&self) -> bool {
+    pub fn geometry_active(&self) -> bool {
         !self.reduced
-            && (self.tracks.values().any(|t| t.active(self.now))
+            && (self.geometry.wait(self.now).is_some()
+                || self.gestures_active()
+                || self.timelines_active()
+                || self
+                    .tracks
+                    .values()
+                    .any(|t| t.active(self.now) && t.from.transform != t.to.transform))
+    }
+    pub fn active(&self) -> bool {
+        #[cfg(feature = "rust-ui")]
+        if self.text_active() {
+            return true;
+        }
+        !self.reduced
+            && (self.timelines_active()
+                || self.gestures_active()
+                || self.geometry.wait(self.now).is_some()
+                || self.tracks.values().any(|t| t.active(self.now))
                 || self.mounts.values().any(|f| f.active(self.now))
                 || !self.exits.is_empty()
                 || self.frames_playing())
     }
     pub fn settle(&mut self) {
+        self.geometry.settle();
+        self.settle_gestures();
+        self.settle_timelines();
+        #[cfg(feature = "rust-ui")]
+        self.settle_text();
         self.mounts.clear();
         self.exits.clear();
         for f in self.frames.values_mut() {

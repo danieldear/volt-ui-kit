@@ -40,6 +40,60 @@ async function run(type,options,label) {
   },sections);
   assert.equal(results.length,sections.length);
   console.log(`${label}: all ${results.length} original Catalog sections rendered nonblank browser pixels.`);
+  // Real WASM declarations at fractional DPI: advance the Rust-owned clock,
+  // exercise canvas pointer routing and verify semantic geometry, not CSS motion.
+  await page.evaluate(async () => {
+   const m=await import('./pkg/volt_web_catalog.js');await m.default();
+   const check=(condition,message)=>{if(!condition)throw new Error(message);};
+   for(const dpi of [1.25,2])for(const section of ['fx-transforms','fx-layout','fx-gestures','fx-timeline','fx-text']){
+    const canvas=document.createElement('canvas');document.body.append(canvas);
+    const d=await m.CatalogPreview.mount(canvas,false,false,'effects-motion',section,0);
+    const send=event=>d.dispatch(JSON.stringify(event));
+    const state=()=>JSON.parse(d.snapshot());
+    const node=id=>state().nodes.find(n=>n.id===id);
+    const label=text=>state().nodes.find(n=>n.label===text);
+    const activate=id=>send({op:'activate',id});
+    try{
+     send({op:'resize',width:1000,height:600,scale:dpi});
+     send({op:'motion',reduced:false});d.frame(0);
+     if(section==='fx-transforms'){
+      const before=node('motion-affine-button').bounds;
+      activate('motion-transform-toggle');d.frame(1);d.frame(161);
+      const target=node('motion-affine-button').bounds;
+      check(target[2]>before[2],`transform geometry ${dpi}`);
+      const x=target[0]+target[2]/2,y=target[1]+target[3]/2;
+      send({op:'down',x,y});send({op:'up',x,y});d.frame(170);
+      check(node('motion-affine-button').label==='Pressed 1 times','transformed pointer activation');
+     }else if(section==='fx-layout'){
+      const before=label('Workspace').bounds[0];
+      activate('motion-reorder');d.frame(1);d.frame(161);
+      check(label('Workspace').bounds[0]>before,'keyed layout geometry');
+      activate('motion-layout-tab-2');activate('motion-resize');d.frame(170);
+     }else if(section==='fx-gestures'){
+      const b=label('Drag me').bounds,x=b[0]+10,y=b[1]+10;
+      send({op:'down',x,y});d.frame(50);send({op:'move',x:x+100,y});
+      send({op:'up',x:x+100,y});d.frame(500);
+      const after=label('Drag me').bounds[0];
+      check(after>b[0]+90&&after<=b[0]+128.1,`bounded gesture ${dpi}: ${after-b[0]}`);
+     }else if(section==='fx-timeline'){
+      activate('motion-replay-timeline');d.frame(1);
+      const before=label('Volt').bounds[0];
+      send({op:'number',id:'motion-seek-timeline',value:50});d.frame(2);
+      check(label('Volt').bounds[0]>before+50,'timeline seek geometry');
+      check(!state().animating,'seek pauses the playhead');
+      activate('motion-reverse-timeline');d.frame(3);d.frame(500);
+     }else{
+      activate('motion-change-text');activate('motion-replay-text');d.frame(1);d.frame(160);
+      check(node('motion-morph').label==='Ready to ship','morph semantic target');
+      check(node('motion-number').label==='2048','rolling semantic value');
+      check(node('motion-typing').label==='Beautiful motion, native Rust.','typing full semantics');
+     }
+     send({op:'motion',reduced:true});d.frame(2500);
+     check(!state().animating,'reduced motion must settle');
+    }finally{d.free();canvas.remove();}
+   }
+  });
+  console.log(`${label}: fractional-DPI Rust transforms/pointer capture, keyed layout, bounded drag, timeline seek and text presets passed.`);
   // Navigation can be delivered reentrantly by WebKit during a WASM/browser
   // call. Teardown must not free the driver while frame() still borrows it.
   await page.evaluate(async()=>{
@@ -71,7 +125,7 @@ async function run(type,options,label) {
   // The live Catalog dashboard heads the Components index.
   const dashboard=page.locator('[data-volt-page="dashboard"]:not([data-volt-mode="directory"])');await ready(dashboard);
   if(label==='chromium')await page.screenshot({path:path.join(output,'components-live-dashboard.png'),caret:'initial'});
-  const cards=page.locator('[data-volt-mode="directory"]');assert.equal(await cards.count(),49);
+  const cards=page.locator('[data-volt-mode="directory"]');assert.equal(await cards.count(),catalog.filter(p=>p.sections.length).length);
   for(let i=0;i<await cards.count();i++)await ready(cards.nth(i));
   assert.equal(await page.locator('.volt-status[data-error="true"]').count(),0);
   assert.equal(await page.locator('img[src*="images/components"]').count(),0);
@@ -114,7 +168,7 @@ async function run(type,options,label) {
   assert.equal(await dates.locator('.volt-status[data-error="true"]').count(),0);
   if(label==='chromium')await page.screenshot({path:path.join(output,'catalog-direct-calendar.png'),fullPage:true,caret:'initial'});
   assert.deepEqual(errors,[]);
-  console.log(`${label}: landing counter/state retention, live accent, Components dashboard, 49 directory canvases, resource limits, original menu/context callbacks, table sorting/selection and calendar passed.`);
+  console.log(`${label}: landing counter/state retention, live accent, Components dashboard, ${catalog.filter(p=>p.sections.length).length} directory canvases, resource limits, original menu/context callbacks, table sorting/selection and calendar passed.`);
  }catch(e){console.error(label,e,errors);throw e;}finally{await browser.close();}
 }
 (async()=>{await run(chromium,{channel:process.env.PLAYWRIGHT_CHANNEL || undefined,headless:true},'chromium');if(process.env.VOLT_TEST_WEBKIT==='1')await run(webkit,{headless:true},'webkit');})().catch(e=>{console.error(e);process.exitCode=1});

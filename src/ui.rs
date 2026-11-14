@@ -129,8 +129,8 @@ pub use crate::declarative::{
 };
 
 pub use crate::graphics::{
-    BackgroundImage, Canvas, CanvasFrames, Clip, Image, ImageFit, ImagePosition, MaskMode,
-    VectorPath,
+    BackgroundImage, BlendMode, Canvas, CanvasFrames, Clip, DialStyle, Image, ImageFit,
+    ImagePosition, MaskMode, VectorPath,
 };
 pub use crate::{ColorToken, Palette, ThemeMode, UiTheme};
 
@@ -485,6 +485,8 @@ pub use routing::{
 };
 mod popovers;
 mod progress;
+mod speed_dial;
+pub use speed_dial::{speed_dial, SpeedDial};
 mod split;
 mod split_view;
 pub mod tokens;
@@ -518,11 +520,11 @@ pub use navigation::{
     navigation, navigation_item, Navigation, NavigationItem, NavigationPlacement,
 };
 pub use popovers::{hover_card, popover, tooltip, Popover, Tooltip};
-pub use progress::{loading, progress, progress_indeterminate, spinner, Progress};
+pub use progress::{gauge, loading, progress, progress_indeterminate, spinner, Progress};
 pub use split::{split, SplitPane};
 pub use split_view::{navigation_split_view, NavigationSplitView, SidebarPlace};
 pub use value_controls::{
-    range_slider, select, select_item, slider, RangeSlider, Select, SelectItem, Slider,
+    knob, range_slider, select, select_item, slider, RangeSlider, Select, SelectItem, Slider,
 };
 /// A composed, owned UI description. No callback is run while building it.
 pub struct Element<C> {
@@ -1037,10 +1039,56 @@ macro_rules! modifiers {
             /// The mouse cursor while the pointer is over this element.
             pub fn cursor(mut self, value: Cursor) -> Self { self.$($field)*.ext.cursor = Some(value); self }
             /// Paint-time translation in logical pixels; layout and hit targets stay put.
+            /// Isolate this subtree and blend its colours with content below it.
+            /// Keep child blending within this isolated group.
+            pub fn isolate(mut self, enabled: bool) -> Self { self.$($field)*.effects.isolate = enabled; self }
+            /// One entry reveal per key/revision when the laid-out box first enters view.
+            /// Never changes scrolling, hit geometry or accessibility semantics.
+            pub fn reveal_on_scroll(mut self, effect: Transition) -> Self { self.$($field)*.effects.scroll_reveal = Some(effect); self }
+            pub fn blend_mode(mut self, mode: BlendMode) -> Self { self.$($field)*.effects.blend = mode; self }
             pub fn offset(mut self, x: f32, y: f32) -> Self { self.$($field)*.ext.offset = [x, y]; self }
             /// Draw the border only on these edges (straight edges; corners stay square).
             pub fn border_sides(mut self, sides: Sides) -> Self { self.$($field)*.ext.border_sides = Some(sides); self }
             pub fn border_style(mut self, style: BorderStyle) -> Self { self.$($field)*.ext.border_style = style; self }
+
+
+            /// Interpolate keyed position/size changes. Nested layout motion
+            /// composes with its parent's transform; use stable keys.
+            pub fn layout_animation(mut self, animation: Animation) -> Self {
+                self.$($field)*.effects.layout_animation = Some(animation);
+                self
+            }
+            /// Match geometry across differently keyed instances/parents.
+            pub fn shared_element(mut self, key: impl Into<String>) -> Self {
+                self.$($field)*.effects.shared = Some(key.into());
+                self
+            }
+            /// Pointer-captured direct manipulation with bounded optional momentum.
+            pub fn drag_motion(mut self, policy: crate::motion::DragMotion) -> Self {
+                self.$($field)*.effects.drag_motion = Some(policy);
+                self
+            }
+            /// A finite, seekable clock-driven sequence. The same revision
+            /// preserves playback across ordinary recomposition.
+            pub fn timeline(mut self, sequence: crate::motion::Timeline) -> Self {
+                self.$($field)*.effects.timeline = Some(sequence);
+                self
+            }
+            /// Apply a logical 2D transform to this subtree, including input.
+            pub fn transform(mut self, value: crate::motion::Transform2D) -> Self {
+                self.$($field)*.effects.base.transform = Some(value);
+                self
+            }
+            pub fn scale(mut self, x: f32, y: f32) -> Self {
+                let t = self.$($field)*.effects.base.transform.unwrap_or_default();
+                self.$($field)*.effects.base.transform = Some(t.scale(x, y));
+                self
+            }
+            pub fn rotate(mut self, degrees: f32) -> Self {
+                let t = self.$($field)*.effects.base.transform.unwrap_or_default();
+                self.$($field)*.effects.base.transform = Some(t.rotate(degrees));
+                self
+            }
             /// A linear or radial gradient fill, resolved from theme tokens.
             pub fn background_gradient(mut self, gradient: Gradient) -> Self { self.$($field)*.ext.gradient = Some(gradient); self }
             /// Remove a component's fixed-width default; use the parent's cross-axis allocation.
@@ -1080,6 +1128,9 @@ macro_rules! modifiers {
             /// Skip this box as a wheel-scroll starting target. Children remain
             /// eligible; painting and button/keyboard interaction are unchanged.
             /// Useful for empty decorative layers above another scroll view.
+            /// Hover/drag surfaces can let wheel events scroll their ancestors.
+            /// Default false preserves custom canvas wheel handling.
+            pub fn wheel_passthrough(mut self, value: bool) -> Self { self.$($field)*.effects.wheel_passthrough = value; self }
             pub fn scroll_passthrough(mut self, value: bool) -> Self { self.$($field)*.effects.scroll_passthrough = value; self }
             /// Subtree group opacity. Does not disable pointer/keyboard interaction.
             pub fn opacity(mut self, value:f32) -> Self { self.$($field)*.effects.base.opacity=Some(value); self }
@@ -1749,30 +1800,34 @@ macro_rules! tab_bar { ($($item:expr),* $(,)?) => { $crate::ui::tab_bar(vec![$($
 macro_rules! tabs { ($($item:expr),* $(,)?) => { $crate::ui::tabs(vec![$($item),*]) }; }
 pub use crate::{button_bar, tab_bar, tabs, toolbar};
 /// Import component functions, types and layout macros together.
+mod text_motion;
+pub use text_motion::{morphing_text, rolling_number, shimmer_text, typing_text};
 pub mod prelude {
     pub use super::{
-        accordion, alert, avatar, avatar_group, bar_chart, breadcrumb, carousel, collapsible,
-        command, command_palette, drawer, empty_state, hover_card, image_view, kbd, line_chart,
-        pagination, skeleton, skeleton_text, sparkline, stat, steps, timeline, toaster,
-        CommandPaletteState, DrawerSide, Presence, Severity, TimelineItem, Toast, ToastPosition,
+        accordion, alert, avatar, avatar_group, bar_chart, bottom_sheet, breadcrumb, carousel,
+        collapsible, command, command_palette, drawer, empty_state, fab, gauge, hover_card,
+        image_view, kbd, knob, line_chart, pagination, skeleton, skeleton_text, sparkline, stat,
+        steps, timeline, toaster, CommandPaletteState, DrawerSide, Presence, Severity,
+        TimelineItem, Toast, ToastPosition,
     };
     pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
     pub use super::{
         badge, button, button_bar, canvas, canvas_frames, checkbox, column, context_menu,
-        data_item, dialog, divider, grid, hstack, lazy_list, loading, menu, menu_item,
-        menu_separator, menu_submenu, navigation, navigation_item, panel, popover, progress,
-        progress_indeterminate, range_slider, responsive, row, segmented_control, select,
-        select_item, separator, slider, spacer, spinner, split, stack, tab, tab_bar, tab_item,
-        table, table_column, table_row, tabs, text, text_area, text_field, toggle, toolbar,
-        tooltip, tree_node, tree_view, virtual_list, vstack, window_controls,
-        window_controls_with_style, window_header, zstack, Align, Ambient, Animation, Axes, Axis,
-        BackgroundImage, BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip,
-        ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, Dialog,
-        Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns,
-        Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, MaskMode, Menu, MenuItem,
-        Motion, Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress,
-        Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
-        Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
+        data_item, dialog, divider, grid, hstack, lazy_list, loading, mask_difference,
+        mask_exclude, mask_intersection, mask_union, menu, menu_item, menu_separator, menu_submenu,
+        navigation, navigation_item, panel, popover, progress, progress_indeterminate,
+        range_slider, responsive, row, segmented_control, select, select_item, separator, slider,
+        spacer, speed_dial, spinner, split, stack, tab, tab_bar, tab_item, table, table_column,
+        table_row, tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node,
+        tree_view, virtual_list, vstack, window_controls, window_controls_with_style,
+        window_header, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage, BlendMode,
+        BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
+        ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, DialStyle, Dialog, Direction,
+        Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image,
+        ImageFit, ImagePosition, Interaction, Justify, LazyList, MaskMode, Menu, MenuItem, Motion,
+        Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress, Responsive,
+        Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow, Sides, Slider,
+        SortDirection, SpeedDial, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
         TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone,
         Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
         VisualStyle, WindowAction, WindowControlStyle, WindowControlsState,
@@ -1792,6 +1847,7 @@ pub mod prelude {
         link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
         NavigationHistory, NavigationLink, NavigationSnapshot, UrlError,
     };
+    pub use super::{morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
     pub use super::{
@@ -1803,4 +1859,42 @@ pub mod prelude {
         InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
         PointerPhase, PressedKey,
     };
+    pub use crate::motion::{
+        Affine2D, DragGesture, DragMotion, Inertia, InertiaPlayer, MotionPose, TextEffect,
+        Timeline, TimelinePlayback, TimelinePlayer, Transform2D,
+    };
+}
+
+/// A touch-sized circular action button; provide a meaningful accessible label.
+pub fn fab<C>(symbol: impl Into<String>) -> Button<C> {
+    button(symbol)
+        .width(56.)
+        .height(56.)
+        .rounded(Rounding::Full)
+        .font_size(24.)
+        .variant(ButtonVariant::Primary)
+}
+/// A bottom-attached modal drawer. Dismissal, focus trapping and Escape are shared.
+pub fn bottom_sheet<C>(content: impl Into<Element<C>>) -> Drawer<C> {
+    drawer(content)
+        .side(DrawerSide::Bottom)
+        .size(320.)
+        .corner_radius(20.)
+}
+
+/// Alpha union: paint mask coverage together in an isolated group.
+/// These compose coverage, not editable boolean vector paths.
+pub fn mask_union<C>(masks: impl IntoIterator<Item = Element<C>>) -> Container<C> {
+    zstack(masks).isolate(true)
+}
+pub fn mask_intersection<C>(a: impl Into<Element<C>>, b: impl Into<Element<C>>) -> Container<C> {
+    zstack![a.into()].mask(b, MaskMode::Alpha).isolate(true)
+}
+pub fn mask_difference<C>(a: impl Into<Element<C>>, b: impl Into<Element<C>>) -> Container<C> {
+    let b: Element<C> = b.into();
+    zstack![a.into(), b.blend_mode(BlendMode::DestinationOut)].isolate(true)
+}
+pub fn mask_exclude<C>(a: impl Into<Element<C>>, b: impl Into<Element<C>>) -> Container<C> {
+    let b: Element<C> = b.into();
+    zstack![a.into(), b.blend_mode(BlendMode::Xor)].isolate(true)
 }

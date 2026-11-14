@@ -12,6 +12,13 @@ use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, PartialEq)]
 pub enum Shape {
+    /// Retained, normalized subtree. GPU adapters append vector scenes;
+    /// software composites at an adequate raster density before transforming.
+    Transformed(
+        crate::motion::Affine2D,
+        std::sync::Arc<Vec<PaintBatch<Shape, Glyph>>>,
+        [u32; 2],
+    ),
     Rectangle([f32; 4], [f32; 4]),
     Triangle([[f32; 2]; 3], [f32; 4]),
     Rounded([f32; 4], f32, [f32; 4]),
@@ -23,6 +30,7 @@ pub enum Shape {
     /// spread (inward), offset and colour.
     InnerShadow([f32; 4], [f32; 4], f32, f32, [f32; 2], [f32; 4]),
     LayerBegin(f32),
+    BlendBegin(f32, crate::graphics::BlendMode),
     LayerEnd,
     /// Inside a layer: what follows until `MaskEnd` is a mask applied to
     /// what the layer drew before it.
@@ -99,7 +107,7 @@ fn tiled_opacity_needed(
     let (mut depth, mut peak) = (0usize, 0usize);
     for shape in batches.iter().flat_map(|batch| &batch.shapes) {
         match shape {
-            Shape::LayerBegin(opacity) => {
+            Shape::LayerBegin(opacity) | Shape::BlendBegin(opacity, _) => {
                 if !opacity.is_finite() || !(0. ..=1.).contains(opacity) {
                     return Err("invalid layer opacity".into());
                 }
@@ -150,6 +158,16 @@ fn translated_batch(
     result.clip = crate::Rect::new(x + dx, y + dy, w, h).expect("translation preserves dimensions");
     for shape in &mut result.shapes {
         match shape {
+            Shape::Transformed(matrix, ..) => {
+                *matrix = matrix.then(crate::motion::Affine2D([
+                    1.,
+                    0.,
+                    0.,
+                    1.,
+                    f64::from(dx),
+                    f64::from(dy),
+                ]));
+            }
             Shape::Rectangle(b, _)
             | Shape::Rounded(b, _, _)
             | Shape::Corners(b, _, _)
@@ -169,6 +187,7 @@ fn translated_batch(
             Shape::ClipBegin(ClipRegion::Rounded { bounds: b, .. })
             | Shape::ClipBegin(ClipRegion::Circle { bounds: b }) => bounds(b),
             Shape::LayerBegin(_)
+            | Shape::BlendBegin(..)
             | Shape::LayerEnd
             | Shape::MaskBegin(_)
             | Shape::MaskEnd
@@ -410,6 +429,8 @@ pub struct RasterPainter {
     effect_bytes: usize,
     effect_tint_bytes: usize,
     layer_pool: Vec<Pixmap>,
+    transform_depth: usize,
+    transform_bytes: u64,
     /// Pixel region [x0, y0, x1, y1] being repainted by an incremental frame;
     /// every write is confined to it through the clip masks.
     damage: Option<[usize; 4]>,
@@ -457,6 +478,7 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
         [x0, y0, x1 - x0, y1 - y0]
     };
     Some(match s {
+        Shape::Transformed(m, _, size) => m.bounds([0., 0., size[0] as f32, size[1] as f32]),
         Shape::Rectangle(b, _)
         | Shape::Rounded(b, ..)
         | Shape::Corners(b, ..)
@@ -487,6 +509,7 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
         Shape::ClipBegin(_)
         | Shape::ClipEnd
         | Shape::LayerBegin(_)
+        | Shape::BlendBegin(..)
         | Shape::LayerEnd
         | Shape::MaskBegin(_)
         | Shape::MaskEnd => return None,
@@ -859,6 +882,8 @@ impl RasterPainter {
             effect_bytes: 0,
             effect_tint_bytes: 0,
             layer_pool: Vec::new(),
+            transform_depth: 0,
+            transform_bytes: 0,
             damage: None,
             raster_origin: [0; 2],
             last: None,
@@ -1800,7 +1825,8 @@ impl RasterPainter {
 
         // Open layers: the pixmap underneath and, for an opacity layer, its
         // opacity, or for a mask, its mode (the open pixmap is the mask).
-        let mut layers: Vec<(Pixmap, Result<f32, MaskMode>)> = Vec::new();
+        type LayerMode = Result<(f32, crate::graphics::BlendMode), MaskMode>;
+        let mut layers: Vec<(Pixmap, LayerMode)> = Vec::new();
         let mut effect_pixels = 0_u64;
         for batch in batches {
             let [x, y, cw, ch] = batch.clip.bounds();
@@ -1831,6 +1857,10 @@ impl RasterPainter {
                     _ => &rect_mask,
                 };
                 match shape {
+                    Shape::Transformed(matrix, content, size) => {
+                        self.draw_transformed(&mut pixmap, mask, *matrix, content, *size)?;
+                        continue;
+                    }
                     Shape::ClipBegin(region) => {
                         if clips.len() >= 48 {
                             return Err("clip depth exceeds limit".into());
@@ -1893,7 +1923,7 @@ impl RasterPainter {
                         }
                         continue;
                     }
-                    Shape::LayerBegin(opacity) => {
+                    Shape::LayerBegin(opacity) | Shape::BlendBegin(opacity, _) => {
                         if !opacity.is_finite() || !(0. ..=1.).contains(opacity) {
                             return Err("invalid layer opacity".into());
                         }
@@ -1910,16 +1940,57 @@ impl RasterPainter {
                             self.layer_allocations += 1;
                             Pixmap::new(w, h).ok_or("invalid opacity layer")?
                         };
-                        layers.push((std::mem::replace(&mut pixmap, next), Ok(*opacity)));
+                        let mode = match shape {
+                            Shape::BlendBegin(_, mode) => *mode,
+                            _ => crate::graphics::BlendMode::Normal,
+                        };
+                        layers.push((std::mem::replace(&mut pixmap, next), Ok((*opacity, mode))));
                         continue;
                     }
                     Shape::LayerEnd => {
-                        let (mut parent, Ok(opacity)) =
+                        let (mut parent, Ok((opacity, mode))) =
                             layers.pop().ok_or("unbalanced opacity layer end")?
                         else {
                             return Err("opacity layer end inside a mask".into());
                         };
-                        composite_layer(&mut parent, &pixmap, byte(opacity));
+                        if mode == crate::graphics::BlendMode::Normal {
+                            composite_layer(&mut parent, &pixmap, byte(opacity));
+                        } else {
+                            let blend_mode = match mode {
+                                crate::graphics::BlendMode::Normal => {
+                                    tiny_skia::BlendMode::SourceOver
+                                }
+                                crate::graphics::BlendMode::Multiply => {
+                                    tiny_skia::BlendMode::Multiply
+                                }
+                                crate::graphics::BlendMode::Screen => tiny_skia::BlendMode::Screen,
+                                crate::graphics::BlendMode::Overlay => {
+                                    tiny_skia::BlendMode::Overlay
+                                }
+                                crate::graphics::BlendMode::ColorBurn => {
+                                    tiny_skia::BlendMode::ColorBurn
+                                }
+                                crate::graphics::BlendMode::Difference => {
+                                    tiny_skia::BlendMode::Difference
+                                }
+                                crate::graphics::BlendMode::DestinationOut => {
+                                    tiny_skia::BlendMode::DestinationOut
+                                }
+                                crate::graphics::BlendMode::Xor => tiny_skia::BlendMode::Xor,
+                            };
+                            parent.draw_pixmap(
+                                0,
+                                0,
+                                pixmap.as_ref(),
+                                &tiny_skia::PixmapPaint {
+                                    opacity,
+                                    blend_mode,
+                                    ..Default::default()
+                                },
+                                Transform::identity(),
+                                None,
+                            );
+                        }
                         self.layer_pool.push(std::mem::replace(&mut pixmap, parent));
                         continue;
                     }
@@ -2126,11 +2197,13 @@ impl RasterPainter {
                         };
                         (path, *c)
                     }
-                    Shape::Outline(..)
+                    Shape::Transformed(..)
+                    | Shape::Outline(..)
                     | Shape::Gradient(..)
                     | Shape::Shadow(..)
                     | Shape::InnerShadow(..)
                     | Shape::LayerBegin(..)
+                    | Shape::BlendBegin(..)
                     | Shape::LayerEnd
                     | Shape::MaskBegin(..)
                     | Shape::MaskEnd
@@ -2859,6 +2932,18 @@ impl Painter for RasterPainter {
     }
 }
 impl DocumentPainter for RasterPainter {
+    fn ui_supports_transforms(&self) -> bool {
+        true
+    }
+    fn ui_transform_batches(
+        &mut self,
+        batches: Vec<PaintBatch<Shape, Glyph>>,
+        matrix: crate::motion::Affine2D,
+        ancestor_clip: crate::Rect,
+    ) -> Vec<PaintBatch<Shape, Glyph>> {
+        transform::group(self, batches, matrix, ancestor_clip)
+    }
+
     fn ui_clip_begin(&mut self, out: &mut Vec<Shape>, clip: ClipRegion) {
         out.push(Shape::ClipBegin(clip));
     }
@@ -2886,6 +2971,18 @@ impl DocumentPainter for RasterPainter {
 
     fn ui_layer_begin(&mut self, out: &mut Vec<Shape>, opacity: f32) {
         out.push(Shape::LayerBegin(opacity));
+    }
+    fn ui_blend_begin(
+        &mut self,
+        out: &mut Vec<Shape>,
+        opacity: f32,
+        mode: crate::graphics::BlendMode,
+    ) {
+        if mode == crate::graphics::BlendMode::Normal {
+            self.ui_layer_begin(out, opacity);
+        } else {
+            out.push(Shape::BlendBegin(opacity, mode));
+        }
     }
     fn ui_layer_end(&mut self, out: &mut Vec<Shape>) {
         out.push(Shape::LayerEnd);
@@ -5111,3 +5208,6 @@ mod emoji_tests {
         assert_eq!(face.families[0].0, family);
     }
 }
+
+#[path = "raster_transform.rs"]
+mod transform;

@@ -1053,6 +1053,8 @@ pub struct Carousel<C> {
     height: f32,
     wrap: bool,
     motion: bool,
+    transition: Transition,
+    sliding: Option<Animation>,
     controls_below: bool,
     labels: Vec<String>,
 }
@@ -1065,11 +1067,26 @@ pub fn carousel<C>(slides: impl IntoIterator<Item = Element<C>>, index: usize) -
         height: 240.,
         wrap: true,
         motion: true,
+        transition: Transition::fade().duration_ms(180),
+        sliding: None,
         controls_below: false,
         labels: Vec::new(),
     }
 }
 impl<C> Carousel<C> {
+    /// Slide retained pages by the resolved viewport width. Paint/input share
+    /// the affine pose; no timer or fixed pixel width is required.
+    pub fn slide_animation(mut self, animation: Animation) -> Self {
+        self.sliding = Some(animation);
+        self
+    }
+
+    /// Enter/exit effect; defaults to the existing short crossfade.
+    pub fn transition(mut self, effect: Transition) -> Self {
+        self.transition = effect;
+        self
+    }
+
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -1128,7 +1145,52 @@ impl<C: 'static> From<Carousel<C>> for Element<C> {
         } else {
             (i.saturating_sub(1), (i + 1).min(n - 1))
         };
-        let mut slide = c.slides.into_iter().nth(i).unwrap();
+        if c.sliding.is_some() && n > 32 {
+            return invalid("sliding carousel supports at most 32 pages");
+        }
+        let mut slide: Element<C> = if let Some(animation) = c.sliding {
+            zstack(
+                c.slides
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, child)| -> Element<C> {
+                        let mut e: Element<C> = vstack![child]
+                            .key(format!("{key}-page-{at}"))
+                            .width_fraction(1.)
+                            .height(c.height)
+                            .align(Align::Stretch)
+                            .animation(if c.motion {
+                                animation
+                            } else {
+                                Animation::linear().duration_ms(0)
+                            })
+                            .into();
+                        fn inert<C>(e: &mut Element<C>) {
+                            e.node.effects.inert = true;
+                            // Portals escape the slide's clip and input scope.
+                            // An inactive page must not publish a hidden modal
+                            // or popup which traps focus on the active page.
+                            e.children.retain(|c| c.node.overlay.is_none());
+                            for c in &mut e.children {
+                                inert(c)
+                            }
+                        }
+                        if at != i {
+                            inert(&mut e);
+                        }
+                        e.node.effects.carousel_slot = Some(at as i16 - i as i16);
+                        e
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .flow(Flow::TopLeft)
+            .width_fraction(1.)
+            .height(c.height)
+            .clip_contents(true)
+            .into()
+        } else {
+            c.slides.into_iter().nth(i).unwrap()
+        };
         if slide.node.flex == 0. {
             slide.node.flex = 1.;
         }
@@ -1191,10 +1253,14 @@ impl<C: 'static> From<Carousel<C>> for Element<C> {
             .align(Align::Center);
         let slide = super::dialogs::with_motion(
             vstack![slide]
-                .key(format!("{key}-slide-{i}"))
+                .key(if c.sliding.is_some() {
+                    format!("{key}-slide-track")
+                } else {
+                    format!("{key}-slide-{i}")
+                })
                 .align(Align::Stretch),
-            c.motion,
-            Transition::fade().duration_ms(180),
+            c.motion && c.sliding.is_none(),
+            c.transition,
         );
         let previous = arrow(
             format!("{key}-prev"),

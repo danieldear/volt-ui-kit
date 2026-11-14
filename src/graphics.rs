@@ -303,6 +303,70 @@ impl VectorPath {
         inside
     }
 }
+/// Logical-pixel dial geometry shared by gauges and rotary sliders.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DialStyle {
+    pub(crate) start: f32,
+    pub(crate) sweep: f32,
+    pub(crate) stroke: f32,
+    pub(crate) ticks: u16,
+}
+impl Default for DialStyle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl DialStyle {
+    pub const fn new() -> Self {
+        Self {
+            start: 135.,
+            sweep: 270.,
+            stroke: 5.,
+            ticks: 11,
+        }
+    }
+    pub fn start_angle(mut self, degrees: f32) -> Self {
+        self.start = degrees;
+        self
+    }
+    pub fn sweep(mut self, degrees: f32) -> Self {
+        self.sweep = degrees;
+        self
+    }
+    pub fn stroke_width(mut self, logical_pixels: f32) -> Self {
+        self.stroke = logical_pixels;
+        self
+    }
+    pub fn ticks(mut self, count: u16) -> Self {
+        self.ticks = count;
+        self
+    }
+    #[cfg(feature = "declarative")]
+    pub(crate) fn valid(self) -> bool {
+        self.start.is_finite()
+            && self.start.abs() <= 3600.
+            && self.sweep.is_finite()
+            && (1. ..=360.).contains(&self.sweep)
+            && self.stroke.is_finite()
+            && (0.1..=32.).contains(&self.stroke)
+            && self.ticks <= 64
+    }
+}
+/// Isolated subtree colour compositing against the content painted below it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    ColorBurn,
+    Difference,
+    /// Porter-Duff subtraction of source alpha from the destination.
+    DestinationOut,
+    /// Keep only non-overlapping alpha coverage.
+    Xor,
+}
 /// How a mask element cuts the content of the container it masks
 /// (see `Container::mask`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
