@@ -11,6 +11,11 @@ fs.mkdirSync(output, {recursive:true});
 async function run(type, options, name) {
  const browser = await type.launch(options);
  const page = await browser.newPage({viewport:{width:1200,height:900}});
+ if(process.env.VOLT_TEST_NO_GPU==='1') {
+  await page.addInitScript(()=>{
+   if(navigator.gpu)Object.defineProperty(navigator.gpu,'requestAdapter',{value:async()=>null});
+  });
+ }
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  try {
   await page.goto(`${origin}/live/?renderer=software`);
@@ -84,7 +89,13 @@ async function run(type, options, name) {
     } finally {d.free();c.remove()}
    }
   });
-  const backends=await page.evaluate(async()=>{
+  const preferred=await page.evaluate(async()=>{
+   // The pinned headless CI image may expose navigator.gpu but have no adapter.
+   // Software workflows above are mandatory everywhere; never catch/mask a
+   // rendering failure after a real WebGPU adapter has been admitted.
+   if(!navigator.gpu || !await navigator.gpu.requestAdapter()) {
+    return {skipped:true,backends:[]};
+   }
    const m=await import('./pkg/volt_web_catalog.js');await m.default();
    const backends=[];
    for(const [p,s,action] of [
@@ -102,10 +113,15 @@ async function run(type, options, name) {
      backends.push(JSON.parse(d.snapshot()).backend);
     } finally {d.free();c.remove()}
    }
-   return backends;
+   return {skipped:false,backends};
   });
-  assert.equal(backends.length,5);
-  console.log(`${name}: preferred gallery renderers: ${[...new Set(backends)].join(', ')}`);
+  if(preferred.skipped) {
+   console.log(`${name}: no WebGPU adapter; GPU-only gallery checks skipped, mandatory software workflows passed.`);
+  } else {
+   assert.equal(preferred.backends.length,5);
+   assert.ok(preferred.backends.every(b=>b==='Vello / WebGPU'));
+   console.log(`${name}: preferred gallery renderers: ${[...new Set(preferred.backends)].join(', ')}`);
+  }
   // DOM bridge: actual pointer/keyboard and rendered canvas, not just dispatch.
   await page.goto(`${origin}/reference/motion-studio.html?renderer=software`);
   const root=page.locator('[data-volt-section="studio-carousel"]');
