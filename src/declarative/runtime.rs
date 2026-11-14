@@ -154,6 +154,12 @@ pub trait DocumentPainter: Painter + TextMetrics {
     ) -> Vec<PaintBatch<Self::Shape, Self::Glyph>> {
         batches
     }
+    /// Whether `ui_transform_batches` preserves affine/subpixel subtree poses.
+    /// Opting in routes decorative floating motion through that hook instead
+    /// of changing glyph origins. Legacy adapters keep their existing motion.
+    fn ui_supports_transforms(&self) -> bool {
+        false
+    }
     /// Optional subtree group-compositing hooks. Legacy adapters ignore opacity;
     /// adapters supporting effects override both hooks.
     fn ui_layer_begin(&mut self, _out: &mut Vec<Self::Shape>, _opacity: f32) {}
@@ -3110,7 +3116,12 @@ impl Runtime {
                 .any(|b| b.effects.ambient.is_some())
         {
             let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
-            apply_ambient(&mut list, motion.now, self.scale);
+            apply_ambient(
+                &mut list,
+                motion.now,
+                self.scale,
+                p.ui_supports_transforms(),
+            );
             boxes = Some(list);
         }
         #[cfg(feature = "rust-ui")]
@@ -3275,7 +3286,31 @@ impl Runtime {
                 motion.node_matrix(source, visual.transform, self.scale, inherited)
             };
             geometry_stack.push((source.depth, next_geometry));
-            let declared = source.effects.text_effect.is_some()
+            // Keep a floating subtree's local glyph origins stable. The
+            // compositor applies the fractional translation to text, borders
+            // and backgrounds together; input/layout stay decorative-only.
+            let floating = source.effects.ambient.filter(|a| {
+                p.ui_supports_transforms()
+                    && matches!(a.kind, super::effects::AmbientKind::Float(_))
+            });
+            let matrix = if let Some(a) = floating.filter(|_| !motion.reduced) {
+                let super::effects::AmbientKind::Float([x, y]) = a.kind else {
+                    unreachable!()
+                };
+                let angle = a.turns(motion.now) * std::f32::consts::TAU;
+                matrix.then(crate::motion::Affine2D([
+                    1.,
+                    0.,
+                    0.,
+                    1.,
+                    f64::from(x * angle.sin() * self.scale),
+                    f64::from(y * angle.cos() * self.scale),
+                ]))
+            } else {
+                matrix
+            };
+            let declared = floating.is_some()
+                || source.effects.text_effect.is_some()
                 || source.effects.layout_animation.is_some()
                 || source.effects.timeline.is_some()
                 || source.effects.drag_motion.is_some()
@@ -3294,7 +3329,12 @@ impl Runtime {
                 children[0].transform_suppressed = true;
                 let mut batches = Vec::new();
                 self.paint_nodes(p, ui, &children, motion, &mut batches, inherited);
-                out.extend(p.ui_transform_batches(batches, matrix, source.ancestor_clip));
+                let clip = if floating.is_some() {
+                    source.effect_clip
+                } else {
+                    source.ancestor_clip
+                };
+                out.extend(p.ui_transform_batches(batches, matrix, clip));
                 source_index = end;
                 continue;
             }
@@ -4767,7 +4807,7 @@ fn translate_descendants(boxes: &mut [LayoutBox], start: usize, d: [f32; 2]) -> 
     true
 }
 /// Paint-time ambient motion: drift subtrees and spin canvases for `now`.
-fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32) {
+fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32, affine_float: bool) {
     use super::effects::AmbientKind;
     for i in 0..boxes.len() {
         let Some(ambient) = boxes[i].effects.ambient else {
@@ -4775,6 +4815,7 @@ fn apply_ambient(boxes: &mut [LayoutBox], now: Duration, scale: f32) {
         };
         let angle = ambient.turns(now) * std::f32::consts::TAU;
         match ambient.kind {
+            AmbientKind::Float(_) if affine_float => {}
             AmbientKind::Float([ax, ay]) => {
                 // An ellipse: smooth, periodic, never a straight bounce.
                 let d = [ax * angle.sin() * scale, ay * angle.cos() * scale];
@@ -7071,7 +7112,7 @@ mod ambient_tests {
         let mut motion = r.motion.borrow_mut();
         motion.now = Duration::from_millis(at_ms);
         let mut list = r.boxes.clone();
-        apply_ambient(&mut list, motion.now, r.scale);
+        apply_ambient(&mut list, motion.now, r.scale, false);
         list
     }
     #[test]
@@ -7764,3 +7805,6 @@ mod linked_hover_tests {
         assert_eq!(app, 0);
     }
 }
+
+#[cfg(all(test, feature = "rust-ui", feature = "rendering"))]
+mod ambient_rendering_tests;

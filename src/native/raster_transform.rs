@@ -214,6 +214,13 @@ impl RasterPainter {
         self.clip_bytes = old_bytes;
         let source = result?;
         let [a, b, c, d, x, y] = matrix.0;
+        // tiny-skia 0.11 forces nearest sampling for *all* pure translations,
+        // including fractional ones. Preserve subpixel drift rather than
+        // snapping this composited text/card back onto whole pixels.
+        if [a, b, c, d] == [1., 0., 0., 1.] && (x.fract() != 0. || y.fract() != 0.) {
+            fractional_translation(dest, mask, &source, [x, y]);
+            return Ok(());
+        }
         dest.draw_pixmap(
             0,
             0,
@@ -233,5 +240,78 @@ impl RasterPainter {
             Some(mask),
         );
         Ok(())
+    }
+}
+
+/// Four-tap premultiplied translation. No extra staging image; only the
+/// destination overlap is visited and the existing rounded/path mask applies.
+fn fractional_translation(dest: &mut Pixmap, mask: &Mask, source: &Pixmap, [x, y]: [f64; 2]) {
+    let (ox, oy) = (x.floor() as i64, y.floor() as i64);
+    let (fx, fy) = ((x - x.floor()) as f32, (y - y.floor()) as f32);
+    let taps = [
+        (0, 0, (1. - fx) * (1. - fy)),
+        (-1, 0, fx * (1. - fy)),
+        (0, -1, (1. - fx) * fy),
+        (-1, -1, fx * fy),
+    ];
+    let (sw, sh) = (i64::from(source.width()), i64::from(source.height()));
+    let (dw, dh) = (i64::from(dest.width()), i64::from(dest.height()));
+    let left = ox.clamp(0, dw);
+    let top = oy.clamp(0, dh);
+    let right = ox.saturating_add(sw).saturating_add(1).clamp(left, dw);
+    let bottom = oy.saturating_add(sh).saturating_add(1).clamp(top, dh);
+    for dy in top..bottom {
+        for dx in left..right {
+            let index = (dy * dw + dx) as usize;
+            let coverage = u32::from(mask.data()[index]);
+            if coverage == 0 {
+                continue;
+            }
+            let mut rgba = [0.; 4];
+            for (tx, ty, weight) in taps {
+                let (sx, sy) = (dx - ox + tx, dy - oy + ty);
+                if sx >= 0 && sy >= 0 && sx < sw && sy < sh && weight > 0. {
+                    let i = (sy * sw + sx) as usize * 4;
+                    for (channel, value) in rgba.iter_mut().enumerate() {
+                        *value += f32::from(source.data()[i + channel]) * weight;
+                    }
+                }
+            }
+            let rgba = rgba.map(|v| v.round().clamp(0., 255.) as u8);
+            if rgba[3] != 0 {
+                blend_premultiplied(
+                    &mut dest.data_mut()[index * 4..index * 4 + 4],
+                    &rgba,
+                    &|v| ((u32::from(v) * coverage + 127) / 255) as u8,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fractional_translation_preserves_coverage_mask_and_premultiplication() {
+        let mut source = Pixmap::new(1, 1).unwrap();
+        source.fill(tiny_skia::Color::from_rgba8(255, 0, 0, 255));
+        let mut target = Pixmap::new(3, 2).unwrap();
+        let mut mask = Mask::new(3, 2).unwrap();
+        mask.data_mut().fill(255);
+        mask.data_mut()[1] = 0;
+        fractional_translation(&mut target, &mask, &source, [0.25, 0.5]);
+        assert_eq!(target.pixel(0, 0).unwrap().alpha(), 96);
+        assert_eq!(target.pixel(1, 0).unwrap().alpha(), 0);
+        assert_eq!(target.pixel(0, 1).unwrap().alpha(), 96);
+        assert_eq!(target.pixel(1, 1).unwrap().alpha(), 32);
+        assert!(target
+            .pixels()
+            .iter()
+            .all(|p| p.red() == p.alpha() && p.green() == 0 && p.blue() == 0));
+        let mut clipped = Pixmap::new(3, 2).unwrap();
+        fractional_translation(&mut clipped, &mask, &source, [-0.5, -0.5]);
+        assert_eq!(clipped.pixel(0, 0).unwrap().alpha(), 64);
+        assert!(clipped.pixels()[1..].iter().all(|p| p.alpha() == 0));
     }
 }

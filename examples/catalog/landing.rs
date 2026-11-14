@@ -88,6 +88,37 @@ mod claims_tests {
         );
     }
 
+    #[cfg(feature = "native-gpu")]
+    #[test]
+    #[ignore = "requires actual GPU; landing floating cards and orbits at fractional DPI"]
+    fn actual_gpu_hero_float_keeps_vector_drawing_without_fallback() {
+        use std::time::Duration;
+        use volt_ui_kit::{native::GpuOffscreenRenderer, ThemeMode};
+        let mut gpu = GpuOffscreenRenderer::new().unwrap();
+        for mode in [ThemeMode::Light, ThemeMode::Dark] {
+            for scale in [1., 1.25, 2.] {
+                let app = App::new();
+                let (d, h) = landing_hero(&app).build().unwrap().into_parts();
+                let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+                let vp = Viewport::new(1600. * scale, 800. * scale, scale).unwrap();
+                let mut p = RasterPainter::new(vp);
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                assert!(r.is_animating());
+                let theme = super::super::theme(&app, mode);
+                for ms in [0, 8, 500, 6999] {
+                    r.advance_animations(Duration::from_millis(ms));
+                    let batches = r.paint_ui(&mut p, &theme);
+                    let frame = gpu.render(&mut p, &batches, theme.palette.base[0]).unwrap();
+                    assert_eq!(gpu.last_over_budget(), None, "{mode:?} {scale} {ms}");
+                    assert_eq!(gpu.framebuffer_upload_bytes(), 0);
+                    assert!(frame.pixels().iter().any(|p| *p != frame.pixels()[0]));
+                }
+                r.set_reduced_motion(true);
+                assert_eq!(r.animation_wait(), None);
+            }
+        }
+    }
+
     #[test]
     fn hero_accent_card_uses_the_current_preset_count_instead_of_a_fake_timing() {
         let cards = labels(zstack(fragments()).into(), 1600.);
@@ -424,16 +455,16 @@ fn hero_tier(_app: &App, tier: Tier) -> El<App> {
     .key(k("hero-copy"))
     .flow(Flow::Center);
     let mut layers: Vec<El<App>> = vec![
-        // Two hairline orbits behind the copy, each with one slow accent arc.
+        // Two hairline orbits behind the copy, each with one gently moving accent arc.
         vstack![orbit(orbit_size, orbit_size * 0.47, 70., 210.)
             .key(k("orbit-outer"))
-            .ambient(Ambient::spin().period_ms(90_000))]
+            .ambient(Ambient::spin().period_ms(36_000))]
         .key(k("orbit-outer-layer"))
         .flow(Flow::Center)
         .into(),
         vstack![orbit(orbit_size, orbit_size * 0.34, 50., 30.)
             .key(k("orbit-inner"))
-            .ambient(Ambient::spin().period_ms(64_000).phase(0.5))]
+            .ambient(Ambient::spin().period_ms(24_000).phase(0.5))]
         .key(k("orbit-inner-layer"))
         .flow(Flow::Center)
         .into(),
@@ -477,7 +508,7 @@ fn fragments() -> Vec<El<App>> {
         .gap(10., Axis::Vertical)
         .into(),
         190.,
-        Ambient::float(6., 4.).period_ms(11_000),
+        Ambient::float(6., 4.).period_ms(7_000),
     );
     let accent = fragment(
         "fragment-accent",
@@ -506,7 +537,7 @@ fn fragments() -> Vec<El<App>> {
         .gap(6., Axis::Vertical)
         .into(),
         180.,
-        Ambient::float(5., 6.).period_ms(13_000).phase(0.4),
+        Ambient::float(5., 6.).period_ms(8_000).phase(0.4),
     );
     let status = fragment(
         "fragment-status",
@@ -524,7 +555,7 @@ fn fragments() -> Vec<El<App>> {
         .align(Align::Center)
         .into(),
         176.,
-        Ambient::float(7., 3.).period_ms(9_500).phase(0.75),
+        Ambient::float(7., 3.).period_ms(6_000).phase(0.75),
     );
     let place = |child: El<App>, key: &'static str, flow: Flow, x: f32, y: f32| -> El<App> {
         let horizontal = if matches!(flow, Flow::TopRight | Flow::Right | Flow::BottomRight) {
@@ -551,7 +582,7 @@ fn fragments() -> Vec<El<App>> {
     ]
 }
 
-// ── Ticker: a slow, swaying strip of what Volt is ───────────────────────
+// ── Ticker: a swaying strip of what Volt is ───────────────────────
 
 fn ticker() -> El<App> {
     let words = [
@@ -589,7 +620,7 @@ fn ticker() -> El<App> {
         .key("ticker-row")
         .gap(22., Axis::Horizontal)
         .align(Align::Center)
-        .ambient(Ambient::float(180., 0.).period_ms(40_000))]
+        .ambient(Ambient::float(180., 0.).period_ms(20_000))]
     .key("ticker")
     .height(52.)
     .padding(15., Edge::Vertical)

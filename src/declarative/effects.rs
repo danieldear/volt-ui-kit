@@ -463,7 +463,11 @@ impl Ambient {
     }
     /// Cycle position in turns at `now`.
     pub(crate) fn turns(&self, now: std::time::Duration) -> f32 {
-        let cycle = (now.as_millis() % u128::from(self.period_ms)) as f32 / self.period_ms as f32;
+        // Reduce before converting to float: retain submillisecond frame times
+        // without losing phase precision after days of process uptime.
+        let period = u128::from(self.period_ms) * 1_000_000;
+        let cycle = (now.as_nanos() % period) as f64 / period as f64;
+        let cycle = cycle as f32;
         (cycle + self.phase).rem_euclid(1.)
     }
 }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Keep decorative floating text, borders and backgrounds together under a
+  subpixel affine compositor instead of rounding moving text origins. Preserve
+  legacy painter fallback, fixed hit geometry, clipping and reduced motion.
+  Retain submillisecond ambient phase precision; fix fractional software
+  translation filtering without changing static text hinting. Make Catalog hero
+  floats, orbit arcs and ticker livelier with Catalog-only timing changes.
+  Add high-refresh/DPI, real-GPU, mask/coverage and hero regressions.
+
 - Fix scroll input latency on motion-heavy pages: index transform ancestry and
   keep ordinary hit testing/viewport culling for unaffected subtrees. Preserve
   moving offscreen descendants and ancestor clipping/opacity, with pixel-parity,

@@ -323,6 +323,17 @@ continuous while visible; opt into them only where useful and remove loading
 indicators when finished. They stop under reduced motion. Shadows and glows
 remain optional; geometry stays fixed during alpha/color animation so native
 blur masks can be reused.</p>
+<p>Floating subtrees use continuous subpixel composition in the built-in raster/GPU
+adapters, keeping text, borders and backgrounds moving together. GPU drawing
+stays vector-based; software uses filtered composition (bilinear for pure
+fractional translation, bicubic for other affine poses), within the transform
+staging limits above. Static text outside these scopes keeps its existing
+hinting. This is decorative motion: layout, hit targets and accessibility do not
+float. Use <code>.transform</code>/timelines for interactive moving controls.
+Custom <code>DocumentPainter</code> adapters keep their legacy float path by default;
+override <code>ui_supports_transforms()</code> to return <code>true</code> only when the adapter also
+implements <code>ui_transform_batches</code>. Periods remain configurable with
+<code>Ambient::period_ms</code>; the Catalog&#39;s faster hero timing is not a global default.</p>
 <p>The Catalog&#39;s <strong>Effects &amp; motion</strong> page has Smooth/Spring/Instant comparison,
 reversible task motion, a replayable three-step sequence, and hover/press/focus
 feedback. Instant previews are local to those demos; the launch/runtime reduced

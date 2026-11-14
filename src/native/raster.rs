@@ -2886,6 +2886,9 @@ impl Painter for RasterPainter {
     }
 }
 impl DocumentPainter for RasterPainter {
+    fn ui_supports_transforms(&self) -> bool {
+        true
+    }
     fn ui_transform_batches(
         &mut self,
         batches: Vec<PaintBatch<Shape, Glyph>>,
