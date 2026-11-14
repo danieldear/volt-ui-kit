@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reject nonfinite rotary pointer coordinates before angle/value calculation,
+  with fractional-DPI regressions. Browser gallery CI explicitly checks adapter
+  availability before GPU-only tests; software workflows remain mandatory.
+
 - Add opt-in sliding carousels, viewport-triggered reveals, bottom sheets,
   floating action/speed-dial controls, rotary sliders and radial gauges. Reuse
   controlled state, keyboard/accessibility semantics, logical coordinates and

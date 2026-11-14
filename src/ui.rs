@@ -1054,18 +1054,41 @@ macro_rules! modifiers {
 
             /// Interpolate keyed position/size changes. Nested layout motion
             /// composes with its parent's transform; use stable keys.
-            pub fn layout_animation(mut self,animation:Animation)->Self {self.$($field)*.effects.layout_animation=Some(animation);self}
+            pub fn layout_animation(mut self, animation: Animation) -> Self {
+                self.$($field)*.effects.layout_animation = Some(animation);
+                self
+            }
             /// Match geometry across differently keyed instances/parents.
-            pub fn shared_element(mut self,key:impl Into<String>)->Self {self.$($field)*.effects.shared=Some(key.into());self}
+            pub fn shared_element(mut self, key: impl Into<String>) -> Self {
+                self.$($field)*.effects.shared = Some(key.into());
+                self
+            }
             /// Pointer-captured direct manipulation with bounded optional momentum.
-            pub fn drag_motion(mut self,policy:crate::motion::DragMotion)->Self {self.$($field)*.effects.drag_motion=Some(policy);self}
+            pub fn drag_motion(mut self, policy: crate::motion::DragMotion) -> Self {
+                self.$($field)*.effects.drag_motion = Some(policy);
+                self
+            }
             /// A finite, seekable clock-driven sequence. The same revision
             /// preserves playback across ordinary recomposition.
-            pub fn timeline(mut self,sequence:crate::motion::Timeline)->Self {self.$($field)*.effects.timeline=Some(sequence);self}
+            pub fn timeline(mut self, sequence: crate::motion::Timeline) -> Self {
+                self.$($field)*.effects.timeline = Some(sequence);
+                self
+            }
             /// Apply a logical 2D transform to this subtree, including input.
-            pub fn transform(mut self,value:crate::motion::Transform2D)->Self {self.$($field)*.effects.base.transform=Some(value);self}
-            pub fn scale(mut self,x:f32,y:f32)->Self {let t=self.$($field)*.effects.base.transform.unwrap_or_default();self.$($field)*.effects.base.transform=Some(t.scale(x,y));self}
-            pub fn rotate(mut self,degrees:f32)->Self {let t=self.$($field)*.effects.base.transform.unwrap_or_default();self.$($field)*.effects.base.transform=Some(t.rotate(degrees));self}
+            pub fn transform(mut self, value: crate::motion::Transform2D) -> Self {
+                self.$($field)*.effects.base.transform = Some(value);
+                self
+            }
+            pub fn scale(mut self, x: f32, y: f32) -> Self {
+                let t = self.$($field)*.effects.base.transform.unwrap_or_default();
+                self.$($field)*.effects.base.transform = Some(t.scale(x, y));
+                self
+            }
+            pub fn rotate(mut self, degrees: f32) -> Self {
+                let t = self.$($field)*.effects.base.transform.unwrap_or_default();
+                self.$($field)*.effects.base.transform = Some(t.rotate(degrees));
+                self
+            }
             /// A linear or radial gradient fill, resolved from theme tokens.
             pub fn background_gradient(mut self, gradient: Gradient) -> Self { self.$($field)*.ext.gradient = Some(gradient); self }
             /// Remove a component's fixed-width default; use the parent's cross-axis allocation.

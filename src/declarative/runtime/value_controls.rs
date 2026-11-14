@@ -73,7 +73,7 @@ impl Runtime {
             .map(|b| b.id.clone())
     }
     fn slider_pointer_value(&self, id: &str, x: f32, y: f32) -> Option<f32> {
-        if !x.is_finite() {
+        if !x.is_finite() || !y.is_finite() {
             return None;
         }
         let b = self.boxes.iter().find(|b| b.id == id && b.enabled)?;
@@ -1157,5 +1157,30 @@ fn paint_dial<P: DocumentPainter>(
             accent,
             Some((3. * scale).min(inner * 0.3)),
         );
+    }
+}
+
+#[cfg(all(test, feature = "rendering"))]
+mod pointer_validation_tests {
+    use super::*;
+    use crate::{rendering::RasterPainter, ui::prelude::*};
+
+    #[test]
+    fn rotary_pointer_values_reject_nonfinite_coordinates_before_angle_math() {
+        for scale in [1., 1.25, 2.] {
+            let e: Element<()> = knob(0.5).key("dial").on_change(|_: &mut (), _| {}).into();
+            let (d, h) = e.build().unwrap().into_parts();
+            let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(200. * scale, 160. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                assert_eq!(r.slider_pointer_value("dial", 100. * scale, bad), None);
+                assert_eq!(r.slider_pointer_value("dial", bad, 56. * scale), None);
+            }
+            assert!(r
+                .slider_pointer_value("dial", 100. * scale, 56. * scale)
+                .is_some_and(|v| v.is_finite()));
+        }
     }
 }
