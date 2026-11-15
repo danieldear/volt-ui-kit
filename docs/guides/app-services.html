@@ -244,6 +244,24 @@ ordinary component testing, including context menus, but intentionally omits
 GPU rendering and the separately opt-in notification adapter. Application
 developers retain independent library feature flags. Non-macOS launches report
 that local notifications are unavailable rather than pretending to deliver.</p>
+<h2 id="secrets-touch-id-and-sign-in-with-apple">Secrets, Touch ID and Sign in with Apple</h2>
+<p>Keep API keys, tokens and passwords in the system&#39;s store with the separate
+<a href="https://github.com/danieldear/volt-ui-kit/blob/main/crates/volt-ui-kit-security/README.md"><code>volt-ui-kit-security</code></a> crate. On
+macOS it uses the login Keychain, and it can ask the person to confirm with
+Touch ID or their account password before something sensitive. It also
+offers Sign in with Apple for apps packaged with a provisioning profile (see
+<a href="#packaging-and-releasing">Packaging and releasing</a>); Apple grants that to Mac
+App Store apps and development builds, not to Developer ID apps. Linux and Windows report
+<code>Unsupported</code> for now. It&#39;s a separate crate because these
+calls need unsafe code, which <code>volt-ui-kit</code> forbids, and most apps don&#39;t need
+them.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit_security::{local_auth::{self, Policy}, secrets::{self, Secret, SecretKey}};
+
+let key = SecretKey::new(&quot;com.example.app&quot;, &quot;api-key&quot;)?;
+secrets::store(&amp;key, Secret::new(token), |saved| { /* send to the UI */ })?;
+local_auth::confirm(&quot;show your saved keys&quot;, Policy::BiometricsOrPassword, |ok| { /* … */ })?;</code></pre></div><p>Callbacks run on a background thread: forward results with a message, as in
+<a href="#background-work">Background work</a>. Password fields still aren&#39;t a vault:
+save what they collect with <code>secrets</code>, not in settings or dev-state.</p>
 <h2 id="the-development-loop">The development loop</h2>
 <p><code>cargo volt dev</code> rebuilds your project when a source or manifest changes and
 restarts the app after a successful build. To keep your place across restarts,
@@ -338,7 +356,16 @@ cargo volt release --universal              # target/release/bundle/My-App-1.0.0
 your keychain (<code>--identity</code> picks another). The notary profile comes from
 <code>--notary-profile</code>, <code>VOLT_NOTARY_PROFILE</code> or <code>notary-profile</code> in the
 metadata. <code>--no-notarize</code> and <code>--no-dmg</code> stop early, and <code>--entitlements</code>
-adds an entitlements file. Steps run programs directly, never a shell, and
+adds an entitlements file.</p>
+<p>Entitlements Apple restricts, such as Sign in with Apple
+(<code>com.apple.developer.applesignin</code>), also need a provisioning profile from
+your developer account: macOS won&#39;t launch an app signed with them otherwise,
+so <code>cargo volt release</code> refuses to. Pass it with <code>--provisioning-profile FILE</code>
+(or <code>VOLT_PROVISIONING_PROFILE</code>). The profile is embedded in the app; its App
+ID must match the bundle identifier and it must grant every restricted
+entitlement the file asks for, and its app and team identifiers are added to
+the signature. <code>VOLT_BUNDLE_IDENTIFIER</code> builds under another identifier
+without editing the metadata. Keep profiles out of the repository. Steps run programs directly, never a shell, and
 only direct outputs under <code>target/release/bundle</code> are replaced. The metadata
 <code>name</code> is a single filename: directory separators, <code>.</code> and <code>..</code> are rejected.
 Inputs and bundle metadata are validated after the build and before replacing
@@ -420,4 +447,4 @@ sends one generic local notification and requests removal. The separately ignore
 generated file into Trash. Run it only with deliberate approval in a desktop session; it
 never touches personal files or empties Trash. A passing OS submission is not
 visual acceptance on every desktop. Test KDE, GNOME and COSMIC separately.</p>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#opening-web-links">Opening web links</a><a href="#menus-and-tray">Menus and tray</a><a href="#tray-resident-window-visibility">Tray-resident window visibility</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#the-development-loop">The development loop</a><a href="#explicit-macos-trash">Explicit macOS Trash</a><a href="#packaging-and-releasing">Packaging and releasing</a><a href="#linux-desktop-services">Linux desktop services</a><a href="#nonblocking-ui-callbacks">Nonblocking UI callbacks</a><a href="#recoverable-trash-safety">Recoverable Trash safety</a><a href="#linux-acceptance">Linux acceptance</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/app-services.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#background-work">Background work</a><a href="#commands-and-shortcuts">Commands and shortcuts</a><a href="#guarding-close">Guarding close</a><a href="#files-and-dialogs">Files and dialogs</a><a href="#opening-web-links">Opening web links</a><a href="#menus-and-tray">Menus and tray</a><a href="#tray-resident-window-visibility">Tray-resident window visibility</a><a href="#notifications">Notifications</a><a href="#testing-catalog-notifications">Testing Catalog notifications</a><a href="#secrets-touch-id-and-sign-in-with-apple">Secrets, Touch ID and Sign in with Apple</a><a href="#the-development-loop">The development loop</a><a href="#explicit-macos-trash">Explicit macOS Trash</a><a href="#packaging-and-releasing">Packaging and releasing</a><a href="#linux-desktop-services">Linux desktop services</a><a href="#nonblocking-ui-callbacks">Nonblocking UI callbacks</a><a href="#recoverable-trash-safety">Recoverable Trash safety</a><a href="#linux-acceptance">Linux acceptance</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

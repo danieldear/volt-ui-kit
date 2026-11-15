@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Add `volt-ui-kit-security`, an opt-in crate for secrets and device-owner
+  confirmation. On macOS, `secrets` stores, reads and removes small secrets in
+  the login Keychain on one ordered background worker, and `local_auth` asks
+  for Touch ID or the account password. Linux and Windows build and report
+  `Unsupported` for now. The Apple calls need unsafe code, so they live in this
+  crate and `volt-ui-kit` still forbids unsafe code. Includes a windowed demo.
+- Add Sign in with Apple to `volt-ui-kit-security`: `apple_id::sign_in` shows
+  Apple's sheet and returns the user identifier, identity token and first-time
+  name and email; `credential_state` reports revoked access. Apple grants it to
+  Mac App Store apps and development builds, not Developer ID apps. A packaged
+  demo app shows the whole flow.
+- `cargo volt release --provisioning-profile FILE` embeds a profile, checks it
+  matches the bundle identifier and grants the requested restricted
+  entitlements, and signs with its app and team identifiers. It refuses
+  restricted entitlements without a profile, since macOS won't launch such an
+  app. `VOLT_BUNDLE_IDENTIFIER` overrides the identifier for one build.
+
 - Reject nonfinite rotary pointer coordinates before angle/value calculation,
   with fractional-DPI regressions. Browser gallery CI explicitly checks adapter
   availability before GPU-only tests; software workflows remain mandatory.
