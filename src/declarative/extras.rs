@@ -192,9 +192,27 @@ impl TextSpan {
     }
 }
 
+/// A page's navigation bar, as a navigation stack describes it to hosts that
+/// draw the bar themselves (iOS). IDs name the controls Volt draws otherwise;
+/// `Runtime::activate_navigation` runs them while they are hidden.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NavigationBar {
+    pub title: String,
+    /// Show the title large above the content, as iOS top-level pages do.
+    pub large_title: bool,
+    /// The history position: 0 for the root page.
+    pub depth: usize,
+    /// The Back control, when the stack can go back and handles it.
+    pub back: Option<String>,
+    /// Trailing bar buttons as (id, label).
+    pub buttons: Vec<(String, String)>,
+}
+
 /// Rust-only extensions carried by every node. Defaults change nothing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct NodeExtras {
+    /// This node is a navigation stack's bar.
+    pub navigation_bar: Option<Box<NavigationBar>>,
     /// Text inside can be selected and copied (inherited; `Some(false)`
     /// opts a subtree out).
     pub selectable: Option<bool>,

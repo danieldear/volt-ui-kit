@@ -216,9 +216,43 @@ Pushing after Back discards the forward branch; overflow removes the oldest
 entry. <code>replace(route)</code> changes only the current entry; <code>reset(root)</code> clears
 history. <code>NavigationSnapshot</code> supports Serde; <code>restore</code> validates its length and
 index before changing anything. Bound serialized input before deserializing.
-Persistent page models, scroll/focus restoration, route decoding and OS deep-link
-registration are <strong>application responsibilities</strong>, not automatic behavior.
-Use route-specific keys for independent page controls.</p>
+Keyed scroll views keep their position when their page is left and get it
+back when the page returns (up to 64 pages). Persistent page models, focus
+restoration, route decoding and OS deep-link registration are <strong>application
+responsibilities</strong>, not automatic behavior. Use route-specific keys for
+independent page controls.</p>
+<h3 id="navigation-bars">Navigation bars</h3>
+<p>A page describes its own bar; the stack draws it above the page, or on iOS
+hands it to UIKit&#39;s navigation bar with its back button and swipe.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+#[derive(Clone, Copy, PartialEq)]
+enum Route { Home, Detail }
+struct App { history: NavigationHistory&lt;Route&gt;, editing: bool }
+fn view(app: &amp;App) -&gt; Element&lt;App&gt; {
+    navigation_stack(&amp;app.history, |route| match route {
+        Route::Home =&gt; vstack![navigation_link(&quot;Open&quot;, Route::Detail).key(&quot;open&quot;)
+                .on_navigate(|app: &amp;mut App, r| { app.history.push(r); })]
+            .navigation_title(&quot;Inbox&quot;)
+            .large_title(true)
+            .into(),
+        Route::Detail =&gt; vstack![text(&quot;Details&quot;)]
+            .navigation_title(&quot;Message&quot;)
+            .bar_button(if app.editing { &quot;Done&quot; } else { &quot;Edit&quot; },
+                |app: &amp;mut App| app.editing = !app.editing)
+            .into(),
+    })
+    .key(&quot;mail&quot;)
+    .on_back(|app: &amp;mut App| { app.history.back(); })
+    .into()
+}
+let app = App { history: NavigationHistory::new(Route::Home), editing: false };
+view(&amp;app).build().unwrap();</code></pre></div><ul>
+<li><code>navigation_title</code>, <code>large_title</code> and <code>bar_button</code> work on any container or
+element a route returns. Bar controls are keyed <code>{stack}-back</code> and
+<code>{stack}-bar-{n}</code>.</li>
+<li>The Back control appears while the history can go back and <code>on_back</code> is
+set. Without a title or buttons, the stack draws no bar.</li>
+</ul>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
 #[derive(Default)]
 struct App { destination: Option&lt;ExternalUrl&gt; }
@@ -552,4 +586,4 @@ targets stay where they were. Use <code>.transform(..)</code>, <code>.layout_ani
 <code>.drag_motion(..)</code> when input must follow the animated content. Text morphing
 is a shaped-label crossfade, not arbitrary font-outline deformation.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#runnable-recipes">Runnable recipes</a><a href="#buttons-and-actions">Buttons and actions</a><a href="#floating-actions-and-bottom-sheets">Floating actions and bottom sheets</a><a href="#radial-instruments">Radial instruments</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#typed-navigation-and-web-links">Typed navigation and web links</a><a href="#motion-and-effects">Motion and effects</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#runnable-recipes">Runnable recipes</a><a href="#buttons-and-actions">Buttons and actions</a><a href="#floating-actions-and-bottom-sheets">Floating actions and bottom sheets</a><a href="#radial-instruments">Radial instruments</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#typed-navigation-and-web-links">Typed navigation and web links</a><a href="#navigation-bars">Navigation bars</a><a href="#motion-and-effects">Motion and effects</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

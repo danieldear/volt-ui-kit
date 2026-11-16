@@ -165,7 +165,7 @@ the launcher script, which intentionally only accepts `--check` and `--help`.
 | macOS 11+ | Primary platform; tested on Apple silicon with Metal. |
 | Windows | Cross-compilation checked; headless CI configured (DX12). Native runtime not yet validated. |
 | Linux | Cross-compilation checked; headless CI configured (Vulkan, X11/Wayland). Native runtime not yet validated. |
-| iOS | [Experimental reusable host/template](ios-prototype.md): Rust screens without per-app Swift glue. Simulator workflows tested; physical-device GPU acceptance pending. |
+| iOS | [Experimental host/template](ios-prototype.md): Rust pages with UIKit's bar, scrolling, controls and keyboard, no per-app Swift. UI tests pass on a physical iPhone; still experimental. |
 | Android | [Experimental host/template](android-prototype.md): Rust UI + shared SurfaceView/JNI/native editor; APK/emulator validation separate from hardware GPU acceptance. |
 | WebAssembly | [Experimental browser host](web-prototype.md): live Rust buttons, tabs, forms and scrolling with WebGPU/software rendering; not full web parity. |
 

@@ -265,9 +265,48 @@ Pushing after Back discards the forward branch; overflow removes the oldest
 entry. `replace(route)` changes only the current entry; `reset(root)` clears
 history. `NavigationSnapshot` supports Serde; `restore` validates its length and
 index before changing anything. Bound serialized input before deserializing.
-Persistent page models, scroll/focus restoration, route decoding and OS deep-link
-registration are **application responsibilities**, not automatic behavior.
-Use route-specific keys for independent page controls.
+Keyed scroll views keep their position when their page is left and get it
+back when the page returns (up to 64 pages). Persistent page models, focus
+restoration, route decoding and OS deep-link registration are **application
+responsibilities**, not automatic behavior. Use route-specific keys for
+independent page controls.
+
+### Navigation bars
+
+A page describes its own bar; the stack draws it above the page, or on iOS
+hands it to UIKit's navigation bar with its back button and swipe.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+#[derive(Clone, Copy, PartialEq)]
+enum Route { Home, Detail }
+struct App { history: NavigationHistory<Route>, editing: bool }
+fn view(app: &App) -> Element<App> {
+    navigation_stack(&app.history, |route| match route {
+        Route::Home => vstack![navigation_link("Open", Route::Detail).key("open")
+                .on_navigate(|app: &mut App, r| { app.history.push(r); })]
+            .navigation_title("Inbox")
+            .large_title(true)
+            .into(),
+        Route::Detail => vstack![text("Details")]
+            .navigation_title("Message")
+            .bar_button(if app.editing { "Done" } else { "Edit" },
+                |app: &mut App| app.editing = !app.editing)
+            .into(),
+    })
+    .key("mail")
+    .on_back(|app: &mut App| { app.history.back(); })
+    .into()
+}
+let app = App { history: NavigationHistory::new(Route::Home), editing: false };
+view(&app).build().unwrap();
+```
+
+- `navigation_title`, `large_title` and `bar_button` work on any container or
+  element a route returns. Bar controls are keyed `{stack}-back` and
+  `{stack}-bar-{n}`.
+- The Back control appears while the history can go back and `on_back` is
+  set. Without a title or buttons, the stack draws no bar.
 
 ```rust
 use volt_ui_kit::ui::prelude::*;

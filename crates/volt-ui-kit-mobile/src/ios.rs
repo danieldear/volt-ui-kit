@@ -89,13 +89,9 @@ pub unsafe extern "C" fn volt_create(layer: *mut c_void, font: *const u8, len: u
             return Err("Missing system font or Metal layer".into());
         }
         // SAFETY: UIKit passes a live Data buffer for the duration of this call.
+        // Every family name in the system font's file selects that file.
         let families = register_font(unsafe { std::slice::from_raw_parts(font, len) }.to_vec())?;
-        let family = families
-            .iter()
-            .find(|s| s.contains("SF") && s.contains("Text"))
-            .or_else(|| families.first())
-            .ok_or("No font family")?
-            .clone();
+        let family = families.first().ok_or("No font family")?.clone();
         let ui = FACTORY.with(|slot| {
             slot.borrow()
                 .as_ref()

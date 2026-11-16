@@ -545,7 +545,8 @@ pub enum Scroll {
     Auto,
 }
 impl Scroll {
-    pub(crate) fn axes(self) -> [bool; 2] {
+    /// Whether it scrolls horizontally and vertically, as `[x, y]`.
+    pub fn axes(self) -> [bool; 2] {
         match self {
             Self::Vertical => [false, true],
             Self::Horizontal => [true, false],

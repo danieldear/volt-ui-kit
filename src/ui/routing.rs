@@ -134,11 +134,138 @@ impl<T: PartialEq> NavigationHistory<T> {
 }
 /// Mount only the current route. Use route-specific keys for independent pages;
 /// keep their persistent data in application state, not in this container.
+///
+/// A page with `.navigation_title(..)`, `.large_title(..)` or `.bar_button(..)`
+/// gets a navigation bar, and `.on_back(..)` adds its Back control. On iOS the
+/// bar is UIKit's, with its back button and swipe; elsewhere Volt draws it.
 pub fn navigation_stack<C, T>(
     history: &NavigationHistory<T>,
     view: impl FnOnce(&T) -> Element<C>,
-) -> Container<C> {
-    column([view(history.current())])
+) -> NavigationStack<C> {
+    NavigationStack {
+        page: view(history.current()),
+        depth: history.index(),
+        can_go_back: history.can_go_back(),
+        key: None,
+        on_back: None,
+    }
+}
+/// The current route's page under its navigation bar. See `navigation_stack`.
+pub struct NavigationStack<C> {
+    page: Element<C>,
+    depth: usize,
+    can_go_back: bool,
+    key: Option<String>,
+    on_back: Option<Click<C>>,
+}
+impl<C> NavigationStack<C> {
+    /// The stack's key; its bar controls are keyed `{key}-back` and
+    /// `{key}-bar-{n}` (`navigation-…` without a key).
+    pub fn key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
+        self
+    }
+    /// Go back one page. Runs for the bar's Back control, which shows while
+    /// the history can go back; on iOS also for the back button and swipe.
+    pub fn on_back(mut self, on_back: impl FnMut(&mut C) + 'static) -> Self {
+        self.on_back = Some(Box::new(on_back));
+        self
+    }
+}
+impl<C: 'static> From<NavigationStack<C>> for Element<C> {
+    fn from(stack: NavigationStack<C>) -> Self {
+        let NavigationStack {
+            mut page,
+            depth,
+            can_go_back,
+            key,
+            on_back,
+        } = stack;
+        let item = page.navigation.take();
+        let back = on_back.filter(|_| can_go_back);
+        let content = if item.is_none() && back.is_none() {
+            column([page])
+        } else {
+            let base = key.clone().unwrap_or_else(|| "navigation".into());
+            column([navigation_bar(&base, depth, item, back), page])
+        };
+        match key {
+            Some(key) => content.key(key).into(),
+            None => content.into(),
+        }
+    }
+}
+/// The bar Volt draws, described in its node for hosts that draw their own.
+fn navigation_bar<C: 'static>(
+    base: &str,
+    depth: usize,
+    item: Option<Box<PageNavigation<C>>>,
+    back: Option<Click<C>>,
+) -> Element<C> {
+    let (title, large_title, buttons) = match item {
+        Some(item) => (item.title, item.large_title, item.buttons),
+        None => (String::new(), false, Vec::new()),
+    };
+    let mut bar = crate::declarative::NavigationBar {
+        title: title.clone(),
+        large_title,
+        depth,
+        back: None,
+        buttons: Vec::new(),
+    };
+    let mut leading: Vec<Element<C>> = Vec::new();
+    if let Some(mut back) = back {
+        let id = format!("{base}-back");
+        bar.back = Some(id.clone());
+        leading.push(
+            button("Back")
+                .key(id)
+                .variant(ButtonVariant::Ghost)
+                .color(ColorToken::Primary)
+                .on_click(move |c: &mut C| back(c))
+                .into(),
+        );
+    }
+    leading.push(spacer().into());
+    let mut trailing: Vec<Element<C>> = vec![spacer().into()];
+    for (i, (label, mut f)) in buttons.into_iter().enumerate() {
+        let id = format!("{base}-bar-{i}");
+        bar.buttons.push((id.clone(), label.clone()));
+        trailing.push(
+            button(label)
+                .key(id)
+                .variant(ButtonVariant::Ghost)
+                .color(ColorToken::Primary)
+                .on_click(move |c: &mut C| f(c))
+                .into(),
+        );
+    }
+    let center = if large_title {
+        String::new()
+    } else {
+        title.clone()
+    };
+    let mut rows: Vec<Element<C>> = vec![hstack![
+        hstack(leading).flex(1.).align(Align::Center),
+        text(center).key(format!("{base}-title")).font_weight(600),
+        hstack(trailing).flex(1.).align(Align::Center),
+    ]
+    .key(format!("{base}-bar-row"))
+    .height(44.)
+    .align(Align::Center)
+    .into()];
+    if large_title {
+        rows.push(
+            text(title)
+                .key(format!("{base}-large-title"))
+                .font_size(34.)
+                .font_weight(700)
+                .into(),
+        );
+    }
+    let mut bar_element: Element<C> = vstack(rows).key(format!("{base}-bar")).into();
+    bar_element.node.ext.navigation_bar = Some(Box::new(bar));
+    bar_element
 }
 
 /// An absolute ASCII HTTP(S) URL. Deliberately excludes credentials, local file
