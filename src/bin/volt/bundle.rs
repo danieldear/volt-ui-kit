@@ -113,7 +113,7 @@ impl AppExtension {
 }
 
 /// A JSON value (from Cargo.toml metadata) as a plist value.
-fn plist_value(xml: &mut String, v: &serde_json::Value) {
+pub(crate) fn plist_value(xml: &mut String, v: &serde_json::Value) {
     use serde_json::Value;
     match v {
         Value::Bool(true) => xml.push_str("<true/>"),

@@ -57,3 +57,4 @@ jobs:
       - run: cargo install cargo-audit --version 0.22.2 --locked
       # Maintenance warnings stay visible; known vulnerabilities fail the job.
       - run: cargo audit
+      - run: cargo audit --file crates/volt-ui-kit-security/Cargo.lock

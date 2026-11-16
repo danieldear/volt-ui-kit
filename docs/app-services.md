@@ -299,6 +299,31 @@ GPU rendering and the separately opt-in notification adapter. Application
 developers retain independent library feature flags. Non-macOS launches report
 that local notifications are unavailable rather than pretending to deliver.
 
+## Secrets, Touch ID and Sign in with Apple
+
+Keep API keys, tokens and passwords in the system's store with the separate
+[`volt-ui-kit-security`](../crates/volt-ui-kit-security/README.md) crate. On
+macOS it uses the login Keychain, and it can ask the person to confirm with
+Touch ID or their account password before something sensitive. It also
+offers Sign in with Apple for apps packaged with a provisioning profile (see
+[Packaging and releasing](#packaging-and-releasing)); Apple grants that to Mac
+App Store apps and development builds, not to Developer ID apps. Linux and Windows report
+`Unsupported` for now. It's a separate crate because these
+calls need unsafe code, which `volt-ui-kit` forbids, and most apps don't need
+them.
+
+```rust,ignore
+use volt_ui_kit_security::{local_auth::{self, Policy}, secrets::{self, Secret, SecretKey}};
+
+let key = SecretKey::new("com.example.app", "api-key")?;
+secrets::store(&key, Secret::new(token), |saved| { /* send to the UI */ })?;
+local_auth::confirm("show your saved keys", Policy::BiometricsOrPassword, |ok| { /* … */ })?;
+```
+
+Callbacks run on a background thread: forward results with a message, as in
+[Background work](#background-work). Password fields still aren't a vault:
+save what they collect with `secrets`, not in settings or dev-state.
+
 ## The development loop
 
 `cargo volt dev` rebuilds your project when a source or manifest changes and
@@ -433,7 +458,17 @@ The identity defaults to the only "Developer ID Application" certificate in
 your keychain (`--identity` picks another). The notary profile comes from
 `--notary-profile`, `VOLT_NOTARY_PROFILE` or `notary-profile` in the
 metadata. `--no-notarize` and `--no-dmg` stop early, and `--entitlements`
-adds an entitlements file. Steps run programs directly, never a shell, and
+adds an entitlements file.
+
+Entitlements Apple restricts, such as Sign in with Apple
+(`com.apple.developer.applesignin`), also need a provisioning profile from
+your developer account: macOS won't launch an app signed with them otherwise,
+so `cargo volt release` refuses to. Pass it with `--provisioning-profile FILE`
+(or `VOLT_PROVISIONING_PROFILE`). The profile is embedded in the app; its App
+ID must match the bundle identifier and it must grant every restricted
+entitlement the file asks for, and its app and team identifiers are added to
+the signature. `VOLT_BUNDLE_IDENTIFIER` builds under another identifier
+without editing the metadata. Keep profiles out of the repository. Steps run programs directly, never a shell, and
 only direct outputs under `target/release/bundle` are replaced. The metadata
 `name` is a single filename: directory separators, `.` and `..` are rejected.
 Inputs and bundle metadata are validated after the build and before replacing

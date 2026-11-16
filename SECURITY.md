@@ -44,8 +44,10 @@ revision and monitor advisories and updates.
 - Platform adapters and dependencies contain native FFI. Non-Linux/non-native
   builds forbid `unsafe` Rust in this crate; Linux native builds deny it except
   for the narrowly fenced Wayland handle imports with documented ownership and
-  drop-order invariants. This is not a claim that every dependency or GPU driver
-  is memory-safe. OS permission prompts remain outside the toolkit's boundary.
+  drop-order invariants. The separate, opt-in `volt-ui-kit-security` crate
+  contains unsafe calls to the macOS Keychain and LocalAuthentication; apps that
+  don't depend on it don't compile them. This is not a claim that every
+  dependency or GPU driver is memory-safe. OS permission prompts remain outside the toolkit's boundary.
 - Compositor blur uses a private macOS API and is opt-in; prefer the public
   Material mode for normal applications and distribution compatibility.
 

@@ -69,6 +69,10 @@ tests; live sessions with VoiceOver, Narrator and Orca are still to do.
   of the protocol engine remains safe Rust and is exercised against a mock
   compositor. Other platform bridges use safe bindings (`objc2`, `muda`,
   `tray-icon`) that contain native FFI internally.
+  The opt-in `volt-ui-kit-security` crate is separate for this reason: its
+  macOS Keychain and LocalAuthentication backends call Apple's C and
+  Objective-C APIs directly, in two modules that allow unsafe code with a
+  stated reason for each call.
 - Every tree is validated before installation: sizes, colours, text length,
   depth and node count are bounded (see [limits](building-uis.md#validation-and-limits)).
 - Images: PNG/JPEG up to 16 MiB encoded, 4096 px per side and 128 MiB decoded.
