@@ -184,6 +184,10 @@ pub enum EditKey {
     Delete,
     Enter,
     Submit,
+    /// Opt-in only: normal Tab still traverses focus/inserts indentation.
+    Tab,
+    /// Explicit paste had no text. A registered editor may read image data.
+    PasteImage,
     Undo,
     Redo,
 }

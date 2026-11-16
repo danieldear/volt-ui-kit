@@ -282,6 +282,12 @@ impl<C, F> LazyList<C, F> {
         self.0.select_text = Some(Box::new(f));
         self
     }
+    /// Follow newly appended rows only while the reader remains at the end.
+    /// Uses the same scroll anchoring as ordinary chat/log containers.
+    pub fn anchor_end(mut self, value: bool) -> Self {
+        self.0.node.surface.anchor_end = value;
+        self
+    }
     /// One estimated height (logical pixels) for every unmeasured row.
     pub fn estimate(mut self, height: f32) -> Self {
         self.1.estimate = height;
