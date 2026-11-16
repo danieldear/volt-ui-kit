@@ -225,6 +225,8 @@ struct EffectMask {
 #[cfg(feature = "rendering-gpu")]
 pub(crate) struct GpuGlyphRun {
     pub font: cosmic_text::fontdb::ID,
+    /// The requested weight; a variable face draws it from its `wght` axis.
+    pub weight: cosmic_text::fontdb::Weight,
     pub size: f32,
     pub fake_italic: bool,
     /// Rich text runs change colour mid-text; a run never mixes colours.
@@ -402,7 +404,10 @@ pub struct RasterPainter {
     /// Normalized outline ink boxes, not rasterized glyphs. Bounded independently
     /// so repeated GPU frames need no font-table parsing to decide clipping.
     #[cfg(feature = "rendering-gpu")]
-    gpu_ink: BTreeMap<(cosmic_text::fontdb::ID, u16), Option<[f32; 4]>>,
+    gpu_ink: BTreeMap<(cosmic_text::fontdb::ID, u16, u16), Option<[f32; 4]>>,
+    /// Vello's normalized variation coordinates per face and weight.
+    #[cfg(feature = "rendering-gpu")]
+    gpu_coords: BTreeMap<(cosmic_text::fontdb::ID, u16), std::sync::Arc<[i16]>>,
     /// Hashed, not ordered: ordering compares whole paragraphs on every lookup.
     text: crate::fasthash::FxHashMap<TextKey, (Buffer, u64)>,
     /// Unwrapped sizes by a hash of text and style, so layout can answer
@@ -673,40 +678,15 @@ impl RasterPainter {
                 // Advance widths are not ink bounds (italic f, negative side
                 // bearings, accents). Elide the GPU clip only after proving
                 // the face's actual ink fits, with a one-pixel AA margin.
-                if self.gpu_ink.len() >= 4096
-                    && !self.gpu_ink.contains_key(&(k.font_id, k.glyph_id))
-                {
+                let ink_key = (k.font_id, k.font_weight.0, k.glyph_id);
+                if self.gpu_ink.len() >= 4096 && !self.gpu_ink.contains_key(&ink_key) {
                     self.gpu_ink.clear();
                 }
-                let ink = self
+                let fonts = &mut self.fonts;
+                let ink = *self
                     .gpu_ink
-                    .entry((k.font_id, k.glyph_id))
-                    .or_insert_with(|| {
-                        let font = self.fonts.get_font(k.font_id)?;
-                        let face = font.rustybuzz();
-                        let tables = face.tables();
-                        if tables.colr.is_some()
-                            || tables.sbix.is_some()
-                            || tables.cbdt.is_some()
-                            || tables.bdat.is_some()
-                            || tables.ebdt.is_some()
-                            || tables.svg.is_some()
-                        {
-                            return None;
-                        }
-                        let b =
-                            face.glyph_bounding_box(cosmic_text::ttf_parser::GlyphId(k.glyph_id))?;
-                        let em = face.units_per_em() as f32;
-                        if em <= 0. {
-                            return None;
-                        }
-                        Some([
-                            f32::from(b.x_min) / em,
-                            f32::from(b.y_min) / em,
-                            f32::from(b.x_max) / em,
-                            f32::from(b.y_max) / em,
-                        ])
-                    });
+                    .entry(ink_key)
+                    .or_insert_with(|| glyph_ink(fonts, k.font_id, k.font_weight, k.glyph_id));
                 let fits = ink.is_some_and(|[xmin, ymin, xmax, ymax]| {
                     let skew = if fake_italic {
                         ymin.abs().max(ymax.abs()) * size * 14f32.to_radians().tan()
@@ -728,6 +708,7 @@ impl RasterPainter {
                 match runs.last_mut() {
                     Some(r)
                         if r.font == k.font_id
+                            && r.weight == k.font_weight
                             && r.size == size
                             && r.fake_italic == fake_italic
                             && r.color == color =>
@@ -736,6 +717,7 @@ impl RasterPainter {
                     }
                     _ => runs.push(GpuGlyphRun {
                         font: k.font_id,
+                        weight: k.font_weight,
                         size,
                         fake_italic,
                         color,
@@ -753,7 +735,40 @@ impl RasterPainter {
         id: cosmic_text::fontdb::ID,
     ) -> Option<(std::sync::Arc<cosmic_text::Font>, u32)> {
         let index = self.fonts.db().face(id)?.index;
-        Some((self.fonts.get_font(id)?, index))
+        let weight = self.fonts.db().face(id)?.weight;
+        Some((self.fonts.get_font(id, weight)?, index))
+    }
+    /// Variation coordinates that draw `weight` from a variable face, empty
+    /// for static faces and the default instance.
+    #[cfg(feature = "rendering-gpu")]
+    pub(crate) fn gpu_coords(
+        &mut self,
+        id: cosmic_text::fontdb::ID,
+        weight: cosmic_text::fontdb::Weight,
+    ) -> std::sync::Arc<[i16]> {
+        use cosmic_text::skrifa::{MetadataProvider, Tag};
+        if self.gpu_coords.len() >= 256 {
+            self.gpu_coords.clear();
+        }
+        self.gpu_coords
+            .entry((id, weight.0))
+            .or_insert_with(|| {
+                self.fonts
+                    .db()
+                    .with_face_data(id, |data, index| {
+                        let font = cosmic_text::skrifa::FontRef::from_index(data, index).ok()?;
+                        font.axes().get_by_tag(Tag::new(b"wght"))?;
+                        let location = font
+                            .axes()
+                            .location([(Tag::new(b"wght"), f32::from(weight.0))]);
+                        let coords: Vec<i16> =
+                            location.coords().iter().map(|c| c.to_bits()).collect();
+                        coords.iter().any(|&c| c != 0).then(|| coords.into())
+                    })
+                    .flatten()
+                    .unwrap_or_else(|| Vec::new().into())
+            })
+            .clone()
     }
     #[cfg(feature = "rendering-gpu")]
     pub(crate) fn gpu_glyph_image(
@@ -867,6 +882,8 @@ impl RasterPainter {
             swash: SwashCache::new(),
             #[cfg(feature = "rendering-gpu")]
             gpu_ink: BTreeMap::new(),
+            #[cfg(feature = "rendering-gpu")]
+            gpu_coords: BTreeMap::new(),
             text: Default::default(),
             natural: Default::default(),
             text_cache_misses: 0,
@@ -983,15 +1000,12 @@ impl RasterPainter {
                 _ => 1.2,
             };
             let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(size, size * line_height));
-            buffer.set_size(&mut self.fonts, Some(width.max(0.1)), None);
-            buffer.set_wrap(
-                &mut self.fonts,
-                if key.no_wrap && key.max_lines == 0 {
-                    Wrap::None
-                } else {
-                    Wrap::WordOrGlyph
-                },
-            );
+            buffer.set_size(Some(width.max(0.1)), None);
+            buffer.set_wrap(if key.no_wrap && key.max_lines == 0 {
+                Wrap::None
+            } else {
+                Wrap::WordOrGlyph
+            });
             fn family_of(name: &str) -> Family<'_> {
                 match name {
                     "sans" | "sans-serif" => Family::SansSerif,
@@ -1032,12 +1046,7 @@ impl RasterPainter {
             // ellipsis may follow); runs are clipped to it.
             let mut shape = |buffer: &mut Buffer, value: &str, prefix: usize| {
                 if runs.is_empty() && !has_emoji(value) {
-                    buffer.set_text(fonts, value, &attrs, Shaping::Advanced);
-                    if align.is_some() {
-                        for line in &mut buffer.lines {
-                            line.set_align(align);
-                        }
-                    }
+                    buffer.set_text(value, &attrs, Shaping::Advanced, align);
                 } else {
                     let mut spans: Vec<(&str, Attrs)> = Vec::with_capacity(runs.len() * 2 + 1);
                     let mut at = 0;
@@ -1080,7 +1089,7 @@ impl RasterPainter {
                         spans.push((&value[at..], attrs.clone()));
                     }
                     let spans = emoji_spans(spans, emoji);
-                    buffer.set_rich_text(fonts, spans, &attrs, Shaping::Advanced, align);
+                    buffer.set_rich_text(spans, &attrs, Shaping::Advanced, align);
                 }
                 buffer.shape_until_scroll(fonts, false);
                 buffer.layout_runs().count()
@@ -2372,24 +2381,116 @@ impl RasterPainter {
         result
     }
 }
-// cosmic-text 0.14's default-family fallback requires an exact weight. If a
-// family has 400/700 (or a variable face registered as 400), requesting 500 or
-// 800 can silently select an unrelated family with that exact weight instead.
-// Let fontdb choose the nearest face within the requested family first. Keep
-// style/stretch fallback behavior unchanged, and leave missing families alone.
+/// A glyph's outline ink box in ems at `weight`, or `None` for colour and
+/// bitmap faces. Control points bound the outline, so the box never under-reports.
+#[cfg(feature = "rendering-gpu")]
+fn glyph_ink(
+    fonts: &mut FontSystem,
+    id: cosmic_text::fontdb::ID,
+    weight: Weight,
+    glyph: u16,
+) -> Option<[f32; 4]> {
+    use cosmic_text::skrifa::{
+        instance::Size,
+        outline::{DrawSettings, OutlinePen},
+        raw::TableProvider,
+        GlyphId, MetadataProvider, Tag,
+    };
+    #[derive(Default)]
+    struct Bounds(Option<[f32; 4]>);
+    impl Bounds {
+        fn add(&mut self, x: f32, y: f32) {
+            let b = self.0.get_or_insert([x, y, x, y]);
+            *b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+        }
+    }
+    impl OutlinePen for Bounds {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.add(x, y);
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.add(x, y);
+        }
+        fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
+            self.add(cx, cy);
+            self.add(x, y);
+        }
+        fn curve_to(&mut self, a: f32, b: f32, c: f32, d: f32, x: f32, y: f32) {
+            self.add(a, b);
+            self.add(c, d);
+            self.add(x, y);
+        }
+        fn close(&mut self) {}
+    }
+    fonts
+        .db()
+        .with_face_data(id, |data, index| {
+            let font = cosmic_text::skrifa::FontRef::from_index(data, index).ok()?;
+            let bitmap_or_colour = [b"COLR", b"sbix", b"CBDT", b"bdat", b"EBDT", b"SVG "]
+                .iter()
+                .any(|tag| font.table_data(Tag::new(tag)).is_some());
+            if bitmap_or_colour {
+                return None;
+            }
+            let em = f32::from(font.head().ok()?.units_per_em());
+            if em <= 0. {
+                return None;
+            }
+            let location = font
+                .axes()
+                .location([(Tag::new(b"wght"), f32::from(weight.0))]);
+            let outline = font.outline_glyphs().get(GlyphId::new(u32::from(glyph)))?;
+            let mut bounds = Bounds::default();
+            outline
+                .draw(
+                    DrawSettings::unhinted(Size::unscaled(), &location),
+                    &mut bounds,
+                )
+                .ok()?;
+            // A blank glyph (space) has no ink and always fits.
+            let [x0, y0, x1, y1] = bounds.0.unwrap_or([0.; 4]);
+            Some([x0 / em, y0 / em, x1 / em, y1 / em])
+        })
+        .flatten()
+}
+// If a family has only 400/700, requesting 500 or 800 can select an unrelated
+// family with that exact weight instead. Let fontdb choose the nearest face
+// within the requested family first. A variable face whose `wght` axis covers
+// the request keeps it, so cosmic-text draws that weight from the one file.
+// Keep style/stretch fallback behavior unchanged, and leave missing families alone.
 fn available_family_weight<'a>(fonts: &FontSystem, attrs: Attrs<'a>) -> Attrs<'a> {
-    let selected = fonts.db().query(&cosmic_text::fontdb::Query {
+    let db = fonts.db();
+    let selected = db.query(&cosmic_text::fontdb::Query {
         families: &[attrs.family],
         weight: attrs.weight,
         style: attrs.style,
         stretch: attrs.stretch,
     });
-    if let Some(face) = selected.and_then(|id| fonts.db().face(id)) {
+    if let Some(face) = selected.and_then(|id| db.face(id)) {
         if face.style == attrs.style && face.stretch == attrs.stretch {
+            if face.weight != attrs.weight && wght_covers(db, face.id, attrs.weight) {
+                return attrs;
+            }
             return attrs.weight(face.weight);
         }
     }
     attrs
+}
+/// Whether a face has a `wght` axis that includes `weight`.
+fn wght_covers(
+    db: &cosmic_text::fontdb::Database,
+    id: cosmic_text::fontdb::ID,
+    weight: Weight,
+) -> bool {
+    use cosmic_text::skrifa::{MetadataProvider, Tag};
+    db.with_face_data(id, |data, index| {
+        let font = cosmic_text::skrifa::FontRef::from_index(data, index).ok()?;
+        let axis = font.axes().get_by_tag(Tag::new(b"wght"))?;
+        let w = f32::from(weight.0);
+        Some(w >= axis.min_value() && w <= axis.max_value())
+    })
+    .flatten()
+    .unwrap_or(false)
 }
 
 // cosmic-text's default generic families may not be installed (e.g. DejaVu
@@ -5196,7 +5297,6 @@ mod emoji_tests {
         let mut buffer = Buffer::new(fonts, Metrics::new(20., 24.));
         let bold = Attrs::new().weight(Weight::BOLD);
         buffer.set_rich_text(
-            fonts,
             emoji_spans(vec![("🌐 Heading", bold.clone())], Some(&family)),
             &bold,
             Shaping::Advanced,

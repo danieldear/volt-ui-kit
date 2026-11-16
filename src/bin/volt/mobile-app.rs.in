@@ -1,102 +1,212 @@
 //! Edit this Rust file. Native surfaces, keyboard and lifecycle glue live in Volt.
-use volt_ui_kit_mobile::ui_kit::ui::prelude::*;
+//!
+//! On iOS the navigation bar, back swipe, scrolling, switches and keyboard are
+//! UIKit's; Volt draws the pages. Android draws the same bar with Volt.
+use volt_ui_kit_mobile::ui_kit::ui::{prelude::*, Container};
 use volt_ui_kit_mobile::{Application, HostContext};
-#[derive(Default)]
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Page {
+    Home,
+    Settings,
+}
 pub struct App {
+    history: NavigationHistory<Page>,
     count: usize,
-    settings: bool,
     name: String,
+    draft: String,
+    reminders: bool,
     message: String,
 }
-fn view(app: &App) -> Element<App> {
-    let body: Element<App> = if app.settings {
-        vstack![
-            text("Make it yours").font_size(30.).font_weight(700),
-            text("Display name").font_size(14.).color(ColorToken::Muted),
-            text_field(&app.name)
-                .key("name")
-                .accessible_label("Display name")
-                .height(52.)
-                .on_change(|a: &mut App, value| a.name = value),
-            button("Save")
-                .key("save")
-                .height(52.)
-                .rounded(12.)
-                .on_click(|a: &mut App| {
-                    if a.name.trim().is_empty() {
-                        a.message = "Please enter a name.".into();
-                    } else {
-                        a.settings = false;
-                        a.message = "Saved for this session.".into();
-                    }
-                }),
-            text(&app.message).key("status").color(ColorToken::Muted),
-        ]
-        .gap(16., Axis::Vertical)
+
+/// Rows on one rounded surface with inset hairlines, as iOS grouped lists.
+fn section(title: &str, rows: Vec<Element<App>>) -> Element<App> {
+    let mut items = Vec::new();
+    for (i, row) in rows.into_iter().enumerate() {
+        if i > 0 {
+            items.push(
+                vstack![divider().height(1. / 3.)]
+                    .padding(16., Edge::Left)
+                    .align(Align::Stretch)
+                    .into(),
+            );
+        }
+        items.push(row);
+    }
+    vstack![
+        hstack![text(title)
+            .font_size(15.)
+            .font_weight(600)
+            .color(ColorToken::Muted)]
+        .padding(16., Edge::Horizontal),
+        vstack(items)
+            .background(ColorToken::Base200)
+            .rounded(26.)
+            .clip_contents(true),
+    ]
+    .gap(8., Axis::Vertical)
+    .into()
+}
+fn row(label: impl Into<String>, trailing: Element<App>) -> Element<App> {
+    hstack![text(label).font_size(17.), spacer(), trailing]
+        .height(52.)
+        .padding(16., Edge::Horizontal)
+        .align(Align::Center)
         .into()
-    } else {
-        vstack![
-            text(format!("Hello, {}", app.name))
-                .key("greeting")
-                .font_size(30.)
-                .font_weight(700),
-            text("Native UI. Your state. Rust callbacks.").color(ColorToken::Muted),
+}
+/// A scrolling page; on iOS it runs under the bars, which inset it.
+fn page(key: &str, parts: Vec<Element<App>>) -> Container<App> {
+    vstack![vstack(parts)
+        .align(Align::Stretch)
+        .gap(24., Axis::Vertical)
+        .padding(20., Edge::Vertical)]
+    .key(key)
+    .padding(16., Edge::Horizontal)
+    .flex(1.)
+    .scroll(Scroll::Vertical)
+}
+
+fn home(app: &App) -> Container<App> {
+    let items = (1..=30)
+        .map(|i| {
+            hstack![
+                text(format!("Item {i:02}"))
+                    .key(format!("item-{i}"))
+                    .font_size(17.),
+                spacer(),
+                icon(Icon::ChevronRight)
+                    .size(15.)
+                    .stroke(2.)
+                    .color(ColorToken::Muted),
+            ]
+            .height(52.)
+            .padding(16., Edge::Horizontal)
+            .align(Align::Center)
+            .into()
+        })
+        .collect();
+    page(
+        "home",
+        vec![
+            vstack![
+                text(format!("Hello, {}", app.name))
+                    .key("greeting")
+                    .font_size(28.)
+                    .font_weight(700),
+                text("Native UI. Your state. Rust callbacks.")
+                    .font_size(15.)
+                    .color(ColorToken::Muted),
+            ]
+            .gap(4., Axis::Vertical)
+            .into(),
             button(format!("Count: {}", app.count))
                 .key("increment")
+                .variant(ButtonVariant::Primary)
+                .font_size(17.)
+                .font_weight(600)
                 .height(52.)
-                .rounded(12.)
-                .on_click(|a: &mut App| a.count += 1),
-            text(&app.message).key("status").color(ColorToken::Muted),
-            vstack(
-                (1..=30)
-                    .map(|i| text(format!("Item {i:02}"))
-                        .key(format!("item-{i}"))
-                        .height(48.)
-                        .background(ColorToken::Base200)
-                        .rounded(10.)
-                        .into())
-                    .collect::<Vec<_>>()
-            )
-            .gap(8., Axis::Vertical),
-        ]
-        .gap(16., Axis::Vertical)
-        .into()
-    };
-    vstack![
-        hstack![
-            text("__APP_NAME__").font_weight(700),
-            spacer(),
-            button(if app.settings { "Back" } else { "Settings" })
-                .key("navigation")
-                .height(44.)
-                .variant(ButtonVariant::Ghost)
-                .on_click(|a: &mut App| a.settings = !a.settings)
-        ]
-        .align(Align::Center),
-        vstack![body]
-            .key("content")
-            .flex(1.)
-            .scroll(Scroll::Vertical),
-    ]
-    .padding(20., Edge::All)
-    .gap(20., Axis::Vertical)
-    .background(ColorToken::Base100)
-    .color(ColorToken::BaseContent)
+                .rounded(26.)
+                .on_click(|a: &mut App| a.count += 1)
+                .into(),
+            section("Items", items),
+        ],
+    )
+}
+fn settings(app: &App) -> Container<App> {
+    page(
+        "settings",
+        vec![
+            section(
+                "Profile",
+                vec![hstack![text_field(&app.draft)
+                    .key("name")
+                    .accessible_label("Display name")
+                    .placeholder("Display name")
+                    .font_size(17.)
+                    .height(44.)
+                    .on_change(|a: &mut App, value| a.draft = value)
+                    .flex(1.)]
+                .padding(16., Edge::Horizontal)
+                .padding(4., Edge::Vertical)
+                .into()],
+            ),
+            section(
+                "Notifications",
+                vec![row(
+                    "Daily reminder",
+                    toggle("", app.reminders)
+                        .key("reminders")
+                        .accessible_label("Daily reminder")
+                        .on_change(|a: &mut App, on| a.reminders = on)
+                        .into(),
+                )],
+            ),
+            button("Save")
+                .key("save")
+                .variant(ButtonVariant::Primary)
+                .font_size(17.)
+                .font_weight(600)
+                .height(52.)
+                .rounded(26.)
+                .on_click(|a: &mut App| {
+                    if a.draft.trim().is_empty() {
+                        a.message = "Please enter a name.".into();
+                    } else {
+                        a.name = a.draft.trim().into();
+                        a.message.clear();
+                        a.history.back();
+                    }
+                })
+                .into(),
+            text(&app.message)
+                .key("status")
+                .font_size(15.)
+                .color(ColorToken::Muted)
+                .into(),
+        ],
+    )
+}
+fn view(app: &App) -> Element<App> {
+    navigation_stack(&app.history, |page| match page {
+        Page::Home => home(app)
+            .navigation_title("__APP_NAME__")
+            .large_title(true)
+            .bar_button("Settings", |a: &mut App| {
+                a.draft = a.name.clone();
+                a.history.push(Page::Settings);
+            })
+            .into(),
+        Page::Settings => settings(app).navigation_title("Settings").into(),
+    })
+    .key("app")
+    .on_back(|a: &mut App| {
+        a.history.back();
+    })
     .into()
 }
 pub fn application(host: HostContext) -> Result<Application<App>, String> {
     Ok(Application::new(
         host,
         App {
+            history: NavigationHistory::new(Page::Home),
+            count: 0,
             name: "Developer".into(),
-            ..App::default()
+            draft: String::new(),
+            reminders: true,
+            message: String::new(),
         },
         view,
     )?
     // Software fallback is explicit for restricted/CPU adapters. Diagnostics
     // report the real drawing mode; compatible GPUs retain Vello drawing.
     .allow_software_fallback(true)
-    .back_with(|app| app.settings, |app| app.settings = false))
+    // Android's back button; iOS uses the navigation bar and back swipe.
+    .back_with(
+        |app| app.history.can_go_back(),
+        |app| {
+            app.history.back();
+        },
+    ))
 }
 volt_ui_kit_mobile::__VOLT_EXPORT__!(application);
 
@@ -115,11 +225,12 @@ mod tests {
         })
         .unwrap();
         assert_eq!(app.state().count, 1);
-        app.handle(PlatformEvent::Activate {
-            id: "navigation".into(),
+        // The Settings bar button, as the platform's bar runs it.
+        app.handle(PlatformEvent::Navigation {
+            id: "app-bar-0".into(),
         })
         .unwrap();
-        assert!(app.state().settings);
+        assert_eq!(*app.state().history.current(), Page::Settings);
         app.handle(PlatformEvent::Text {
             id: "name".into(),
             text: "".into(),
@@ -127,7 +238,7 @@ mod tests {
         .unwrap();
         app.handle(PlatformEvent::Activate { id: "save".into() })
             .unwrap();
-        assert!(app.state().settings);
+        assert_eq!(*app.state().history.current(), Page::Settings);
         assert_eq!(app.state().message, "Please enter a name.");
         app.handle(PlatformEvent::Text {
             id: "name".into(),
@@ -136,7 +247,18 @@ mod tests {
         .unwrap();
         app.handle(PlatformEvent::Activate { id: "save".into() })
             .unwrap();
-        assert!(!app.state().settings);
+        assert_eq!(*app.state().history.current(), Page::Home);
+        assert_eq!(app.state().name, "Zoë 東京");
+        // Back from Settings without saving keeps the name.
+        app.handle(PlatformEvent::Navigation {
+            id: "app-bar-0".into(),
+        })
+        .unwrap();
+        app.handle(PlatformEvent::Navigation {
+            id: "app-back".into(),
+        })
+        .unwrap();
+        assert_eq!(*app.state().history.current(), Page::Home);
         assert_eq!(app.state().name, "Zoë 東京");
     }
 }

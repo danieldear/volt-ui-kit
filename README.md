@@ -64,16 +64,16 @@ after the corresponding documentation revision is deployed.
 
 ## Experimental Rust-first iOS apps
 
-[Field Notes](docs/ios-prototype.md) is an opt-in iOS integration prototype:
-Rust-owned screens, navigation, touch scrolling and editable profile forms,
-with a reusable UIKit keyboard/Metal host. Generate a Rust app with
-`cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`:
-no per-app Swift application code is needed. See the guide for setup, tests
-and limits. An [experimental Android host/template](docs/android-prototype.md)
-also builds Rust-owned screens with shared native OS glue; neither mobile
-adapter is production support. Simulator software drawing is reported
-explicitly; physical-device GPU acceptance is still pending. Desktop remains
-the primary supported host.
+Write iPhone apps in Rust: [the iOS guide](docs/ios-prototype.md). iOS supplies
+the navigation bar and back swipe, scrolling, switches, sliders and the
+keyboard; Volt draws your pages in iOS's colours and system font, or in your
+own brand. Generate an app with
+`cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`;
+no per-app Swift is needed. The [iPhone gallery](examples/ios-gallery) shows
+every part, including a branded shop, and its UI tests run on a physical
+iPhone. An [experimental Android host/template](docs/android-prototype.md)
+shares the Rust layer. Neither mobile path is production support yet; desktop
+remains the primary supported host.
 
 ## Highlights
 

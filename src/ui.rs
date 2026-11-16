@@ -481,7 +481,7 @@ mod navigation;
 mod routing;
 pub use routing::{
     link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError, NavigationHistory,
-    NavigationLink, NavigationSnapshot, UrlError,
+    NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
 };
 mod popovers;
 mod progress;
@@ -556,8 +556,58 @@ pub struct Element<C> {
     drag_start: Option<Click<C>>,
     drag_from: Option<DragCallback<C>>,
     drag_end: Option<Click<C>>,
+    /// Pages: the title and buttons a `navigation_stack` puts in its bar.
+    navigation: Option<Box<PageNavigation<C>>>,
+}
+/// What a page shows in its navigation bar; read by `navigation_stack`.
+struct PageNavigation<C> {
+    title: String,
+    large_title: bool,
+    buttons: Vec<(String, Click<C>)>,
 }
 impl<C> Element<C> {
+    /// The page's title in its `navigation_stack` bar. On iOS it is the
+    /// navigation bar's title; elsewhere Volt draws the bar.
+    pub fn navigation_title(mut self, title: impl Into<String>) -> Self {
+        self.page_navigation().title = title.into();
+        self
+    }
+    /// Show the title large above the page, as iOS top-level pages do.
+    pub fn large_title(mut self, large: bool) -> Self {
+        self.page_navigation().large_title = large;
+        self
+    }
+    /// A trailing button in the page's navigation bar.
+    pub fn bar_button(
+        mut self,
+        label: impl Into<String>,
+        on_click: impl FnMut(&mut C) + 'static,
+    ) -> Self {
+        self.page_navigation()
+            .buttons
+            .push((label.into(), Box::new(on_click)));
+        self
+    }
+    fn page_navigation(&mut self) -> &mut PageNavigation<C> {
+        self.navigation.get_or_insert_with(|| {
+            Box::new(PageNavigation {
+                title: String::new(),
+                large_title: false,
+                buttons: Vec::new(),
+            })
+        })
+    }
+    /// Hide Volt's navigation bars for a host that draws them natively. Their
+    /// controls still run through `Runtime::activate_navigation`.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn hide_navigation_bars(&mut self) {
+        if self.node.ext.navigation_bar.is_some() {
+            self.node.ext.visible = Some(false.into());
+        }
+        for child in &mut self.children {
+            child.hide_navigation_bars();
+        }
+    }
     #[cfg(feature = "mobile")]
     pub(crate) fn host_font(mut self, family: &str) -> Self {
         self.node
@@ -593,6 +643,7 @@ impl<C> Element<C> {
             drag_start: None,
             drag_from: None,
             drag_end: None,
+            navigation: None,
         }
     }
 }
@@ -669,6 +720,21 @@ impl<C: 'static> Element<C> {
             drag_start: self.drag_start.map(|f| lift0(f, a)),
             drag_from: self.drag_from.map(|f| lift1(f, a)),
             drag_end: self.drag_end.map(|f| lift0(f, a)),
+            navigation: self.navigation.map(|n| {
+                let PageNavigation {
+                    title,
+                    large_title,
+                    buttons,
+                } = *n;
+                Box::new(PageNavigation {
+                    title,
+                    large_title,
+                    buttons: buttons
+                        .into_iter()
+                        .map(|(label, f)| (label, lift0(f, a)))
+                        .collect(),
+                })
+            }),
         }
     }
     /// Lower to the shared runtime directly; no JSON serialization or parsing.
@@ -707,6 +773,8 @@ impl<C: 'static> Element<C> {
                 drag_start,
                 drag_from,
                 drag_end,
+                // Read by navigation_stack; a page outside a stack has no bar.
+                navigation: _,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -1517,6 +1585,21 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// The page's title in its `navigation_stack` bar.
+            pub fn navigation_title(mut self, title: impl Into<String>) -> Self {
+                self.0 = self.0.navigation_title(title);
+                self
+            }
+            /// Show the page's title large above it, as iOS top-level pages do.
+            pub fn large_title(mut self, large: bool) -> Self {
+                self.0 = self.0.large_title(large);
+                self
+            }
+            /// A trailing button in the page's navigation bar.
+            pub fn bar_button(mut self, label: impl Into<String>, on_click: impl FnMut(&mut C) + 'static) -> Self {
+                self.0 = self.0.bar_button(label, on_click);
+                self
+            }
             /// Receive native file drops without changing the container layout.
             /// Drops over descendants route to this nearest registered ancestor.
             pub fn on_files_dropped(mut self, f: impl FnMut(&mut C, Vec<std::path::PathBuf>) + 'static) -> Self {
@@ -1845,7 +1928,7 @@ pub mod prelude {
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
     pub use super::{
         link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
-        NavigationHistory, NavigationLink, NavigationSnapshot, UrlError,
+        NavigationHistory, NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
     };
     pub use super::{morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};

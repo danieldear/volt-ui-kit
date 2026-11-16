@@ -153,6 +153,74 @@ fn component_state_accessors_compose_with_a_mapped_view() {
     assert_eq!(h.app.left.fruit, None);
 }
 
+#[test]
+fn page_navigation_metadata_and_callbacks_survive_state_mapping() {
+    #[derive(Default)]
+    struct PageState {
+        saves: u32,
+        deletes: u32,
+    }
+    #[derive(Default)]
+    struct Parent {
+        page: PageState,
+        untouched: PageState,
+    }
+    let page: Element<PageState> = text("Editor").into();
+    let page = page
+        .navigation_title(String::from("Owned page title"))
+        .large_title(true)
+        .bar_button(String::from("Save"), |s: &mut PageState| s.saves += 1)
+        .bar_button(String::from("Delete"), |s: &mut PageState| s.deletes += 1);
+    // Map the page before the stack consumes its boxed navigation metadata.
+    let history = NavigationHistory::new(0u8);
+    let ui: Element<Parent> =
+        navigation_stack(&history, |_| page.map_state(|p: &mut Parent| &mut p.page))
+            .key("mapped")
+            .into();
+    let (doc, mut handlers) = ui.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            Viewport::new(600., 400., 1.).unwrap(),
+            &Bindings::default(),
+            &mut Metrics,
+        )
+        .unwrap();
+    let bars = runtime.navigation_bars();
+    assert_eq!(bars.len(), 1);
+    let (_, bar) = &bars[0];
+    assert_eq!(bar.title, "Owned page title");
+    assert!(bar.large_title);
+    assert_eq!(
+        bar.buttons,
+        [
+            ("mapped-bar-0".into(), "Save".into()),
+            ("mapped-bar-1".into(), "Delete".into())
+        ]
+    );
+    let mut parent = Parent::default();
+    for id in ["mapped-bar-0", "mapped-bar-1", "mapped-bar-0"] {
+        assert!(
+            runtime
+                .accessibility_activate(id, &mut handlers, &mut parent)
+                .unwrap()
+                .activated
+        );
+    }
+    assert_eq!(parent.page.saves, 2);
+    assert_eq!(parent.page.deletes, 1);
+    // UIKit delivers bar actions through the host path rather than hit testing.
+    assert!(runtime
+        .activate_navigation("mapped-bar-0", &mut handlers, &mut parent)
+        .unwrap());
+    assert!(!runtime
+        .activate_navigation("unknown-bar-button", &mut handlers, &mut parent)
+        .unwrap());
+    assert_eq!(parent.page.saves, 3);
+    assert_eq!(parent.untouched.saves, 0);
+    assert_eq!(parent.untouched.deletes, 0);
+}
+
 /// A surface that does its own hit testing, such as a map.
 #[derive(Default)]
 struct Surface {

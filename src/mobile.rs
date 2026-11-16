@@ -3,6 +3,9 @@
 //! Coordinates and sizes are logical points; the renderer uses physical pixels.
 //! A platform host owns safe-area/keyboard insets and its GPU surface. This first
 //! host supports single-finger tap/drag scrolling, not inertia or multi-touch.
+//!
+//! Motion starts reduced. A host with a frame loop calls `set_reduced_motion`
+//! with the system setting, then draws while `is_animating` is true.
 use crate::{
     declarative::{AccessNode, AccessValue, Bindings, Handlers, Runtime},
     rendering::{PresentStatus, RasterPainter, SurfaceRenderer},
@@ -28,6 +31,10 @@ pub struct MobileView<C: 'static> {
     touch: Option<Touch>,
     suspended: bool,
     host_font: Option<String>,
+    /// Monotonic animation clock, advanced on input and before each draw.
+    clock: std::time::Instant,
+    /// The host draws navigation bars; Volt's copies are hidden.
+    native_navigation: bool,
 }
 impl<C: 'static> MobileView<C> {
     pub fn new(context: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
@@ -66,14 +73,109 @@ impl<C: 'static> MobileView<C> {
             touch: None,
             suspended: false,
             host_font,
+            clock: std::time::Instant::now(),
+            native_navigation: false,
         };
-        // The first mobile prototype uses no perpetual animation/display link.
+        // Hosts without a frame loop keep motion reduced so nothing stops halfway.
         value.runtime.set_reduced_motion(true);
         value.layout()?;
         Ok(value)
     }
     pub fn context(&self) -> &C {
         &self.context
+    }
+    /// Follow the system's Reduce Motion setting. Only a host that keeps
+    /// drawing while `is_animating` returns true should allow motion.
+    pub fn set_reduced_motion(&mut self, reduced: bool) {
+        self.runtime.set_reduced_motion(reduced);
+    }
+    /// Whether the host should draw another frame (press feedback, transitions).
+    pub fn is_animating(&self) -> bool {
+        !self.suspended && self.runtime.is_animating()
+    }
+    /// Let the platform's scroll view own scrolling: its momentum, bounce and
+    /// indicators. Drags then only cancel presses; report positions with
+    /// `scroll_to`.
+    pub fn set_native_scrolling(&mut self, native: bool) -> Result<(), String> {
+        self.runtime.set_native_scrolling(native);
+        self.layout()
+    }
+    /// Let the platform draw navigation bars (title, back button, bar
+    /// buttons). Volt's bars are hidden; run their controls with
+    /// `activate_navigation`, and read them from `Runtime::navigation_bars`.
+    pub fn set_native_navigation(&mut self, native: bool) -> Result<(), String> {
+        if self.native_navigation != native {
+            self.native_navigation = native;
+            self.recompose()?;
+        }
+        Ok(())
+    }
+    /// Let the platform draw switches and sliders over their laid-out boxes.
+    pub fn set_native_controls(&mut self, native: bool) {
+        self.runtime.set_native_controls(native);
+    }
+    /// A platform slider's new value.
+    pub fn set_value(&mut self, id: &str, value: f32) -> Result<bool, String> {
+        if self.suspended || !value.is_finite() {
+            return Ok(false);
+        }
+        self.tick();
+        let o = self
+            .runtime
+            .accessibility_set_value(
+                id,
+                AccessValue::Number(value),
+                &mut self.handlers,
+                &mut self.context,
+            )
+            .map_err(|e| e.to_string())?;
+        if o.activated {
+            self.recompose()?;
+        } else if o.changed {
+            self.layout()?;
+        }
+        Ok(o.activated)
+    }
+    /// Run a navigation bar control (Back or a bar button) the platform drew.
+    pub fn activate_navigation(&mut self, id: &str) -> Result<bool, String> {
+        if self.suspended {
+            return Ok(false);
+        }
+        self.tick();
+        let activated = self
+            .runtime
+            .activate_navigation(id, &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if activated {
+            self.recompose()?;
+        }
+        Ok(activated)
+    }
+    /// Space a platform scroll view keeps around its content, as [top, right,
+    /// bottom, left] logical points: the bars it scrolls under.
+    pub fn set_scroll_insets(&mut self, id: &str, insets: [f32; 4]) -> Result<bool, String> {
+        let changed = self.runtime.set_scroll_insets(id, insets);
+        if changed {
+            self.layout()?;
+        }
+        Ok(changed)
+    }
+    /// A platform scroll view's position for scroll view `id`, in logical
+    /// points; past either end while it bounces.
+    pub fn scroll_to(&mut self, id: &str, position: [f32; 2]) -> Result<bool, String> {
+        if self.suspended {
+            return Ok(false);
+        }
+        self.tick();
+        let changed = self.runtime.set_scroll_position(id, position);
+        if changed {
+            self.layout()?;
+        }
+        Ok(changed)
+    }
+    /// Advance motion to now. Called on input and before drawing, never on a timer.
+    fn tick(&mut self) -> bool {
+        self.runtime.advance_animations(self.clock.elapsed())
     }
     pub fn runtime(&self) -> &Runtime {
         &self.runtime
@@ -122,7 +224,10 @@ impl<C: 'static> MobileView<C> {
             .map_err(|e| e.to_string())
     }
     fn recompose(&mut self) -> Result<(), String> {
-        let element = (self.view)(&self.context);
+        let mut element = (self.view)(&self.context);
+        if self.native_navigation {
+            element.hide_navigation_bars();
+        }
         let element = if let Some(family) = &self.host_font {
             element.host_font(family)
         } else {
@@ -141,6 +246,7 @@ impl<C: 'static> MobileView<C> {
     }
     pub fn touch_begin(&mut self, point: [f32; 2]) -> Result<(), String> {
         self.cancel_touch();
+        self.tick();
         if self.suspended {
             return Ok(());
         }
@@ -165,6 +271,7 @@ impl<C: 'static> MobileView<C> {
             self.cancel_touch();
             return Err("invalid touch".into());
         }
+        self.tick();
         let Some(t) = self.touch.as_mut() else {
             return Ok(());
         };
@@ -179,7 +286,8 @@ impl<C: 'static> MobileView<C> {
         };
         t.last = point;
         let p = t.start.map(|v| v * self.viewport.scale);
-        if t.scrolling {
+        // A platform scroll view moves the content; a drag only ends the press.
+        if t.scrolling && !self.runtime.native_scrolling() {
             let outcome = self
                 .runtime
                 .scroll_outcome(p[0], p[1], delta, &mut self.handlers, &mut self.context)
@@ -266,7 +374,11 @@ impl<C: 'static> MobileView<C> {
                 n.id == id
                     && n.enabled
                     && !n.read_only
-                    && matches!(n.role, crate::declarative::AccessRole::TextInput)
+                    && matches!(
+                        n.role,
+                        crate::declarative::AccessRole::TextInput
+                            | crate::declarative::AccessRole::MultilineTextInput
+                    )
             })
         {
             return Ok(false);
@@ -318,6 +430,7 @@ impl<C: 'static> MobileView<C> {
         if self.suspended {
             return Ok(PresentStatus::Retry);
         }
+        self.tick();
         self.layout()?;
         let batches = self.runtime.paint_ui(&mut self.painter, theme);
         renderer.present(&batches, &mut self.painter, theme.palette.base[0])

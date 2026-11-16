@@ -6,8 +6,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 mod application;
 mod protocol;
-pub use application::{Application, HostContext};
-pub use protocol::{PlatformEvent, HOST_ABI_VERSION};
+pub use application::{system_palette, Application, HostContext};
+pub use protocol::{PlatformEvent, SystemColors, HOST_ABI_VERSION};
 pub use volt_ui_kit as ui_kit;
 
 #[cfg(target_os = "ios")]

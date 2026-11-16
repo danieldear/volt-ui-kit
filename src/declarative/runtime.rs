@@ -470,6 +470,22 @@ struct DragCapture {
     end: Option<String>,
 }
 /// Shared document layout and event state; owns no window or background tasks.
+/// How many unmounted scroll views keep their position for a return.
+const MAX_PARKED_SCROLL: usize = 64;
+/// An unmounted scroll view's offset and host insets.
+type ParkedScroll = (Option<[f32; 2]>, Option<[f32; 4]>);
+/// Scrolling owned by a platform scroll view, such as UIKit's, for its
+/// momentum, bounce and indicators. Offsets are logical points.
+#[derive(Default)]
+struct HostScroll {
+    /// The host scrolls; drawn scrollbars are hidden.
+    native: bool,
+    /// Distance past either end during a bounce, signed, per scroll view.
+    overscroll: BTreeMap<String, [f32; 2]>,
+    /// Space before and after the content, as [top, right, bottom, left]:
+    /// bars it can scroll under, the home indicator.
+    insets: BTreeMap<String, [f32; 4]>,
+}
 pub struct Runtime {
     document: Document,
     boxes: Vec<LayoutBox>,
@@ -531,6 +547,14 @@ pub struct Runtime {
     /// token/pair specifications, not their active theme's resolved colours.
     input_theme: RefCell<UiTheme>,
     scroll_offsets: BTreeMap<String, [f32; 2]>,
+    /// Scroll offsets and host insets of scroll views no longer mounted,
+    /// restored if the same key returns (Back to a page).
+    parked_scroll: BTreeMap<String, ParkedScroll>,
+    /// Scrolling driven by a platform scroll view (iOS), not by drag input.
+    host_scroll: HostScroll,
+    /// The host draws switches and sliders as platform controls; Volt keeps
+    /// their layout and labels.
+    native_controls: bool,
     /// Variable-height lists: measured row heights per list key.
     lazy_heights: BTreeMap<String, LazyHeights>,
     /// Last laid-out vertical extent of end-anchored scroll views.
@@ -638,6 +662,9 @@ impl Runtime {
             transform_index: transforms::TransformIndex::default(),
             input_theme: RefCell::new(UiTheme::light()),
             scroll_offsets: BTreeMap::new(),
+            parked_scroll: BTreeMap::new(),
+            host_scroll: HostScroll::default(),
+            native_controls: false,
             lazy_heights: BTreeMap::new(),
             scroll_ends: BTreeMap::new(),
             styles_cache: None,
@@ -954,7 +981,39 @@ impl Runtime {
         }
         let mut ids = BTreeSet::new();
         keys(next.root(), &mut ids);
+        // A page left behind (navigation) keeps its scroll position and host
+        // insets for when it returns, as platform navigation stacks do.
+        for (id, offset) in &self.scroll_offsets {
+            if !ids.contains(id) {
+                self.parked_scroll.entry(id.clone()).or_default().0 = Some(*offset);
+            }
+        }
+        for (id, insets) in &self.host_scroll.insets {
+            if !ids.contains(id) {
+                self.parked_scroll.entry(id.clone()).or_default().1 = Some(*insets);
+            }
+        }
         self.scroll_offsets.retain(|id, _| ids.contains(id));
+        self.host_scroll.overscroll.retain(|id, _| ids.contains(id));
+        self.host_scroll.insets.retain(|id, _| ids.contains(id));
+        let returning: Vec<String> = ids
+            .iter()
+            .filter(|id| self.parked_scroll.contains_key(*id))
+            .cloned()
+            .collect();
+        for id in returning {
+            if let Some((offset, insets)) = self.parked_scroll.remove(&id) {
+                if let Some(offset) = offset {
+                    self.scroll_offsets.entry(id.clone()).or_insert(offset);
+                }
+                if let Some(insets) = insets {
+                    self.host_scroll.insets.entry(id).or_insert(insets);
+                }
+            }
+        }
+        if self.parked_scroll.len() > MAX_PARKED_SCROLL {
+            self.parked_scroll.clear();
+        }
         self.scroll_ends.retain(|id, _| ids.contains(id));
         // Keep the outgoing layout's measurements for unchanged subtrees.
         let previous_styles = self.styles_cache.take();
@@ -1181,6 +1240,7 @@ impl Runtime {
             area,
             &[],
             &mut self.scroll_offsets,
+            &self.host_scroll,
             &mut self.lazy_heights,
             values,
             metrics,
@@ -1206,6 +1266,7 @@ impl Runtime {
                 area,
                 &[],
                 &mut self.scroll_offsets,
+                &self.host_scroll,
                 &mut self.lazy_heights,
                 values,
                 metrics,
@@ -1572,6 +1633,146 @@ impl Runtime {
     /// Logical scroll offsets survive keyed recomposition and clamp on layout.
     pub fn scroll_offset(&self, id: &str) -> [f32; 2] {
         self.scroll_offsets.get(id).copied().unwrap_or([0.; 2])
+    }
+    /// Navigation bars in the current page tree, outermost first, with the
+    /// node ID of each. A host that draws its own bar (iOS) reads these.
+    pub fn navigation_bars(&self) -> Vec<(String, super::NavigationBar)> {
+        fn visit(n: &Node, out: &mut Vec<(String, super::NavigationBar)>) {
+            if let Some(bar) = &n.ext.navigation_bar {
+                out.push((n.id.clone(), (**bar).clone()));
+            }
+            for child in &n.children {
+                visit(child, out);
+            }
+        }
+        let mut bars = Vec::new();
+        visit(self.document.root(), &mut bars);
+        bars
+    }
+    /// Run a navigation bar's Back or bar button by ID, even while a host draws
+    /// the bar natively and Volt's copy is hidden. Other IDs do nothing.
+    pub fn activate_navigation<C>(
+        &mut self,
+        id: &str,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        fn control<'a>(n: &'a Node, in_bar: bool, id: &str) -> Option<&'a Node> {
+            let in_bar = in_bar || n.ext.navigation_bar.is_some();
+            if in_bar && n.id == id {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| control(c, in_bar, id))
+        }
+        if !self.scope_allows_id(id) {
+            return Ok(false);
+        }
+        let Some(action) = control(self.document.root(), false, id)
+            .filter(|n| n.enabled)
+            .and_then(|n| n.on_activate.clone())
+        else {
+            return Ok(false);
+        };
+        handlers
+            .dispatch(&action, Event::Activate, context)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        Ok(true)
+    }
+    /// Let a platform scroll view own scrolling: drawn scrollbars are hidden
+    /// and the host reports positions with `set_scroll_position`.
+    pub fn set_native_scrolling(&mut self, native: bool) {
+        if self.host_scroll.native != native {
+            self.host_scroll.native = native;
+            self.host_scroll.overscroll.clear();
+            self.host_scroll.insets.clear();
+            self.invalidate_layout();
+        }
+    }
+    pub fn native_scrolling(&self) -> bool {
+        self.host_scroll.native
+    }
+    /// Space a platform scroll view keeps before and after its content, in
+    /// logical points as [top, right, bottom, left]: content starts below a
+    /// bar it can later scroll under. Offsets then run from 0 to the content
+    /// plus these insets.
+    pub fn set_scroll_insets(&mut self, id: &str, insets: [f32; 4]) -> bool {
+        if !insets
+            .iter()
+            .all(|v| v.is_finite() && (0. ..=8192.).contains(v))
+        {
+            return false;
+        }
+        let before = self.scroll_insets(id);
+        if before == insets {
+            return false;
+        }
+        if insets == [0.; 4] {
+            self.host_scroll.insets.remove(id);
+        } else {
+            self.host_scroll.insets.insert(id.to_owned(), insets);
+        }
+        self.invalidate_layout();
+        true
+    }
+    pub fn scroll_insets(&self, id: &str) -> [f32; 4] {
+        self.host_scroll.insets.get(id).copied().unwrap_or([0.; 4])
+    }
+    /// Let the host draw switches and sliders as platform controls (iOS
+    /// `UISwitch`, `UISlider`) over their laid-out boxes. Volt still lays them
+    /// out and draws a switch's label; values arrive as accessibility actions.
+    pub fn set_native_controls(&mut self, native: bool) {
+        self.native_controls = native;
+    }
+    pub fn native_controls(&self) -> bool {
+        self.native_controls
+    }
+    /// Move scroll view `id` to a platform scroll view's position, in logical
+    /// points. A position past either end (a bounce) draws the content that far
+    /// beyond it, up to the view's own size, without changing the stored offset.
+    pub fn set_scroll_position(&mut self, id: &str, position: [f32; 2]) -> bool {
+        if !position.iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        let Some(b) = self
+            .boxes
+            .iter()
+            .find(|b| b.id == id && b.scroll.is_some() && self.scope_allows_id(&b.id))
+        else {
+            return false;
+        };
+        let axes = b.scroll.map_or([false; 2], |m| m.axes());
+        let (max, current) = (b.scroll_max, b.scroll_offset);
+        let size = [
+            b.bounds.bounds()[2] / self.scale,
+            b.bounds.bounds()[3] / self.scale,
+        ];
+        let before = self.scroll_offsets.get(id).copied().unwrap_or(current);
+        let (mut offset, mut over) = (before, [0.; 2]);
+        for a in 0..2 {
+            if axes[a] {
+                offset[a] = position[a].clamp(0., max[a]);
+                over[a] = (position[a] - offset[a]).clamp(-size[a], size[a]);
+            }
+        }
+        let over_before = self
+            .host_scroll
+            .overscroll
+            .get(id)
+            .copied()
+            .unwrap_or([0.; 2]);
+        if offset == before && over == over_before {
+            return false;
+        }
+        self.scroll_offsets.insert(id.to_owned(), offset);
+        if over == [0.; 2] {
+            self.host_scroll.overscroll.remove(id);
+        } else {
+            self.host_scroll.overscroll.insert(id.to_owned(), over);
+        }
+        if over != over_before || !self.shift_scrolled(id, before, offset) {
+            self.invalidate_layout();
+        }
+        true
     }
     /// What the keys scroll at a point (physical pixels), in logical pixels:
     /// a line, and a page (the innermost scroll view's height less a line).
@@ -3575,6 +3776,14 @@ impl Runtime {
             return self.paint_editor(p, ui, b);
         }
         #[cfg(feature = "rust-ui")]
+        if b.slider.is_some() && self.native_controls {
+            return PaintBatch {
+                clip: b.clip,
+                shapes: Vec::new(),
+                glyphs: Vec::new(),
+            };
+        }
+        #[cfg(feature = "rust-ui")]
         if b.slider.is_some() {
             let mut shapes = Vec::new();
             value_controls::paint_slider(
@@ -3795,6 +4004,8 @@ impl Runtime {
             Kind::Checkbox | Kind::Toggle => {
                 let state = self.state_for_box(b);
                 let radius = b.radius_spec(self.scale);
+                // A platform switch draws the track, knob and press feedback.
+                let host_switch = b.kind == Kind::Toggle && self.native_controls;
                 if let Some(background) = b.style.background {
                     paint_surface(
                         p,
@@ -3806,7 +4017,7 @@ impl Runtime {
                             |v| v.background,
                         ),
                     );
-                } else if state.hovered || state.pressed {
+                } else if (state.hovered || state.pressed) && !host_switch {
                     let mut background = c.selected;
                     background[3] = if state.pressed { 0.7 } else { 0.35 };
                     paint_surface(p, &mut shapes, r, radius, background);
@@ -3820,7 +4031,7 @@ impl Runtime {
                     b.style.border_width.unwrap_or(0.),
                     border,
                 );
-                if state.focused {
+                if state.focused && !host_switch {
                     paint_border(
                         p,
                         &mut shapes,
@@ -3885,7 +4096,7 @@ impl Runtime {
                             check,
                         );
                     }
-                } else {
+                } else if !host_switch {
                     let track_w = (42. * self.scale).min((r[2] - 2. * self.scale).max(0.));
                     let track = [left, top, track_w, control_h];
                     paint_surface(
@@ -3970,16 +4181,21 @@ impl Runtime {
             Kind::Spacer => {
                 paint_overrides(p, &mut shapes, r, &b.style, &b.ext, self.scale);
             }
+            // Hairlines land on whole device pixels: at a fractional position
+            // a one-pixel line spreads over two rows at partial strength.
             Kind::Separator => paint_surface(
                 p,
                 &mut shapes,
-                r,
+                on_pixels(r),
                 b.radius_spec(self.scale),
+                // A transparent background is no colour: fall through to
+                // `.color(..)` and then the theme's line colour.
                 b.style
                     .background
+                    .filter(|c| c[3] > 0.)
                     .or(b.style.color)
                     .or(b.style.border_color)
-                    .unwrap_or(c.line),
+                    .unwrap_or(if ui.is_legacy() { c.line } else { c.border }),
             ),
         }
         if let Some(image) = &b.image {
@@ -4024,8 +4240,17 @@ impl Runtime {
                 );
             }
         }
+        // A separator's clip moves with its snapped line.
+        let clip = if b.kind == Kind::Separator {
+            let [x, y, w, h] = on_pixels(r);
+            Rect::new(x, y, w, h)
+                .and_then(|line| intersection(line, b.ancestor_clip))
+                .unwrap_or(b.clip)
+        } else {
+            b.clip
+        };
         PaintBatch {
-            clip: b.clip,
+            clip,
             shapes,
             glyphs,
         }
@@ -4151,6 +4376,9 @@ fn visual_target(b: &LayoutBox, state: ButtonState, ui: &UiTheme, scale: f32) ->
         .color
         .unwrap_or(if b.kind == Kind::Button && b.primary {
             ui.palette.on_primary
+        } else if b.kind == Kind::Separator {
+            // A divider's colour is its line, not text.
+            c.border
         } else {
             match b.tone {
                 Tone::Muted => c.muted,
@@ -4226,6 +4454,11 @@ fn state_surface(mut surface: [f32; 4], state: ButtonState, theme: &Theme) -> [f
         }
     }
     surface
+}
+/// A thin line's rectangle on whole device pixels, at least one pixel thick.
+/// Edges round up, as clip masks do, so the line stays inside its own clip.
+fn on_pixels([x, y, w, h]: [f32; 4]) -> [f32; 4] {
+    [x.ceil(), y.ceil(), w.round().max(1.), h.round().max(1.)]
 }
 fn paint_surface<P: Painter>(
     p: &P,
@@ -5570,6 +5803,7 @@ fn place(
     effect_ancestor: Rect,
     regions: &[ClipRegion],
     offsets: &mut BTreeMap<String, [f32; 2]>,
+    host_scroll: &HostScroll,
     lazy: &mut BTreeMap<String, LazyHeights>,
     v: &Bindings,
     m: &mut impl TextMetrics,
@@ -5694,7 +5928,12 @@ fn place(
         scroll_max: [0.; 2],
         scroll_offset: [0.; 2],
         scroll: n.surface.scroll,
-        scrollbars: n.surface.scrollbars,
+        // Platform scroll views draw their own indicators.
+        scrollbars: if host_scroll.native {
+            super::Scrollbars::Hidden
+        } else {
+            n.surface.scrollbars
+        },
         layout_visible: visible,
         split: n.split.clone(),
         split_handle: n.split_handle.clone(),
@@ -5906,15 +6145,24 @@ fn place(
                     ],
                 })
         });
+        let inset = host_scroll.insets.get(&n.id).copied().unwrap_or([0.; 4]);
         for a in 0..2 {
+            // Host insets: before (top/left) and after (bottom/right) the content.
+            let (lead, trail) = match (axes[a], a) {
+                (false, _) => (0., 0.),
+                (true, 0) => (inset[3], inset[1]),
+                (true, _) => (inset[0], inset[2]),
+            };
             let max = if axes[a] {
-                (content[a] - available[a]).max(0.) / s
+                ((content[a] - available[a]) / s + lead + trail).max(0.)
             } else {
                 0.
             };
             offset[a] = offset[a].clamp(0., max);
             out[index].scroll_max[a] = max;
-            start[a] -= offset[a] * s;
+            // A platform scroll view's bounce draws content past either end.
+            let over = host_scroll.overscroll.get(&n.id).map_or(0., |o| o[a]);
+            start[a] -= (offset[a] + over - lead) * s;
             if axes[a] {
                 available[a] = available[a].max(content[a]);
             }
@@ -5938,6 +6186,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    host_scroll,
                     lazy,
                     v,
                     m,
@@ -5969,6 +6218,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    host_scroll,
                     lazy,
                     v,
                     m,
@@ -6015,6 +6265,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    host_scroll,
                     lazy,
                     v,
                     m,
@@ -6092,6 +6343,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    host_scroll,
                     lazy,
                     v,
                     m,
@@ -6151,6 +6403,7 @@ fn place(
                     child_effect,
                     &child_regions,
                     offsets,
+                    host_scroll,
                     lazy,
                     v,
                     m,
@@ -6226,6 +6479,7 @@ fn place(
                 child_effect,
                 &child_regions,
                 offsets,
+                host_scroll,
                 lazy,
                 v,
                 m,

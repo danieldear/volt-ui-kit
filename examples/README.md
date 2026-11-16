@@ -171,7 +171,13 @@ a 20-second abort deadline. Invalid/over-budget responses become errors; these
 limits do not imply a bounded long-session tile cache (eviction is pending).
 Managed Mapbox tokens are attached only to the exact HTTPS API authority.
 
-## Experimental iOS app
+## Experimental iOS apps
+
+[`ios-gallery/VoltGallery.xcodeproj`](ios-gallery/VoltGallery.xcodeproj) runs the
+**iPhone gallery**: navigation, buttons, lists, switches and sliders, text input,
+typography, cards and **Pantry**, a branded grocery shop. Rust pages with UIKit's
+bar, scrolling, controls and keyboard. Its UI tests run on a phone; see the
+[iOS guide](../docs/ios-prototype.md#the-iphone-gallery).
 
 [`ios/VoltIOS.xcodeproj`](ios/VoltIOS.xcodeproj) runs **Field Notes**, a Rust-owned
 notes/list/detail/profile prototype with a UIKit keyboard and Metal host. It

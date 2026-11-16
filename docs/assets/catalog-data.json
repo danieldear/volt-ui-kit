@@ -769,6 +769,14 @@
         "Bounded Back/Forward history; mount only the current route"
       ],
       [
+        "page.navigation_title(..).large_title(..).bar_button(..)",
+        "The page's bar: drawn by Volt on desktop, web and Android; UIKit's navigation bar on iOS"
+      ],
+      [
+        "navigation_stack(..).on_back(f)",
+        "Back control; on iOS also the back button and swipe"
+      ],
+      [
         "link(label, url).on_open(f)",
         "Validated HTTP(S) links; no automatic I/O"
       ],

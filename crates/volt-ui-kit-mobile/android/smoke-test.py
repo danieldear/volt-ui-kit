@@ -41,14 +41,14 @@ def main():
         assert node('increment').get('text')=='Count: 0','start from a freshly launched starter'
         text,frames=proof();assert frames>0;print(text,flush=True);shot('01-home.png')
         tap(node('increment'));assert node('increment').get('text')=='Count: 1'
-        tap(node('navigation'));tap(node('name'))
+        tap(node('app-bar-0'));tap(node('name'))
         edit=node('android.widget.EditText','class');assert edit.get('text')=='Developer'
         adb('shell','input','keyevent','KEYCODE_MOVE_END')
         adb('shell','input','keyevent',*(['KEYCODE_DEL']*len('Developer')))
         adb('shell','input','text','Rust%sAndroid');assert node('android.widget.EditText','class').get('text')=='Rust Android'
         shot('02-native-editor.png');adb('shell','input','keyevent','KEYCODE_ENTER');time.sleep(.4)
         tap(node('save'));assert node('greeting').get('text')=='Hello, Rust Android';shot('03-saved.png')
-        tap(node('navigation'));adb('shell','input','keyevent','KEYCODE_BACK');time.sleep(.3)
+        tap(node('app-bar-0'));adb('shell','input','keyevent','KEYCODE_BACK');time.sleep(.3)
         assert node('greeting').get('text')=='Hello, Rust Android'
         # Resume preserves the Rust state, rather than manufacturing a fresh host.
         adb('shell','input','keyevent','KEYCODE_HOME');time.sleep(.3)

@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+- Make boxed page-navigation ownership explicit during state mapping and add
+  regression coverage for owned titles, multiple bar buttons and both Volt
+  and native-host activation without mutating sibling state.
+- Refresh the security crate and Sign in with Apple demo lockfiles for the
+  shared text-engine upgrade, preserving reproducible `--locked` builds.
+- iOS apps use UIKit for what people notice first. Pages describe their
+  navigation bar with `navigation_title`, `large_title` and `bar_button`, and
+  `navigation_stack(..).on_back(..)` handles Back; iOS shows a real
+  `UINavigationController` with push and pop, the back swipe and large titles
+  that shrink on scroll. Desktop, web and Android draw the same bar with Volt.
+  `navigation_stack` now returns `NavigationStack`, which keeps `.key(..)`.
+- iOS scrolling uses `UIScrollView` physics (momentum, bounce, indicators that
+  fade, tap the status bar to go to the top), with content running under the
+  bars and the home indicator. Switches and sliders are `UISwitch` and
+  `UISlider`; text areas edit in `UITextView`. The keyboard slides over the
+  page as an inset instead of resizing it, and the edited field scrolls into
+  view with its page. Back swipes pause while a finger drags a slider or a
+  sideways carousel.
+- iOS pages default to the system's colours for the current appearance and
+  contrast; `Application::theme_from_system` adjusts them, e.g. a brand accent
+  on some pages. The system font's weights render from its variable axis.
+  Motion runs from a display link only while something moves and follows
+  Reduce Motion; generated apps allow 120 Hz. Frames present with Core
+  Animation transactions so UIKit parts and Volt content move together.
+- Add `examples/ios-gallery`: every part on iPhone, including Pantry, a
+  branded grocery shop, with UI tests that run on a physical device. The
+  `cargo volt new --platform ios` starter now uses the navigation bar, a
+  grouped list, a switch and Save with validation.
+- Upgrade cosmic-text to 0.19: variable fonts draw the requested weight in
+  both the CPU and Vello paths.
+- Fix dividers, which never painted: a transparent background hid the line
+  colour. Default dividers use the palette's border colour, and one-pixel
+  hairlines land on whole device pixels.
+- Keyed scroll views keep their position when their page is left and restore
+  it when the page returns. `Scroll::axes` is public.
+- Runtime hooks for hosts that own platform UI: `set_native_scrolling`,
+  `set_scroll_position`, `set_scroll_insets`, `set_native_controls`,
+  `navigation_bars` and `activate_navigation`.
+
 - Add `volt-ui-kit-security`, an opt-in crate for secrets and device-owner
   confirmation. On macOS, `secrets` stores, reads and removes small secrets in
   the login Keychain on one ordered background worker, and `local_auth` asks

@@ -1380,6 +1380,7 @@ impl GpuSceneEncoder {
         let hint = self.transform_depth == 0 && painter.gpu_viewport().scale < 1.5;
         for (run, font) in runs.iter().zip(&fonts) {
             let darken = stem_darkening(run.size, run.color);
+            let coords = painter.gpu_coords(run.font, run.weight);
             for &(_, x, y) in &run.glyphs {
                 let s = f64::from(run.size);
                 self.note(Rect::new(
@@ -1402,6 +1403,7 @@ impl GpuSceneEncoder {
                 // alpha twice to outline glyphs.
                 .brush(color([run.color[0], run.color[1], run.color[2], 1.]))
                 .brush_alpha(run.color[3])
+                .normalized_coords(&coords)
                 .hint(hint);
             if let Some(embolden) = darken {
                 draw = draw.font_embolden(embolden);
