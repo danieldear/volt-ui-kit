@@ -721,11 +721,15 @@ impl<C: 'static> Element<C> {
             drag_from: self.drag_from.map(|f| lift1(f, a)),
             drag_end: self.drag_end.map(|f| lift0(f, a)),
             navigation: self.navigation.map(|n| {
+                let PageNavigation {
+                    title,
+                    large_title,
+                    buttons,
+                } = *n;
                 Box::new(PageNavigation {
-                    title: n.title,
-                    large_title: n.large_title,
-                    buttons: n
-                        .buttons
+                    title,
+                    large_title,
+                    buttons: buttons
                         .into_iter()
                         .map(|(label, f)| (label, lift0(f, a)))
                         .collect(),

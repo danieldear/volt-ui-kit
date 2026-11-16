@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make boxed page-navigation ownership explicit during state mapping and add
+  regression coverage for owned titles, multiple bar buttons and both Volt
+  and native-host activation without mutating sibling state.
 - iOS apps use UIKit for what people notice first. Pages describe their
   navigation bar with `navigation_title`, `large_title` and `bar_button`, and
   `navigation_stack(..).on_back(..)` handles Back; iOS shows a real
