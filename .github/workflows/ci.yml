@@ -52,6 +52,18 @@ jobs:
       - run: cargo test --locked --all-features --all-targets --no-fail-fast
       - run: cargo test --locked --all-features --doc
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      # Keychain and Touch ID live in their own crate (it holds the unsafe
+      # Apple calls); other platforms build it and test the Unsupported path.
+      - name: Security crate
+        shell: bash
+        run: |
+          m=crates/volt-ui-kit-security/Cargo.toml
+          cargo fmt --manifest-path "$m" -- --check
+          cargo clippy --locked --manifest-path "$m" --target-dir target --all-targets -- -D warnings
+          cargo test --locked --manifest-path "$m" --target-dir target
+          d=crates/volt-ui-kit-security/signin-demo/Cargo.toml
+          cargo fmt --manifest-path "$d" -- --check
+          cargo clippy --locked --manifest-path "$d" --target-dir target --all-targets -- -D warnings
       - name: Documentation builds without warnings
         shell: bash
         run: RUSTDOCFLAGS='-D warnings' cargo doc --locked --all-features --no-deps
@@ -81,6 +93,7 @@ jobs:
         with:
           toolchain: 1.89.0
       - run: cargo +1.89.0 check --locked --all-targets --all-features
+      - run: cargo +1.89.0 check --locked --manifest-path crates/volt-ui-kit-security/Cargo.toml --target-dir target --all-targets
       - name: Save build cache
         if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

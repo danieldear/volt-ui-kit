@@ -112,6 +112,7 @@ fn steps(o: &ReleaseOptions, identity: Option<&str>, profile: Option<&str>) -> V
             Step::Bundle => "bundle".into(),
             Step::Remove(p) => format!("remove {}", p.display()),
             Step::Stage { .. } => "stage".into(),
+            Step::Write { path, .. } => format!("write {}", path.display()),
         })
         .collect()
 }
@@ -240,4 +241,110 @@ fn app_extensions_are_built_merged_and_signed_before_the_app() {
     bundle["extensions"][0]["binary"] = json!("missing");
     let m = manifest_from_json(&metadata(bundle), None).unwrap();
     assert!(options_from_manifest(&m, "/b/notes".into(), "/o/N.app".into()).is_err());
+}
+
+fn sign_in_profile() -> serde_json::Value {
+    json!({
+        "com.apple.application-identifier": "TEAM123456.com.example.notes",
+        "com.apple.developer.team-identifier": "TEAM123456",
+        "com.apple.developer.applesignin": ["Default"],
+        "keychain-access-groups": ["TEAM123456.*"]
+    })
+}
+
+#[test]
+fn a_profile_must_match_the_app_and_grant_what_it_asks_for() {
+    let wanted = json!({
+        "com.apple.developer.applesignin": ["Default"],
+        "com.apple.security.cs.allow-jit": true,
+        "keychain-access-groups": ["TEAM123456.com.example.notes"]
+    });
+    let merged =
+        signing_entitlements(&sign_in_profile(), Some(&wanted), "com.example.notes").unwrap();
+    assert_eq!(
+        merged["com.apple.application-identifier"],
+        "TEAM123456.com.example.notes"
+    );
+    assert_eq!(merged["com.apple.developer.team-identifier"], "TEAM123456");
+    // Unrestricted entitlements pass through without the profile's say.
+    assert_eq!(merged["com.apple.security.cs.allow-jit"], true);
+    // Without a file, only the identifiers are signed in.
+    let bare = signing_entitlements(&sign_in_profile(), None, "com.example.notes").unwrap();
+    assert_eq!(bare.as_object().unwrap().len(), 2);
+
+    let other_app = signing_entitlements(&sign_in_profile(), None, "com.example.other");
+    assert!(other_app
+        .unwrap_err()
+        .to_string()
+        .contains("is for TEAM123456.com.example.notes"));
+    let ungranted =
+        json!({"com.apple.developer.associated-domains": ["webcredentials:example.com"]});
+    let refused = signing_entitlements(&sign_in_profile(), Some(&ungranted), "com.example.notes");
+    assert!(refused
+        .unwrap_err()
+        .to_string()
+        .contains("doesn't grant com.apple.developer.associated-domains"));
+    let wider = json!({"com.apple.developer.applesignin": ["Default", "Other"]});
+    assert!(signing_entitlements(&sign_in_profile(), Some(&wider), "com.example.notes").is_err());
+    assert!(signing_entitlements(&json!({}), None, "com.example.notes").is_err());
+    // A wildcard App ID covers any bundle identifier of the team.
+    let mut wildcard = sign_in_profile();
+    wildcard["com.apple.application-identifier"] = json!("TEAM123456.*");
+    let merged = signing_entitlements(&wildcard, None, "com.example.other").unwrap();
+    assert_eq!(
+        merged["com.apple.application-identifier"],
+        "TEAM123456.com.example.other"
+    );
+
+    // Signing these without a profile makes an app macOS refuses to launch.
+    assert_eq!(
+        restricted_without_profile(&wanted).as_deref(),
+        Some("com.apple.developer.applesignin")
+    );
+    assert_eq!(
+        restricted_without_profile(&json!({"com.apple.security.cs.allow-jit": true})),
+        None
+    );
+
+    let xml = entitlements_plist(&bare);
+    for needle in [
+        "<plist version=\"1.0\"><dict>",
+        "<key>com.apple.application-identifier</key><string>TEAM123456.com.example.notes</string>",
+        "</dict></plist>",
+    ] {
+        assert!(xml.contains(needle), "missing {needle}\n{xml}");
+    }
+}
+
+#[test]
+fn a_provisioning_profile_is_embedded_before_signing_with_its_entitlements() {
+    let args: Vec<String> = [
+        "--no-notarize",
+        "--no-dmg",
+        "--provisioning-profile",
+        "/keys/Notes.provisionprofile",
+    ]
+    .map(String::from)
+    .to_vec();
+    let mut o = ReleaseOptions::parse(&args, true).unwrap();
+    o.signing_entitlements = Some(entitlements_plist(&sign_in_profile()));
+    let joined = steps(&o, Some("ABC123"), None).join("\n");
+    let order = [
+        "bundle",
+        "cp /keys/Notes.provisionprofile /work/target/release/bundle/Notes Pro.app/Contents/embedded.provisionprofile",
+        "write /work/target/release/bundle/Notes-Pro.entitlements",
+        "codesign --force --options runtime --timestamp --sign ABC123 --entitlements /work/target/release/bundle/Notes-Pro.entitlements /work/target/release/bundle/Notes Pro.app",
+        "codesign --verify",
+    ];
+    let mut at = 0;
+    for needle in order {
+        let found = joined[at..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} missing or out of order in\n{joined}"));
+        at += found + needle.len();
+    }
+    assert!(
+        ReleaseOptions::parse(&["--provisioning-profile".into(), "x".into()], false).is_err(),
+        "release-only flag"
+    );
 }

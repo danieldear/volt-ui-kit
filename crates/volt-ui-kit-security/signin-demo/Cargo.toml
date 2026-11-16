@@ -1,0 +1,21 @@
+# Sign in with Apple only works from a signed app with a provisioning profile,
+# so this demo is a small package of its own that `cargo volt release` can
+# bundle. See README.md.
+[package]
+name = "volt-signin-demo"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+license = "MIT"
+
+[dependencies]
+volt-ui-kit = { path = "../../..", features = ["native"] }
+volt-ui-kit-security = { path = ".." }
+
+[package.metadata.volt.bundle]
+name = "Volt Sign in"
+# Must equal the App ID in your provisioning profile: change it to yours, or
+# build with VOLT_BUNDLE_IDENTIFIER set (see README.md).
+identifier = "com.example.volt-signin-demo"
+minimum-system-version = "13.0"

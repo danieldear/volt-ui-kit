@@ -15,12 +15,19 @@ use std::{
 pub const HELP: &str = "cargo volt bundle [--manifest-path Cargo.toml] [--universal]
   Builds the release binary and the .app described by [package.metadata.volt.bundle].
 cargo volt release [--manifest-path Cargo.toml] [--universal] [--identity NAME|SHA1]
-  [--notary-profile NAME] [--entitlements FILE] [--no-notarize] [--no-dmg] [--dry-run]
+  [--notary-profile NAME] [--entitlements FILE] [--provisioning-profile FILE]
+  [--no-notarize] [--no-dmg] [--dry-run]
   Signs with Developer ID and the hardened runtime, notarizes and staples the
   app, then builds, signs, notarizes and staples a disk image. The identity
   defaults to the only \"Developer ID Application\" certificate in the keychain;
   the notary profile comes from `xcrun notarytool store-credentials NAME`
   (also VOLT_SIGNING_IDENTITY / VOLT_NOTARY_PROFILE or the bundle metadata).
+  VOLT_BUNDLE_IDENTIFIER replaces the metadata identifier for one build.
+  A provisioning profile (also VOLT_PROVISIONING_PROFILE) is needed for
+  entitlements Apple restricts, such as Sign in with Apple: it is embedded, must
+  match the bundle identifier and grant every com.apple.developer entitlement
+  the --entitlements file asks for, and its app and team identifiers are added
+  to the signature.
 
 [package.metadata.volt.bundle]
 name = \"My App\"                       # default: the package name
@@ -280,6 +287,11 @@ pub struct ReleaseOptions {
     pub identity: Option<String>,
     pub notary_profile: Option<String>,
     pub entitlements: Option<PathBuf>,
+    pub provisioning_profile: Option<PathBuf>,
+    /// The entitlements to sign with when a provisioning profile is used:
+    /// the requested ones plus the profile's app and team identifiers. Filled
+    /// in by `main` after reading the profile.
+    pub signing_entitlements: Option<String>,
     pub notarize: bool,
     pub dmg: bool,
     pub dry_run: bool,
@@ -307,6 +319,9 @@ impl ReleaseOptions {
                 "--identity" if release => o.identity = Some(value()?),
                 "--notary-profile" if release => o.notary_profile = Some(value()?),
                 "--entitlements" if release => o.entitlements = Some(value()?.into()),
+                "--provisioning-profile" if release => {
+                    o.provisioning_profile = Some(value()?.into())
+                }
                 "--no-notarize" if release => o.notarize = false,
                 "--no-dmg" if release => o.dmg = false,
                 "--dry-run" if release => o.dry_run = true,
@@ -332,6 +347,8 @@ pub enum Step {
     Remove(PathBuf),
     /// Make a directory holding the app and an Applications link for the image.
     Stage { dir: PathBuf, app: PathBuf },
+    /// Write a generated file directly under the output directory.
+    Write { path: PathBuf, contents: String },
 }
 
 fn run(what: &'static str, program: &str, args: &[&str]) -> Step {
@@ -404,6 +421,28 @@ pub fn plan(
         return steps;
     };
     let app_s = app.to_string_lossy().into_owned();
+    // A provisioning profile goes in before anything is signed, and the app is
+    // signed with entitlements that name the profile's app and team.
+    let entitlements = match (&o.provisioning_profile, &o.signing_entitlements) {
+        (Some(profile), Some(contents)) => {
+            let embedded = app.join("Contents/embedded.provisionprofile");
+            steps.push(run(
+                "embed the provisioning profile",
+                "/bin/cp",
+                &[&profile.to_string_lossy(), &embedded.to_string_lossy()],
+            ));
+            let path = out.join(format!("{}.entitlements", file_stem(name)));
+            steps.push(Step::Write {
+                path: path.clone(),
+                contents: contents.clone(),
+            });
+            Some(path.to_string_lossy().into_owned())
+        }
+        _ => o
+            .entitlements
+            .as_ref()
+            .map(|e| e.to_string_lossy().into_owned()),
+    };
     // Nested code is signed first: each app extension in the app sandbox.
     let entitlements_file = out.join("extension.entitlements");
     let entitlements_file = entitlements_file.to_string_lossy();
@@ -436,16 +475,12 @@ pub fn plan(
         "--sign",
         identity,
     ];
-    let entitlements = o
-        .entitlements
-        .as_ref()
-        .map(|e| e.to_string_lossy().into_owned());
     if let Some(e) = &entitlements {
         sign.extend(["--entitlements", e.as_str()]);
     }
     sign.push(&app_s);
     steps.push(run(
-        "sign with Developer ID and the hardened runtime",
+        "sign with the hardened runtime",
         "/usr/bin/codesign",
         &sign,
     ));
@@ -549,6 +584,135 @@ fn notarize(path: &str, profile: &str) -> Step {
             "json",
         ],
     )
+}
+
+const APP_ID: &str = "com.apple.application-identifier";
+const TEAM_ID: &str = "com.apple.developer.team-identifier";
+
+/// The entitlements a provisioning profile grants, read with `security cms`
+/// (which checks Apple's signature on it) and `plutil`.
+fn profile_entitlements(path: &Path) -> io::Result<Value> {
+    let decoded = Command::new("/usr/bin/security")
+        .args(["cms", "-D", "-i"])
+        .arg(path)
+        .output()?;
+    if !decoded.status.success() || decoded.stdout.is_empty() {
+        return Err(error(format!(
+            "{} isn't a provisioning profile Apple signed",
+            path.display()
+        )));
+    }
+    let mut plutil = Command::new("/usr/bin/plutil")
+        .args(["-extract", "Entitlements", "json", "-o", "-", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+    {
+        use io::Write;
+        plutil
+            .stdin
+            .take()
+            .ok_or_else(|| error("plutil has no input"))?
+            .write_all(&decoded.stdout)?;
+    }
+    let out = plutil.wait_with_output()?;
+    if !out.status.success() {
+        return Err(error("the provisioning profile has no entitlements"));
+    }
+    serde_json::from_slice(&out.stdout).map_err(|_| error("unreadable profile entitlements"))
+}
+
+/// An entitlements file as JSON (entitlements are strings, booleans and arrays).
+fn plist_as_json(path: &Path) -> io::Result<Value> {
+    let out = Command::new("/usr/bin/plutil")
+        .args(["-convert", "json", "-o", "-", "--"])
+        .arg(path)
+        .output()?;
+    if !out.status.success() {
+        return Err(error(format!("{} isn't a property list", path.display())));
+    }
+    serde_json::from_slice(&out.stdout)
+        .map_err(|_| error(format!("unreadable entitlements in {}", path.display())))
+}
+
+/// Entitlements Apple grants only through a provisioning profile.
+fn restricted(key: &str) -> bool {
+    key.starts_with("com.apple.developer.") || key == "keychain-access-groups"
+}
+
+/// The first requested entitlement that can't be used without a profile.
+pub fn restricted_without_profile(requested: &Value) -> Option<String> {
+    requested
+        .as_object()?
+        .keys()
+        .find(|key| restricted(key))
+        .cloned()
+}
+
+/// Whether `granted` (a profile value, possibly ending in `*`) covers `wanted`.
+fn grants(granted: &Value, wanted: &Value) -> bool {
+    let one = |g: &Value, w: &Value| match (g, w) {
+        (Value::String(g), Value::String(w)) => {
+            g == w
+                || g.strip_suffix('*')
+                    .is_some_and(|prefix| w.starts_with(prefix))
+        }
+        _ => g == w,
+    };
+    match (granted, wanted) {
+        (Value::Array(g), Value::Array(w)) => w.iter().all(|w| g.iter().any(|g| one(g, w))),
+        (Value::Array(g), w) => g.iter().any(|g| one(g, w)),
+        (g, w) => one(g, w),
+    }
+}
+
+/// The entitlements to sign with: the requested ones, checked against what the
+/// profile grants, plus the profile's app and team identifiers.
+pub fn signing_entitlements(
+    granted: &Value,
+    requested: Option<&Value>,
+    bundle_identifier: &str,
+) -> io::Result<Value> {
+    let team = granted[TEAM_ID]
+        .as_str()
+        .ok_or_else(|| error("the provisioning profile names no team"))?;
+    let app = granted[APP_ID]
+        .as_str()
+        .ok_or_else(|| error("the provisioning profile names no app identifier"))?;
+    let expected = format!("{team}.{bundle_identifier}");
+    if app != expected && app != format!("{team}.*") {
+        return Err(error(format!(
+            "the provisioning profile is for {app}, but the bundle identifier is {bundle_identifier}"
+        )));
+    }
+    let mut merged = match requested {
+        Some(Value::Object(map)) => map.clone(),
+        Some(_) => return Err(error("the entitlements file must be a dictionary")),
+        None => Default::default(),
+    };
+    for (key, wanted) in &merged {
+        if restricted(key) && !granted.get(key).is_some_and(|g| grants(g, wanted)) {
+            let hint = if key == "com.apple.developer.applesignin" {
+                " (Apple offers Sign in with Apple to App Store and development profiles only, not Developer ID)"
+            } else {
+                ""
+            };
+            return Err(error(format!(
+                "the provisioning profile doesn't grant {key}: enable it for the App ID, then download the profile again{hint}"
+            )));
+        }
+    }
+    merged.insert(APP_ID.into(), Value::String(expected));
+    merged.insert(TEAM_ID.into(), Value::String(team.into()));
+    Ok(Value::Object(merged))
+}
+
+/// Entitlements as an XML property list for `codesign --entitlements`.
+pub fn entitlements_plist(entitlements: &Value) -> String {
+    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">");
+    bundle::plist_value(&mut xml, entitlements);
+    xml.push_str("</plist>\n");
+    xml
 }
 
 /// The only "Developer ID Application" identity in `security find-identity`.
@@ -685,6 +849,16 @@ fn execute(
             );
             bundle::run(options)
         }
+        Step::Write { path, contents } => {
+            let root = checked_output_root(m, false)?;
+            if path.parent() != Some(out_dir(m).as_path()) || path.file_name().is_none() {
+                return Err(error(
+                    "refusing to write a path outside target/release/bundle",
+                ));
+            }
+            eprintln!("  → write the signing entitlements");
+            fs::write(root.join(path.file_name().unwrap()), contents)
+        }
         Step::Stage { dir, app } => {
             fs::create_dir_all(dir)?;
             let name = app.file_name().ok_or_else(|| error("app has no name"))?;
@@ -709,7 +883,7 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
             "cargo volt bundle and release currently support macOS only",
         ));
     }
-    let o = ReleaseOptions::parse(args, release)?;
+    let mut o = ReleaseOptions::parse(args, release)?;
     let m = read_manifest(o.manifest_path.as_deref())?;
     let out = out_dir(&m);
     let binary = if o.universal {
@@ -718,6 +892,13 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
         m.target_dir.join("release").join(&m.bin)
     };
     let mut options = options_from_manifest(&m, binary, PathBuf::new())?;
+    // Build someone else's project under your own App ID without editing it.
+    if let Some(id) = std::env::var("VOLT_BUNDLE_IDENTIFIER")
+        .ok()
+        .filter(|id| !id.is_empty())
+    {
+        options.identifier = id;
+    }
     let name = options.name.clone();
     options.output = out.join(format!("{name}.app"));
     // A release is signed with Developer ID instead of ad hoc.
@@ -752,6 +933,34 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
             "notarization needs a keychain profile: run `xcrun notarytool store-credentials NAME --apple-id ID --team-id TEAM` once, then pass --notary-profile NAME (or --no-notarize)",
         ));
     }
+    if release {
+        o.provisioning_profile = o
+            .provisioning_profile
+            .take()
+            .or_else(|| std::env::var_os("VOLT_PROVISIONING_PROFILE").map(PathBuf::from));
+    }
+    let requested = match (&o.entitlements, release) {
+        (Some(path), true) => Some(plist_as_json(path)?),
+        _ => None,
+    };
+    if o.provisioning_profile.is_none() {
+        if let Some(key) = requested.as_ref().and_then(restricted_without_profile) {
+            return Err(error(format!(
+                "{key} needs a provisioning profile, or macOS won't launch the app: pass --provisioning-profile FILE"
+            )));
+        }
+    }
+    if let Some(path) = &o.provisioning_profile {
+        let granted = profile_entitlements(path)?;
+        let merged = signing_entitlements(&granted, requested.as_ref(), &options.identifier)?;
+        eprintln!(
+            "  → provisioning profile for {}",
+            merged["com.apple.application-identifier"]
+                .as_str()
+                .unwrap_or("?")
+        );
+        o.signing_entitlements = Some(entitlements_plist(&merged));
+    }
     let steps = plan(&m, &o, &name, identity.as_deref(), profile.as_deref());
     if o.dry_run {
         for step in &steps {
@@ -767,6 +976,9 @@ pub fn main(args: &[String], release: bool) -> io::Result<()> {
                     options.output.display()
                 ),
                 Step::Remove(p) => println!("# remove {}", p.display()),
+                Step::Write { path, contents } => {
+                    println!("# write {}\n{contents}", path.display())
+                }
                 Step::Stage { dir, app } => println!(
                     "# stage {} with an Applications link in {}",
                     app.display(),
