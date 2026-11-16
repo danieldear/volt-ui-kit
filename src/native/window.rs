@@ -1292,6 +1292,10 @@ impl<C: 'static> App<C> {
             }
             return Ok(false);
         }
+        if event.logical_key == Key::Named(NamedKey::Tab) && !shift {
+            let outcome=self.runtime.editor_key(EditKey::Tab,false,&mut self.handlers,&mut self.context).map_err(|e|e.to_string())?;
+            if outcome.activated {self.after_input(outcome)?;return Ok(true);}
+        }
         if event.logical_key == Key::Named(NamedKey::Tab)
             && !shift
             && self.runtime.editing_tab_indents()
@@ -1336,7 +1340,7 @@ impl<C: 'static> App<C> {
                         .runtime
                         .text_input(&text, &mut self.handlers, &mut self.context)
                         .map_err(|e| e.to_string())?,
-                    None => return Ok(true),
+                    None => self.runtime.editor_key(EditKey::PasteImage,false,&mut self.handlers,&mut self.context).map_err(|e|e.to_string())?,
                 },
                 "z" => self
                     .runtime

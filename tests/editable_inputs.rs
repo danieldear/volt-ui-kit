@@ -1033,3 +1033,20 @@ fn host_selection_ranges_are_atomic_utf8_and_read_only_still_selects() {
     );
     assert_eq!(app.value, "A東京é");
 }
+
+#[test]
+fn opt_in_image_paste_and_tab_do_not_replace_text_or_submit() {
+    let mut app=Slash{text:"keep draft".into(),..Default::default()};
+    let input:Element<Slash>=text_area(app.text.clone()).key("composer")
+        .on_change(|a:&mut Slash,t|a.text=t)
+        .on_keys([EditKey::PasteImage,EditKey::Tab],|a:&mut Slash,k|a.picked.push(k)).into();
+    let (doc,mut h)=input.build().unwrap().into_parts();
+    let mut r=Runtime::new(doc,&h,&Bindings::default()).unwrap();
+    r.layout(Viewport::new(400.,300.,1.).unwrap(),&Bindings::default(),&mut Metrics).unwrap();
+    r.focus_next(false);
+    for key in [EditKey::PasteImage,EditKey::Tab]{assert!(r.editor_key(key,false,&mut h,&mut app).unwrap().activated);}
+    assert_eq!(app.text,"keep draft");assert_eq!(app.picked,vec![EditKey::PasteImage,EditKey::Tab]);
+    r.text_input("x",&mut h,&mut app).unwrap();
+    r.editor_key(EditKey::Undo,false,&mut h,&mut app).unwrap();
+    assert_eq!(app.text,"keep draft");
+}
