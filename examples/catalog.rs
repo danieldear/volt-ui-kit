@@ -1,4 +1,4 @@
-//! Volt UI catalog: every component, documented with live previews, code,
+//! Volt UI Kit Catalog: every component, documented with live previews, code,
 //! variations and API tables, in a shadcn/ui-style documentation shell.
 //!
 //! ./scripts/run_catalog.sh  # full Catalog, automatically bundled on macOS
@@ -19,6 +19,8 @@ fn parse_args(
     let mut forwarded = vec!["--size".to_owned(), "1440x920".to_owned()];
     let mut chrome = if cfg!(target_os = "macos") {
         WindowChrome::Overlay
+    } else if cfg!(target_os = "linux") {
+        WindowChrome::Custom
     } else {
         WindowChrome::Native
     };
@@ -68,6 +70,24 @@ fn parse_args(
             }
             "--palette" => app.palette.open = true,
             "--dialog" => app.dialog_open = true,
+            "--chrome" => {
+                chrome = match args.next().as_deref() {
+                    Some("native") => WindowChrome::Native,
+                    Some("overlay") => WindowChrome::Overlay,
+                    Some("custom") => WindowChrome::Custom,
+                    Some("borderless") => WindowChrome::Borderless,
+                    _ => {
+                        return Err("--chrome must be native, overlay, custom or borderless".into())
+                    }
+                };
+            }
+            "--control-style" => {
+                app.window_control_style = match args.next().as_deref() {
+                    Some("symbols") => volt_ui_kit::ui::WindowControlStyle::Symbols,
+                    Some("traffic-lights") => volt_ui_kit::ui::WindowControlStyle::TrafficLights,
+                    _ => return Err("--control-style must be symbols or traffic-lights".into()),
+                }
+            }
             "--native-chrome" => chrome = WindowChrome::Native,
             "--compact-chrome" => chrome = WindowChrome::CompactOverlay,
             "--background" => {
@@ -106,6 +126,7 @@ fn parse_args(
             app.code.insert(id.to_owned());
         }
     }
+    app.chrome = chrome;
     app.glass = background != "opaque";
     app.opacity = ((opacity * 100.).round() as u8).max(catalog::OPACITY_MIN);
     app.tint = tint;
@@ -144,14 +165,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(_) => return Err("VOLT_UI_RENDERER must be auto, gpu or software".into()),
     };
     support::launch_themed_with_application(
-        "Volt UI",
+        "Volt UI Kit",
         app,
         catalog::view,
         catalog::theme,
         options,
         move |application| {
             let application = application
+                // Built-in component animations (as `cargo volt new` sets).
+                .motion(volt_ui_kit::ui::Motion::Default)
+                .app_id("dev.volt.catalog")
+                .on_window_diagnostics(|app, diagnostics| {
+                    app.window_diagnostics = Some(diagnostics)
+                })
+                .chrome_from_state(|app| app.chrome)
+                .window_actions(|app, sender| app.window_actions = Some(sender))
+                .on_window_state(|app, state| app.window_state = state)
                 .background_from_state(catalog::window_background)
+                .on_backdrop_status(|app, status| app.backdrop_status = status.description().into())
                 .renderer(renderer)
                 .commands(catalog::lifecycle::commands())
                 .requests(|app, sender| app.requests = Some(sender))
@@ -159,7 +190,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .messages(|app, sender| app.sender = Some(sender), catalog::update)
                 // Under `cargo volt dev`, code changes restart on the same page.
                 .dev_state(catalog::dev_save, catalog::dev_load);
-            #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+            #[cfg(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            ))]
             let application = application.desktop(catalog::lifecycle::desktop(), |_, _| {});
             application
         },

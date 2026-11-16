@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import re
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,49 @@ from unittest.mock import patch
 import build_docs_site
 from check_repo import Site, check_link, inspect_site
 import configure_github
+
+
+class PackageBoundaryTests(unittest.TestCase):
+    def test_metadata_basename_patterns_are_anchored_to_the_package_root(self):
+        manifest = (build_docs_site.ROOT / "Cargo.toml").read_text()
+        include = json.loads(next(line.partition("=")[2].strip()
+                                  for line in manifest.splitlines()
+                                  if line.startswith("include =")))
+        for name in ("Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md"):
+            self.assertIn("/" + name, include)
+            self.assertNotIn(name, include,
+                             "unanchored basenames can package ignored tooling files")
+
+
+class SecurityWorkflowTests(unittest.TestCase):
+    def test_history_scan_includes_merge_resolution_diffs_and_redacts_values(self):
+        workflow = (build_docs_site.ROOT / ".github/workflows/security.yml").read_text()
+        command = next(line for line in workflow.splitlines()
+                       if 'gitleaks" git ' in line)
+        self.assertIn('--log-opts="--all -m"', command)
+        self.assertIn('--redact=100', command)
+        self.assertIn('contents: read', workflow)
+
+
+class AttributionTests(unittest.TestCase):
+    def test_shared_settings_disable_commit_pr_and_session_attribution(self):
+        settings = json.loads((build_docs_site.ROOT / ".claude/settings.json").read_text())
+        self.assertEqual(settings, {
+            "attribution": {"commit": "", "pr": "", "sessionUrl": False},
+        })
+
+    def test_local_agent_state_is_ignored_but_shared_policy_is_not(self):
+        root = build_docs_site.ROOT
+        local = [".claude/settings.local.json", ".claude/worktrees/example/README.md",
+                 ".claude/sessions/local.json"]
+        with tempfile.TemporaryDirectory() as directory:
+            empty_ignore = Path(directory) / "empty-ignore"
+            empty_ignore.write_text("")
+            command = ["git", "-c", f"core.excludesFile={empty_ignore}", "check-ignore", "--no-index", "--"]
+            result = subprocess.run(command + local, cwd=root, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.splitlines(), local)
+            result = subprocess.run(command + [".claude/settings.json"], cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
 
 
 class SiteTests(unittest.TestCase):
@@ -35,6 +79,26 @@ class SiteTests(unittest.TestCase):
         guide = (root / "docs/guides/getting-started.html").read_text()
         self.assertIn("./scripts/run_catalog.sh", guide)
         self.assertIn("not yet on crates.io", guide)
+
+    def test_complete_recipe_sources_match_reference_and_keep_excerpt_labels_elsewhere(self):
+        root = build_docs_site.ROOT
+        catalog = json.loads((root / "docs/assets/catalog-data.json").read_text())
+        recipes = {"button-variants", "button-sizes", "button-states", "select",
+                   "select-disabled", "select-vs-combobox", "table", "table-square"}
+        complete = set()
+        for page in catalog:
+            html = (root / f"docs/reference/{page['slug']}.html").read_text()
+            for section in page["sections"]:
+                if section["id"] in recipes:
+                    complete.add(section["id"])
+                    self.assertIn("pub fn main()", section["code"])
+                    self.assertNotIn("catalog-only", section["code"])
+                    self.assertIn(f"--example samples -- {section['id']}</code>", html)
+                    self.assertIn("Complete native Rust program.", html)
+                else:
+                    self.assertNotIn("pub fn main()", section["code"])
+        self.assertEqual(complete, recipes)
+        self.assertIn("Catalog excerpt:", (root / "docs/reference/badge.html").read_text())
 
     def test_real_site_is_valid(self):
         self.assertEqual(inspect_site(build_docs_site.ROOT), [])
@@ -83,7 +147,9 @@ class SiteTests(unittest.TestCase):
     def test_directory_and_reference_previews_are_source_backed_canvases(self):
         docs = build_docs_site.ROOT / 'docs'
         directory = (docs / 'reference/index.html').read_text()
-        self.assertEqual(directory.count('data-volt-mode="directory"'), 49)
+        catalog = json.loads((docs / "assets/catalog-data.json").read_text())
+        self.assertEqual(directory.count('data-volt-mode="directory"'),
+                         sum(bool(page['sections']) for page in catalog))
         self.assertNotIn('images/components/', directory)
         slots = 0
         for path in (docs / 'reference').glob('*.html'):
@@ -93,7 +159,8 @@ class SiteTests(unittest.TestCase):
             slots += html.count('data-volt-page=')
             self.assertNotIn('<iframe', html)
             self.assertNotIn('images/components/', html)
-        self.assertEqual(slots, 123)
+        catalog = json.loads((docs / "assets/catalog-data.json").read_text())
+        self.assertEqual(slots, sum(len(page["sections"]) for page in catalog))
         self.assertFalse(any(name.startswith('images/components/') for name in build_docs_site.FILES))
 
     def test_web_staging_publishes_only_expected_runtime_outputs(self):
@@ -138,17 +205,27 @@ class SiteTests(unittest.TestCase):
             self.assertNotIn(invented, html)
         self.assertNotIn("<img", html)
         self.assertNotIn("<iframe", html)
-        self.assertEqual(html.count('data-volt-page='), 3)
+        self.assertEqual(html.count('data-volt-page='), 2)
         self.assertIn('src="live/catalog-previews.js"', html)
-        # The counts in the copy come from the Catalog's own metadata.
+        # Gallery slots name only apps the browser build can mount, each once.
+        apps = re.findall(r'data-volt-app="([a-z]+)"', html)
+        web = (build_docs_site.ROOT / "examples/web/src/lib.rs").read_text()
+        mountable = set(re.findall(r'^\s*"([a-z]+)" => WebView::new\(', web, re.M))
+        self.assertEqual(sorted(apps), sorted(set(apps)))
+        self.assertEqual(set(apps), mountable)
+        # The Catalog's numbers and live dashboard open the Components index,
+        # and its counts come from the Catalog's own metadata.
         catalog = json.loads((docs / "assets/catalog-data.json").read_text())
         components = sum(page["group"] == "Components" for page in catalog)
         patterns = sum(page["group"] == "Patterns" for page in catalog)
-        text = re.sub(r"<[^>]+>", "", html)
-        self.assertIn(f"{components} component pages", text)
-        self.assertIn(f"{patterns} app patterns", text)
-        self.assertIn(f"{len(catalog)} reference pages", text)
-        self.assertIn(f"all {len(catalog)} pages", text)
+        examples = sum(len(page["sections"]) for page in catalog)
+        index = (docs / "reference/index.html").read_text()
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", index))
+        self.assertIn(f" {components} Components ", text)
+        self.assertIn(f" {patterns} App patterns ", text)
+        self.assertIn(f" {examples} Rendered examples ", text)
+        self.assertIn('data-volt-page="dashboard" data-volt-section="dashboard"', index)
+        self.assertIn("./scripts/run_catalog.sh", index)
         # Every image the page shows, at every size, exists and is published,
         # and is a Catalog render: apps that are not released stay off the page.
         images = re.findall(r'(?:src|srcset)="([^"]+)"', html)
@@ -168,7 +245,6 @@ class SiteTests(unittest.TestCase):
         self.assertIn('Pause decorative motion', html)
         self.assertIn('animation-play-state: paused', css)
         self.assertIn('.swatch .sr-only { position: static;', css)
-        self.assertIn('./scripts/run_catalog.sh', html)
 
     def test_links_cannot_escape_root_or_use_javascript(self):
         root = build_docs_site.ROOT
@@ -192,7 +268,7 @@ class SiteTests(unittest.TestCase):
         docs = build_docs_site.ROOT / "docs"
         catalog = json.loads((docs / "assets/catalog-data.json").read_text())
         manifest = set(build_docs_site.generated_files(build_docs_site.ROOT))
-        self.assertEqual(len(catalog), 50)
+        self.assertEqual(len(catalog), 52)
         for page in catalog:
             target = f"reference/{page['slug']}.html"
             self.assertIn(target, manifest)
@@ -205,10 +281,17 @@ class SiteTests(unittest.TestCase):
                 self.assertIn(f'data-volt-page="{page["slug"]}"', html)
                 self.assertIn(f'data-volt-section="{section["id"]}"', html)
                 self.assertIn('src="../live/catalog-previews.js"', html)
-                data = (docs / image).read_bytes()
-                self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
-                self.assertEqual(int.from_bytes(data[16:20], 'big'), section['width'])
-                self.assertEqual(int.from_bytes(data[20:24], 'big'), section['height'])
+                self.assertGreater(section['width'], 0)
+                self.assertGreater(section['height'], 0)
+                height = max(160, min(760, section['height']))
+                self.assertIn(f'data-volt-section="{section["id"]}" data-volt-height="{height}"', html)
+                # Old PNGs are archival, not a requirement for new live previews.
+                # Pixel rendering of every section is covered by real-browser QA.
+                if (docs / image).is_file():
+                    data = (docs / image).read_bytes()
+                    self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
+                    self.assertEqual(int.from_bytes(data[16:20], 'big'), section['width'])
+                    self.assertEqual(int.from_bytes(data[20:24], 'big'), section['height'])
 
     def test_cross_page_html_anchor_checked(self):
         root = build_docs_site.ROOT

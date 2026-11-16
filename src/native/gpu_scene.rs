@@ -11,7 +11,7 @@ use super::raster::{self, Glyph, Shape};
 use super::RasterPainter;
 use crate::{
     declarative::PaintBatch,
-    graphics::{BackgroundImage, ClipRegion, Image, ImageFit},
+    graphics::{BackgroundImage, ClipRegion, Image, ImageFit, MaskMode},
 };
 use cosmic_text::{CacheKey, SwashContent};
 use std::{
@@ -103,7 +103,14 @@ pub(crate) struct GpuSceneEncoder {
     peak: Vec<u8>,
     /// Estimated command words per tile, including draws and clip scopes.
     commands: Vec<u32>,
+    /// Row difference array: record rectangle ends, then resolve tile totals
+    /// once. Admission stays exact without touching every covered tile/draw.
+    command_edges: Vec<i64>,
     open_tiles: Vec<[usize; 4]>,
+    transform_children: Vec<GpuSceneEncoder>,
+    transform_cursor: usize,
+    transform_depth: u8,
+    viewport_override: Option<[u32; 2]>,
     /// Zero-copy handles to loaded faces; stable ids keep Vello's outline cache warm.
     fonts: HashMap<cosmic_text::fontdb::ID, Option<FontData>>,
     budget: Budget,
@@ -218,6 +225,55 @@ impl GpuSceneEncoder {
         }
     }
 }
+/// A rounded rectangle blurred by `blur` (physical pixels), on the GPU.
+fn blurred_rounded(
+    scene: &mut vello::Scene,
+    b: [f32; 4],
+    r: [f32; 4],
+    blur: f32,
+    c: Color,
+) -> Result<(), String> {
+    if blur == 0. {
+        scene.fill(Fill::NonZero, Affine::IDENTITY, c, None, &corners(b, r)?);
+    } else if r.iter().all(|v| *v == r[0]) {
+        scene.draw_blurred_rounded_rect(
+            Affine::translate((-0.5, -0.5)),
+            rect(b),
+            c,
+            r[0] as f64,
+            blur as f64 * 0.5,
+        );
+    } else {
+        let outer = rect([
+            b[0] - blur * 3.,
+            b[1] - blur * 3.,
+            b[2] + blur * 6.,
+            b[3] + blur * 6.,
+        ]);
+        let mx = (b[0] + b[2] * 0.5) as f64;
+        let my = (b[1] + b[3] * 0.5) as f64;
+        for (i, q) in [
+            Rect::new(outer.x0, outer.y0, mx, my),
+            Rect::new(mx, outer.y0, outer.x1, my),
+            Rect::new(mx, my, outer.x1, outer.y1),
+            Rect::new(outer.x0, my, mx, outer.y1),
+        ]
+        .iter()
+        .enumerate()
+        {
+            scene.draw_blurred_rounded_rect_in(
+                q,
+                Affine::translate((-0.5, -0.5)),
+                rect(b),
+                c,
+                r[i] as f64,
+                blur as f64 * 0.5,
+            );
+        }
+    }
+    Ok(())
+}
+
 fn rect([x, y, w, h]: [f32; 4]) -> Rect {
     Rect::new(x as f64, y as f64, (x + w) as f64, (y + h) as f64)
 }
@@ -254,6 +310,10 @@ fn image_data(w: u32, h: u32, pixels: Vec<u8>) -> ImageData {
 fn shape_bounds(s: &Shape) -> Option<Rect> {
     let pad = |r: Rect, p: f32| r.inflate(p as f64, p as f64);
     Some(match s {
+        Shape::Transformed(m, _, size) => {
+            let b = m.bounds([0., 0., size[0] as f32, size[1] as f32]);
+            rect(b)
+        }
         Shape::Rectangle(b, _)
         | Shape::Rounded(b, ..)
         | Shape::Corners(b, ..)
@@ -282,6 +342,7 @@ fn shape_bounds(s: &Shape) -> Option<Rect> {
             rect([b[0] + offset[0], b[1] + offset[1], b[2], b[3]]),
             spread.max(0.) + blur * 1.5,
         ),
+        Shape::InnerShadow(b, ..) => rect(*b),
         _ => return None,
     })
 }
@@ -300,7 +361,7 @@ fn opacity_layer_bounds(batches: &[PaintBatch<Shape, Glyph>]) -> Vec<Rect> {
         let clip = rect(batch.clip.bounds());
         for s in &batch.shapes {
             match s {
-                Shape::LayerBegin(_) => {
+                Shape::LayerBegin(_) | Shape::BlendBegin(..) => {
                     open.push((out.len(), None));
                     out.push(Rect::ZERO);
                 }
@@ -340,6 +401,9 @@ impl GpuSceneEncoder {
     }
     /// Record a draw object's footprint in tiles, per-tile commands and bins.
     fn note(&mut self, r: Rect) {
+        self.note_weighted(r, 8);
+    }
+    fn note_weighted(&mut self, r: Rect, words: u32) {
         let r = r.intersect(Rect::new(
             0.,
             0.,
@@ -359,16 +423,16 @@ impl GpuSceneEncoder {
         let y0 = ((r.y0 / 16.).floor() as usize).min(th);
         let y1 = ((r.y1 / 16.).ceil() as usize).min(th);
         for y in y0..y1 {
-            self.budget.row_tiles[y] += (x1 - x0).max(1) as u64;
-            for words in &mut self.commands[y * tw + x0..y * tw + x1] {
-                *words = words.saturating_add(8);
-            }
+            self.budget.row_tiles[y] += (x1 - x0).max(1) as u64 * u64::from(words.div_ceil(8));
+            let row = y * (tw + 1);
+            self.command_edges[row + x0] += i64::from(words);
+            self.command_edges[row + x1] -= i64::from(words);
         }
         let bins = span(r.x0, r.x1, 256.);
         let by0 = (r.y0 / 256.).floor() as usize;
         let by1 = ((r.y1 / 256.).ceil() as usize).max(by0 + 1);
         for by in by0..by1.min(self.budget.bin_rows.len()) {
-            self.budget.bin_rows[by] += bins;
+            self.budget.bin_rows[by] += bins * u64::from(words.div_ceil(8));
         }
     }
     /// Area-dependent Vello buffers (blend spill, tiles, tile commands,
@@ -408,7 +472,21 @@ impl GpuSceneEncoder {
             None
         }
     }
+    fn resolve_tile_commands(&mut self) {
+        let [tw, th] = self.tiles;
+        for y in 0..th {
+            let mut words = 0i64;
+            for (edge, total) in self.command_edges[y * (tw + 1)..y * (tw + 1) + tw]
+                .iter()
+                .zip(&mut self.commands[y * tw..(y + 1) * tw])
+            {
+                words += edge;
+                *total = words.clamp(0, i64::from(u32::MAX)) as u32;
+            }
+        }
+    }
     fn finish_budget(&mut self) {
+        self.resolve_tile_commands();
         let th = self.tiles[1];
         self.stats.spill_slots = self
             .peak
@@ -502,12 +580,39 @@ impl GpuSceneEncoder {
             shape,
         );
     }
+    /// A luminance mask layer over `area`, with the same tile accounting as
+    /// [`Self::layer`].
+    fn luminance_layer(&mut self, area: &Rect) {
+        let [tw, th] = self.tiles;
+        let tile = |v: f64, max: usize| ((v / 16.).floor().max(0.) as usize).min(max);
+        let r = [
+            tile(area.x0, tw),
+            tile(area.y0, th),
+            tile((area.x1 / 16.).ceil() * 16., tw),
+            tile((area.y1 / 16.).ceil() * 16., th),
+        ];
+        for y in r[1]..r[3] {
+            for i in y * tw + r[0]..y * tw + r[2] {
+                self.depth[i] = self.depth[i].saturating_add(1);
+                self.peak[i] = self.peak[i].max(self.depth[i]);
+            }
+        }
+        self.open_tiles.push(r);
+        self.note(*area);
+        self.note(*area);
+        self.scene.push_luminance_mask_layer(
+            vello::peniko::Fill::NonZero,
+            1.,
+            Affine::IDENTITY,
+            area,
+        );
+    }
     fn pop_layer(&mut self) {
         if let Some(r) = self.open_tiles.pop() {
             let tw = self.tiles[0];
             for y in r[1]..r[3] {
-                for i in y * tw + r[0]..y * tw + r[2] {
-                    self.depth[i] = self.depth[i].saturating_sub(1);
+                for depth in &mut self.depth[y * tw + r[0]..y * tw + r[2]] {
+                    *depth = depth.saturating_sub(1);
                 }
             }
         }
@@ -535,9 +640,15 @@ impl GpuSceneEncoder {
         self.bands.clear();
         self.stats = SceneStats::default();
         self.budget = Budget::default();
-        self.frame_images.clear();
+        if self.transform_depth == 0 {
+            self.frame_images.clear();
+        }
         self.clock += 1;
-        let vp = painter.gpu_viewport();
+        let mut vp = painter.gpu_viewport();
+        if let Some([w, h]) = self.viewport_override {
+            vp.width = w as f32;
+            vp.height = h as f32;
+        }
         if vp.width <= 0.
             || vp.height <= 0.
             || vp.width as f64 * vp.height as f64 > raster::MAX_FRAMEBUFFER_PIXELS as f64
@@ -556,18 +667,29 @@ impl GpuSceneEncoder {
         self.peak.resize(count, 0);
         self.commands.clear();
         self.commands.resize(count, 0);
+        self.command_edges.clear();
+        self.command_edges
+            .resize((self.tiles[0] + 1) * self.tiles[1], 0);
         self.budget.row_tiles = vec![0; self.tiles[1]];
         self.budget.bin_rows = vec![0; self.tiles[1].div_ceil(16)];
         self.viewport_height = vp.height as u32;
         self.viewport_width = vp.width as u32;
         self.open_tiles.clear();
-        let mut stack = Vec::<bool>::new();
+        // What each structural begin opened, innermost last.
+        #[derive(Clone, Copy, PartialEq)]
+        enum Open {
+            Clip,
+            Layer,
+            Mask,
+        }
+        let mut stack = Vec::<Open>::new();
         // Pixel bounds of the innermost structural clip. Opacity layers and
         // path-clip layers use it instead of the whole window: Vello spills
         // every tile of a layer nested deeper than its on-chip blend stack into
         // a fixed buffer, and an overflow drops the entire frame.
         let mut bounds = vec![viewport];
         let mut layer_areas = opacity_layer_bounds(batches).into_iter();
+        self.transform_cursor = 0;
         let mut masks = Vec::<Option<BezPath>>::new();
         let (mut layers, mut clips) = (0, 0);
         // The innermost open batch clip. Consecutive batches usually share one
@@ -582,24 +704,72 @@ impl GpuSceneEncoder {
             for s in &batch.shapes {
                 if matches!(
                     s,
-                    Shape::LayerBegin(_) | Shape::LayerEnd | Shape::ClipBegin(_) | Shape::ClipEnd
+                    Shape::LayerBegin(_)
+                        | Shape::BlendBegin(..)
+                        | Shape::LayerEnd
+                        | Shape::MaskBegin(_)
+                        | Shape::MaskEnd
+                        | Shape::ClipBegin(_)
+                        | Shape::ClipEnd
                 ) {
                     if open.take().is_some_and(|(_, pushed)| pushed) {
                         self.pop_layer();
                     }
                     match s {
-                        Shape::LayerBegin(alpha) => {
+                        Shape::LayerBegin(alpha) | Shape::BlendBegin(alpha, _) => {
                             if !alpha.is_finite() || !(0. ..=1.).contains(alpha) || layers >= 24 {
                                 return Err("invalid GPU layer opacity/depth".into());
                             }
                             // Pixel-aligned so edge antialiasing is never cut.
                             let content = layer_areas.next().unwrap_or(viewport).expand();
                             let area = bounds.last().unwrap().intersect(content);
-                            self.layer(Mix::Normal, *alpha, &area);
+                            let mode: vello::peniko::BlendMode = match s {
+                                Shape::BlendBegin(_, mode) => match mode {
+                                    crate::graphics::BlendMode::DestinationOut => {
+                                        Compose::DestOut.into()
+                                    }
+                                    crate::graphics::BlendMode::Xor => Compose::Xor.into(),
+                                    crate::graphics::BlendMode::Normal => Mix::Normal.into(),
+                                    crate::graphics::BlendMode::Multiply => Mix::Multiply.into(),
+                                    crate::graphics::BlendMode::Screen => Mix::Screen.into(),
+                                    crate::graphics::BlendMode::Overlay => Mix::Overlay.into(),
+                                    crate::graphics::BlendMode::ColorBurn => Mix::ColorBurn.into(),
+                                    crate::graphics::BlendMode::Difference => {
+                                        Mix::Difference.into()
+                                    }
+                                },
+                                _ => Mix::Normal.into(),
+                            };
+                            self.layer(mode, *alpha, &area);
                             bounds.push(area);
-                            stack.push(true);
+                            stack.push(Open::Layer);
                             layers += 1;
                             self.stats.layers += 1;
+                        }
+                        // The mask is drawn on a layer that, when popped,
+                        // keeps what is under it only where the mask is
+                        // opaque (DestIn) or bright (a luminance mask).
+                        Shape::MaskBegin(mode) => {
+                            if layers >= 24 || !stack.contains(&Open::Layer) {
+                                return Err("invalid GPU mask depth or placement".into());
+                            }
+                            let area = *bounds.last().unwrap();
+                            match mode {
+                                MaskMode::Alpha => self.layer(Compose::DestIn, 1., &area),
+                                MaskMode::Luminance => self.luminance_layer(&area),
+                            }
+                            bounds.push(area);
+                            stack.push(Open::Mask);
+                            layers += 1;
+                            self.stats.layers += 1;
+                        }
+                        Shape::MaskEnd => {
+                            if stack.pop() != Some(Open::Mask) {
+                                return Err("unbalanced GPU mask stream".into());
+                            }
+                            bounds.pop();
+                            layers -= 1;
+                            self.pop_layer();
                         }
                         Shape::ClipBegin(region) => {
                             if clips >= 48 {
@@ -656,12 +826,13 @@ impl GpuSceneEncoder {
                             } else {
                                 None
                             });
-                            stack.push(false);
+                            stack.push(Open::Clip);
                             clips += 1;
                         }
                         Shape::LayerEnd | Shape::ClipEnd => {
                             let layer = matches!(s, Shape::LayerEnd);
-                            if stack.pop() != Some(layer) {
+                            let expected = if layer { Open::Layer } else { Open::Clip };
+                            if stack.pop() != Some(expected) {
                                 return Err("unbalanced GPU clip/opacity stream".into());
                             }
                             bounds.pop();
@@ -692,6 +863,10 @@ impl GpuSceneEncoder {
                 if let Some(b) = shape_bounds(s) {
                     self.note(b.intersect(rect(clip)));
                 }
+                if let Shape::Transformed(matrix, content, size) = s {
+                    self.transformed(*matrix, content, *size, painter, images.as_deref_mut())?;
+                    continue;
+                }
                 self.shape(s, images.as_deref_mut())?;
                 self.stats.shapes += 1;
             }
@@ -708,6 +883,7 @@ impl GpuSceneEncoder {
         if !stack.is_empty() {
             return Err("unclosed GPU clip/opacity stream".into());
         }
+        self.transform_children.truncate(self.transform_cursor);
         self.finish_budget();
         Ok(())
     }
@@ -735,6 +911,100 @@ impl GpuSceneEncoder {
             self.layer(Mix::Normal, 1., &r);
         }
         *open = Some((clip, !redundant));
+    }
+    fn transformed(
+        &mut self,
+        matrix: crate::motion::Affine2D,
+        content: &[PaintBatch<Shape, Glyph>],
+        size: [u32; 2],
+        painter: &mut RasterPainter,
+        images: Option<ImageResolver<'_, '_>>,
+    ) -> Result<(), String> {
+        if self.transform_depth >= 24
+            || matrix.inverse().is_none()
+            || size.contains(&0)
+            || size.iter().any(|v| *v > 16384)
+        {
+            return Err("invalid transformed GPU scene".into());
+        }
+        let index = self.transform_cursor;
+        self.transform_cursor += 1;
+        if index == self.transform_children.len() {
+            self.transform_children.push(Self::default());
+        }
+        let child = &mut self.transform_children[index];
+        child.transform_depth = self.transform_depth + 1;
+        child.viewport_override = Some(size);
+        // Retain one cache budget and one frame-image identity set for the
+        // complete scene, not a fresh 64/16 MiB cache per animated element.
+        // Exchange ownership rather than clone image/font data. Restore even
+        // on an invalid child stream so fallback/recovery keeps the caches.
+        macro_rules! exchange_caches {
+            ($($field:ident),*) => { $(std::mem::swap(&mut self.$field, &mut child.$field);)* };
+        }
+        exchange_caches!(
+            images,
+            glyphs,
+            image_bytes,
+            glyph_bytes,
+            clock,
+            fonts,
+            frame_images
+        );
+        let result = child.encode_with(content, painter, images);
+        exchange_caches!(
+            images,
+            glyphs,
+            image_bytes,
+            glyph_bytes,
+            clock,
+            fonts,
+            frame_images
+        );
+        result?;
+        self.scene.append(&child.scene, Some(Affine::new(matrix.0)));
+        self.stats.shapes += child.stats.shapes;
+        self.stats.glyphs += child.stats.glyphs;
+        self.stats.layers += child.stats.layers;
+        self.stats.resource_bytes += child.stats.resource_bytes;
+        self.budget.glyph_lines += child
+            .budget
+            .glyph_lines
+            .saturating_mul(matrix.max_scale().max(1.).ceil() as u64);
+        self.budget.atlas_area += child.budget.atlas_area;
+        self.budget.oversize_image |= child.budget.oversize_image;
+        // Map occupied local tiles conservatively into the parent's physical
+        // tile grid, including nested layer peaks. Never admit an undercount.
+        let tw = child.tiles[0];
+        let occupied: Vec<_> = child
+            .commands
+            .iter()
+            .zip(&child.peak)
+            .enumerate()
+            .filter(|(_, (words, peak))| **words > 0 || **peak > 0)
+            .map(|(i, (words, peak))| {
+                (
+                    matrix.bounds([(i % tw * 16) as f32, (i / tw * 16) as f32, 16., 16.]),
+                    *words,
+                    *peak,
+                )
+            })
+            .collect();
+        for (b, words, peak) in occupied {
+            self.note_weighted(rect(b), words);
+            let [tw, th] = self.tiles;
+            let x0 = (b[0].max(0.) / 16.).floor() as usize;
+            let y0 = (b[1].max(0.) / 16.).floor() as usize;
+            let x1 = ((b[0] + b[2]).max(0.) / 16.).ceil() as usize;
+            let y1 = ((b[1] + b[3]).max(0.) / 16.).ceil() as usize;
+            for y in y0.min(th)..y1.min(th) {
+                for x in x0.min(tw)..x1.min(tw) {
+                    let i = y * tw + x;
+                    self.peak[i] = self.peak[i].max(self.depth[i].saturating_add(peak));
+                }
+            }
+        }
+        Ok(())
     }
     fn shape(&mut self, s: &Shape, images: Option<ImageResolver<'_, '_>>) -> Result<(), String> {
         let scene = &mut self.scene;
@@ -876,10 +1146,52 @@ impl GpuSceneEncoder {
                     }
                 }
             }
+            Shape::InnerShadow(b, r, blur, spread, offset, c) => {
+                if ![blur, spread, &offset[0], &offset[1]]
+                    .into_iter()
+                    .all(|v| v.is_finite())
+                    || !(0. ..=384.).contains(blur)
+                    || spread.abs() > 384.
+                    || r.iter().any(|v| !v.is_finite() || *v < 0.)
+                {
+                    return Err("invalid GPU inner shadow".into());
+                }
+                if c[3] <= 0. || b[2] <= 0. || b[3] <= 0. {
+                    return Ok(());
+                }
+                // Fill the shape with the colour, then cut out a blurred copy
+                // moved by the offset and shrunk by the spread.
+                let outline = corners(*b, *r)?;
+                self.layer(Mix::Normal, 1., &outline);
+                self.scene
+                    .fill(Fill::NonZero, Affine::IDENTITY, color(*c), None, &outline);
+                self.layer(Compose::DestOut, 1., &outline);
+                let hole = [
+                    b[0] + offset[0] + spread,
+                    b[1] + offset[1] + spread,
+                    b[2] - 2. * spread,
+                    b[3] - 2. * spread,
+                ];
+                if hole[2] > 0. && hole[3] > 0. {
+                    let radii = r.map(|v| (v - spread).max(0.).min(hole[2].min(hole[3]) * 0.5));
+                    blurred_rounded(&mut self.scene, hole, radii, *blur, Color::BLACK)?;
+                }
+                self.pop_layer();
+                self.pop_layer();
+            }
             Shape::Image(b, image, scale) => self.image(*b, image, *scale, images)?,
             Shape::Gradient(b, r, geometry, stops) => {
-                let stops: Vec<(f32, Color)> =
+                let mut stops: Vec<(f32, Color)> =
                     stops.iter().map(|(at, c)| (*at, color(*c))).collect();
+                // Vello's ramp starts from the first stop as if it were at 0
+                // and stops at the last as if at 1, so a first stop at 40%
+                // would fade from the top. Pin the ends, as CSS pads them.
+                if let Some(&(_, c)) = stops.first().filter(|s| s.0 > 0.) {
+                    stops.insert(0, (0., c));
+                }
+                if let Some(&(_, c)) = stops.last().filter(|s| s.0 < 1.) {
+                    stops.push((1., c));
+                }
                 let gradient = match *geometry {
                     raster::GradientGeometry::Linear { start, end } => {
                         vello::peniko::Gradient::new_linear(
@@ -1065,9 +1377,10 @@ impl GpuSceneEncoder {
         }
         // Pixel-grid hinting sharpens text on low-density (1x) displays;
         // Retina text keeps its true outlines, as native macOS text does.
-        let hint = painter.gpu_viewport().scale < 1.5;
+        let hint = self.transform_depth == 0 && painter.gpu_viewport().scale < 1.5;
         for (run, font) in runs.iter().zip(&fonts) {
             let darken = stem_darkening(run.size, run.color);
+            let coords = painter.gpu_coords(run.font, run.weight);
             for &(_, x, y) in &run.glyphs {
                 let s = f64::from(run.size);
                 self.note(Rect::new(
@@ -1090,6 +1403,7 @@ impl GpuSceneEncoder {
                 // alpha twice to outline glyphs.
                 .brush(color([run.color[0], run.color[1], run.color[2], 1.]))
                 .brush_alpha(run.color[3])
+                .normalized_coords(&coords)
                 .hint(hint);
             if let Some(embolden) = darken {
                 draw = draw.font_embolden(embolden);
@@ -1236,5 +1550,133 @@ impl GpuSceneEncoder {
             self.pop_layer();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tile_depth_tests {
+    use super::*;
+
+    #[test]
+    fn transformed_scenes_share_cache_and_atlas_budgets_and_restore_them_on_error() {
+        use crate::{motion::Affine2D, Viewport};
+        let mut p = RasterPainter::new(Viewport::new(300., 200., 1.).unwrap());
+        let clip = crate::Rect::new(0., 0., 300., 200.).unwrap();
+        let image = Image::from_rgba(8, 8, vec![255; 8 * 8 * 4]).unwrap();
+        let content = PaintBatch {
+            clip,
+            shapes: vec![Shape::Image([0., 0., 8., 8.], image.background(), 1.)],
+            glyphs: vec![],
+        };
+        let mut scene = GpuSceneEncoder::default();
+        let batches = (0..8)
+            .map(|i| PaintBatch {
+                clip,
+                shapes: vec![Shape::Transformed(
+                    Affine2D([1., 0., 0., 1., f64::from(i * 10), 0.]),
+                    std::sync::Arc::new(vec![content.clone()]),
+                    [300, 200],
+                )],
+                glyphs: vec![],
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..3 {
+            scene.encode(&batches, &mut p).unwrap();
+            assert_eq!(scene.images.len(), 1);
+            assert_eq!(scene.image_bytes, 256);
+            assert_eq!(
+                scene.budget.atlas_area, 100,
+                "one shared image, not one atlas entry per transform"
+            );
+            assert!(scene
+                .transform_children
+                .iter()
+                .all(|c| c.images.is_empty() && c.glyphs.is_empty() && c.fonts.is_empty()));
+        }
+        let mut broken = content;
+        broken.shapes.push(Shape::LayerEnd);
+        let batches = vec![PaintBatch {
+            clip,
+            shapes: vec![Shape::Transformed(
+                Affine2D::IDENTITY,
+                std::sync::Arc::new(vec![broken]),
+                [300, 200],
+            )],
+            glyphs: vec![],
+        }];
+        assert!(scene.encode(&batches, &mut p).is_err());
+        assert_eq!(scene.images.len(), 1);
+        assert_eq!(scene.image_bytes, 256);
+        assert!(scene.transform_children[0].images.is_empty());
+    }
+
+    #[test]
+    fn rectangle_command_accounting_matches_the_per_tile_oracle() {
+        let mut encoder = GpuSceneEncoder {
+            tiles: [17, 11],
+            commands: vec![0; 17 * 11],
+            command_edges: vec![0; 18 * 11],
+            budget: Budget {
+                row_tiles: vec![0; 11],
+                bin_rows: vec![0; 1],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut expected = vec![0u32; 17 * 11];
+        let mut seed = 73u32;
+        for _ in 0..1000 {
+            let mut next = || {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed % 400) as f64 - 64.
+            };
+            let (x, y) = (next(), next());
+            let r = Rect::new(x, y, x + next().abs(), y + next().abs());
+            encoder.note(r);
+            let r = r.intersect(Rect::new(0., 0., 272., 176.));
+            if !r.is_zero_area() {
+                for y in (r.y0 / 16.).floor() as usize..(r.y1 / 16.).ceil() as usize {
+                    for x in (r.x0 / 16.).floor() as usize..(r.x1 / 16.).ceil() as usize {
+                        expected[y * 17 + x] = expected[y * 17 + x].saturating_add(8);
+                    }
+                }
+            }
+        }
+        encoder.resolve_tile_commands();
+        assert_eq!(encoder.commands, expected);
+        // Resolving again must not count a rectangle a second time.
+        encoder.resolve_tile_commands();
+        assert_eq!(encoder.commands, expected);
+        encoder.command_edges.fill(0);
+        encoder.command_edges[0] = i64::from(u32::MAX) + 8;
+        encoder.command_edges[1] = -encoder.command_edges[0];
+        encoder.resolve_tile_commands();
+        assert_eq!(encoder.commands[0], u32::MAX);
+        assert!(encoder.commands[1..].iter().all(|v| *v == 0));
+    }
+
+    #[test]
+    fn popping_layers_only_decrements_covered_tiles_and_accepts_empty_edges() {
+        let mut encoder = GpuSceneEncoder {
+            tiles: [3, 2],
+            depth: vec![0, 0, 2, 0, 1, 2],
+            ..Default::default()
+        };
+        let mut pop = |area| {
+            encoder.scene.push_layer(
+                Fill::NonZero,
+                vello::peniko::BlendMode::default(),
+                1.,
+                Affine::IDENTITY,
+                &Rect::new(0., 0., 48., 32.),
+            );
+            encoder.open_tiles.push(area);
+            encoder.pop_layer();
+        };
+        pop([1, 0, 3, 2]);
+        pop([3, 0, 3, 2]); // clipped entirely beyond the right edge
+        pop([0, 2, 3, 2]); // clipped entirely beyond the bottom edge
+        assert_eq!(encoder.depth, [0, 0, 1, 0, 0, 1]);
+        assert!(encoder.open_tiles.is_empty());
     }
 }

@@ -1,4 +1,4 @@
-//! Volt UI catalog: a documentation-style showcase of every component, in the
+//! Volt UI Kit Catalog: a documentation-style showcase of every component, in the
 //! spirit of shadcn/ui and daisyUI docs. Each page shows live previews, the
 //! Rust that produced them, variations and an API reference.
 pub mod art;
@@ -13,8 +13,11 @@ mod landing;
 #[cfg(feature = "native")]
 pub mod lifecycle;
 pub mod motion_lab;
+pub mod motion_showcase;
 pub mod navigation_links;
 mod pages;
+#[allow(dead_code)]
+pub mod samples;
 #[cfg(feature = "native")]
 mod shell;
 #[cfg(all(test, feature = "native"))]
@@ -82,6 +85,8 @@ pub struct App {
     /// Explicit opt-in to winit compositor blur (private API on macOS).
     pub compositor_blur: bool,
     pub blur: bool,
+    /// Native host report; a request is not proof of visible compositor blur.
+    pub backdrop_status: String,
     pub sidebar_query: String,
     /// Site search (⌘K): open flag and query.
     pub palette: volt_ui_kit::ui::CommandPaletteState,
@@ -111,6 +116,24 @@ pub struct App {
     #[cfg(feature = "native")]
     pub requests: Option<UiSender<volt_ui_kit::native::ApplicationRequest>>,
     #[cfg(feature = "native")]
+    pub window_actions: Option<UiSender<volt_ui_kit::ui::WindowAction>>,
+    #[cfg(feature = "native")]
+    pub chrome: volt_ui_kit::native::WindowChrome,
+    #[cfg(feature = "native")]
+    pub window_state: volt_ui_kit::native::WindowState,
+    #[cfg(feature = "native")]
+    pub window_menu: Option<[f32; 2]>,
+    #[cfg(feature = "native")]
+    pub chrome_picker: Option<&'static str>,
+    #[cfg(feature = "native")]
+    pub chrome_panel_open: bool,
+    #[cfg(feature = "native")]
+    pub window_control_style: volt_ui_kit::ui::WindowControlStyle,
+    #[cfg(feature = "native")]
+    pub window_diagnostics: Option<volt_ui_kit::native::WindowDiagnostics>,
+    #[cfg(feature = "native")]
+    pub chrome_demo_maximized: bool,
+    #[cfg(feature = "native")]
     pub documents: documents::State,
     #[cfg(feature = "native")]
     pub services: desktop_services::State,
@@ -125,10 +148,6 @@ pub struct App {
     pub log_entries: Vec<String>,
     pub volume: f32,
     pub price: f32,
-    pub fruit: u8,
-    pub fruit_open: bool,
-    pub timezone: u8,
-    pub timezone_open: bool,
     pub dialog_open: bool,
     pub delete_open: bool,
     pub menu_open: bool,
@@ -138,8 +157,6 @@ pub struct App {
     pub popover_open: bool,
     pub width: f32,
     pub height: f32,
-    pub sort: Option<(u8, SortDirection)>,
-    pub row: Option<u32>,
     pub expanded: Vec<u16>,
     pub file: Option<u16>,
     pub window: Range<usize>,
@@ -148,13 +165,15 @@ pub struct App {
     pub reveal: bool,
     /// Sign-in demo: the password is shown in plain text.
     pub show_password: bool,
-    pub liked: bool,
     pub last_action: String,
     pub image: Image,
     /// Demo state for the parity component pages.
     pub kit: kit::State,
+    /// Runnable component recipe state; both table previews use this one table.
+    pub samples: samples::State,
     /// The landing page's live counter demo.
     pub counter: u32,
+    pub gallery: motion_showcase::State,
     #[cfg(not(feature = "native"))]
     pub web_section: String,
     // Background task demo.
@@ -171,6 +190,24 @@ impl App {
         Self {
             #[cfg(feature = "native")]
             requests: None,
+            #[cfg(feature = "native")]
+            window_actions: None,
+            #[cfg(feature = "native")]
+            chrome: if cfg!(target_os = "macos") { volt_ui_kit::native::WindowChrome::Overlay } else { volt_ui_kit::native::WindowChrome::Native },
+            #[cfg(feature = "native")]
+            window_state: Default::default(),
+            #[cfg(feature = "native")]
+            window_menu: None,
+            #[cfg(feature = "native")]
+            chrome_picker: None,
+            #[cfg(feature = "native")]
+            chrome_panel_open: false,
+            #[cfg(feature = "native")]
+            window_control_style: Default::default(),
+            #[cfg(feature = "native")]
+            window_diagnostics: None,
+            #[cfg(feature = "native")]
+            chrome_demo_maximized: false,
             #[cfg(feature = "native")]
             documents: documents::State::default(),
             #[cfg(feature = "native")]
@@ -194,6 +231,7 @@ impl App {
             opacity: 72,
             compositor_blur: false,
             blur: true,
+            backdrop_status: "Blur status is reported by the native window host".into(),
             sidebar_query: String::new(),
             palette: Default::default(),
             nav_open: false,
@@ -218,10 +256,6 @@ impl App {
                 .into(),
             volume: 0.6,
             price: 40.,
-            fruit: 1,
-            fruit_open: false,
-            timezone: 2,
-            timezone_open: false,
             dialog_open: false,
             delete_open: false,
             menu_open: false,
@@ -231,8 +265,6 @@ impl App {
             popover_open: false,
             width: 100.,
             height: 25.,
-            sort: Some((0, SortDirection::Ascending)),
-            row: Some(2),
             expanded: vec![1, 2],
             file: Some(4),
             window: 0..14,
@@ -240,11 +272,17 @@ impl App {
             split: 0.4,
             reveal: true,
             show_password: false,
-            liked: false,
             last_action: "Nothing yet".into(),
             image: art::sample_landscape(),
             kit: kit::State::default(),
+            samples: samples::State {
+                select: samples::select::App { fruit: 1, country: Some(0), ..Default::default() },
+                select_disabled: samples::select_disabled::App { zone: 2, ..Default::default() },
+                table: samples::table::App { row: Some(2), sort: Some((0, SortDirection::Ascending)) },
+                ..Default::default()
+            },
             counter: 0,
+            gallery: motion_showcase::State::default(),
             #[cfg(not(feature = "native"))]
             web_section: String::new(),
             #[cfg(feature = "native")]
@@ -263,8 +301,9 @@ impl App {
         self.palette.query.clear();
         self.nav_open = false;
         // Close every open overlay that belonged to the previous page.
-        self.fruit_open = false;
-        self.timezone_open = false;
+        self.samples.select.open = false;
+        self.samples.select.country_search.open = false;
+        self.samples.select_disabled.open = false;
         self.menu_open = false;
         self.actions_open = false;
         self.context_open = false;
@@ -360,6 +399,7 @@ impl Drop for App {
 #[cfg(feature = "native")]
 pub fn update(app: &mut App, message: Message) {
     desktop_services::drain(app);
+    navigation_links::drain(app);
     let (generation, step) = match message {
         Message::NotificationWake => return,
         Message::File { generation, result } => {

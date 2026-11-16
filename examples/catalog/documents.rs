@@ -37,8 +37,19 @@ impl State {
 }
 #[derive(Debug)]
 pub enum Completion {
-    Loaded { path: PathBuf, text: String },
-    Saved { path: PathBuf, snapshot: String },
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    Dialog {
+        save: bool,
+        path: Option<PathBuf>,
+    },
+    Loaded {
+        path: PathBuf,
+        text: String,
+    },
+    Saved {
+        path: PathBuf,
+        snapshot: String,
+    },
 }
 /// Completion retries are worker-only and bounded by channel closure. There is
 /// one document operation at a time; normal progress coalesces in the other demo.
@@ -85,10 +96,43 @@ pub fn open(app: &mut App) {
 fn choose_open(app: &mut App) {
     app.documents.after = None;
     app.documents.prompt = false;
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    request_dialog(
+        app,
+        false,
+        FileDialogOptions::new("Open UTF-8 notes (8 KiB maximum)"),
+    );
+    #[cfg(not(all(feature = "native-desktop", target_os = "linux")))]
     match file_dialog::open_file(&FileDialogOptions::new("Open UTF-8 notes (8 KiB maximum)")) {
         Ok(Some(path)) => load_path(app, path),
         Ok(None) => app.documents.status = "Open cancelled; document unchanged".into(),
         Err(e) => app.documents.error = Some(e.to_string()),
+    }
+}
+#[cfg(all(feature = "native-desktop", target_os = "linux"))]
+fn request_dialog(app: &mut App, save: bool, options: FileDialogOptions) {
+    let sender = app.sender.clone().expect("ready checked");
+    app.documents.generation = app.documents.generation.wrapping_add(1);
+    let generation = app.documents.generation;
+    app.documents.busy = true;
+    app.documents.status = "Waiting for desktop file chooser…".into();
+    let callback = move |result: Result<Option<PathBuf>, file_dialog::FileDialogError>| {
+        deliver(
+            sender,
+            generation,
+            result
+                .map(|path| Completion::Dialog { save, path })
+                .map_err(|e| e.to_string()),
+        )
+    };
+    let result = if save {
+        file_dialog::request_save_file(options, callback)
+    } else {
+        file_dialog::request_open_file(options, callback)
+    };
+    if let Err(e) = result {
+        app.documents.busy = false;
+        app.documents.error = Some(e.to_string());
     }
 }
 pub fn load_path(app: &mut App, path: PathBuf) {
@@ -144,6 +188,13 @@ fn save_as_or_current(app: &mut App, save_as: bool) {
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
             .unwrap_or("notes.txt");
+        #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+        {
+            let options = FileDialogOptions::new("Save UTF-8 notes").suggested_name(name);
+            request_dialog(app, true, options);
+            return;
+        }
+        #[cfg(not(all(feature = "native-desktop", target_os = "linux")))]
         match file_dialog::save_file(
             &FileDialogOptions::new("Save UTF-8 notes").suggested_name(name),
         ) {
@@ -205,6 +256,24 @@ pub fn finish(app: &mut App, generation: u64, result: &Result<Completion, String
             app.documents.error = Some(e.clone());
             app.documents.status = "Operation failed; draft retained".into();
             app.documents.prompt = app.documents.after.is_some();
+            return;
+        }
+        #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+        Ok(Completion::Dialog { save, path }) => {
+            match path {
+                Some(path) => {
+                    if *save {
+                        save_path(app, path.clone(), true);
+                    } else {
+                        load_path(app, path.clone());
+                    }
+                }
+                None => {
+                    app.documents.after = None;
+                    app.documents.prompt = false;
+                    app.documents.status = "File dialog cancelled; document unchanged".into();
+                }
+            }
             return;
         }
         Ok(Completion::Loaded { path, text }) => {
@@ -272,7 +341,7 @@ pub fn doc(app: &App) -> Doc {
     } else {
         spacer().height(0.).into()
     };
-    Doc {sections:vec![Section {id:"document-files",title:"A real notes document",note:"Native macOS file panels and worker-thread UTF-8 I/O. 8 KiB maximum; failed/cancelled operations retain your draft. No automatic saving or hidden path selection.",
+    Doc {sections:vec![Section {id:"document-files",title:"A real notes document",note:"Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KiB (8,192 bytes). If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
         demo:vstack![
             hstack![text(name).font_family("SF Mono").font_size(13.),spacer(),badge(if state.busy {"Working…"} else if state.dirty(){"Unsaved"} else {"No unsaved changes"})],
             hstack![
@@ -281,8 +350,8 @@ pub fn doc(app: &App) -> Doc {
                 button("Save As…").key("files-save-as").variant(ButtonVariant::Outline).enabled(!state.busy).on_click(|app:&mut App|lifecycle::request(app,ApplicationRequest::Command("save-as-file".into()))),
             ].gap(8.,Axis::Horizontal),
             text_area(&state.text).key("files-editor").accessible_label("File document editor").height(240.).soft_wrap(true).read_only(state.busy).font_family("SF Mono").font_size(13.).on_change(|app:&mut App,text|app.documents.text=text),
-            text(if state.status.is_empty(){"Choose a file or write a new note. Cmd+O opens; Cmd+S saves the active notes document."} else {&state.status}).font_size(12.).color(ColorToken::Muted),error,
-            text("Matching saves detect ordinary external edits. This is not a hostile-directory sandbox or a multi-process transaction; ACLs/xattrs are not preserved.").font_size(12.).color(ColorToken::Muted),
+            text(if state.status.is_empty(){"Write a note, or open one with Cmd+O. Cmd+S saves it."} else {&state.status}).font_size(12.).color(ColorToken::Muted),error,
+            text("If another app changed the file after you opened it, saving stops and tells you instead of overwriting it. This guards against ordinary edits, not against other programs deliberately racing the save. Saving doesn't keep the file's extended attributes or access-control lists.").font_size(12.).color(ColorToken::Muted),
         ].width(640.).gap(14.,Axis::Vertical).into(),
         code:r#"// Application owns document state and paths.
 // Native panels choose a path; read/write on a worker.
@@ -291,7 +360,7 @@ let selected = file_dialog::open_file(&FileDialogOptions::new("Open notes"))?;
 // Worker: files::save_text_file(&path, &snapshot, SavePolicy::MatchContents(&original))
 // Main-thread completion marks ONLY that saved snapshot clean.
 // Close stays vetoed until saving succeeds; errors keep the draft."#,
-    }],api:vec![("file_dialog::open_file / save_file", "Main-thread, native-desktop macOS panels; Cancel is Ok(None)."),("files::read_text_file", "Bounded UTF-8 regular file; no silent truncation."),("files::save_text_file", "Private sibling + sync + commit; explicit create/replace policy."),("SavePolicy::MatchContents(original)","Rejects ordinary external edits before replacement; not a cross-process lock.")]}
+    }],api:vec![("file_dialog::open_file / save_file", "macOS panels; Linux uses request_open_file/request_save_file callbacks without blocking the UI. Cancel is Ok(None)."),("files::read_text_file", "Bounded UTF-8 regular file; no silent truncation."),("files::save_text_file", "Private sibling + sync + commit; explicit create/replace policy."),("SavePolicy::MatchContents(original)","Rejects ordinary external edits before replacement; not a cross-process lock.")]}
 }
 pub fn overlay(app: &App) -> El<App> {
     let error: El<App> = if let Some(error) = &app.documents.error {
@@ -300,7 +369,7 @@ pub fn overlay(app: &App) -> El<App> {
         spacer().height(0.).into()
     };
     dialog(vstack![
-        text(if app.documents.busy {"A file operation is running. Keep the window open until it completes; Cancel cancels the pending close/open action, not the disk operation."} else {"This notes document has unsaved changes. Save writes to disk; Discard restores the last saved text; Cancel keeps editing."}).font_size(14.),
+        text(if app.documents.busy {"A file is still being opened or saved. Keep the window open until it finishes. Cancel stops the close or open you asked for, not the file operation itself."} else {"This notes document has unsaved changes. Save writes to disk; Discard restores the last saved text; Cancel keeps editing."}).font_size(14.),
         error,
         hstack![spacer(),button("Cancel").key("files-close-cancel").variant(ButtonVariant::Outline).on_click(cancel),
             button("Discard").key("files-close-discard").variant(ButtonVariant::Danger).enabled(!app.documents.busy).on_click(discard),

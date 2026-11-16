@@ -44,7 +44,7 @@ class CatalogLauncherTests(unittest.TestCase):
         self.assertIn('name = "volt-ui-kit"\nversion = "' + version + '"',
                       (ROOT / 'Cargo.lock').read_text())
         self.assertIn('## ' + version + ' (', (ROOT / 'CHANGELOG.md').read_text())
-        self.assertIn(minor + ' / Pre-1.0', (ROOT / 'scripts/generate_docs.cjs').read_text())
+        self.assertIn('brand-version">' + minor + '<', (ROOT / 'scripts/generate_docs.cjs').read_text())
         self.assertIn('brand-version">' + minor + '<', (ROOT / 'docs/index.html').read_text())
 
     def test_help_and_invalid_options_never_build(self):
@@ -61,7 +61,9 @@ class CatalogLauncherTests(unittest.TestCase):
         self.assertIn('native-gpu,native-desktop,native-notifications', calls)
         self.assertIn('--locked', calls)
         self.assertIn('executed', calls)
-        self.assertIn('macOS-only', result.stdout)
+        self.assertIn('Linux desktop services', result.stdout)
+        self.assertIn('need desktop session services', result.stdout)
+        self.assertNotIn('macOS-only', result.stdout)
         self.assertFalse(leftovers)
 
     def test_macos_registers_the_signed_bundle_before_opening(self):

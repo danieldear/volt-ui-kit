@@ -27,10 +27,6 @@ fn selectable(b: &LayoutBox) -> bool {
     b.kind == Kind::Text && b.style.selectable && b.editor.is_none() && !b.text.is_empty()
 }
 
-fn contains(r: [f32; 4], x: f32, y: f32) -> bool {
-    x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]
-}
-
 /// The word (or run of spaces/punctuation) around byte `at`.
 fn word_at(text: &str, at: usize) -> (usize, usize) {
     for (start, word) in text.split_word_bound_indices() {
@@ -46,10 +42,8 @@ impl Runtime {
     fn selectable_at(&self, x: f32, y: f32) -> Option<&LayoutBox> {
         self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
             (selectable(b)
-                && contains(b.bounds.bounds(), x, y)
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.content_clip.as_ref().is_none_or(|r| r.contains(x, y))
+                && self.hit_bounds(b, x, y)
+                && self.hit_clip(b, x, y)
                 && self.scope_allows_id(&b.id)
                 && !self.portal_passthrough(&b.id)
                 && !self.input_occluded(index, x, y))
@@ -86,11 +80,12 @@ impl Runtime {
             .iter()
             .rev()
             .filter(visible)
-            .find(|b| b.bounds.bounds()[1] <= y)
+            .find(|b| self.world_transform(b).bounds(b.bounds.bounds())[1] <= y)
             .or_else(|| self.boxes.iter().find(visible))
     }
 
-    fn offset_in(b: &LayoutBox, x: f32, y: f32, m: &mut impl TextMetrics) -> usize {
+    fn offset_in(&self, b: &LayoutBox, x: f32, y: f32, m: &mut impl TextMetrics) -> usize {
+        let [x, y] = self.input_point(b, x, y).unwrap_or([x, y]);
         let r = b.bounds.bounds();
         // Points beyond the box snap to its edges.
         if y >= r[1] + r[3] {
@@ -120,7 +115,7 @@ impl Runtime {
             return self.clear_text_selection();
         };
         let id = b.id.clone();
-        let at = Self::offset_in(b, x, y, m);
+        let at = self.offset_in(b, x, y, m);
         let (start, end) = match clicks {
             0 | 1 => (at, at),
             2 => word_at(&b.text, at),
@@ -152,7 +147,7 @@ impl Runtime {
         let Some(b) = self.selectable_near(x, y) else {
             return false;
         };
-        let at = Self::offset_in(b, x, y, m);
+        let at = self.offset_in(b, x, y, m);
         let s = &self.text_selection;
         let (anchor, focus) = match (s.unit, &s.pivot) {
             // A double- or triple-click drag keeps what the press selected

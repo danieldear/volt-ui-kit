@@ -576,7 +576,7 @@
     "group": "Components",
     "sections": [
       {
-        "code": "button(\"Primary\").variant(ButtonVariant::Primary).on_click(save)\nbutton(\"Soft\").variant(ButtonVariant::Soft)\nbutton(\"Outline\").variant(ButtonVariant::Outline)\nbutton(\"Ghost\").variant(ButtonVariant::Ghost)\nbutton(\"Delete\").variant(ButtonVariant::Danger)",
+        "code": "//! Button variants: the same builders used by the Catalog.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\n#[derive(Default)]\npub struct App {}\n\npub fn view(_app: &App) -> Element<App> {\n    line(vec![\n        button(\"Primary\")\n            .key(\"b-primary\")\n            .variant(ButtonVariant::Primary)\n            .on_click(noop)\n            .into(),\n        button(\"Neutral\").key(\"b-neutral\").on_click(noop).into(),\n        button(\"Soft\")\n            .key(\"b-soft\")\n            .variant(ButtonVariant::Soft)\n            .on_click(noop)\n            .into(),\n        button(\"Outline\")\n            .key(\"b-outline\")\n            .variant(ButtonVariant::Outline)\n            .on_click(noop)\n            .into(),\n        button(\"Ghost\")\n            .key(\"b-ghost\")\n            .variant(ButtonVariant::Ghost)\n            .on_click(noop)\n            .into(),\n        button(\"Delete\")\n            .key(\"b-danger\")\n            .variant(ButtonVariant::Danger)\n            .on_click(noop)\n            .into(),\n    ])\n}\n\nfn line(items: Vec<Element<App>>) -> Element<App> {\n    hstack(items)\n        .gap(12., Axis::Horizontal)\n        .align(Align::Center)\n        .into()\n}\nfn noop(_: &mut App) {}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    Application::new(\"Button variants\", App::default(), |app| {\n        vstack![view(app)]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(760, 200)\n    .run()\n}\n",
         "height": 200,
         "id": "button-variants",
         "image": "button-button-variants.png",
@@ -585,7 +585,7 @@
         "width": 1000
       },
       {
-        "code": "button(\"Small\").size(ControlSize::Small)\nbutton(\"Large\").size(ControlSize::Large)",
+        "code": "//! Button sizes: the same builders used by the Catalog.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\n#[derive(Default)]\npub struct App {}\n\npub fn view(_app: &App) -> Element<App> {\n    line(vec![\n        button(\"Small\")\n            .key(\"b-small\")\n            .size(ControlSize::Small)\n            .variant(ButtonVariant::Outline)\n            .on_click(noop)\n            .into(),\n        button(\"Medium\")\n            .key(\"b-medium\")\n            .size(ControlSize::Medium)\n            .variant(ButtonVariant::Outline)\n            .on_click(noop)\n            .into(),\n        button(\"Large\")\n            .key(\"b-large\")\n            .size(ControlSize::Large)\n            .variant(ButtonVariant::Outline)\n            .on_click(noop)\n            .into(),\n    ])\n}\n\nfn line(items: Vec<Element<App>>) -> Element<App> {\n    hstack(items)\n        .gap(12., Axis::Horizontal)\n        .align(Align::Center)\n        .into()\n}\nfn noop(_: &mut App) {}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    Application::new(\"Button sizes\", App::default(), |app| {\n        vstack![view(app)]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(560, 200)\n    .run()\n}\n",
         "height": 200,
         "id": "button-sizes",
         "image": "button-button-sizes.png",
@@ -594,7 +594,7 @@
         "width": 1000
       },
       {
-        "code": "button(if app.liked { \"Liked\" } else { \"Like\" })\n    .variant(if app.liked { ButtonVariant::Primary } else { ButtonVariant::Outline })\n    .animation(Animation::ease_out().duration_ms(180))\n    .on_click(|app: &mut App| app.liked = !app.liked)\nbutton(\"Sort by date\").disclosure(false)",
+        "code": "//! Button states: the same builders used by the Catalog.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\n#[derive(Default)]\npub struct App {\n    pub liked: bool,\n}\n\npub fn view(app: &App) -> Element<App> {\n    line(vec![\n        button(\"Disabled\")\n            .key(\"b-disabled\")\n            .variant(ButtonVariant::Primary)\n            .enabled(false)\n            .on_click(noop)\n            .into(),\n        button(if app.liked { \"Liked\" } else { \"Like\" })\n            .key(\"b-like\")\n            .variant(if app.liked {\n                ButtonVariant::Primary\n            } else {\n                ButtonVariant::Outline\n            })\n            .animation(Animation::ease_out().duration_ms(180))\n            .on_click(|app: &mut App| app.liked = !app.liked)\n            .into(),\n        button(\"Sort by date\")\n            .key(\"b-disclosure\")\n            .disclosure(false)\n            .width(150.)\n            .variant(ButtonVariant::Outline)\n            .on_click(noop)\n            .into(),\n        button(\"Left aligned\")\n            .key(\"b-align\")\n            .label_align(Align::Start)\n            .width(150.)\n            .on_click(noop)\n            .into(),\n    ])\n}\n\nfn line(items: Vec<Element<App>>) -> Element<App> {\n    hstack(items)\n        .gap(12., Axis::Horizontal)\n        .align(Align::Center)\n        .into()\n}\nfn noop(_: &mut App) {}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    Application::new(\"Button states\", App::default(), |app| {\n        vstack![view(app)]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(760, 200)\n    .run()\n}\n",
         "height": 200,
         "id": "button-states",
         "image": "button-button-states.png",
@@ -661,7 +661,7 @@
     "group": "Components",
     "sections": [
       {
-        "code": "toolbar![\n    button(\"Back\").variant(ButtonVariant::Ghost).size(ControlSize::Small).on_click(back),\n    spacer(),\n    badge(\"Draft\"),\n    button(\"Publish\").variant(ButtonVariant::Primary).on_click(publish),\n]",
+        "code": "toolbar![\n    button(\"Back\").variant(ButtonVariant::Ghost).size(ControlSize::Small).on_click(back),\n    spacer(),\n    badge(\"Draft\").font_size(12.),\n    button(\"Publish\").variant(ButtonVariant::Primary).on_click(publish),\n]",
         "height": 200,
         "id": "toolbar",
         "image": "toolbar-toolbar.png",
@@ -769,6 +769,14 @@
         "Bounded Back/Forward history; mount only the current route"
       ],
       [
+        "page.navigation_title(..).large_title(..).bar_button(..)",
+        "The page's bar: drawn by Volt on desktop, web and Android; UIKit's navigation bar on iOS"
+      ],
+      [
+        "navigation_stack(..).on_back(f)",
+        "Back control; on iOS also the back button and swipe"
+      ],
+      [
         "link(label, url).on_open(f)",
         "Validated HTTP(S) links; no automatic I/O"
       ],
@@ -825,7 +833,7 @@
         "width": 1000
       },
       {
-        "code": "link(\"Documentation ↗\", \"https://example.com/docs\")\n    .key(\"documentation\")\n    .on_open(|app: &mut App, url| {\n        // Your policy: capture, confirm, or explicitly dispatch.\n        app.status = match volt_ui_kit::native::links::open_url(&url) {\n            Ok(()) => \"Browser request accepted\".into(),\n            Err(error) => error.to_string(),\n        };\n    });\n// HTTP(S) only. No credentials, file URLs or executable schemes.",
+        "code": "link(\"Documentation ↗\", \"https://example.com/docs\")\n    .key(\"documentation\")\n    .on_open(|app: &mut App, url| {\n        // Your policy: capture, confirm, or explicitly dispatch.\n        if let Err(error) = volt_ui_kit::native::links::request_open_url(url, move |result| {\n            // Marshal result to your UI mailbox; Linux completes on a worker.\n        }) { app.status = error.to_string(); }\n    });\n// HTTP(S) only. No credentials, file URLs or executable schemes.",
         "height": 459,
         "id": "navigation-links",
         "image": "navigation-navigation-links.png",
@@ -1051,7 +1059,7 @@
     "group": "Components",
     "sections": [
       {
-        "code": "select(fruits.iter().enumerate().map(|(i, f)| select_item(i, *f)))\n    .key(\"fruit\")\n    .selected(app.fruit)\n    .open(app.fruit_open)\n    .on_select(|app: &mut App, v| app.fruit = v)\n    .on_open_change(|app: &mut App, open| app.fruit_open = open)",
+        "code": "//! Select and combobox recipes. Run this file with `--compare` to see both.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\npub const FRUITS: [&str; 5] = [\"Apple\", \"Banana\", \"Blueberry\", \"Grapes\", \"Pineapple\"];\n#[derive(Default)]\npub struct App {\n    pub fruit: u8,\n    pub open: bool,\n    pub country: Option<u8>,\n    pub country_search: ComboboxState,\n}\n\npub fn view(app: &App) -> Element<App> {\n    select(\n        FRUITS\n            .iter()\n            .enumerate()\n            .map(|(i, f)| select_item(i as u8, *f)),\n    )\n    .key(\"select-fruit\")\n    .selected(app.fruit)\n    .open(app.open)\n    .width(220.)\n    .on_select(|app: &mut App, v| app.fruit = v)\n    .on_open_change(|app: &mut App, open| app.open = open)\n    .into()\n}\n\npub fn comparison_view(app: &App) -> Element<App> {\n    let countries = [\n        \"Argentina\",\n        \"Australia\",\n        \"Austria\",\n        \"Belgium\",\n        \"Brazil\",\n        \"Canada\",\n        \"Chile\",\n        \"Denmark\",\n        \"Finland\",\n        \"France\",\n        \"Germany\",\n        \"India\",\n        \"Ireland\",\n        \"Italy\",\n        \"Japan\",\n        \"Kenya\",\n        \"Mexico\",\n        \"Netherlands\",\n        \"New Zealand\",\n        \"Norway\",\n        \"Portugal\",\n        \"Singapore\",\n        \"South Korea\",\n        \"Spain\",\n        \"Sweden\",\n        \"Switzerland\",\n        \"United Kingdom\",\n        \"United States\",\n    ];\n    hstack![\n        vstack![\n            muted(\"Select · 5 fruits\"),\n            text(FRUITS[app.fruit as usize])\n                .font_size(14.)\n                .font_weight(500),\n            muted(\"(the first example above)\").font_size(12.),\n        ]\n        .gap(6., Axis::Vertical)\n        .width(220.),\n        vstack![\n            muted(\"Combobox · 28 countries\"),\n            combobox(\n                countries.iter().enumerate().map(|(i, c)| (i as u8, *c)),\n                &app.country_search,\n            )\n            .key(\"select-country\")\n            .selected(app.country)\n            .placeholder(\"Search countries…\")\n            .width(240.)\n            .state(|app: &mut App| &mut app.country_search)\n            .on_select(|app: &mut App, v| app.country = Some(v)),\n        ]\n        .gap(6., Axis::Vertical),\n    ]\n    .gap(40., Axis::Horizontal)\n    .into()\n}\nfn muted(value: impl Into<String>) -> volt_ui_kit::ui::Text<App> {\n    text(value).font_size(13.).color(ColorToken::Muted)\n}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    let compare = std::env::args().any(|arg| {\n        matches!(\n            arg.as_str(),\n            \"--compare\" | \"select-vs-combobox\" | \"select_vs_combobox\"\n        )\n    });\n    Application::new(\"Select and combobox\", App::default(), move |app| {\n        let demo = if compare {\n            vstack![view(app), comparison_view(app)]\n                .gap(24., Axis::Vertical)\n                .into()\n        } else {\n            view(app)\n        };\n        vstack![demo]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(640, 400)\n    .run()\n}\n",
         "height": 200,
         "id": "select",
         "image": "select-select.png",
@@ -1060,7 +1068,7 @@
         "width": 1000
       },
       {
-        "code": "select_item(1, \"Mountain (UTC−7)\").enabled(false)",
+        "code": "//! Disabled options are skipped by pointer and keyboard.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\nconst ZONES: [&str; 6] = [\n    \"Pacific (UTC−8)\",\n    \"Mountain (UTC−7)\",\n    \"Central (UTC−6)\",\n    \"Eastern (UTC−5)\",\n    \"London (UTC+0)\",\n    \"Tokyo (UTC+9)\",\n];\n#[derive(Default)]\npub struct App {\n    pub zone: u8,\n    pub open: bool,\n}\n\npub fn view(app: &App) -> Element<App> {\n    let tz = select(\n        ZONES\n            .iter()\n            .enumerate()\n            .map(|(i, z)| select_item(i as u8, *z).enabled(i != 1)),\n    )\n    .key(\"select-tz\")\n    .selected(app.zone)\n    .open(app.open)\n    .width(260.)\n    .on_select(|app: &mut App, v| app.zone = v)\n    .on_open_change(|app: &mut App, open| app.open = open);\n    tz.into()\n}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    Application::new(\"Disabled options\", App::default(), |app| {\n        vstack![view(app)]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(420, 360)\n    .run()\n}\n",
         "height": 200,
         "id": "select-disabled",
         "image": "select-select-disabled.png",
@@ -1069,7 +1077,7 @@
         "width": 1000
       },
       {
-        "code": "// Few options, no typing:\nselect(sizes).key(\"size\").selected(app.size)\n// Many options, type to filter:\ncombobox(countries, &app.country_search)\n    .key(\"country\")\n    .state(|app: &mut App| &mut app.country_search)\n    .on_select(|app: &mut App, c| app.country = Some(c))",
+        "code": "//! Select and combobox recipes. Run this file with `--compare` to see both.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\npub const FRUITS: [&str; 5] = [\"Apple\", \"Banana\", \"Blueberry\", \"Grapes\", \"Pineapple\"];\n#[derive(Default)]\npub struct App {\n    pub fruit: u8,\n    pub open: bool,\n    pub country: Option<u8>,\n    pub country_search: ComboboxState,\n}\n\npub fn view(app: &App) -> Element<App> {\n    select(\n        FRUITS\n            .iter()\n            .enumerate()\n            .map(|(i, f)| select_item(i as u8, *f)),\n    )\n    .key(\"select-fruit\")\n    .selected(app.fruit)\n    .open(app.open)\n    .width(220.)\n    .on_select(|app: &mut App, v| app.fruit = v)\n    .on_open_change(|app: &mut App, open| app.open = open)\n    .into()\n}\n\npub fn comparison_view(app: &App) -> Element<App> {\n    let countries = [\n        \"Argentina\",\n        \"Australia\",\n        \"Austria\",\n        \"Belgium\",\n        \"Brazil\",\n        \"Canada\",\n        \"Chile\",\n        \"Denmark\",\n        \"Finland\",\n        \"France\",\n        \"Germany\",\n        \"India\",\n        \"Ireland\",\n        \"Italy\",\n        \"Japan\",\n        \"Kenya\",\n        \"Mexico\",\n        \"Netherlands\",\n        \"New Zealand\",\n        \"Norway\",\n        \"Portugal\",\n        \"Singapore\",\n        \"South Korea\",\n        \"Spain\",\n        \"Sweden\",\n        \"Switzerland\",\n        \"United Kingdom\",\n        \"United States\",\n    ];\n    hstack![\n        vstack![\n            muted(\"Select · 5 fruits\"),\n            text(FRUITS[app.fruit as usize])\n                .font_size(14.)\n                .font_weight(500),\n            muted(\"(the first example above)\").font_size(12.),\n        ]\n        .gap(6., Axis::Vertical)\n        .width(220.),\n        vstack![\n            muted(\"Combobox · 28 countries\"),\n            combobox(\n                countries.iter().enumerate().map(|(i, c)| (i as u8, *c)),\n                &app.country_search,\n            )\n            .key(\"select-country\")\n            .selected(app.country)\n            .placeholder(\"Search countries…\")\n            .width(240.)\n            .state(|app: &mut App| &mut app.country_search)\n            .on_select(|app: &mut App, v| app.country = Some(v)),\n        ]\n        .gap(6., Axis::Vertical),\n    ]\n    .gap(40., Axis::Horizontal)\n    .into()\n}\nfn muted(value: impl Into<String>) -> volt_ui_kit::ui::Text<App> {\n    text(value).font_size(13.).color(ColorToken::Muted)\n}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    let compare = std::env::args().any(|arg| {\n        matches!(\n            arg.as_str(),\n            \"--compare\" | \"select-vs-combobox\" | \"select_vs_combobox\"\n        )\n    });\n    Application::new(\"Select and combobox\", App::default(), move |app| {\n        let demo = if compare {\n            vstack![view(app), comparison_view(app)]\n                .gap(24., Axis::Vertical)\n                .into()\n        } else {\n            view(app)\n        };\n        vstack![demo]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(640, 400)\n    .run()\n}\n",
         "height": 200,
         "id": "select-vs-combobox",
         "image": "select-select-vs-combobox.png",
@@ -1477,7 +1485,7 @@
     "group": "Components",
     "sections": [
       {
-        "code": "collapsible(\"What is Volt UI?\", body).key(\"about\").open(app.open)\n    .on_toggle(|app: &mut App, open| app.open = open)",
+        "code": "collapsible(\"What is Volt UI Kit?\", body).key(\"about\").open(app.open)\n    .on_toggle(|app: &mut App, open| app.open = open)",
         "height": 200,
         "id": "disc-collapsible",
         "image": "overlays-disc-collapsible.png",
@@ -1776,7 +1784,7 @@
     "group": "Components",
     "sections": [
       {
-        "code": "table(columns, rows)\n.key(\"invoices\")\n.rounded(12.) // default outer corners\n.selected(app.row)\n.on_select(|app: &mut App, row| app.row = Some(row))\n.on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))",
+        "code": "//! Invoice table recipes. Run with `--square` for the square-corner variant.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\n#[derive(Default)]\npub struct App {\n    pub row: Option<u32>,\n    pub sort: Option<(u8, SortDirection)>,\n}\n\npub fn view(app: &App) -> Element<App> {\n    invoice_table(app, false)\n}\npub fn square_view(app: &App) -> Element<App> {\n    invoice_table(app, true)\n}\n\npub const INVOICES: [(&str, &str, &str, &str); 6] = [\n    (\"INV001\", \"Paid\", \"Credit card\", \"$250.00\"),\n    (\"INV002\", \"Pending\", \"PayPal\", \"$150.00\"),\n    (\"INV003\", \"Unpaid\", \"Bank transfer\", \"$350.00\"),\n    (\"INV004\", \"Paid\", \"Credit card\", \"$450.00\"),\n    (\"INV005\", \"Paid\", \"PayPal\", \"$550.00\"),\n    (\"INV006\", \"Pending\", \"Bank transfer\", \"$200.00\"),\n];\nfn invoice_table(app: &App, square: bool) -> Element<App> {\n    let key = if square {\n        \"invoices-square\"\n    } else {\n        \"invoices\"\n    };\n    let row_prefix = if square { \"inv-square\" } else { \"inv\" };\n    let mut t = table(\n        [\n            table_column(0u8, \"Invoice\").width(130.).sortable(true),\n            table_column(1, \"Status\").width(120.).sortable(true),\n            table_column(2, \"Method\").width(160.).sortable(false),\n            table_column(3, \"Amount\")\n                .width(110.)\n                .align(Align::End)\n                .sortable(true),\n        ],\n        INVOICES.iter().enumerate().map(|(i, r)| {\n            table_row(i as u32, [r.0, r.1, r.2, r.3]).key(format!(\"{row_prefix}-{i}\"))\n        }),\n    )\n    .key(key)\n    .width(600.)\n    .rounded(if square { 0. } else { 12. })\n    .accessible_label(if square {\n        \"Square invoices\"\n    } else {\n        \"Rounded invoices\"\n    })\n    .selected(app.row)\n    .on_select(|app: &mut App, r| app.row = Some(r))\n    .on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)));\n    if let Some((column, direction)) = app.sort {\n        t = t.sort(column, direction);\n    }\n    t.into()\n}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    let square = std::env::args()\n        .any(|arg| matches!(arg.as_str(), \"--square\" | \"table-square\" | \"table_square\"));\n    Application::new(\"Invoices\", App::default(), move |app| {\n        let demo = if square { square_view(app) } else { view(app) };\n        vstack![demo]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(680, 440)\n    .run()\n}\n",
         "height": 424,
         "id": "table",
         "image": "table-table.png",
@@ -1785,7 +1793,7 @@
         "width": 1000
       },
       {
-        "code": "table(columns, rows)\n.key(\"invoices-square\")\n.rounded(0.) // square outer frame and inset rows\n.selected(app.row)\n.on_select(|app: &mut App, row| app.row = Some(row))\n.on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)))",
+        "code": "//! Invoice table recipes. Run with `--square` for the square-corner variant.\nuse volt_ui_kit::native::Application;\nuse volt_ui_kit::ui::prelude::*;\n\n#[derive(Default)]\npub struct App {\n    pub row: Option<u32>,\n    pub sort: Option<(u8, SortDirection)>,\n}\n\npub fn view(app: &App) -> Element<App> {\n    invoice_table(app, false)\n}\npub fn square_view(app: &App) -> Element<App> {\n    invoice_table(app, true)\n}\n\npub const INVOICES: [(&str, &str, &str, &str); 6] = [\n    (\"INV001\", \"Paid\", \"Credit card\", \"$250.00\"),\n    (\"INV002\", \"Pending\", \"PayPal\", \"$150.00\"),\n    (\"INV003\", \"Unpaid\", \"Bank transfer\", \"$350.00\"),\n    (\"INV004\", \"Paid\", \"Credit card\", \"$450.00\"),\n    (\"INV005\", \"Paid\", \"PayPal\", \"$550.00\"),\n    (\"INV006\", \"Pending\", \"Bank transfer\", \"$200.00\"),\n];\nfn invoice_table(app: &App, square: bool) -> Element<App> {\n    let key = if square {\n        \"invoices-square\"\n    } else {\n        \"invoices\"\n    };\n    let row_prefix = if square { \"inv-square\" } else { \"inv\" };\n    let mut t = table(\n        [\n            table_column(0u8, \"Invoice\").width(130.).sortable(true),\n            table_column(1, \"Status\").width(120.).sortable(true),\n            table_column(2, \"Method\").width(160.).sortable(false),\n            table_column(3, \"Amount\")\n                .width(110.)\n                .align(Align::End)\n                .sortable(true),\n        ],\n        INVOICES.iter().enumerate().map(|(i, r)| {\n            table_row(i as u32, [r.0, r.1, r.2, r.3]).key(format!(\"{row_prefix}-{i}\"))\n        }),\n    )\n    .key(key)\n    .width(600.)\n    .rounded(if square { 0. } else { 12. })\n    .accessible_label(if square {\n        \"Square invoices\"\n    } else {\n        \"Rounded invoices\"\n    })\n    .selected(app.row)\n    .on_select(|app: &mut App, r| app.row = Some(r))\n    .on_sort(|app: &mut App, column, direction| app.sort = Some((column, direction)));\n    if let Some((column, direction)) = app.sort {\n        t = t.sort(column, direction);\n    }\n    t.into()\n}\n\npub fn main() -> Result<(), Box<dyn std::error::Error>> {\n    let square = std::env::args()\n        .any(|arg| matches!(arg.as_str(), \"--square\" | \"table-square\" | \"table_square\"));\n    Application::new(\"Invoices\", App::default(), move |app| {\n        let demo = if square { square_view(app) } else { view(app) };\n        vstack![demo]\n            .align(Align::Center)\n            .padding(24., Edge::All)\n            .fill_width()\n            .fill_height()\n            .into()\n    })\n    .size(680, 440)\n    .run()\n}\n",
         "height": 424,
         "id": "table-square",
         "image": "table-table-square.png",
@@ -1976,6 +1984,33 @@
         "image": "image-image-clip.png",
         "note": "Circles, rounded rectangles and arbitrary paths.",
         "title": "Clipping",
+        "width": 1000
+      },
+      {
+        "code": "photo.mask(mask_union([left_mask(), right_mask()]), MaskMode::Alpha);\nphoto.mask(mask_difference(left_mask(), right_mask()), MaskMode::Alpha);\n// Also: mask_intersection(a, b), mask_exclude(a, b).",
+        "height": 210,
+        "id": "image-mask-operations",
+        "image": "image-image-mask-operations.png",
+        "note": "Reusable alpha-coverage union, intersection, subtraction and exclusion. These compose masks; they do not generate boolean vector-path geometry.",
+        "title": "Cutouts with clear edges",
+        "width": 1000
+      },
+      {
+        "code": "photo.mask(mask.background_gradient(Gradient::linear(90., [\n    (0., \"#FFFFFF00\"), (0.25, \"#FFFFFFFF\"),\n    (0.75, \"#FFFFFFFF\"), (1., \"#FFFFFF00\"),\n])), MaskMode::Alpha)",
+        "height": 274,
+        "id": "image-feather",
+        "image": "image-image-feather.png",
+        "note": "Gradient alpha masks blend an image into its surface without a pre-rendered asset.",
+        "title": "A softer edge",
+        "width": 1000
+      },
+      {
+        "code": "zstack![photo, tint.blend_mode(BlendMode::ColorBurn)]\n    .isolate(true).clip_contents(true);\n// BlendMode::Difference is colour difference, not alpha subtraction.",
+        "height": 338,
+        "id": "image-blend",
+        "image": "image-image-blend.png",
+        "note": "Normal, multiply, screen, overlay, color burn and difference run on both GPU and software. Isolation keeps compositing inside this preview.",
+        "title": "Overlays that belong to the image",
         "width": 1000
       }
     ],
@@ -2197,6 +2232,26 @@
   {
     "api": [
       [
+        ".transform(Transform2D) / .scale(x, y) / .rotate(degrees)",
+        "Interactive logical-pixel 2D subtree poses; paint and input move together"
+      ],
+      [
+        ".layout_animation(Animation).shared_element(key)",
+        "Keyed geometry transitions; unique shared keys pair geometry across identities"
+      ],
+      [
+        ".drag_motion(DragMotion)",
+        "Captured direct manipulation with bounded analytic release momentum"
+      ],
+      [
+        ".timeline(Timeline)",
+        "Finite pose keyframes with replay, pause, reverse and seek"
+      ],
+      [
+        "typing_text / morphing_text / rolling_number / shimmer_text",
+        "Grapheme reveal, shaped crossfade, rolling digits and opacity shimmer"
+      ],
+      [
         "Animation::spring() / spring_with(Spring)",
         "Finite damped response; positional overshoot, bounded colors/opacity"
       ],
@@ -2231,6 +2286,51 @@
     ],
     "group": "Components",
     "sections": [
+      {
+        "code": "button(\"Press me\").key(\"action\")\n    .transform(Transform2D::new().rotate(angle).scale(zoom, zoom))\n    .animation(Animation::ease_out().duration_ms(320))\n    .on_click(|app: &mut App| app.presses += 1)",
+        "height": 270,
+        "id": "fx-transforms",
+        "image": "effects-motion-fx-transforms.png",
+        "note": "Logical 2D scale and rotation, shaped GPU text and inverse-mapped pointer input at fractional DPI.",
+        "title": "Transforms that keep input aligned",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"workspace\")\n    .layout_animation(Animation::ease_out().duration_ms(320));\nindicator.key(format!(\"indicator-{selected}\"))\n    .shared_element(\"active-indicator\")\n    .layout_animation(Animation::ease_out().duration_ms(320));",
+        "height": 308,
+        "id": "fx-layout",
+        "image": "effects-motion-fx-layout.png",
+        "note": "Keyed cards interpolate position and size. One shared identity connects the indicator across tab containers.",
+        "title": "Layout and shared geometry",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"draggable\")\n    .drag_motion(DragMotion::new()\n        .bounds([0., 0.], [128., 0.])\n        .friction(7.)); // .momentum(false) for direct manipulation only",
+        "height": 232,
+        "id": "fx-gestures",
+        "image": "effects-motion-fx-gestures.png",
+        "note": "Captured pointer gestures in logical coordinates, with analytical frame-rate-independent inertia and explicit bounds.",
+        "title": "Direct manipulation and momentum",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"sequence\").timeline(Timeline::new(1600)\n    .keyframe(0., MotionPose::new())\n    .keyframe(0.5, MotionPose::new().translate(150., 0.).rotate(12.))\n    .keyframe(1., MotionPose::new())\n    .playback(TimelinePlayback::Play)\n    .revision(replay_revision));",
+        "height": 304,
+        "id": "fx-timeline",
+        "image": "effects-motion-fx-timeline.png",
+        "note": "Finite keyframe sequences with pause, resume, reverse, seek and explicit replay. No app-owned animation timer.",
+        "title": "One clock, a composed sequence",
+        "width": 1000
+      },
+      {
+        "code": "typing_text(\"Hello, native world\").key(\"typing\")\n    .text_effect(TextEffect::typing().duration_ms(1400).revision(replay));\nmorphing_text(status).key(\"status\");\nrolling_number(count).key(\"count\");\nshimmer_text(\"Preparing workspace\").key(\"working\");",
+        "height": 315,
+        "id": "fx-text",
+        "image": "effects-motion-fx-text.png",
+        "note": "Selectable semantic text remains intact. Typing reveals whole graphemes, morphing crossfades shaped text, numbers roll and shimmer sweeps opacity across glyphs.",
+        "title": "Text that stays text",
+        "width": 1000
+      },
       {
         "code": "panel![task_content(app)].key(\"task\")\n    .offset(if app.ready { 64. } else { 0. }, 0.)\n    .animation(Animation::spring().duration_ms(520));\n// Or tune the response without adding a timer:\n// Animation::spring_with(Spring::new().damping_ratio(0.7))\n// Retargeting preserves painted position, not physical velocity.",
         "height": 451,
@@ -2293,6 +2393,113 @@
   {
     "api": [
       [
+        "carousel(...).slide_animation(animation)",
+        "Responsive retained slides; shared paint/input transforms"
+      ],
+      [
+        "bottom_sheet(body) / speed_dial(label, actions)",
+        "Controlled modal and non-modal touch-sized actions"
+      ],
+      [
+        ".reveal_on_scroll(transition)",
+        "One entry reveal per key/revision; never drives the scroll position"
+      ],
+      [
+        ".on_pointer(...) / .wheel_passthrough(true)",
+        "Pointer reactions without swallowing wheel scrolling"
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "carousel(slides, app.slide).key(\"journey\").height(240.)\n    .slide_animation(Animation::ease_out().duration_ms(380))\n    .controls_below(true).on_change(|app, i| app.slide = i)",
+        "height": 378,
+        "id": "studio-carousel",
+        "image": "motion-studio-studio-carousel.png",
+        "note": "Retained pages travel by the resolved viewport width. Buttons, focus and hit targets follow the same pose; no autoplay timer.",
+        "title": "A carousel with real page motion",
+        "width": 1000
+      },
+      {
+        "code": "card.key(\"kit\").height(if app.expanded { 294. } else { 180. })\n    .layout_animation(Animation::spring().duration_ms(400));\n// Mount details with a stable key and a finite enter/exit slide.\n// details.key(\"details\").transition(Transition::slide(0., 18.))",
+        "height": 432,
+        "id": "studio-card",
+        "image": "motion-studio-studio-card.png",
+        "note": "The card changes size with keyed layout motion. Details slide in and out; removed content cannot receive input.",
+        "title": "Reveal what matters",
+        "width": 1000
+      },
+      {
+        "code": "bottom_sheet(order_form()).key(\"checkout\").title(\"Review your order\")\n    .size(340.).open(app.checkout_open)\n    .on_dismiss(|app| app.checkout_open = false)",
+        "height": 540,
+        "id": "studio-sheet",
+        "image": "motion-studio-studio-sheet.png",
+        "note": "A real modal: focus containment, Escape, backdrop dismissal and a scrollable body reuse the drawer contract.",
+        "title": "Bottom sheets, not another window",
+        "width": 1000
+      },
+      {
+        "code": "speed_dial(\"quick actions\", [(Action::Note, \"New note\"), (Action::Pin, \"Add waypoint\")])\n    .key(\"quick-actions\").open(app.quick_open)\n    .on_open_change(|app, open| app.quick_open = open)\n    .on_action(|app, action| app.perform(action))",
+        "height": 412,
+        "id": "studio-fab",
+        "image": "motion-studio-studio-fab.png",
+        "note": "A controlled, non-modal speed dial. Touch-sized buttons, staggered entrances, explicit close and Escape; no hidden side effects.",
+        "title": "Quick actions within reach",
+        "width": 1000
+      },
+      {
+        "code": "surface.wheel_passthrough(true).on_pointer(|app, p| match p.phase {\n    PointerPhase::Hover | PointerPhase::Press | PointerPhase::Drag => app.pointer = p.at,\n    _ => {},\n});\n// Move retained children using Transform2D + Animation; do not replace the OS cursor.",
+        "height": 354,
+        "id": "studio-pointer",
+        "image": "motion-studio-studio-pointer.png",
+        "note": "A spotlight, spring-like following ring and restrained 2D card response. Touch/drag works too; wheel input still scrolls the page.",
+        "title": "Follow, without replacing the cursor",
+        "width": 1000
+      },
+      {
+        "code": "section.key(\"story-step\").reveal_on_scroll(Transition::slide(0., 24.).duration_ms(420))\n    .transition_revision(app.replay_revision);\n// Normal scrolling stays in control; this is not scroll snapping or scroll hijacking.",
+        "height": 720,
+        "id": "studio-scroll-reveal",
+        "image": "motion-studio-studio-scroll-reveal.png",
+        "note": "One entrance per key/revision when a box first becomes visible. Offscreen items do not run an animation timer. Reduced motion shows content immediately.",
+        "title": "Reveals that follow your reading",
+        "width": 1000
+      }
+    ],
+    "slug": "motion-studio",
+    "summary": "Carousels, sheets, card reveals, pointer reactions and viewport entrances.",
+    "title": "Motion studio"
+  },
+  {
+    "api": [
+      [
+        "gauge(fraction) / knob(value)",
+        "Read-only progress and interactive numeric slider"
+      ],
+      [
+        "DialStyle::new().start_angle(...).sweep(...).ticks(...)",
+        "Validated, bounded logical geometry; normal GPU antialiasing"
+      ]
+    ],
+    "group": "Components",
+    "sections": [
+      {
+        "code": "gauge(app.battery).accessible_label(\"Battery charge\")\n    .dial_style(DialStyle::new().ticks(13).stroke_width(7.));\nknob(app.temperature).key(\"temperature\").range(16.0..=30.0).step(0.5)\n    .accessible_label(\"Cabin temperature, degrees Celsius\")\n    .on_change(|app, value| app.temperature = value);",
+        "height": 472,
+        "id": "instruments-controls",
+        "image": "instruments-instruments-controls.png",
+        "note": "Real progress and slider semantics. The rotary control supports captured pointer input, keyboard steps, disabled state and assistive adjustment. Values here are simulated.",
+        "title": "A panel made for touch",
+        "width": 1000
+      }
+    ],
+    "slug": "instruments",
+    "summary": "Touch-sized radial gauges and rotary controls with native input semantics.",
+    "title": "Instruments"
+  },
+  {
+    "api": [
+      [
         "run_ui_with_messages(options, state, view, init, update)",
         "Start with a typed message channel."
       ],
@@ -2344,6 +2551,34 @@
         "Close or KeepOpen; the developer owns dirty state and dialogs."
       ],
       [
+        "Application::chrome_from_state(f)",
+        "Live Native / Custom / Borderless / macOS Overlay policy; no window replacement."
+      ],
+      [
+        "Application::window_actions(f) / on_window_state(f)",
+        "Bounded typed control intents; native maximize/fullscreen/focus snapshots."
+      ],
+      [
+        "window_controls(maximized, on_action)",
+        "Accessible vector controls; close goes through the host close guard."
+      ],
+      [
+        "window_header(content, controls)",
+        "Shared existing-header composition; configurable height, gap and padding; no global title strip."
+      ],
+      [
+        "window_controls_with_style(state, style, f)",
+        "Symbols or TrafficLights, with the same accessible intents and availability."
+      ],
+      [
+        "Application::app_id(id) / on_window_diagnostics(f)",
+        "Linux identity plus actual backend, renderer, scale and blur request diagnostics."
+      ],
+      [
+        "Application::linux_backend(preference)",
+        "Auto, Wayland or X11. Explicit unavailable backends fail, never silently fall back."
+      ],
+      [
         "Application::requests(initialize)",
         "Bounded, event-driven commands and close requests; no idle polling."
       ]
@@ -2352,11 +2587,20 @@
     "sections": [
       {
         "code": "Application::new(\"Documents\", app, view)\n    .commands(commands())\n    .requests(|app, sender| app.requests = Some(sender))\n    .on_close_request(|app, reason| {\n        if app.dirty() {\n            app.close_prompt = Some(reason);\n            CloseDecision::KeepOpen\n        } else { CloseDecision::Close }\n    })\n    .run()?;\n// Save / Discard: update app state, then enqueue Close(reason).\n// Cancel: dismiss the dialog without closing or clearing the draft.",
-        "height": 734,
+        "height": 720,
         "id": "application-document",
         "image": "application-lifecycle-application-document.png",
         "note": "Edit the draft, use Save or Cmd/Ctrl+S, then request closing. Dirty work opens Save / Discard / Cancel. Saving here is in memory, not disk persistence.",
         "title": "A guarded document",
+        "width": 1000
+      },
+      {
+        "code": "Application::new(\"Workspace\", app, view)\n    .app_id(\"com.example.workspace\") // matches the Linux .desktop filename\n    .on_window_diagnostics(|app, state| app.diagnostics = Some(state))\n    .chrome_from_state(|app| app.chrome)\n    .custom_resize_border(6.) // logical pixels, Custom mode only\n    .window_actions(|app, sender| app.window_actions = Some(sender))\n    .on_window_state(|app, state| app.window_state = state)\n    .on_close_request(close_guard)\n    .run()?;\n// Linux/Windows: place controls inside your EXISTING draggable toolbar.\n// macOS Custom retains native traffic lights; do not draw duplicate buttons.\nwindow_header(text(\"Workspace\"), window_controls_with_style(\n    app.window_state.maximized,\n    WindowControlStyle::TrafficLights, // or Symbols (legacy default)\n    |app: &mut App, action| {\n        if let Some(sender) = &app.window_actions { let _ = sender.send(action); }\n    },\n)).key(\"workspace-header\");\n// navigation_split_view(...).integrated_header(true).material(true)\n// embeds controls without restyling the opaque, inset detail panel.\n// .toolbar_translucent(true) separately opts into header glass (default false).\n// The shell default and Application Native default remain unchanged.",
+        "height": 200,
+        "id": "application-window-chrome",
+        "image": "application-lifecycle-application-window-chrome.png",
+        "note": "Open Window settings in the header (at any width) to choose Native, Custom or Borderless and Symbols / Traffic lights. This preview only records actions; Custom embeds controls in the existing toolbar/sidebar, without adding a title strip, and honors the unsaved-work close guard.",
+        "title": "Window decorations and controls",
         "width": 1000
       }
     ],
@@ -2368,7 +2612,7 @@
     "api": [
       [
         "file_dialog::open_file / save_file",
-        "Main-thread, native-desktop macOS panels; Cancel is Ok(None)."
+        "macOS panels; Linux uses request_open_file/request_save_file callbacks without blocking the UI. Cancel is Ok(None)."
       ],
       [
         "files::read_text_file",
@@ -2390,7 +2634,7 @@
         "height": 1600,
         "id": "document-files",
         "image": "documents-document-files.png",
-        "note": "Native macOS file panels and worker-thread UTF-8 I/O. 8 KiB maximum; failed/cancelled operations retain your draft. No automatic saving or hidden path selection.",
+        "note": "Open and save plain-text notes with the native macOS file panels. Files can be up to 8 KiB (8,192 bytes). If an operation fails or you cancel it, your draft stays as it was. Nothing is saved automatically, and you always choose the file.",
         "title": "A real notes document",
         "width": 1000
       }
@@ -2407,7 +2651,7 @@
       ],
       [
         "request_authorization(callback)",
-        "Explicit alert-only decision, no automatic prompting; OS-thread completion."
+        "macOS alert-only decision; Linux reports authorization=false, with no fake prompt or grant."
       ],
       [
         "LocalNotification::new(id,title,body)",
@@ -2415,7 +2659,7 @@
       ],
       [
         "notification.after(Duration)",
-        "One-shot 1 second–24 hours, silent local notification."
+        "macOS-only one-shot delay; Linux accepts immediate notifications and rejects delayed scheduling."
       ],
       [
         "notifications::send / remove",
@@ -2425,12 +2669,21 @@
     "group": "Patterns",
     "sections": [
       {
-        "code": "// Build with native-notifications, then package the executable.\n// Only a deliberate user action calls request_authorization.\nnotifications::request_authorization(move |decision| {\n    // Marshal into bounded UiSender; never mutate UI on this OS thread.\n})?;\nlet note = LocalNotification::new(\"build.ready\", \"Build ready\", \"All checks passed.\")\n    .after(Duration::from_secs(8));\nnotifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;\n// A later Remove action (after this callback) may remove \"build.ready\".",
-        "height": 589,
+        "code": "let caps = notifications::capabilities();\nif caps.authorization {\n    // macOS: native-notifications + identified .app.\n    notifications::request_authorization(move |decision| {\n        // Marshal to UiSender. Send from the UI after permission is granted.\n    })?;\n} else if caps.local_requests {\n    // Linux: no simulated permission grant; immediate desktop notification.\n    let note = LocalNotification::new(\"build.ready\", \"Build ready\", \"All checks passed.\");\n    notifications::send(&note, move |accepted| { /* Accepted != displayed */ })?;\n}\n// Linux: remove_async(\"build.ready\".into(), callback).\n// macOS alone supports after(Duration); Linux rejects delayed scheduling.",
+        "height": 604,
         "id": "desktop-notifications",
         "image": "desktop-services-desktop-notifications.png",
-        "note": "An explicit, opt-in OS service—not an in-app toast. No permission or notification is requested on launch.",
+        "note": "System notifications that appear in Notification Center, unlike in-app toasts. Nothing is requested until you ask.",
         "title": "Local notifications",
+        "width": 1000
+      },
+      {
+        "code": "// File panels: nonblocking on Linux; macOS starts its panel on the main thread.\nfile_dialog::request_open_file(FileDialogOptions::new(\"Open\"), move |result| {\n    // Result<Option<PathBuf>, FileDialogError>; None means Cancel.\n    // Marshal the result into UiSender before changing application state.\n})?;\n// On a worker, after an explicit user action:\nfile_dialog::open_path(&path)?;\nfile_dialog::reveal_file(&path)?;\n// Only after confirmation and application-specific protected-path checks:\nfile_dialog::prepare_trash_for(&path)?;\nlet receipt = file_dialog::move_to_trash_checked(&path)?;",
+        "height": 424,
+        "id": "desktop-files",
+        "image": "desktop-services-desktop-files.png",
+        "note": "Explicit OS requests. Choosing a save location writes nothing; opening a path may launch its registered application. The Trash test uses only a generated file.",
+        "title": "Files and desktop integration",
         "width": 1000
       },
       {
@@ -2438,7 +2691,7 @@
         "height": 206,
         "id": "desktop-tray",
         "image": "desktop-services-desktop-tray.png",
-        "note": "The optional native-desktop tray reuses these command IDs. Menu/toolbar/palette/tray commands all pass current enablement and modal guards.",
+        "note": "The optional native-desktop tray (macOS and supported Linux desktops) reuses these command IDs. Menu/toolbar/palette/tray commands all pass current enablement and modal guards.",
         "title": "One command registry, multiple surfaces",
         "width": 1000
       }

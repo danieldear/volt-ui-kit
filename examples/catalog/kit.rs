@@ -398,7 +398,7 @@ pub fn forms_doc(app: &App) -> Doc {
     ]
     .gap(24., Axis::Horizontal);
     let frameworks = [
-        (0u8, "Volt UI"),
+        (0u8, "Volt UI Kit"),
         (1, "Iced"),
         (2, "egui"),
         (3, "Slint"),
@@ -619,7 +619,7 @@ pub fn forms_doc(app: &App) -> Doc {
 pub fn disclosure_doc(app: &App) -> Doc {
     let s = &app.kit;
     let collapse = collapsible(
-        "What is Volt UI?",
+        "What is Volt UI Kit?",
         muted("A Rust toolkit for native desktop interfaces, declared as functions of your state.")
             .max_width(420.),
     )
@@ -838,7 +838,7 @@ pub fn disclosure_doc(app: &App) -> Doc {
                 "Collapsible",
                 "One section that shows or hides its content.",
                 collapse,
-                r#"collapsible("What is Volt UI?", body).key("about").open(app.open)
+                r#"collapsible("What is Volt UI Kit?", body).key("about").open(app.open)
     .on_toggle(|app: &mut App, open| app.open = open)"#,
             ),
             section(
@@ -953,7 +953,7 @@ pub fn display_doc(app: &App) -> Doc {
     let alerts = vstack![
         alert("A new version is available")
             .severity(Severity::Info)
-            .description("Volt UI 0.4 adds date pickers, form inputs and charts."),
+            .description("Restart to finish updating; your work is saved."),
         alert("Payment received").severity(Severity::Success),
         alert("Your trial ends in 3 days")
             .severity(Severity::Warning)

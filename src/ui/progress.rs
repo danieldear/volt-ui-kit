@@ -21,6 +21,14 @@ fn make<C>(value: Option<f32>, kind: ProgressKind) -> Progress<C> {
 pub fn progress<C>(value: f32) -> Progress<C> {
     make(Some(value), ProgressKind::Bar)
 }
+/// A read-only radial indicator (0..=1), not an adjustable slider.
+pub fn gauge<C>(value: f32) -> Progress<C> {
+    let mut g = progress(value);
+    g.0.node.width = Some(144.);
+    g.0.node.height = Some(144.);
+    g.0.node.effects.dial = Some(crate::graphics::DialStyle::default());
+    g
+}
 pub fn progress_indeterminate<C>() -> Progress<C> {
     make(None, ProgressKind::Bar)
 }
@@ -34,6 +42,19 @@ pub fn loading<C>(label: impl Into<String>) -> Container<C> {
         .align(Align::Center)
 }
 impl<C> Progress<C> {
+    pub fn dial_style(mut self, style: crate::graphics::DialStyle) -> Self {
+        if self
+            .0
+            .node
+            .progress
+            .as_ref()
+            .is_some_and(|p| p.value.is_none())
+        {
+            self.0.validation_error = Some("radial gauges require determinate progress".into());
+        }
+        self.0.node.effects.dial = Some(style);
+        self
+    }
     pub fn period_ms(mut self, value: u32) -> Self {
         self.0.node.progress.as_mut().unwrap().period_ms = value;
         self

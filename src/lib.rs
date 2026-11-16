@@ -9,8 +9,8 @@
 //! | --- | --- |
 //! | `native` | A window host with software drawing, text, images, clipboard, IME and accessibility |
 //! | `native-gpu` | GPU drawing with Vello (implies `native`) |
-//! | `native-desktop` | macOS menus, tray and file panels |
-//! | `native-notifications` | macOS local notifications |
+//! | `native-desktop` | macOS integrations; Linux portal dialogs, file actions, notifications, checked Trash and supported tray hosts |
+//! | `native-notifications` | macOS local / Linux immediate notifications |
 //! | `rust-ui` | The `ui` builders without a window, for custom hosts |
 //! | `declarative` | The validated tree, runtime and optional JSON frontend |
 //! | `dev-tools` | The `cargo volt` command |
@@ -26,7 +26,10 @@
     not(feature = "native"),
     doc = "The guides are in the repository's `docs/` folder, and in the `guide` module when built with the `native` feature."
 )]
-#![forbid(unsafe_code)]
+// Only the Linux native handle bridge opts out locally. All other modules deny
+// unsafe code; non-Linux and non-native builds retain the stronger forbid.
+#![cfg_attr(not(all(target_os = "linux", feature = "native")), forbid(unsafe_code))]
+#![deny(unsafe_code)]
 pub mod card_paint;
 pub mod form_paint;
 pub mod paint;
@@ -54,6 +57,8 @@ pub use button::{Button, ButtonColors};
 mod fasthash;
 pub mod geometry;
 pub mod graphics;
+#[cfg(feature = "declarative")]
+pub mod motion;
 pub mod theme;
 pub use theme::{contrast_ratio, hex, parse_hex, ColorToken, Palette, ThemeMode, UiTheme};
 pub mod panel;

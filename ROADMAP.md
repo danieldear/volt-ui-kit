@@ -10,6 +10,8 @@
   settle.
 - **Publication readiness.** Maintain the public repository, protected CI and
   generated documentation; publish to crates.io only after release approval.
+  Track the [release readiness checklist](docs/public-release.md), then the
+  [announcements and live projects checklist](docs/announcements-and-projects.md).
 
 ## Next
 
@@ -21,19 +23,29 @@
 - Keyboard navigation through combobox and command palette results;
   independent range-slider thumbs for assistive technology.
 - Multiple windows, state restoration and the full OS quit lifecycle.
-- File panels and notifications on Windows and Linux.
+- File panels and notifications on Windows. Linux portal panels, immediate
+  notifications and tray commands are implemented; expand recorded desktop
+  acceptance and keep unsupported compositor capabilities explicit.
 
 ## Later
 
 - Harden the [experimental web host](docs/web-prototype.md): broaden browser,
   accessibility and input coverage beyond the live Catalog previews.
 - Finer-grained updates and partial GPU redraws.
-- Layout animation, springs and gestures; variable-height virtual lists.
+- Expand 2D keyed/shared layout motion, springs, bounded drag inertia and finite
+  pose timelines with broader platform acceptance; variable-height virtual lists.
+  3D transforms, multi-touch gesture recognition and outline morphing remain later.
 - [Embedded content and extensible maps](#embedded-content-and-extensible-maps-planned).
 - On-device AI integrations on macOS.
 - Publish to crates.io once the APIs have held up in real applications.
 
 ## Embedded content and extensible maps (planned)
+
+**Prototype available:** `examples/maps` already draws vector/raster provider
+maps in Rust, with camera interaction, search/routes and macOS MapKit snapshots;
+the web gallery runs the free-vector subset. This is an example-level spike,
+not a reusable `map` component, provider trait or native-view embedding API.
+The contracts and host integrations below remain planned and need an API proposal.
 
 Build reusable embedding infrastructure once, then integrate map providers
 through optional adapters. This is planned work, not an existing map component:

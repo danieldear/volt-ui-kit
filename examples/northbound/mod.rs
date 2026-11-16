@@ -4,7 +4,7 @@ pub mod art;
 pub mod icons;
 mod kit;
 mod screens;
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests;
 
 pub use screens::view;
@@ -209,6 +209,14 @@ pub struct Toast {
 }
 
 pub struct App {
+    #[cfg(feature = "native")]
+    pub chrome: volt_ui_kit::native::WindowChrome,
+    #[cfg(feature = "native")]
+    pub window_control_style: volt_ui_kit::ui::WindowControlStyle,
+    #[cfg(feature = "native")]
+    pub window_state: volt_ui_kit::native::WindowState,
+    #[cfg(feature = "native")]
+    pub window_actions: Option<volt_ui_kit::native::UiSender<volt_ui_kit::ui::WindowAction>>,
     pub screen: Screen,
     pub mode: ThemeMode,
     pub accent: usize,
@@ -264,6 +272,20 @@ impl App {
     /// Sample itinerary state around already-rendered photographs.
     fn sample(photos: Vec<Image>, thumbs: Vec<Image>) -> Self {
         Self {
+            #[cfg(feature = "native")]
+            chrome: if cfg!(target_os = "macos") {
+                volt_ui_kit::native::WindowChrome::Overlay
+            } else if cfg!(target_os = "linux") {
+                volt_ui_kit::native::WindowChrome::Custom
+            } else {
+                volt_ui_kit::native::WindowChrome::Native
+            },
+            #[cfg(feature = "native")]
+            window_state: Default::default(),
+            #[cfg(feature = "native")]
+            window_control_style: Default::default(),
+            #[cfg(feature = "native")]
+            window_actions: None,
             screen: Screen::Route,
             mode: ThemeMode::Dark,
             accent: 0,
@@ -370,7 +392,23 @@ impl App {
         let thumbs = std::mem::take(&mut self.thumbs);
         let (mode, accent, units) = (self.mode, self.accent, self.units);
         // Rebuild the sample data without regenerating the photographs.
+        #[cfg(feature = "native")]
+        let window = (
+            self.chrome,
+            self.window_state,
+            self.window_actions.take(),
+            self.window_control_style,
+        );
         *self = Self::sample(photos, thumbs);
+        #[cfg(feature = "native")]
+        {
+            (
+                self.chrome,
+                self.window_state,
+                self.window_actions,
+                self.window_control_style,
+            ) = window;
+        }
         (self.mode, self.accent, self.units) = (mode, accent, units);
         self.screen = Screen::Settings;
         self.notify("Trip reset to the sample itinerary");

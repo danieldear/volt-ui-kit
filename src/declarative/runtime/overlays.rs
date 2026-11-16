@@ -347,15 +347,7 @@ impl Runtime {
                 continue;
             };
             let hovered = self.overlays.tooltip_pointer.is_some_and(|[x, y]| {
-                bounds.clip.contains(x, y)
-                    && bounds.clip_regions.iter().all(|clip| clip.contains(x, y))
-                    && bounds
-                        .content_clip
-                        .as_ref()
-                        .is_none_or(|clip| clip.contains(x, y))
-                    && bounds
-                        .bounds
-                        .contains_corners(bounds.radii(self.scale), x, y)
+                self.hit_clip(bounds, x, y) && self.hit_rounded(bounds, x, y)
             });
             fn contains(node: &Node, id: &str) -> bool {
                 node.id == id || node.children.iter().any(|child| contains(child, id))
@@ -412,7 +404,13 @@ impl Runtime {
             self.boxes
                 .iter()
                 .position(|b| b.id == id && b.enabled && !b.departing && self.scope_allows_id(id))
-                .map(|i| (i, self.boxes[i].bounds.bounds()))
+                .map(|i| {
+                    (
+                        i,
+                        self.world_transform(&self.boxes[i])
+                            .bounds(self.boxes[i].bounds.bounds()),
+                    )
+                })
         }) else {
             return Ok(InputOutcome::default());
         };
@@ -492,12 +490,8 @@ impl Runtime {
                     || find_node(self.document.root(), &b.id)
                         .is_some_and(|node| node.on_context.is_some()))
                 && self.scope_allows_id(&b.id)
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|clip| clip.contains(x, y))
-                && b.content_clip
-                    .as_ref()
-                    .is_none_or(|clip| clip.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                && self.hit_clip(b,x,y)
+                && self.hit_rounded(b,x,y)
         }) {
             loop {
                 let b = &self.boxes[index];
@@ -515,12 +509,7 @@ impl Runtime {
                                     .iter()
                                     .find(|candidate| candidate.id == target.id)
                                     .is_some_and(|b| {
-                                        b.clip.contains(x, y)
-                                            && b.clip_regions.iter().all(|clip| clip.contains(x, y))
-                                            && b.content_clip
-                                                .as_ref()
-                                                .is_none_or(|clip| clip.contains(x, y))
-                                            && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                                        self.hit_clip(b, x, y) && self.hit_rounded(b, x, y)
                                     })
                             });
                             if target_hit {
@@ -567,20 +556,24 @@ impl Runtime {
         })
     }
     pub(super) fn scope_allows_id(&self, id: &str) -> bool {
-        self.overlays
-            .scopes
-            .last()
-            .is_none_or(|scope| scope.ids.contains(id))
+        !self.transform_index.inert(id)
+            && self
+                .overlays
+                .scopes
+                .last()
+                .is_none_or(|scope| scope.ids.contains(id))
     }
     /// Copy menus may coexist with a read-only selection. A modal, however,
     /// must never expose a selection belonging to content behind that modal.
     pub(super) fn selection_scope_allows_id(&self, id: &str) -> bool {
-        self.overlays
-            .scopes
-            .iter()
-            .rev()
-            .find(|scope| scope.options.kind == OverlayKind::Modal)
-            .is_none_or(|scope| scope.ids.contains(id))
+        !self.transform_index.inert(id)
+            && self
+                .overlays
+                .scopes
+                .iter()
+                .rev()
+                .find(|scope| scope.options.kind == OverlayKind::Modal)
+                .is_none_or(|scope| scope.ids.contains(id))
     }
     pub(super) fn overlay_active(&self) -> bool {
         !self.overlays.scopes.is_empty()
@@ -597,14 +590,7 @@ impl Runtime {
         self.boxes
             .iter()
             .filter(|b| b.id == scope.content || Some(b.id.as_str()) == anchor)
-            .any(|b| {
-                b.clip.contains(x, y)
-                    && b.clip_regions.iter().all(|r| r.contains(x, y))
-                    && b.content_clip
-                        .as_ref()
-                        .is_none_or(|clip| clip.contains(x, y))
-                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
-            })
+            .any(|b| self.hit_clip(b, x, y) && self.hit_rounded(b, x, y))
     }
     /// A backdrop press is consumed even when outside dismissal is disabled.
     pub(super) fn overlay_pointer_down(&mut self, x: f32, y: f32) -> Option<bool> {

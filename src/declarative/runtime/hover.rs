@@ -25,11 +25,7 @@ impl Runtime {
             let Some([x, y]) = pointer else {
                 continue;
             };
-            if self.scope_allows_id(&b.id)
-                && b.clip.contains(x, y)
-                && b.clip_regions.iter().all(|r| r.contains(x, y))
-                && b.bounds.contains_corners(b.radii(self.scale), x, y)
-            {
+            if self.scope_allows_id(&b.id) && self.hit_clip(b, x, y) && self.hit_rounded(b, x, y) {
                 inside.insert(b.id.clone());
             }
         }

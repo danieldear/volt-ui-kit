@@ -2,6 +2,359 @@
 
 ## Unreleased
 
+- Make boxed page-navigation ownership explicit during state mapping and add
+  regression coverage for owned titles, multiple bar buttons and both Volt
+  and native-host activation without mutating sibling state.
+- Refresh the security crate and Sign in with Apple demo lockfiles for the
+  shared text-engine upgrade, preserving reproducible `--locked` builds.
+- iOS apps use UIKit for what people notice first. Pages describe their
+  navigation bar with `navigation_title`, `large_title` and `bar_button`, and
+  `navigation_stack(..).on_back(..)` handles Back; iOS shows a real
+  `UINavigationController` with push and pop, the back swipe and large titles
+  that shrink on scroll. Desktop, web and Android draw the same bar with Volt.
+  `navigation_stack` now returns `NavigationStack`, which keeps `.key(..)`.
+- iOS scrolling uses `UIScrollView` physics (momentum, bounce, indicators that
+  fade, tap the status bar to go to the top), with content running under the
+  bars and the home indicator. Switches and sliders are `UISwitch` and
+  `UISlider`; text areas edit in `UITextView`. The keyboard slides over the
+  page as an inset instead of resizing it, and the edited field scrolls into
+  view with its page. Back swipes pause while a finger drags a slider or a
+  sideways carousel.
+- iOS pages default to the system's colours for the current appearance and
+  contrast; `Application::theme_from_system` adjusts them, e.g. a brand accent
+  on some pages. The system font's weights render from its variable axis.
+  Motion runs from a display link only while something moves and follows
+  Reduce Motion; generated apps allow 120 Hz. Frames present with Core
+  Animation transactions so UIKit parts and Volt content move together.
+- Add `examples/ios-gallery`: every part on iPhone, including Pantry, a
+  branded grocery shop, with UI tests that run on a physical device. The
+  `cargo volt new --platform ios` starter now uses the navigation bar, a
+  grouped list, a switch and Save with validation.
+- Upgrade cosmic-text to 0.19: variable fonts draw the requested weight in
+  both the CPU and Vello paths.
+- Fix dividers, which never painted: a transparent background hid the line
+  colour. Default dividers use the palette's border colour, and one-pixel
+  hairlines land on whole device pixels.
+- Keyed scroll views keep their position when their page is left and restore
+  it when the page returns. `Scroll::axes` is public.
+- Runtime hooks for hosts that own platform UI: `set_native_scrolling`,
+  `set_scroll_position`, `set_scroll_insets`, `set_native_controls`,
+  `navigation_bars` and `activate_navigation`.
+
+- Add `volt-ui-kit-security`, an opt-in crate for secrets and device-owner
+  confirmation. On macOS, `secrets` stores, reads and removes small secrets in
+  the login Keychain on one ordered background worker, and `local_auth` asks
+  for Touch ID or the account password. Linux and Windows build and report
+  `Unsupported` for now. The Apple calls need unsafe code, so they live in this
+  crate and `volt-ui-kit` still forbids unsafe code. Includes a windowed demo.
+- Add Sign in with Apple to `volt-ui-kit-security`: `apple_id::sign_in` shows
+  Apple's sheet and returns the user identifier, identity token and first-time
+  name and email; `credential_state` reports revoked access. Apple grants it to
+  Mac App Store apps and development builds, not Developer ID apps. A packaged
+  demo app shows the whole flow.
+- `cargo volt release --provisioning-profile FILE` embeds a profile, checks it
+  matches the bundle identifier and grants the requested restricted
+  entitlements, and signs with its app and team identifiers. It refuses
+  restricted entitlements without a profile, since macOS won't launch such an
+  app. `VOLT_BUNDLE_IDENTIFIER` overrides the identifier for one build.
+
+- Reject nonfinite rotary pointer coordinates before angle/value calculation,
+  with fractional-DPI regressions. Browser gallery CI explicitly checks adapter
+  availability before GPU-only tests; software workflows remain mandatory.
+
+- Add opt-in sliding carousels, viewport-triggered reveals, bottom sheets,
+  floating action/speed-dial controls, rotary sliders and radial gauges. Reuse
+  controlled state, keyboard/accessibility semantics, logical coordinates and
+  reduced-motion scheduling. Inactive carousel pages cannot activate controls
+  or open portals; existing crossfade and drawer defaults remain unchanged.
+- Add isolated color blending and composable alpha-mask union, intersection,
+  difference and exclusion in the software and Vello renderers. Extend the
+  subpixel compositor to decorative slide offsets without moving hit geometry.
+  Legacy DocumentPainter adapters keep ordinary opacity through a default hook;
+  native Shape gains BlendBegin for adapters with exhaustive shape matches.
+- Showcase these capabilities in Motion studio, Instruments and Image Catalog
+  pages, shared with the live Rust/WASM documentation. Pointer previews pass
+  wheel input through to scrolling; viewport reveals never drive scroll position.
+  Instrument values are simulations, not device or automotive host support.
+
+- Keep decorative floating text, borders and backgrounds together under a
+  subpixel affine compositor instead of rounding moving text origins. Preserve
+  legacy painter fallback, fixed hit geometry, clipping and reduced motion.
+  Retain submillisecond ambient phase precision; fix fractional software
+  translation filtering without changing static text hinting. Make Catalog hero
+  floats, orbit arcs and ticker livelier with Catalog-only timing changes.
+  Add high-refresh/DPI, real-GPU, mask/coverage and hero regressions.
+
+- Fix scroll input latency on motion-heavy pages: index transform ancestry and
+  keep ordinary hit testing/viewport culling for unaffected subtrees. Preserve
+  moving offscreen descendants and ancestor clipping/opacity, with pixel-parity,
+  input and fractional-DPI regressions. Native trackpad deltas and momentum,
+  animation timing, antialiasing and existing layout remain unchanged.
+
+- Add opt-in 2D subtree transforms with matching hit tests, keyed/shared-element
+  layout transitions, bounded analytic drag momentum, pose timelines with
+  pause/reverse/seek, and typing/crossfade/rolling-number/shimmer text presets.
+  Keep logical coordinates, reduced-motion behavior, GPU vector antialiasing and
+  bounded density-aware software composition. Add five Catalog motion sections
+  and fractional-DPI/input/CPU-GPU regressions; existing motion defaults remain.
+  Custom DocumentPainter adapters must implement the new default transform hook
+  to render these effects; native Shape gains a Transformed variant.
+
+
+- Reduce animation-frame allocation by sharing immutable vector artwork between
+  paint snapshots and avoiding a second styled-node clone. Coalesce native
+  accessibility publication until input, layout, focus or an initial tree request
+  changes semantics; decorative frames retain their existing timing and appearance.
+- Make GPU tile-command admission linear in covered rows plus viewport tiles,
+  preserving the same admission totals and safety limits. Release cache-only image
+  textures and obsolete resized band targets, while keeping application-owned
+  images and same-viewport strip targets warm. Add regression and actual-GPU
+  readback tests; no public API, dependency, antialiasing or frame-rate changes.
+
+- Anchor package metadata-file patterns to the repository root so ignored local
+  tooling readmes/licenses cannot accidentally enter a release archive.
+
+- Include merge-resolution diffs in redacted history secret scanning, with a
+  workflow regression check. Keep PR tokens read-only and main protection intact.
+
+- Harden Linux portal dispatch against named-pipe worker exhaustion: reject
+  special files, open descriptors nonblocking and recheck their type. Add a
+  FIFO regression while preserving regular-file/directory dispatch.
+- Update locked `async-executor` to 1.14.1 (fixes the yanked 1.14.0 teardown
+  use-after-free), `clipboard-win` to non-yanked 5.4.3, and affected root/mobile/iOS
+  Tokio locks to 1.53.3 for RUSTSEC-2026-0386. Keep GPU/text pins and Rust 1.89.
+
+- Fix Custom/Borderless GPU startup on X11 surfaces without transparent alpha:
+  negotiate an opaque/inherited GPU surface instead of failing or forcing CPU
+  drawing. Use actual negotiated alpha for the clear, corner mask and native
+  transparency during startup, live chrome/background changes and recovery.
+  Preserve alpha-capable desktop and platform-owned mobile/web surface policies;
+  X11 backdrop blur remains unsupported.
+
+- Fix Linux desktop application startup: `Application::validate()` accepts the
+  compiled tray host without requiring a macOS-style global menu. Preserve
+  invalid-configuration and missing-adapter rejection, add platform-aware startup
+  regressions, and correct the Catalog launcher's Linux capability message.
+
+- Add optional Rust-only Linux desktop services: nonblocking XDG portal file/folder
+  dialogs, default-app file/URL dispatch, file-manager reveal, immediate silent
+  notifications/removal, checked freedesktop Trash, and StatusNotifierItem/DBusMenu
+  tray commands. Preserve macOS APIs and explicit unsupported capabilities. Add
+  Catalog workflows, private-bus portal race/cancel tests and Trash regressions.
+  Linux scheduling, combined file-or-folder dialogs, notification actions and
+  global menu bars remain unsupported; GNOME tray visibility needs a tray host.
+
+- Add explicit per-user `cargo volt install-linux` registration with matched
+  desktop/app IDs and app-specific icons for Catalog, Northbound and generated
+  starters. Launchers point directly to the selected executable, safely escaping
+  paths without a shell. No automatic installation, sudo or dependency changes;
+  updates require `--replace` and a managed registration. Add collision, injection,
+  symlink and scaffold regression tests. KDE Wayland blur was manually confirmed
+  in VM QA; hardware GPU performance and other-desktop acceptance remain separate.
+
+- Make Catalog Window settings available in the existing header at every width,
+  with live mode selection, optional app-drawn TrafficLights/Symbols and actual
+  backend diagnostics. Share configurable `window_header` composition and control
+  styles across Catalog, Northbound and all desktop `cargo volt new` templates.
+  Native macOS controls and existing legacy defaults remain intact; no global
+  title strip is inserted. Add validated Linux app identity/WM_CLASS, explicit
+  Wayland/X11 backend selection, event-driven host diagnostics and opt-in matching
+  desktop launchers in generated projects, with `--chrome`, `--control-style`
+  and `--app-id` creation options. CI compiles all ten desktop starters.
+  Linux compositor visual/runtime acceptance remains a separate release gate.
+
+- Port eight runnable Button, Select and Table recipes into the current Catalog
+  without changing its design or shared rounded/square Table selection and sort.
+  Their Code panels and web reference show complete cached Rust programs; the
+  `samples` runner lists, launches and prints them. CI checks copied programs
+  independently. Retain mapped-child key/pointer coverage alongside existing tests.
+
+- Integrated custom chrome with the current runtime/input and map-safety fixes.
+  Custom header drags wait for pointer movement to preserve double-click
+  maximize; Wayland/Windows blank headers request the native window menu.
+  Interactive children and unsupported-backend context menus are preserved.
+  Shared Northbound browser previews keep native chrome state cfg-gated.
+
+
+- Fix Linux client chrome: Catalog and Northbound now default to Custom;
+  Northbound connects existing-header minimize/maximize/close to native actions, preserving
+  the channel across sample resets. Northbound's client controls are centered
+  26 logical pixels below the top edge without moving the title/search/day row
+  or adding a title bar; hit targets move with the controls. Linux GPU Custom/Borderless windows use an
+  antialiased outer corner mask with matching Wayland blur regions at fractional
+  scale; maximized/fullscreen frames stay rectangular. Native frames remain
+  compositor-owned; software fallback remains opaque/rectangular. No winit
+  upgrade or additional dependencies are required.
+
+- Add optional embedded window chrome and live Catalog Native/Custom/Borderless
+  selection (plus macOS Unified), typed accessible window controls, a separate
+  bounded native action queue, native state reporting, and Linux/Windows edge
+  resizing with fractional-scale hit tests. Controls occupy existing app content,
+  not an added title strip. macOS Custom retains native traffic lights, rounded
+  frame, shadow, resizing and public material. macOS Borderless hides the title
+  and buttons while retaining the invisible native frame for the same material,
+  rounded corners and shadow. Opt-in split-view integrated headers control layout
+  and the configurable native-control safe area only: the Catalog's right panel
+  keeps the same opaque toolbar/content, inset, rounding and shadow in every
+  chrome mode. Toolbar translucency is an independent opt-in (default false);
+  only that explicit glass toolbar omits the full-sheet shadow to avoid a dark
+  band. Existing split-view defaults and opaque page content stay unchanged. Custom close honors existing unsaved-work guards. Add
+  `WindowChrome::Custom` (exhaustive matches must handle it), docs and regression
+  coverage. Fix passive toast layers blocking otherwise draggable headers.
+
+- Harden the maps example's network boundary: only the exact HTTPS Mapbox API
+  authority receives a managed token (never a path or lookalike hostname).
+  Vector tiles have a 16 MiB compressed/expanded limit and bounded decoding;
+  malformed varints and geometry fail instead of truncating or overflowing.
+  Browser downloads stream into shared response limits, with six concurrent
+  requests and a 20-second abort deadline rather than unbounded array buffers.
+
+- Fix presses lost to recomposition: an app that rebuilds its document while
+  a button is held (on a timer, or when a download arrives) no longer drops
+  the press, which made controls need several clicks. The press survives
+  when the same control, of the same kind, is still there, enabled and in
+  scope and the same application root; a press on a control that went away
+  or belongs to a replaced root ends. Root changes also discard captured drags,
+  scrollbar gestures and previous click identity.
+- An app that registers Inter gets it as its default ("system") face on
+  every platform, instead of Avenir Next on macOS and the platform's
+  sans-serif elsewhere.
+- Add the `maps` example: maps drawn by Volt from OpenFreeMap and
+  OpenStreetMap, Mapbox and Google (with a key), and Apple Maps through
+  MapKit on macOS. It has search, directions, your location, light and dark
+  maps, smooth camera moves, rotating and tilting with 3D buildings, and
+  settings for units and provider keys. `examples/maps/run.sh` builds and
+  opens it as an app bundle on macOS.
+
+- Add `Container::mask(element, MaskMode)`: the container's content shows
+  only where the mask element is opaque (`MaskMode::Alpha`, so a gradient
+  mask fades it and a shape cuts it out) or bright (`MaskMode::Luminance`).
+  The mask is laid out like the container's other children but never painted
+  on its own; it must be the container's last child. The container is drawn
+  in a layer of its own, with the mask applied as it closes, in both the
+  software renderer (tiny-skia alpha and luminance masks) and the GPU
+  renderer (Vello DestIn and luminance mask layers), so it works on the
+  desktop and in the browser. Painters get `ui_mask_begin` and `ui_mask_end`
+  hooks (no-ops by default).
+- Fix GPU gradients whose first stop is after 0% or last stop before 100%:
+  Vello ramps from the first stop as if it sat at 0, so a scrim clear until
+  40% darkened from the top on the GPU while the software renderer was
+  right. The end colours are now held out to 0% and 100%, as CSS does.
+- `tree_node` rows can carry an `.icon(..)` before the label, a `.marker(..)`
+  in the disclosure slot of a row without children (such as a hook for a
+  layer a mask clips), up to three decorative `.trailing(..)` status icons
+  (locked, hidden) and a dimmed `.muted(true)` label; `tree_view` takes
+  `.selected_many(..)` to show every row of a multiple selection as
+  selected. A row's indent and disclosure slot no longer shrink when its
+  label asks for the whole width.
+- Add `popup_width` to `menu` and `context_menu`, so a compact trigger can
+  open a list wide enough for its rows, and `label_inset` to `menu` for its
+  trigger's label.
+- Add `on_key_press` for application keys: a container hears a key press
+  that no text editor, menu, dialog, application command, focused control or
+  text selection used, as a `KeyPress` (a `PressedKey` — a lower-case layout
+  character, Backspace, Delete, Enter, Space, the arrows, Home/End or
+  PageUp/PageDown — plus modifiers and repeat). The nearest such container
+  around the focused control hears it first, else the last one in the
+  document; returning false leaves the key to the window's defaults. This
+  gives canvases and editors Delete, arrow nudges, single-letter tools and
+  Cmd/Ctrl+Z, C, V and X when no text field is being edited, which
+  application commands cannot claim. Tab and Escape keep their focus and
+  dismiss roles (Escape still goes to `on_escape`), and Enter and Space stay
+  with a focused control. Both the native and the browser host route it; the
+  browser host's canvas now takes focus on a press (it is never a Tab stop)
+  so keys reach Rust when no control is focused, and its Escape now reaches
+  `on_escape` as it already did on the desktop. A press on an `on_drag` grip
+  now counts as a press on blank space: it ends text editing and clears
+  focus, so a canvas's keys work again right after typing in a field.
+- Add `on_pointer` for surfaces that do their own hit testing, such as a
+  drawing canvas. A press on the container (not on a control inside it)
+  arrives as a `Pointer` with its position in the surface, the modifiers held
+  and the click count (1, 2 or 3); the pointer is then captured, so drags
+  arrive with the offset and the modifiers held now (hosts re-send on a
+  modifier change, so Shift mid-drag applies at once), and the release
+  arrives wherever it happens. With no button held, moves over the surface
+  arrive as `Hover` and then `Leave`, and a scroll wheel, two-finger scroll or
+  trackpad pinch over it arrives as `Wheel` (with the delta) or `Pinch` (with
+  the change in magnification) instead of scrolling the content under it.
+  New runtime entry points `set_pointer_modifiers`, `pinch_outcome`,
+  `pointer_leave_outcome` and `pointer_dragging` let hosts report these; the
+  native host routes macOS trackpad pinch, and the browser host now sends
+  pointer modifiers and click counts, and a Ctrl+wheel pinch as `Pinch`.
+  `on_drag` on the same container keeps working.
+- Add a design-tool layout to `color_picker`: `.area(true)` shows a
+  saturation/brightness square, a hue strip and (with `.alpha(true)`) an
+  opacity strip, each dragged directly, with hex and opacity fields and the
+  swatches below; `.alpha(true)` makes `on_change` report `#RRGGBBAA`. A new
+  `Hsva` colour (with `#RRGGBB`/`#RRGGBBAA` parsing) can be passed with
+  `.hsva(..)` and received with `.on_hsva(..)`, so an app keeps the hue while
+  a colour is grey or black. `.width(..)` sizes the picker. The default
+  picker is unchanged.
+- Add inner shadows and several shadows per element: `Shadow::inset(true)`
+  draws inside the element, above its fill and below its children, on both
+  the GPU and the software renderer; `.shadows([..])` adds up to eight drop or
+  inner shadows after any `.shadow(..)` (these are not animated). Painters get
+  a `card_inner_shadow` command whose renderer-independent fallback draws
+  nothing.
+
+## 0.6.0 (2026-11-08; not published to crates.io)
+
+- The website leads with live apps: Relay and Northbound run in the page in one
+  WebAssembly canvas, as slides of the kit's own carousel, from the same Rust as
+  their desktop examples. The page no longer calls the kit macOS-first; its
+  status table says what is tested on each platform.
+- Add `Element::map_state`: embed a view written for its own state inside a
+  larger app. Every callback in the tree runs against the part of the parent
+  state that the accessor returns, so a whole app can become one screen of
+  another.
+- Carousel: `.controls_below(true)` puts the previous and next buttons under the
+  slide, beside the position markers, so they don't cover interactive slides.
+  `.labels(..)` names the slides; the names replace the dots as small buttons.
+- Browser host: `WebView::set_busy` keeps frames coming while an app plays timed
+  work from the frame clock.
+- Relay plays its scripted agent replies as a timed list of events, from a
+  thread on the desktop and from the frame clock in the browser. Its sample
+  threads use made-up project names.
+- Northbound computes each column of its generated photographs once instead of
+  per pixel: 0.44 s to 0.09 s natively, and about 11 s to 0.6 s in the browser.
+
+- Align the native Catalog landing page with current capabilities: remove
+  unmeasured frame-time and 8K claims, describe accessibility semantics and
+  macOS-first validation accurately, and derive component/pattern/accent counts
+  from the Catalog. Preserve the design and replace the timing card with
+  theme-aware accent swatches; scope native webview claims separately from
+  experimental web/mobile host code.
+
+- Add native Linux Wayland backdrop negotiation for `ext-background-effect-v1`,
+  retaining the legacy KDE protocol without migrating stable winit/AccessKit to
+  a beta. Add UI-thread backdrop status callbacks, truthful Catalog diagnostics,
+  logical-coordinate blur regions, bounded asynchronous discovery and idle-safe
+  dispatch/teardown. Add mock-compositor protocol regression tests. The two raw
+  handle imports are isolated in a documented Linux-native-only FFI boundary;
+  desktop defaults and existing Volt drawing APIs remain unchanged. Real
+  KDE/COSMIC GPU visual acceptance remains a separate test gate.
+- Built-in component motion, on by default: dialogs and the command palette
+  fade their backdrop and card in and out; popovers, menus, context menus and
+  selects fade while settling into place; tooltips and hover cards fade in.
+  Drawers, toasts, collapsibles, accordions and carousels keep their existing
+  motion. Every one of these takes `.motion(false)`, and the new
+  `Application::motion(Motion::Default | Motion::None)` sets the level for the
+  whole app (`reduced_motion(true)` is the same as `Motion::None`). New projects
+  from `cargo volt new` set `.motion(Motion::Default)` explicitly.
+- Overlays now sit in a stable zero-size `"{key}-slot"` element while closed
+  instead of reusing the overlay's key, so a closing dialog, drawer or palette
+  fades out above the window rather than inside its original parent's clip and
+  opacity. Code that looked up a closed overlay by its key should use the slot.
+- The native host now reads the Linux desktop's reduce-motion setting at
+  startup, as it already did on macOS: KDE Plasma's Instant animation speed
+  (`AnimationDurationFactor=0` in `kdeglobals`) and GNOME's
+  `enable-animations` turned off (read with `gsettings` on a background
+  thread). Only the active KDE/GNOME session is queried. KDE config reads
+  are limited to 64 KiB per file; GNOME queries have a two-second timeout,
+  a 64-byte output limit and child-process cleanup. It can only turn motion
+  off; `VOLT_UI_REDUCED_MOTION=1` and
+  `reduced_motion(true)` work as before. The Windows setting is not read yet.
+
 - Extend the experimental web host with write-only password input, UTF-16/UTF-8
   caret/selection synchronization, native composition cancellation/commit,
   code-surface input and trusted-event clipboard routing. Add a small Rust-owned

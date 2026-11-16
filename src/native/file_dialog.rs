@@ -1,5 +1,6 @@
-//! Safe public macOS file panels, opt-in through `native-desktop`.
-//! Dialogs are synchronous application-modal UI; do file I/O on a worker afterward.
+//! macOS panels and Linux desktop portals, opt-in through `native-desktop`.
+//! Use request_* for portable UI callbacks. Synchronous Linux calls are worker-only;
+//! synchronous macOS panels require the main thread. Do file I/O on a worker.
 use std::{fmt, path::PathBuf};
 #[derive(Clone, Debug)]
 pub struct FileDialogOptions {
@@ -62,8 +63,8 @@ impl fmt::Display for FileDialogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::InvalidOptions => "invalid file dialog title, suggested name, or directory",
-            Self::Unsupported => "file dialogs require native-desktop on macOS",
-            Self::WrongThread => "AppKit file dialogs require the main thread",
+            Self::Unsupported => "file dialogs require native-desktop on macOS or Linux with an available desktop portal",
+            Self::WrongThread => "wrong thread: use request_* callbacks on Linux; AppKit panels require the macOS main thread",
             Self::NativeFailure => "native file panel failed or returned an invalid file URL",
         })
     }
@@ -71,7 +72,10 @@ impl fmt::Display for FileDialogError {
 impl std::error::Error for FileDialogError {}
 /// Compiled adapter availability, not an authorization/runtime guarantee.
 pub fn available() -> bool {
-    cfg!(all(feature = "native-desktop", target_os = "macos"))
+    cfg!(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    ))
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
@@ -117,7 +121,17 @@ pub fn reveal_file(path: &std::path::Path) -> Result<(), FileDialogError> {
         objc2_app_kit::NSWorkspace::sharedWorkspace().activateFileViewerSelectingURLs(&urls);
         Ok(())
     }
-    #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    {
+        if super::linux_services::on_ui_thread() {
+            return Err(FileDialogError::WrongThread);
+        }
+        super::linux_services::reveal(path).map_err(|_| FileDialogError::NativeFailure)
+    }
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
     Err(FileDialogError::Unsupported)
 }
 /// Move one existing absolute item to the macOS Trash. Never permanently deletes.
@@ -143,7 +157,14 @@ pub fn move_to_trash(path: &std::path::Path) -> Result<(), FileDialogError> {
                 .map_err(|_| FileDialogError::NativeFailure)
         })
     }
-    #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    return super::linux_services::trash::move_item(path, true)
+        .map(|_| ())
+        .map_err(|_| FileDialogError::NativeFailure);
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
     Err(FileDialogError::Unsupported)
 }
 /// The existing OS-selected Trash on the item's current local filesystem.
@@ -186,7 +207,7 @@ impl fmt::Display for TrashError {
             Self::InvalidPath => {
                 "Trash requires an absolute non-root path without parent traversal"
             }
-            Self::Unsupported => "checked Trash requires native-desktop on macOS",
+            Self::Unsupported => "checked Trash requires native-desktop on macOS or Linux",
             Self::Symlink => "checked Trash refuses symbolic links in the item or its ancestors",
             Self::MetadataUnavailable => {
                 "filesystem metadata is unavailable; item was not submitted to Trash"
@@ -202,7 +223,7 @@ impl fmt::Display for TrashError {
     }
 }
 impl std::error::Error for TrashError {}
-fn validate_metadata_path(path: &std::path::Path) -> Result<(), TrashError> {
+pub(super) fn validate_metadata_path(path: &std::path::Path) -> Result<(), TrashError> {
     if !path.is_absolute()
         || path.as_os_str().as_encoded_bytes().contains(&0)
         || path
@@ -213,7 +234,7 @@ fn validate_metadata_path(path: &std::path::Path) -> Result<(), TrashError> {
     }
     Ok(())
 }
-fn validate_trash_path(path: &std::path::Path) -> Result<(), TrashError> {
+pub(super) fn validate_trash_path(path: &std::path::Path) -> Result<(), TrashError> {
     validate_metadata_path(path)?;
     if path.parent().is_none() {
         return Err(TrashError::InvalidPath);
@@ -232,7 +253,12 @@ pub fn is_local_volume(path: &std::path::Path) -> Result<bool, TrashError> {
     {
         checked_trash::local_volume(path)
     }
-    #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    return super::linux_services::trash::local_volume(path);
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
     Err(TrashError::Unsupported)
 }
 /// Find an existing, symlink-free, same-volume Trash using public Foundation
@@ -259,7 +285,12 @@ pub fn recoverable_trash_for(path: &std::path::Path) -> Result<TrashCapability, 
     {
         objc2::rc::autoreleasepool(|_| checked_trash::capability(path))
     }
-    #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    return super::linux_services::trash::capability(path);
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
     Err(TrashError::Unsupported)
 }
 /// Perform exactly one native Trash request after checking the current local,
@@ -287,7 +318,12 @@ pub fn move_to_trash_checked(path: &std::path::Path) -> Result<TrashReceipt, Tra
     {
         objc2::rc::autoreleasepool(|_| checked_trash::move_item(path))
     }
-    #[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    return super::linux_services::trash::move_item(path, false);
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
     Err(TrashError::Unsupported)
 }
 #[cfg(all(feature = "native-desktop", target_os = "macos"))]
@@ -413,10 +449,110 @@ pub fn save_file(options: &FileDialogOptions) -> Result<Option<PathBuf>, FileDia
     options.validate()?;
     show(options, Panel::Save)
 }
-#[cfg(not(all(feature = "native-desktop", target_os = "macos")))]
+#[cfg(not(all(
+    feature = "native-desktop",
+    any(target_os = "macos", target_os = "linux")
+)))]
 fn show(_: &FileDialogOptions, _: Panel) -> Result<Option<PathBuf>, FileDialogError> {
     Err(FileDialogError::Unsupported)
 }
+
+#[cfg(all(feature = "native-desktop", target_os = "linux"))]
+fn show(options: &FileDialogOptions, kind: Panel) -> Result<Option<PathBuf>, FileDialogError> {
+    if super::linux_services::on_ui_thread() {
+        return Err(FileDialogError::WrongThread);
+    }
+    if kind == Panel::OpenEither {
+        return Err(FileDialogError::Unsupported);
+    }
+    super::linux_services::choose(
+        &options.title,
+        options.directory.as_deref(),
+        options.suggested_name.as_deref(),
+        kind == Panel::OpenFolder,
+        kind == Panel::Save,
+    )
+    .map_err(|_| FileDialogError::NativeFailure)
+}
+/// Nonblocking on Linux; callback on a worker. macOS keeps its main-thread
+/// modal panel. On startup error the callback is not invoked. Cancel is Ok(None).
+pub fn request_open_file(
+    options: FileDialogOptions,
+    callback: impl FnOnce(Result<Option<PathBuf>, FileDialogError>) + Send + 'static,
+) -> Result<(), FileDialogError> {
+    request_panel(options, Panel::OpenFile, callback)
+}
+pub fn request_open_folder(
+    options: FileDialogOptions,
+    callback: impl FnOnce(Result<Option<PathBuf>, FileDialogError>) + Send + 'static,
+) -> Result<(), FileDialogError> {
+    request_panel(options, Panel::OpenFolder, callback)
+}
+pub fn request_save_file(
+    options: FileDialogOptions,
+    callback: impl FnOnce(Result<Option<PathBuf>, FileDialogError>) + Send + 'static,
+) -> Result<(), FileDialogError> {
+    request_panel(options, Panel::Save, callback)
+}
+fn request_panel(
+    options: FileDialogOptions,
+    kind: Panel,
+    callback: impl FnOnce(Result<Option<PathBuf>, FileDialogError>) + Send + 'static,
+) -> Result<(), FileDialogError> {
+    options.validate()?;
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    return super::linux_services::spawn(
+        move || show(&options, kind).map_err(|e| e.to_string()),
+        move |r| callback(r.map_err(|_| FileDialogError::NativeFailure)),
+    )
+    .map_err(|_| FileDialogError::NativeFailure);
+    #[cfg(not(all(feature = "native-desktop", target_os = "linux")))]
+    {
+        let result = show(&options, kind);
+        callback(result);
+        Ok(())
+    }
+}
+/// Open one absolute file/directory in its default app. Call on a worker on Linux.
+/// Unlike a file chooser, this can execute a registered external application.
+pub fn open_path(path: &std::path::Path) -> Result<(), FileDialogError> {
+    if !path.is_absolute() {
+        return Err(FileDialogError::InvalidOptions);
+    }
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    {
+        if super::linux_services::on_ui_thread() {
+            return Err(FileDialogError::WrongThread);
+        }
+        super::linux_services::open_path(path).map_err(|_| FileDialogError::NativeFailure)
+    }
+    #[cfg(all(feature = "native-desktop", target_os = "macos"))]
+    {
+        let _main = objc2::MainThreadMarker::new().ok_or(FileDialogError::WrongThread)?;
+        let url =
+            objc2_foundation::NSURL::from_file_path(path).ok_or(FileDialogError::InvalidOptions)?;
+        if objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&url) {
+            Ok(())
+        } else {
+            Err(FileDialogError::NativeFailure)
+        }
+    }
+    #[cfg(not(all(
+        feature = "native-desktop",
+        any(target_os = "macos", target_os = "linux")
+    )))]
+    Err(FileDialogError::Unsupported)
+}
+/// Explicitly prepare a private recoverable Trash when missing. Unlike the
+/// metadata-only capability query, this MAY create directories; never moves data.
+pub fn prepare_trash_for(path: &std::path::Path) -> Result<TrashCapability, TrashError> {
+    validate_trash_path(path)?;
+    #[cfg(all(feature = "native-desktop", target_os = "linux"))]
+    return super::linux_services::trash::prepare(path);
+    #[cfg(not(all(feature = "native-desktop", target_os = "linux")))]
+    recoverable_trash_for(path)
+}
+
 #[cfg(all(feature = "native-desktop", target_os = "macos"))]
 fn show(options: &FileDialogOptions, kind: Panel) -> Result<Option<PathBuf>, FileDialogError> {
     use objc2::MainThreadMarker;
@@ -470,6 +606,52 @@ fn show(options: &FileDialogOptions, kind: Panel) -> Result<Option<PathBuf>, Fil
     }
     Ok(Some(path))
 }
+/// Dispatch a local path without blocking Linux's UI thread. macOS starts on
+/// the main thread. As with request_open_file, marshal completion via UiSender.
+pub fn request_open_path(
+    path: PathBuf,
+    callback: impl FnOnce(Result<(), FileDialogError>) + Send + 'static,
+) -> Result<(), FileDialogError> {
+    request_path_action(path, false, callback)
+}
+pub fn request_reveal_file(
+    path: PathBuf,
+    callback: impl FnOnce(Result<(), FileDialogError>) + Send + 'static,
+) -> Result<(), FileDialogError> {
+    request_path_action(path, true, callback)
+}
+fn request_path_action(
+    path: PathBuf,
+    reveal: bool,
+    callback: impl FnOnce(Result<(), FileDialogError>) + Send + 'static,
+) -> Result<(), FileDialogError> {
+    if !path.is_absolute() {
+        return Err(FileDialogError::InvalidOptions);
+    }
+    #[cfg(all(target_os = "linux", feature = "native-desktop"))]
+    return super::linux_services::spawn(
+        move || {
+            if reveal {
+                reveal_file(&path)
+            } else {
+                open_path(&path)
+            }
+            .map_err(|e| e.to_string())
+        },
+        move |r| callback(r.map_err(|_| FileDialogError::NativeFailure)),
+    )
+    .map_err(|_| FileDialogError::NativeFailure);
+    #[cfg(not(all(target_os = "linux", feature = "native-desktop")))]
+    {
+        callback(if reveal {
+            reveal_file(&path)
+        } else {
+            open_path(&path)
+        });
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,6 +791,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(all(target_os = "linux", feature = "native-desktop")))]
     fn background_thread_never_opens_a_native_panel() {
         let result = std::thread::spawn(|| open_file(&FileDialogOptions::new("Open")))
             .join()

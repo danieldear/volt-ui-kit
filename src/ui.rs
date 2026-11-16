@@ -121,14 +121,16 @@ fn bounded_semantic_name(text: &str, fallback: &str) -> String {
 }
 pub use crate::declarative::{
     responsive, Align, Ambient, Animation, Breakpoint, Direction, Easing, Flow, Glow, Interaction,
-    Responsive, Rounding, Scroll, Scrollbars, Shadow, Spring, Tone, Transition, VisualStyle,
+    Motion, Responsive, Rounding, Scroll, Scrollbars, Shadow, Spring, Tone, Transition,
+    VisualStyle,
 };
 pub use crate::declarative::{
     BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
 };
 
 pub use crate::graphics::{
-    BackgroundImage, Canvas, CanvasFrames, Clip, Image, ImageFit, ImagePosition, VectorPath,
+    BackgroundImage, BlendMode, Canvas, CanvasFrames, Clip, DialStyle, Image, ImageFit,
+    ImagePosition, MaskMode, VectorPath,
 };
 pub use crate::{ColorToken, Palette, ThemeMode, UiTheme};
 
@@ -254,6 +256,8 @@ pub enum FontStyle {
 type Click<C> = Box<dyn FnMut(&mut C)>;
 type ClickWith<C> = Box<dyn FnMut(&mut C, PointerActivation, u8)>;
 type InputKeyCallback<C> = Box<dyn FnMut(&mut C, InputKeyEvent) -> bool>;
+type KeyPressCallback<C> = Box<dyn FnMut(&mut C, KeyPress) -> bool>;
+type PointerCallback<C> = Box<dyn FnMut(&mut C, Pointer)>;
 type Change<C> = Box<dyn FnMut(&mut C, bool)>;
 type ChangeText<C> = Box<dyn FnMut(&mut C, String)>;
 type ChangeNumber<C> = Box<dyn FnMut(&mut C, f32)>;
@@ -291,6 +295,64 @@ enum Callback<C> {
         caret: Option<CodeCaretCallback<C>>,
         fold: Option<CodeFoldCallback<C>>,
     },
+}
+// `Element::map_state` re-targets every callback at a part of a larger state.
+type Access<P, C> = std::rc::Rc<dyn Fn(&mut P) -> &mut C>;
+type Handler1<S, A, R> = Box<dyn FnMut(&mut S, A) -> R>;
+type Handler2<S, A, B> = Box<dyn FnMut(&mut S, A, B)>;
+fn lift0<P: 'static, C: 'static>(mut f: Click<C>, access: &Access<P, C>) -> Click<P> {
+    let access = access.clone();
+    Box::new(move |parent| f(access(parent)))
+}
+fn lift1<P: 'static, C: 'static, A: 'static, R: 'static>(
+    mut f: Handler1<C, A, R>,
+    access: &Access<P, C>,
+) -> Handler1<P, A, R> {
+    let access = access.clone();
+    Box::new(move |parent, a| f(access(parent), a))
+}
+fn lift2<P: 'static, C: 'static, A: 'static, B: 'static>(
+    mut f: Handler2<C, A, B>,
+    access: &Access<P, C>,
+) -> Handler2<P, A, B> {
+    let access = access.clone();
+    Box::new(move |parent, a, b| f(access(parent), a, b))
+}
+impl<C: 'static> Callback<C> {
+    fn map_state<P: 'static>(self, a: &Access<P, C>) -> Callback<P> {
+        match self {
+            Callback::Click(f) => Callback::Click(lift0(f, a)),
+            Callback::Change(f) => Callback::Change(lift1(f, a)),
+            Callback::Text {
+                change,
+                submit,
+                cancel,
+                selection,
+                key,
+            } => Callback::Text {
+                change: change.map(|f| lift1(f, a)),
+                submit: submit.map(|f| lift0(f, a)),
+                cancel: cancel.map(|f| lift0(f, a)),
+                selection: selection.map(|f| lift1(f, a)),
+                key: key.map(|f| lift1(f, a)),
+            },
+            Callback::Number(f) => Callback::Number(lift1(f, a)),
+            Callback::Range { lower, upper } => Callback::Range {
+                lower: lift1(lower, a),
+                upper: lift1(upper, a),
+            },
+            Callback::Dismiss(f) => Callback::Dismiss(lift0(f, a)),
+            Callback::Context(f) => Callback::Context(lift1(f, a)),
+            Callback::Window(f) => Callback::Window(lift1(f, a)),
+            Callback::Files(f) => Callback::Files(lift1(f, a)),
+            Callback::Link(f) => Callback::Link(lift1(f, a)),
+            Callback::Code { input, caret, fold } => Callback::Code {
+                input: lift1(input, a),
+                caret: caret.map(|f| lift1(f, a)),
+                fold: fold.map(|f| lift1(f, a)),
+            },
+        }
+    }
 }
 // Opt-in spacing for composites whose public builder is not an Element wrapper.
 // Empty overrides leave every constructor default intact.
@@ -366,13 +428,19 @@ macro_rules! root_spacing_methods {
         }
     };
 }
+mod window_chrome;
+pub use window_chrome::{
+    window_controls, window_controls_with_style, window_header, WindowAction, WindowControlStyle,
+    WindowControlsState,
+};
 mod bars;
 mod charts;
 mod hierarchy;
 mod selection;
 mod sunburst;
 pub use crate::declarative::{
-    InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation,
+    InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
+    PointerPhase, PressedKey,
 };
 pub use hierarchy::{
     icicle_chart, icicle_layout, treemap_chart, treemap_layout, HierarchyChart, HierarchyNode,
@@ -413,10 +481,12 @@ mod navigation;
 mod routing;
 pub use routing::{
     link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError, NavigationHistory,
-    NavigationLink, NavigationSnapshot, UrlError,
+    NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
 };
 mod popovers;
 mod progress;
+mod speed_dial;
+pub use speed_dial::{speed_dial, SpeedDial};
 mod split;
 mod split_view;
 pub mod tokens;
@@ -426,7 +496,7 @@ pub use dates::{
 };
 pub use forms::{
     color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group, rating,
-    tag_input, ColorPicker, Combobox, ComboboxState, DropZone, FormField, Hsl, NumberInput,
+    tag_input, ColorPicker, Combobox, ComboboxState, DropZone, FormField, Hsl, Hsva, NumberInput,
     OtpInput, RadioGroup, Rating, TagInput, TagInputState,
 };
 pub use icons::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon, ALL_ICONS};
@@ -450,11 +520,11 @@ pub use navigation::{
     navigation, navigation_item, Navigation, NavigationItem, NavigationPlacement,
 };
 pub use popovers::{hover_card, popover, tooltip, Popover, Tooltip};
-pub use progress::{loading, progress, progress_indeterminate, spinner, Progress};
+pub use progress::{gauge, loading, progress, progress_indeterminate, spinner, Progress};
 pub use split::{split, SplitPane};
 pub use split_view::{navigation_split_view, NavigationSplitView, SidebarPlace};
 pub use value_controls::{
-    range_slider, select, select_item, slider, RangeSlider, Select, SelectItem, Slider,
+    knob, range_slider, select, select_item, slider, RangeSlider, Select, SelectItem, Slider,
 };
 /// A composed, owned UI description. No callback is run while building it.
 pub struct Element<C> {
@@ -477,13 +547,67 @@ pub struct Element<C> {
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
+    /// Containers: application keys nothing else used.
+    key_press: Option<KeyPressCallback<C>>,
+    /// Containers: pointer surface events.
+    pointer: Option<PointerCallback<C>>,
     /// Containers: a drag began on them; the offset from the press.
     drag: Option<DragCallback<C>>,
     drag_start: Option<Click<C>>,
     drag_from: Option<DragCallback<C>>,
     drag_end: Option<Click<C>>,
+    /// Pages: the title and buttons a `navigation_stack` puts in its bar.
+    navigation: Option<Box<PageNavigation<C>>>,
+}
+/// What a page shows in its navigation bar; read by `navigation_stack`.
+struct PageNavigation<C> {
+    title: String,
+    large_title: bool,
+    buttons: Vec<(String, Click<C>)>,
 }
 impl<C> Element<C> {
+    /// The page's title in its `navigation_stack` bar. On iOS it is the
+    /// navigation bar's title; elsewhere Volt draws the bar.
+    pub fn navigation_title(mut self, title: impl Into<String>) -> Self {
+        self.page_navigation().title = title.into();
+        self
+    }
+    /// Show the title large above the page, as iOS top-level pages do.
+    pub fn large_title(mut self, large: bool) -> Self {
+        self.page_navigation().large_title = large;
+        self
+    }
+    /// A trailing button in the page's navigation bar.
+    pub fn bar_button(
+        mut self,
+        label: impl Into<String>,
+        on_click: impl FnMut(&mut C) + 'static,
+    ) -> Self {
+        self.page_navigation()
+            .buttons
+            .push((label.into(), Box::new(on_click)));
+        self
+    }
+    fn page_navigation(&mut self) -> &mut PageNavigation<C> {
+        self.navigation.get_or_insert_with(|| {
+            Box::new(PageNavigation {
+                title: String::new(),
+                large_title: false,
+                buttons: Vec::new(),
+            })
+        })
+    }
+    /// Hide Volt's navigation bars for a host that draws them natively. Their
+    /// controls still run through `Runtime::activate_navigation`.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn hide_navigation_bars(&mut self) {
+        if self.node.ext.navigation_bar.is_some() {
+            self.node.ext.visible = Some(false.into());
+        }
+        for child in &mut self.children {
+            child.hide_navigation_bars();
+        }
+    }
     #[cfg(feature = "mobile")]
     pub(crate) fn host_font(mut self, family: &str) -> Self {
         self.node
@@ -513,10 +637,13 @@ impl<C> Element<C> {
             validation_error: None,
             input_activation: None,
             input_key: None,
+            key_press: None,
+            pointer: None,
             drag: None,
             drag_start: None,
             drag_from: None,
             drag_end: None,
+            navigation: None,
         }
     }
 }
@@ -531,6 +658,85 @@ impl<C> BuiltUi<C> {
     }
 }
 impl<C: 'static> Element<C> {
+    /// Embed a view written for its own state inside a larger app.
+    ///
+    /// `access` finds the view's state inside the parent state; every callback
+    /// in the tree then runs against that part. A self-contained screen, or a
+    /// whole example program's `view`, can be reused without rewriting its
+    /// callbacks:
+    ///
+    /// ```
+    /// use volt_ui_kit::ui::prelude::*;
+    ///
+    /// #[derive(Default)]
+    /// struct Counter { count: u32 }
+    /// fn counter(state: &Counter, key: &str) -> Element<Counter> {
+    ///     button(format!("Clicked {}", state.count))
+    ///         .key(key)
+    ///         .on_click(|state: &mut Counter| state.count += 1)
+    ///         .into()
+    /// }
+    ///
+    /// #[derive(Default)]
+    /// struct App { left: Counter, right: Counter }
+    /// fn view(app: &App) -> Element<App> {
+    ///     hstack![
+    ///         counter(&app.left, "left").map_state(|app: &mut App| &mut app.left),
+    ///         counter(&app.right, "right").map_state(|app: &mut App| &mut app.right),
+    ///     ]
+    ///     .into()
+    /// }
+    /// # view(&App::default()).build().unwrap();
+    /// ```
+    ///
+    /// Keys are not renamed and are unique across the whole window, so each
+    /// copy of a view needs keys of its own.
+    pub fn map_state<P: 'static>(self, access: impl Fn(&mut P) -> &mut C + 'static) -> Element<P> {
+        let access: Access<P, C> = std::rc::Rc::new(access);
+        self.map_state_with(&access)
+    }
+    fn map_state_with<P: 'static>(self, a: &Access<P, C>) -> Element<P> {
+        Element {
+            node: self.node,
+            auto_id: self.auto_id,
+            children: self
+                .children
+                .into_iter()
+                .map(|child| child.map_state_with(a))
+                .collect(),
+            callback: self.callback.map(|f| f.map_state(a)),
+            select_text: self.select_text.map(|f| lift1(f, a)),
+            width: self.width.map(|f| lift1(f, a)),
+            height: self.height.map(|f| lift1(f, a)),
+            hover: self.hover.map(|f| lift1(f, a)),
+            focus_within: self.focus_within.map(|f| lift1(f, a)),
+            escape: self.escape.map(|f| lift0(f, a)),
+            validation_error: self.validation_error,
+            input_activation: self.input_activation.map(|f| lift2(f, a)),
+            input_key: self.input_key.map(|f| lift1(f, a)),
+            key_press: self.key_press.map(|f| lift1(f, a)),
+            pointer: self.pointer.map(|f| lift1(f, a)),
+            drag: self.drag.map(|f| lift1(f, a)),
+            drag_start: self.drag_start.map(|f| lift0(f, a)),
+            drag_from: self.drag_from.map(|f| lift1(f, a)),
+            drag_end: self.drag_end.map(|f| lift0(f, a)),
+            navigation: self.navigation.map(|n| {
+                let PageNavigation {
+                    title,
+                    large_title,
+                    buttons,
+                } = *n;
+                Box::new(PageNavigation {
+                    title,
+                    large_title,
+                    buttons: buttons
+                        .into_iter()
+                        .map(|(label, f)| (label, lift0(f, a)))
+                        .collect(),
+                })
+            }),
+        }
+    }
     /// Lower to the shared runtime directly; no JSON serialization or parsing.
     /// Rejects missing callbacks, duplicate keys and invalid geometry/styles.
     pub fn build(self) -> Result<BuiltUi<C>, DocumentError> {
@@ -561,10 +767,14 @@ impl<C: 'static> Element<C> {
                 validation_error,
                 input_activation,
                 input_key,
+                key_press,
+                pointer,
                 drag,
                 drag_start,
                 drag_from,
                 drag_end,
+                // Read by navigation_stack; a page outside a stack has no bar.
+                navigation: _,
             } = element;
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
@@ -655,6 +865,20 @@ impl<C: 'static> Element<C> {
                     .on_input_key(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_input_key = Some(name);
+            }
+            if let Some(f) = key_press {
+                let name = format!("rust-key-press-{}", *count);
+                handlers
+                    .on_key_press(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_key_press = Some(name);
+            }
+            if let Some(f) = pointer {
+                let name = format!("rust-pointer-{}", *count);
+                handlers
+                    .on_pointer(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.on_pointer = Some(name);
             }
             if let Some(callback) = callback {
                 let name = format!("rust-action-{}", *count);
@@ -819,6 +1043,22 @@ pub struct Spacer<C>(Element<C>);
 pub struct Button<C>(Element<C>);
 pub struct Checkable<C>(Element<C>);
 pub struct Container<C>(Element<C>);
+impl<C> Container<C> {
+    /// Mask the container's content with `mask`: content shows only where
+    /// the mask is opaque (`MaskMode::Alpha`) or bright
+    /// (`MaskMode::Luminance`), so a gradient mask fades it and an image
+    /// mask cuts it out. The mask is laid out like the container's other
+    /// children (in a `zstack`, over them; place it with `.offset`), is
+    /// never painted on its own, and takes no pointer input. Call it after
+    /// the container has all its children: the mask must stay the last.
+    /// For a plain outline, `.clip(Clip::Path(..))` is cheaper.
+    pub fn mask(mut self, mask: impl Into<Element<C>>, mode: MaskMode) -> Self {
+        let mut mask = mask.into();
+        mask.node.ext.mask = Some(mode);
+        self.0.children.push(mask);
+        self
+    }
+}
 /// A stack whose horizontal/vertical direction can change at viewport breakpoints.
 pub struct Stack<C>(Element<C>);
 macro_rules! element_from {
@@ -867,10 +1107,56 @@ macro_rules! modifiers {
             /// The mouse cursor while the pointer is over this element.
             pub fn cursor(mut self, value: Cursor) -> Self { self.$($field)*.ext.cursor = Some(value); self }
             /// Paint-time translation in logical pixels; layout and hit targets stay put.
+            /// Isolate this subtree and blend its colours with content below it.
+            /// Keep child blending within this isolated group.
+            pub fn isolate(mut self, enabled: bool) -> Self { self.$($field)*.effects.isolate = enabled; self }
+            /// One entry reveal per key/revision when the laid-out box first enters view.
+            /// Never changes scrolling, hit geometry or accessibility semantics.
+            pub fn reveal_on_scroll(mut self, effect: Transition) -> Self { self.$($field)*.effects.scroll_reveal = Some(effect); self }
+            pub fn blend_mode(mut self, mode: BlendMode) -> Self { self.$($field)*.effects.blend = mode; self }
             pub fn offset(mut self, x: f32, y: f32) -> Self { self.$($field)*.ext.offset = [x, y]; self }
             /// Draw the border only on these edges (straight edges; corners stay square).
             pub fn border_sides(mut self, sides: Sides) -> Self { self.$($field)*.ext.border_sides = Some(sides); self }
             pub fn border_style(mut self, style: BorderStyle) -> Self { self.$($field)*.ext.border_style = style; self }
+
+
+            /// Interpolate keyed position/size changes. Nested layout motion
+            /// composes with its parent's transform; use stable keys.
+            pub fn layout_animation(mut self, animation: Animation) -> Self {
+                self.$($field)*.effects.layout_animation = Some(animation);
+                self
+            }
+            /// Match geometry across differently keyed instances/parents.
+            pub fn shared_element(mut self, key: impl Into<String>) -> Self {
+                self.$($field)*.effects.shared = Some(key.into());
+                self
+            }
+            /// Pointer-captured direct manipulation with bounded optional momentum.
+            pub fn drag_motion(mut self, policy: crate::motion::DragMotion) -> Self {
+                self.$($field)*.effects.drag_motion = Some(policy);
+                self
+            }
+            /// A finite, seekable clock-driven sequence. The same revision
+            /// preserves playback across ordinary recomposition.
+            pub fn timeline(mut self, sequence: crate::motion::Timeline) -> Self {
+                self.$($field)*.effects.timeline = Some(sequence);
+                self
+            }
+            /// Apply a logical 2D transform to this subtree, including input.
+            pub fn transform(mut self, value: crate::motion::Transform2D) -> Self {
+                self.$($field)*.effects.base.transform = Some(value);
+                self
+            }
+            pub fn scale(mut self, x: f32, y: f32) -> Self {
+                let t = self.$($field)*.effects.base.transform.unwrap_or_default();
+                self.$($field)*.effects.base.transform = Some(t.scale(x, y));
+                self
+            }
+            pub fn rotate(mut self, degrees: f32) -> Self {
+                let t = self.$($field)*.effects.base.transform.unwrap_or_default();
+                self.$($field)*.effects.base.transform = Some(t.rotate(degrees));
+                self
+            }
             /// A linear or radial gradient fill, resolved from theme tokens.
             pub fn background_gradient(mut self, gradient: Gradient) -> Self { self.$($field)*.ext.gradient = Some(gradient); self }
             /// Remove a component's fixed-width default; use the parent's cross-axis allocation.
@@ -910,10 +1196,16 @@ macro_rules! modifiers {
             /// Skip this box as a wheel-scroll starting target. Children remain
             /// eligible; painting and button/keyboard interaction are unchanged.
             /// Useful for empty decorative layers above another scroll view.
+            /// Hover/drag surfaces can let wheel events scroll their ancestors.
+            /// Default false preserves custom canvas wheel handling.
+            pub fn wheel_passthrough(mut self, value: bool) -> Self { self.$($field)*.effects.wheel_passthrough = value; self }
             pub fn scroll_passthrough(mut self, value: bool) -> Self { self.$($field)*.effects.scroll_passthrough = value; self }
             /// Subtree group opacity. Does not disable pointer/keyboard interaction.
             pub fn opacity(mut self, value:f32) -> Self { self.$($field)*.effects.base.opacity=Some(value); self }
             pub fn shadow(mut self, value:Shadow) -> Self { self.$($field)*.effects.base.shadow=Some(value); self }
+            /// Several drop and inner (`Shadow::inset`) shadows, drawn in
+            /// order after any `.shadow`; at most 8. These are not animated.
+            pub fn shadows(mut self, values: impl IntoIterator<Item = Shadow>) -> Self { self.$($field)*.effects.shadows = values.into_iter().collect(); self }
             pub fn glow(mut self, value:Glow) -> Self { self.$($field)*.effects.base.glow=Some(value); self }
             /// Share paint-only hover with enabled, mounted peers having this key.
             /// Does not dispatch callbacks, select, focus, scroll or open tooltips
@@ -1293,6 +1585,21 @@ macro_rules! container_modifiers {
     };
     ($target:ident, [$($generic:ident),*]) => {
         impl<C $(, $generic)*> $target<C $(, $generic)*> {
+            /// The page's title in its `navigation_stack` bar.
+            pub fn navigation_title(mut self, title: impl Into<String>) -> Self {
+                self.0 = self.0.navigation_title(title);
+                self
+            }
+            /// Show the page's title large above it, as iOS top-level pages do.
+            pub fn large_title(mut self, large: bool) -> Self {
+                self.0 = self.0.large_title(large);
+                self
+            }
+            /// A trailing button in the page's navigation bar.
+            pub fn bar_button(mut self, label: impl Into<String>, on_click: impl FnMut(&mut C) + 'static) -> Self {
+                self.0 = self.0.bar_button(label, on_click);
+                self
+            }
             /// Receive native file drops without changing the container layout.
             /// Drops over descendants route to this nearest registered ancestor.
             pub fn on_files_dropped(mut self, f: impl FnMut(&mut C, Vec<std::path::PathBuf>) + 'static) -> Self {
@@ -1384,6 +1691,37 @@ macro_rules! container_modifiers {
             /// the container is shown. The last such container in the
             /// document (the topmost) gets it: for dismissing a non-modal
             /// floating surface.
+            /// Application keys: called with a key press nothing else used
+            /// while the container is shown — no text editor has focus, no
+            /// menu or dialog is open, and no application command or focused
+            /// control took it. The nearest such container around the
+            /// focused control hears it first, else the last one in the
+            /// document (the topmost). Return true when you used the key;
+            /// false leaves it to the window (arrow scrolling, Enter on a
+            /// focused button). For canvases and editors: Delete, arrow
+            /// nudges, single-letter tools and Cmd/Ctrl+Z, C, V or X when no
+            /// text field is being edited. Tab and Escape never arrive (see
+            /// `on_escape`); Cmd/Ctrl+C with text selected and Cmd/Ctrl+A
+            /// over selectable text still copy and select that text.
+            pub fn on_key_press(mut self, f: impl FnMut(&mut C, KeyPress) -> bool + 'static) -> Self {
+                self.0.key_press = Some(Box::new(f));
+                self
+            }
+            /// Make the container a pointer surface that does its own hit
+            /// testing, like a drawing canvas. A press on it (not on a
+            /// control inside) arrives with its modifiers and click count;
+            /// the pointer is then captured, so drags arrive with the offset
+            /// and the modifiers held now, and the release arrives wherever
+            /// it happens. With no button held, moves over the surface
+            /// arrive as `Hover` (then `Leave`), and a scroll wheel,
+            /// two-finger scroll or trackpad pinch over it arrives as
+            /// `Wheel` or `Pinch` instead of scrolling what is under it.
+            /// Positions are logical points inside the surface. Works with
+            /// `on_drag` on the same container, which still gets its calls.
+            pub fn on_pointer(mut self, f: impl FnMut(&mut C, Pointer) + 'static) -> Self {
+                self.0.pointer = Some(Box::new(f));
+                self
+            }
             pub fn on_escape(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
                 self.0.escape = Some(Box::new(f));
                 self
@@ -1545,32 +1883,37 @@ macro_rules! tab_bar { ($($item:expr),* $(,)?) => { $crate::ui::tab_bar(vec![$($
 macro_rules! tabs { ($($item:expr),* $(,)?) => { $crate::ui::tabs(vec![$($item),*]) }; }
 pub use crate::{button_bar, tab_bar, tabs, toolbar};
 /// Import component functions, types and layout macros together.
+mod text_motion;
+pub use text_motion::{morphing_text, rolling_number, shimmer_text, typing_text};
 pub mod prelude {
     pub use super::{
-        accordion, alert, avatar, avatar_group, bar_chart, breadcrumb, carousel, collapsible,
-        command, command_palette, drawer, empty_state, hover_card, image_view, kbd, line_chart,
-        pagination, skeleton, skeleton_text, sparkline, stat, steps, timeline, toaster,
-        CommandPaletteState, DrawerSide, Presence, Severity, TimelineItem, Toast, ToastPosition,
+        accordion, alert, avatar, avatar_group, bar_chart, bottom_sheet, breadcrumb, carousel,
+        collapsible, command, command_palette, drawer, empty_state, fab, gauge, hover_card,
+        image_view, kbd, knob, line_chart, pagination, skeleton, skeleton_text, sparkline, stat,
+        steps, timeline, toaster, CommandPaletteState, DrawerSide, Presence, Severity,
+        TimelineItem, Toast, ToastPosition,
     };
     pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
     pub use super::{
         badge, button, button_bar, canvas, canvas_frames, checkbox, column, context_menu,
-        data_item, dialog, divider, grid, hstack, lazy_list, loading, menu, menu_item,
-        menu_separator, menu_submenu, navigation, navigation_item, panel, popover, progress,
-        progress_indeterminate, range_slider, responsive, row, segmented_control, select,
-        select_item, separator, slider, spacer, spinner, split, stack, tab, tab_bar, tab_item,
-        table, table_column, table_row, tabs, text, text_area, text_field, toggle, toolbar,
-        tooltip, tree_node, tree_view, virtual_list, vstack, zstack, Align, Ambient, Animation,
-        Axes, Axis, BackgroundImage, BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas,
-        Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem,
-        Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient,
-        GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList, Menu,
-        MenuItem, Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress,
-        Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow,
-        Sides, Slider, SortDirection, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
+        data_item, dialog, divider, grid, hstack, lazy_list, loading, mask_difference,
+        mask_exclude, mask_intersection, mask_union, menu, menu_item, menu_separator, menu_submenu,
+        navigation, navigation_item, panel, popover, progress, progress_indeterminate,
+        range_slider, responsive, row, segmented_control, select, select_item, separator, slider,
+        spacer, speed_dial, spinner, split, stack, tab, tab_bar, tab_item, table, table_column,
+        table_row, tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node,
+        tree_view, virtual_list, vstack, window_controls, window_controls_with_style,
+        window_header, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage, BlendMode,
+        BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
+        ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, DialStyle, Dialog, Direction,
+        Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image,
+        ImageFit, ImagePosition, Interaction, Justify, LazyList, MaskMode, Menu, MenuItem, Motion,
+        Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress, Responsive,
+        Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow, Sides, Slider,
+        SortDirection, SpeedDial, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
         TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone,
         Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
-        VisualStyle,
+        VisualStyle, WindowAction, WindowControlStyle, WindowControlsState,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
@@ -1579,14 +1922,15 @@ pub mod prelude {
     pub use super::{code_view, CodeView};
     pub use super::{
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
-        rating, tag_input, ComboboxState, Hsl, TagInputState,
+        rating, tag_input, ComboboxState, Hsl, Hsva, TagInputState,
     };
     pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
     pub use super::{
         link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
-        NavigationHistory, NavigationLink, NavigationSnapshot, UrlError,
+        NavigationHistory, NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
     };
+    pub use super::{morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
     pub use super::{
@@ -1594,5 +1938,46 @@ pub mod prelude {
         SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
     };
     pub use super::{sunburst_chart, SunburstChart};
-    pub use super::{InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation};
+    pub use super::{
+        InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
+        PointerPhase, PressedKey,
+    };
+    pub use crate::motion::{
+        Affine2D, DragGesture, DragMotion, Inertia, InertiaPlayer, MotionPose, TextEffect,
+        Timeline, TimelinePlayback, TimelinePlayer, Transform2D,
+    };
+}
+
+/// A touch-sized circular action button; provide a meaningful accessible label.
+pub fn fab<C>(symbol: impl Into<String>) -> Button<C> {
+    button(symbol)
+        .width(56.)
+        .height(56.)
+        .rounded(Rounding::Full)
+        .font_size(24.)
+        .variant(ButtonVariant::Primary)
+}
+/// A bottom-attached modal drawer. Dismissal, focus trapping and Escape are shared.
+pub fn bottom_sheet<C>(content: impl Into<Element<C>>) -> Drawer<C> {
+    drawer(content)
+        .side(DrawerSide::Bottom)
+        .size(320.)
+        .corner_radius(20.)
+}
+
+/// Alpha union: paint mask coverage together in an isolated group.
+/// These compose coverage, not editable boolean vector paths.
+pub fn mask_union<C>(masks: impl IntoIterator<Item = Element<C>>) -> Container<C> {
+    zstack(masks).isolate(true)
+}
+pub fn mask_intersection<C>(a: impl Into<Element<C>>, b: impl Into<Element<C>>) -> Container<C> {
+    zstack![a.into()].mask(b, MaskMode::Alpha).isolate(true)
+}
+pub fn mask_difference<C>(a: impl Into<Element<C>>, b: impl Into<Element<C>>) -> Container<C> {
+    let b: Element<C> = b.into();
+    zstack![a.into(), b.blend_mode(BlendMode::DestinationOut)].isolate(true)
+}
+pub fn mask_exclude<C>(a: impl Into<Element<C>>, b: impl Into<Element<C>>) -> Container<C> {
+    let b: Element<C> = b.into();
+    zstack![a.into(), b.blend_mode(BlendMode::Xor)].isolate(true)
 }

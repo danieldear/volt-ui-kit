@@ -15,7 +15,7 @@ pub fn capabilities() -> SystemCapabilities {
     let desktop = cfg!(all(feature = "native-desktop", target_os = "macos"));
     SystemCapabilities {
         native_menu: desktop,
-        tray_icon: desktop,
+        tray_icon: desktop || cfg!(all(feature = "native-desktop", target_os = "linux")),
         notifications: super::notifications::capabilities().local_requests,
         embedded_web: false,
         maps: false,
@@ -180,6 +180,10 @@ impl DesktopConfig {
             .map(|c| c.enabled)
     }
 }
+#[cfg(all(feature = "native-desktop", target_os = "linux"))]
+pub(super) use super::linux_services::tray::{DesktopEvent, DesktopHost};
+#[cfg(all(feature = "native-desktop", target_os = "macos"))]
+pub(super) use macos::{DesktopEvent, DesktopHost};
 #[cfg(all(feature = "native-desktop", target_os = "macos"))]
 pub(super) mod macos {
     use super::*;

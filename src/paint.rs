@@ -172,6 +172,20 @@ pub trait Painter: Sized {
         }
     }
 
+    /// An inner shadow inside the rounded rectangle. The renderer-independent
+    /// fallback draws nothing; native adapters draw it blurred.
+    #[allow(clippy::too_many_arguments)]
+    fn card_inner_shadow(
+        &self,
+        _out: &mut Vec<Self::Shape>,
+        _rect: [f32; 4],
+        _radii: [f32; 4],
+        _blur: f32,
+        _spread: f32,
+        _offset: [f32; 2],
+        _color: [f32; 4],
+    ) {
+    }
     /// Optional shadow adapter. The renderer-independent fallback is explicitly
     /// an **unblurred offset/spread silhouette**; it does not pretend to provide
     /// blur. Native adapters can override this with an alpha-mask blur.

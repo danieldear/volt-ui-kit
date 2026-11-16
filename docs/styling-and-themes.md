@@ -17,6 +17,66 @@ Colours are `#RRGGBB`, `#RRGGBBAA` (alpha last) or theme roles, below.
 Use `rounded(Rounding::Full)` for pills and circles, and
 `rounded_on(12., Corners::Left)` or a list of `Corner`s for selected corners.
 
+## Image compositing and masks
+
+Use `.blend_mode(BlendMode::Multiply)` on the foreground element and
+`.isolate(true)` on its containing stack to keep blending local. The native GPU
+and software renderers support `Normal`, `Multiply`, `Screen`, `Overlay`,
+`ColorBurn`, `Difference`, `DestinationOut` and `Xor`. Group `.opacity(..)` still
+applies. Color difference and alpha subtraction are different operations.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let image_effect: Element<()> = zstack![
+    vstack![].width(160.).height(100.).background("#306580"),
+    vstack![].width(160.).height(100.).background("#DDAA55")
+        .blend_mode(BlendMode::Overlay),
+].width(160.).height(100.).isolate(true).rounded(12.).clip_contents(true).into();
+image_effect.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+Mask composition helpers are `mask_union(masks)`, `mask_intersection(a, b)`,
+`mask_difference(a, b)` and `mask_exclude(a, b)`. Pass their result to
+`.mask(result, MaskMode::Alpha)`. These combine antialiased **alpha coverage**;
+they do not generate editable boolean vector paths. Gradient alpha masks provide
+feathered edges. Place masks in matching logical dimensions, or use fractional
+widths for both the content and mask. See the Catalog **Image** page for the
+actual image/mask/overlay examples, also rendered live in the browser.
+
+Custom `DocumentPainter` adapters remain source-compatible: the default
+`ui_blend_begin` delegates to `ui_layer_begin`, preserving ordinary opacity but
+not blend semantics. Override it to support blending. Adapters matching native
+`Shape` exhaustively must handle the new `BlendBegin(opacity, mode)` marker,
+paired with `LayerEnd`. Existing layer depth/memory admission limits still apply.
+
+## Viewport entrances and pointer reactions
+
+`.reveal_on_scroll(Transition::slide(0., 24.).duration_ms(420))` starts one finite
+entrance when the element's layout box first intersects the viewport/ancestor
+clip. Keep a stable `.key(..)`. It stays revealed when scrolling away and back;
+increment `.transition_revision(..)` to explicitly replay. Unmounting forgets
+its history. Offscreen, not-yet-revealed items schedule no reveal timer. Reduced
+motion shows content immediately. This never changes wheel deltas, momentum,
+scroll position or scroll snapping. Decorative slide offsets do not move input
+targets; use `Transform2D` for interactive content which must move with its pose.
+
+For a spotlight or pointer-following artwork, use `.on_pointer(..)` and retained
+children with `.transform(..).animation(..)`. `.wheel_passthrough(true)` lets
+normal ancestor scrolling handle the wheel over that surface without losing
+hover/drag events. The default is false, preserving drawing-canvas wheel input.
+Do not hide or replace the operating-system cursor. Touch can drive Press/Drag
+callbacks; a device without hover needs an explicit action or static fallback.
+
+`carousel(slides, index).slide_animation(animation)` retains up to 32 pages and
+uses the resolved viewport width, not a hardcoded travel distance. Inactive
+pages remain painted for travel but cannot receive input or publish portals.
+It has no autoplay timer. Keep page keys stable and control the index through
+`.on_change(..)`. Existing carousels keep their short crossfade; `.transition(..)`
+customizes that enter/exit route. `.motion(false)` and application reduced-motion
+settings settle motion immediately. Close anchored popups before changing pages;
+moving popup anchors are not a shared-element popup animation API.
+
 ## Theme colours
 
 Use semantic roles instead of fixed colours and the whole interface follows
@@ -187,17 +247,18 @@ task.build().unwrap();
 
 `.animation(..)` interpolates appearance and offset changes for a stable key.
 `animate_on(Interaction::Hover, ..)` (also Pressed or Focus) supplies timing for
-interaction patches. Interruptions start from the current painted value. Only
-position overshoots; opacity, colors and border widths stay bounded. Existing
+interaction patches. Interruptions start from the current painted value. Geometry can overshoot with spring easing; opacity, colors and border widths
+stay bounded. Existing
 linear/ease-in/ease-out/ease-in-out and `Easing::CubicBezier(..)` curves remain
 available. Explicit `.easing(..)` replaces any spring timing on that animation.
 
 `Animation::spring_with(Spring::new().damping_ratio(0.7))` tunes bounce. The valid
 damping range is 0.4..=2, default 0.8; 1 is critically damped. This is a finite,
 normalized damped response: duration controls settling time, and interruptions
-preserve position **not physical velocity**. It is not a layout/sizing animation
-or a physics simulation. Small offsets suit controls; larger movement is best
-kept to decorative or noninteractive content because hit targets do not move.
+preserve position **not physical velocity**. It is not a physical spring integration.
+`.animation(..)` changes appearance/pose, not measured layout; use the explicit
+`.layout_animation(..)` API below for geometry. Decorative `.offset(..)` leaves
+hit targets in place; use `.transform(..)` when input must follow larger movement.
 
 ### Entrances, exits and stagger
 
@@ -231,25 +292,212 @@ rows.build().unwrap();
 - Departing subtrees are paint-only snapshots. Removed controls cannot activate
   through pointer, keyboard or accessibility, even while their exit is visible.
 - `.offset`, slide and ambient effects move pixels, **not layout or hit targets**.
-  No scale/rotation transforms, layout tweening or automatic FLIP are implied.
+  Use the explicit 2D transform and layout APIs below when input must follow the motion.
+
+### Interactive 2D transforms and automatic layout
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let card: Element<()> = panel![button("Open").on_click(|_: &mut ()| {})]
+    .key("card")
+    .transform(Transform2D::new().scale(1.05, 1.05).rotate(-3.).origin(0.5, 0.5))
+    .animation(Animation::ease_out().duration_ms(240))
+    .layout_animation(Animation::spring().duration_ms(420))
+    .into();
+card.build().unwrap();
+```
+
+- `.scale(x, y)` and `.rotate(degrees)` are convenient transform modifiers.
+  `Transform2D::translate(x, y)` uses **logical pixels**; origins are fractions
+  of the node's box. Negative scales reflect; zero scale draws no area and
+  cannot capture a pointer. All parameters are finite and bounded.
+- Transforms compose over the subtree. Paint, pointer coordinates, clipping,
+  editor candidate bounds and accessibility bounds follow the same sampled
+  geometry. Unlike `.offset`, transformed controls remain interactive where drawn.
+- `.layout_animation(animation)` interpolates keyed geometry after recomposition,
+  without rerunning layout on every frame. Nested tracks avoid applying their
+  parent's movement twice. Retargeting preserves sampled position, not velocity.
+  Changing DPI resets geometry tracks instead of tweening stale physical pixels.
+- `.shared_element("selection-indicator")` pairs the previous and next geometry
+  across different node keys. The identifier must be unique in the mounted tree;
+  apply `.layout_animation(..)` too. The new mounted node owns input. This is
+  geometry matching, **not** a screenshot transition or arbitrary content morph.
+
+### Drag momentum and timelines
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let draggable: Element<()> = panel![text("Drag me")].key("card")
+    .drag_motion(DragMotion::new().bounds([0., 0.], [180., 40.]).friction(7.))
+    .into();
+let sequence: Element<()> = text("Ready").key("status")
+    .timeline(Timeline::new(900)
+        .keyframe(0., MotionPose::new())
+        .keyframe(0.5, MotionPose::new().translate(80., 0.).scale(1.1, 1.1))
+        .keyframe(1., MotionPose::new().translate(160., 0.).rotate(6.))
+        .playback(TimelinePlayback::Play)
+        .revision(0))
+    .into();
+draggable.build().unwrap();
+sequence.build().unwrap();
+```
+
+Drag motion uses pointer capture and analytic exponential inertia, not per-frame
+Euler integration: the same elapsed time produces the same position at 60 Hz
+and 120 Hz. Bounds are offsets in local logical axes. A new press stops momentum;
+stale velocity samples do not launch a flick. `.momentum(false)` keeps direct
+manipulation without the release animation. Reduced motion also disables momentum.
+`DragGesture` and `Inertia` are available for application-owned motion.
+
+A `Timeline` supports translation, scale, rotation and opacity at 2–128 ordered
+keyframes, up to 60 seconds. `TimelinePlayback::{Paused, Play, Reverse, Seek(fraction)}`
+pauses, resumes, reverses or seeks the current sequence. Seeking pauses; increment
+`.revision(..)` to replay. Use stable keys and revisions, not time-dependent values
+inside `view`. `TimelinePlayer` exposes the same deterministic clock-driven engine
+for custom hosts. There is no global timer or additional thread per animation.
+
+### Text presets
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let labels: Element<()> = vstack![
+    typing_text("Native, not a webview.")
+        .key("intro").text_effect(TextEffect::typing().duration_ms(1400).revision(0)),
+    morphing_text("Connected").key("status"),
+    rolling_number(2048).key("count").font_size(28.),
+    shimmer_text("Preparing workspace").key("loading")
+].into();
+labels.build().unwrap();
+```
+
+Typing reveals Unicode grapheme clusters; accessibility and copy retain the full
+value (not suitable for hiding secrets). Morphing text crossfades shaped labels;
+it does **not** deform font outlines. Rolling numbers use independently clipped,
+monospaced digit transitions with fractional scene movement. Morph/rolling presets
+start when the value changes, not on every render. Shimmer is a moving opacity
+highlight; remove it when work finishes. Offscreen shimmer/ambient effects do not
+keep an otherwise idle host redrawing. Reduced motion shows complete text and
+stops decorative animation.
+
+### DPI, antialiasing and host compatibility
+
+All motion APIs use logical pixels. Native and web hosts apply their scale once;
+do not multiply transforms by the device scale. GPU motion appends vector scenes
+and outlines under affine transforms, preserving antialiasing without uploading
+CPU framebuffers. Opted-in transform/text-motion scopes keep outline hinting
+consistent through the animation, avoiding a hinted/unhinted switch at rest.
+Transformed subscenes share the root image/font/glyph caches and frame-image
+admission identities rather than multiplying cache budgets per element.
+Motion is scoped to the affected subtree: ordinary siblings retain viewport
+culling and direct hit testing. Moving offscreen descendants retain their
+ancestor clips and opacity groups so they can enter the viewport correctly.
+Native trackpad scrolling uses the host deltas and momentum directly; adding a
+transform does not add another smoothing tween or animate the scroll layout.
+Software motion renders at a density appropriate to magnification, then composites
+with bicubic filtering. Software transform staging is bounded (16 megapixels per
+layer, 64 MiB cumulative staging, 24 nested scopes); very large scenes can exceed
+those limits and return an explicit rendering error.
+
+Legacy `Painter` implementations remain source-compatible. A custom
+`DocumentPainter` must implement `ui_transform_batches` to display these new
+transform-based effects; its default preserves legacy drawing, not affine motion.
+The toolkit's raster/GPU adapters implement it. The public native `Shape` enum
+adds a `Transformed` variant; downstream exhaustive matches need to handle it.
+Existing `.offset`, transition defaults, table behavior and chrome are unchanged.
+Portaled popovers/tooltips still use layout anchors; keep an anchor stationary
+while its popup is open or explicitly manage the popup position. Portals are not
+automatically shared elements.
+This is 2D motion: 3D transforms, pinch/rotation recognizers and path-outline morphing
+are not included. Smoothness still depends on scene complexity and host hardware;
+no fixed frame rate is promised by these APIs.
+
+### Built-in component motion
+
+Overlay and disclosure components animate by default. Timing comes from the
+`tokens::motion` presets: roughly 100–220 ms, ease-out, no overshoot.
+
+| Component | Built-in motion |
+| --- | --- |
+| `dialog` | Backdrop and card fade in while the card rises 8 px; both fade out on close |
+| `command_palette` | Backdrop fades; the card settles 8 px down into place |
+| `popover`, `menu`, `context_menu`, `select` | Fade in while settling 4 px into place; fade out on close |
+| `tooltip`, `hover_card` | Quick fade in; hides instantly |
+| `drawer` | Slides in from its edge and back out |
+| `toaster`, `collapsible`, `accordion`, `carousel` | Toasts rise in, sections slide open, slides cross-fade |
+
+Each of these takes `.motion(false)` to open and close instantly.
+`dialog(..).transition(..)` replaces the card's rise with your own timing.
+Choose the level for the whole app once, usually in `main`:
+
+```rust
+use volt_ui_kit::{native::Application, ui::prelude::*};
+fn view(_: &()) -> Element<()> {
+    dialog(text("Saved"))
+        .key("saved")
+        .open(true)
+        .motion(false) // this dialog alone opens and closes instantly
+        .on_dismiss(|_| {})
+        .into()
+}
+// Motion::None turns every animation off, including the app's own.
+let app = Application::new("My app", (), view).motion(Motion::Default);
+# drop(app);
+```
+
+`Motion::None` is the same switch as `reduced_motion(true)`: it also stops the
+app's own `.transition(..)`, `.animation(..)` and `Ambient` effects.
+`VOLT_UI_REDUCED_MOTION=1` and the system reduce-motion setting on macOS,
+KDE and GNOME win over `Motion::Default`. The Windows system setting is not
+read yet.
+A closing overlay leaves a paint-only copy that fades out above the window
+like the open overlay, and never takes input. Data charts do not animate yet.
 
 ### Reduced motion and idle
 
-`Application::reduced_motion(true)`, `VOLT_UI_REDUCED_MOTION=1`, or
-`Runtime::set_reduced_motion(true)` settles finite transitions immediately and
+`Application::motion(Motion::None)` (or `reduced_motion(true)`),
+`VOLT_UI_REDUCED_MOTION=1`, or `Runtime::set_reduced_motion(true)` in a custom
+host settles finite transitions immediately and
 stops decorative ambient motion. Delayed-only scenes sleep until the first
 useful update rather than render unchanged frames; custom hosts can use
 `Runtime::animation_wait()` (None for idle, zero for frame pacing, or a positive
-delay). The macOS native host also samples the system
-Reduce Motion preference at startup. It does not monitor live system preference
-changes yet. Unfocused, occluded or minimized native windows already settle
+delay). Unfocused, occluded or minimized native windows already settle
 animations rather than requesting invisible frames.
+
+The native host also reads the system's reduce-motion setting once at startup.
+It can only turn motion off, never back on:
+
+- **macOS:** Reduce Motion.
+- **Linux:** KDE Plasma's animation speed set to Instant
+  (`AnimationDurationFactor=0` in the `[KDE]` group of `kdeglobals`), or GNOME's
+  animations turned off (`org.gnome.desktop.interface enable-animations`).
+  Only the active KDE or GNOME session is queried; settings left by another
+  installed desktop are ignored. KDE config reads are limited to 64 KiB per file.
+  GNOME's setting is read with `gsettings` on a background thread (a two-second
+  timeout and a 64-byte output limit) and applies
+  when it arrives; an animation already running then jumps to its end. Inside a
+  Flatpak sandbox, `gsettings` may not see the host's setting.
+- **Windows:** the Animation effects setting is not read yet. Use
+  `VOLT_UI_REDUCED_MOTION=1` or the app's own setting.
+
+Changes to the system setting while the app runs are not picked up yet.
 
 `Ambient::pulse(0.4)`, `float(..)` and canvas-only `spin()` are intentionally
 continuous while visible; opt into them only where useful and remove loading
 indicators when finished. They stop under reduced motion. Shadows and glows
 remain optional; geometry stays fixed during alpha/color animation so native
 blur masks can be reused.
+
+Floating subtrees use continuous subpixel composition in the built-in raster/GPU
+adapters, keeping text, borders and backgrounds moving together. GPU drawing
+stays vector-based; software uses filtered composition (bilinear for pure
+fractional translation, bicubic for other affine poses), within the transform
+staging limits above. Static text outside these scopes keeps its existing
+hinting. This is decorative motion: layout, hit targets and accessibility do not
+float. Use `.transform`/timelines for interactive moving controls.
+Custom `DocumentPainter` adapters keep their legacy float path by default;
+override `ui_supports_transforms()` to return `true` only when the adapter also
+implements `ui_transform_batches`. Periods remain configurable with
+`Ambient::period_ms`; the Catalog's faster hero timing is not a global default.
 
 The Catalog's **Effects & motion** page has Smooth/Spring/Instant comparison,
 reversible task motion, a replayable three-step sequence, and hover/press/focus

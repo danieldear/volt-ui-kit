@@ -50,8 +50,13 @@ fn capability_reporting_never_promises_action_or_foreground_delegates() {
     let c = notifications::capabilities();
     let compiled = cfg!(all(feature = "native-notifications", target_os = "macos"));
     assert_eq!(c.authorization, compiled);
-    assert_eq!(c.local_requests, compiled);
-    assert_eq!(c.removal, compiled);
+    let local = compiled
+        || cfg!(all(
+            target_os = "linux",
+            any(feature = "native-desktop", feature = "native-notifications")
+        ));
+    assert_eq!(c.local_requests, local);
+    assert_eq!(c.removal, local);
     assert!(!c.actions && !c.foreground_presentation && !c.settings_query);
 }
 #[test]

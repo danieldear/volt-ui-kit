@@ -15,6 +15,27 @@ Common rules:
 - Popups, menus and dialogs are drawn inside the window and keep focus and
   input inside their scope while open.
 
+## Runnable recipes
+
+The Button, Select and Table Catalog Code panels show complete native programs,
+not fragments with missing callbacks. They use the same builders as their live
+previews. Eight variants are available through the repository's `samples` runner:
+
+```sh
+cargo run --locked --features native --example samples -- --list
+cargo run --locked --features native --example samples -- button-states
+cargo run --locked --features native --example samples -- table-square
+cargo run --locked --features native --example samples -- --source select
+```
+
+Copy a complete program into `src/main.rs` with a `volt-ui-kit` dependency and
+its `native` feature enabled. Use a path dependency for unpublished toolkit
+changes. Select accepts `--compare`; Table accepts `--square`. Other Catalog
+panels are still excerpts; their callbacks and helpers live in the Catalog.
+See [runnable recipes](../examples/README.md#runnable-component-recipes) for all
+names and dependency setup. Rounded and square Tables share state in the native
+Catalog; each embedded browser preview has independent state.
+
 ## Buttons and actions
 
 ```rust
@@ -40,6 +61,70 @@ actions.build()?;
 - `.disclosure(open)` adds a trailing chevron, as used by select and menu triggers.
 - `button_bar![..]` groups actions; `.joined(true)` makes a segmented strip.
   `toolbar![..]` lays out a horizontal application toolbar.
+
+### Floating actions and bottom sheets
+
+`fab(symbol)` is a 56-logical-pixel primary button. Give symbols a readable
+`.accessible_label(..)` and a typed `.on_click(..)` callback. `speed_dial`
+composes a FAB and up to twelve 44-pixel action buttons. It is controlled and
+non-modal: opening it does not trap focus, Escape closes it, and selecting an
+action calls `on_open_change(false)` before `on_action`. Its default gap is
+8 logical pixels; `.gap(..)` changes it. Supply a nonempty key, label and both
+callbacks. Action labels should describe what the application will actually do.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+#[derive(Default)]
+struct App { quick_open: bool, last_action: u8 }
+let actions: Element<App> = speed_dial("quick actions", [(0u8, "New note"), (1, "Add pin")])
+    .key("quick").open(false).gap(10.)
+    .on_open_change(|app: &mut App, open| app.quick_open = open)
+    .on_action(|app: &mut App, action| app.last_action = action)
+    .into();
+actions.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+`bottom_sheet(body)` reuses `Drawer`: bottom placement, 320-pixel default size,
+20-pixel corners, scrollable body, modal focus containment, Escape and optional
+backdrop dismissal. Use `.open(state)`, `.key(..)`, `.on_dismiss(..)`, `.size(..)`
+and `.corner_radius(..)`. Ordinary `drawer` retains its previous square-corner
+default. The sheet is inside the app window, not another native window.
+
+See the live **Motion studio** Catalog page (`--page motion-studio`) for these
+actions, card expand/collapse, retained carousel slides and pointer reactions.
+
+### Radial instruments
+
+`gauge(fraction)` is determinate progress (0..=1), not an interactive slider.
+`knob(value)` is a rotary slider with the existing `.range(..)`, `.step(..)`,
+`.on_change(..)`, disabled state, keyboard and assistive adjustment contracts.
+Pointer positions use an angle around the control center; dragging is captured.
+The center dead zone leaves the value unchanged. Arrow keys provide precision
+without requiring a circular pointer gesture.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+let controls: Element<f32> = hstack![
+    gauge(0.72).accessible_label("Battery charge")
+        .dial_style(DialStyle::new().ticks(13).stroke_width(7.)),
+    knob(21.5).key("temperature").range(16.0..=30.0).step(0.5)
+        .accessible_label("Temperature, degrees Celsius")
+        .on_change(|value: &mut f32, next| *value = next),
+].gap(24., Axis::Horizontal).wrap(true).into();
+controls.build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+`DialStyle` defaults to a 135-degree start, 270-degree clockwise sweep, 5-pixel
+stroke and 11 ticks. Configure `.start_angle(..)`, `.sweep(..)`, `.ticks(..)` or
+`.stroke_width(..)`. Invalid/nonfinite values fail at build; ticks are bounded
+to 64. Styles on indeterminate progress are rejected. Dimensions and strokes
+are logical units and use the normal software/GPU antialiasing path.
+
+The **Instruments** page (`--page instruments`) uses simulated values. These
+portable controls do not imply an embedded OS port, hard-real-time scheduling,
+hardware access or certified CarPlay/automotive integration.
 
 ## Rich text
 
@@ -180,9 +265,48 @@ Pushing after Back discards the forward branch; overflow removes the oldest
 entry. `replace(route)` changes only the current entry; `reset(root)` clears
 history. `NavigationSnapshot` supports Serde; `restore` validates its length and
 index before changing anything. Bound serialized input before deserializing.
-Persistent page models, scroll/focus restoration, route decoding and OS deep-link
-registration are **application responsibilities**, not automatic behavior.
-Use route-specific keys for independent page controls.
+Keyed scroll views keep their position when their page is left and get it
+back when the page returns (up to 64 pages). Persistent page models, focus
+restoration, route decoding and OS deep-link registration are **application
+responsibilities**, not automatic behavior. Use route-specific keys for
+independent page controls.
+
+### Navigation bars
+
+A page describes its own bar; the stack draws it above the page, or on iOS
+hands it to UIKit's navigation bar with its back button and swipe.
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+#[derive(Clone, Copy, PartialEq)]
+enum Route { Home, Detail }
+struct App { history: NavigationHistory<Route>, editing: bool }
+fn view(app: &App) -> Element<App> {
+    navigation_stack(&app.history, |route| match route {
+        Route::Home => vstack![navigation_link("Open", Route::Detail).key("open")
+                .on_navigate(|app: &mut App, r| { app.history.push(r); })]
+            .navigation_title("Inbox")
+            .large_title(true)
+            .into(),
+        Route::Detail => vstack![text("Details")]
+            .navigation_title("Message")
+            .bar_button(if app.editing { "Done" } else { "Edit" },
+                |app: &mut App| app.editing = !app.editing)
+            .into(),
+    })
+    .key("mail")
+    .on_back(|app: &mut App| { app.history.back(); })
+    .into()
+}
+let app = App { history: NavigationHistory::new(Route::Home), editing: false };
+view(&app).build().unwrap();
+```
+
+- `navigation_title`, `large_title` and `bar_button` work on any container or
+  element a route returns. Bar controls are keyed `{stack}-back` and
+  `{stack}-bar-{n}`.
+- The Back control appears while the history can go back and `on_back` is
+  set. Without a title or buttons, the stack draws no bar.
 
 ```rust
 use volt_ui_kit::ui::prelude::*;
@@ -215,7 +339,8 @@ for explicit native opening. Try both workflows on the Catalog's Navigation page
 
 See [animation and transitions](styling-and-themes.md#animation-and-transitions)
 for finite springs, staggered entrances, replay revisions, interaction feedback
-and reduced-motion behavior. Try the Catalog’s **Effects & motion** page.
+and reduced-motion behavior. Interactive 2D transforms, keyed/shared geometry,
+bounded drag momentum, timeline playback and animated text are covered there too. Try the Catalog’s **Effects & motion** page.
 
 ## Customizing component spacing
 
@@ -612,4 +737,6 @@ alternate.build()?;
   Up/Down navigation through results yet.
 - Submenus open in place rather than cascading.
 - `.offset(..)` and slide/ambient motion move pixels only; layout and hit
-  targets stay where they were.
+  targets stay where they were. Use `.transform(..)`, `.layout_animation(..)` or
+  `.drag_motion(..)` when input must follow the animated content. Text morphing
+  is a shaped-label crossfade, not arbitrary font-outline deformation.

@@ -67,7 +67,7 @@ export function attachVolt(root, canvas, driver, { onStatus = () => {}, passive 
               const [x,y,w,h] = JSON.parse(el.dataset.voltBounds);
               const delta = { ArrowUp:[0,-32], ArrowDown:[0,32], ArrowLeft:[-32,0], ArrowRight:[32,0], PageUp:[0,-h], PageDown:[0,h], Home:[0,-16384], End:[0,16384] }[e.key];
               if (send({op:'wheel', x:x+w/2, y:y+h/2, dx:delta[0], dy:delta[1]})) { e.preventDefault(); e.stopPropagation(); }
-            } else if (e.key === 'Escape') { e.preventDefault(); send({ op: 'escape' }); }
+            } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); send({ op: 'escape' }); }
           });
         }
         listen(el, 'focus', () => send({ op: 'focus', id }));
@@ -135,20 +135,53 @@ export function attachVolt(root, canvas, driver, { onStatus = () => {}, passive 
     } catch (error) { dirty = false; onStatus(`Rendering stopped: ${String(error)}`, true); }
   }
   function point(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) / viewScale, y: (e.clientY - r.top) / viewScale }; }
+  // Modifiers for pointer surfaces; `control` is the platform's primary key, as for editor keys.
+  const mods = e => ({ shift: e.shiftKey, control: e.ctrlKey || e.metaKey, alt: e.altKey, meta: e.metaKey });
+  // Pointer events do not count clicks reliably across browsers: count presses close in time and place.
+  let lastPress = null;
+  function clicks(e) {
+    const now = e.timeStamp, near = lastPress && now - lastPress.t < 450 && Math.abs(e.clientX - lastPress.x) < 5 && Math.abs(e.clientY - lastPress.y) < 5;
+    const n = near ? Math.min(3, lastPress.n + 1) : 1;
+    lastPress = { t: now, x: e.clientX, y: e.clientY, n };
+    return n;
+  }
   if (!passive) {
+  // The canvas takes focus on a press (never Tab), so application keys reach
+  // Rust even when no control inside is focused; sync() then moves focus on
+  // to whichever control Rust focused.
+  canvas.tabIndex = -1;
+  canvas.style.outline = 'none';
+  // Keys the page's own controls left: Escape for menus and on_escape, the
+  // rest for the app's on_key_press. Text proxies and range inputs keep theirs.
+  const appKeys = e => {
+    const t = e.target;
+    if (e.defaultPrevented || e.isComposing || t.localName === 'input' || t.localName === 'textarea' || e.key === 'Tab') return;
+    if (['Shift', 'Control', 'Alt', 'Meta', 'Dead', 'Unidentified', 'Process'].includes(e.key)) return;
+    const used = e.key === 'Escape'
+      ? send({ op: 'escape' })
+      : send({ op: 'key', key: e.key, code: e.code, shift: e.shiftKey, control: e.ctrlKey || e.metaKey, alt: e.altKey, meta: e.metaKey, repeat: e.repeat });
+    if (used) { e.preventDefault(); e.stopPropagation(); }
+  };
+  listen(root, 'keydown', appKeys);
+  if (!root.contains(canvas)) listen(canvas, 'keydown', appKeys);
   listen(canvas, 'contextmenu', e => { if(send({ op: 'context', ...point(e) })) { e.preventDefault(); e.stopPropagation(); } });
   listen(canvas, 'pointerdown', e => {
     if (e.button !== 0) return;
-    e.preventDefault(); pointerFocus = true; canvas.setPointerCapture(e.pointerId); send({ op: 'down', ...point(e) });
+    e.preventDefault(); pointerFocus = true;
+    if (document.activeElement !== canvas) canvas.focus({ preventScroll: true });
+    canvas.setPointerCapture(e.pointerId); send({ op: 'down', ...point(e), ...mods(e), clicks: clicks(e) });
   });
-  listen(canvas, 'pointermove', e => send({ op: 'move', ...point(e) }));
-  listen(canvas, 'pointerup', e => { if (e.button === 0) { send({ op: 'up', ...point(e) }); if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId); } });
+  listen(canvas, 'pointermove', e => send({ op: 'move', ...point(e), ...mods(e) }));
+  listen(canvas, 'pointerup', e => { if (e.button === 0) { send({ op: 'up', ...point(e), ...mods(e) }); if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId); } });
   listen(canvas, 'pointercancel', () => send({ op: 'cancel' }));
   listen(canvas, 'lostpointercapture', () => send({ op: 'cancel' }));
   listen(canvas, 'pointerleave', () => send({ op: 'leave' }));
   listen(root, 'wheel', e => {
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? state.height : 1;
-    const changed = send({ op: 'wheel', ...point(e), dx: Math.max(-4096, Math.min(4096, e.deltaX * unit)), dy: Math.max(-4096, Math.min(4096, e.deltaY * unit)) });
+    // Browsers report a trackpad pinch as a wheel with ctrlKey set.
+    const changed = e.ctrlKey && !e.metaKey
+      ? send({ op: 'pinch', ...point(e), ...mods(e), control: e.metaKey, zoom: Math.max(-1, Math.min(1, -e.deltaY * unit * 0.01)) })
+      : send({ op: 'wheel', ...point(e), ...mods(e), dx: Math.max(-4096, Math.min(4096, e.deltaX * unit)), dy: Math.max(-4096, Math.min(4096, e.deltaY * unit)) });
     if (changed) e.preventDefault(); // At the scroll boundary, let the page scroll.
   }, { passive: false });
   }

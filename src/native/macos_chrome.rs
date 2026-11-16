@@ -97,6 +97,11 @@ pub(super) fn trace_geometry(window: &Window) {
         eprintln!("VOLT_UI_CHROME fullscreen=true geometry=system-managed");
         return;
     }
+    eprintln!(
+        "VOLT_UI_CHROME shadow={} decorated={}",
+        ns_window.hasShadow(),
+        window.is_decorated()
+    );
     for (label, kind) in [
         ("close", NSWindowButton::CloseButton),
         ("minimize", NSWindowButton::MiniaturizeButton),
@@ -109,5 +114,151 @@ pub(super) fn trace_geometry(window: &Window) {
             eprintln!("VOLT_UI_CHROME button={label} left={:.1} top={top:.1} size={:.1}x{:.1} bounds={:.1}x{:.1}",
                 rect.origin.x, rect.size.width, rect.size.height, bounds.size.width, bounds.size.height);
         }
+    }
+}
+
+/// Change only the toolbar/style owned by this host. Never replace a delegate,
+/// content view or Metal layer while switching native/custom decorations.
+pub(super) fn apply_chrome(window: &Window, chrome: super::WindowChrome) -> Result<(), String> {
+    use objc2_app_kit::NSWindowTitleVisibility;
+    let mtm = MainThreadMarker::new().ok_or("AppKit chrome requires the main thread")?;
+    let ns_window = app_window(window, mtm)?;
+    if let Some(toolbar) = ns_window.toolbar() {
+        if toolbar.identifier().to_string() == "dev.volt-ui.overlay" {
+            ns_window.setToolbar(None);
+        }
+    }
+    let overlay = matches!(
+        chrome,
+        super::WindowChrome::Overlay
+            | super::WindowChrome::CompactOverlay
+            | super::WindowChrome::Custom
+            | super::WindowChrome::Borderless
+    );
+    // Both Custom and visually Borderless preserve the native frame. Merely
+    // hide buttons for Borderless; stripping the frame loses material, native
+    // rounding and shadow. No delegate/content-view/layer replacement is needed.
+    window.set_decorations(true);
+    let mut mask = ns_window.styleMask();
+    mask.set(NSWindowStyleMask::FullSizeContentView, overlay);
+    ns_window.setStyleMask(mask);
+    ns_window.setTitlebarAppearsTransparent(overlay);
+    ns_window.setTitleVisibility(if overlay {
+        NSWindowTitleVisibility::Hidden
+    } else {
+        NSWindowTitleVisibility::Visible
+    });
+    if matches!(
+        chrome,
+        super::WindowChrome::Overlay
+            | super::WindowChrome::Custom
+            | super::WindowChrome::Borderless
+    ) {
+        install_unified_titlebar(window)?;
+    }
+    sync_controls_and_shadow(window, chrome)?;
+    Ok(())
+}
+
+/// Preserve native shadow and hide only native controls in visually borderless
+/// mode. Called at creation and after a mode switch, never on an idle timer.
+pub(super) fn sync_controls_and_shadow(
+    window: &Window,
+    chrome: super::WindowChrome,
+) -> Result<(), String> {
+    let mtm = MainThreadMarker::new().ok_or("AppKit chrome requires the main thread")?;
+    let native = app_window(window, mtm)?;
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ] {
+        if let Some(button) = native.standardWindowButton(kind) {
+            button.setHidden(chrome == super::WindowChrome::Borderless);
+        }
+    }
+    native.setHasShadow(true);
+    native.invalidateShadow();
+    Ok(())
+}
+
+/// Native geometry for borderless zoom, without winit's temporary style-mask
+/// mutation in is_maximized(). Screen coordinates here are AppKit points.
+#[derive(Default)]
+pub(super) struct CustomZoom {
+    restore: Option<objc2_foundation::NSRect>,
+}
+fn same_frame(a: objc2_foundation::NSRect, b: objc2_foundation::NSRect) -> bool {
+    [
+        a.origin.x - b.origin.x,
+        a.origin.y - b.origin.y,
+        a.size.width - b.size.width,
+        a.size.height - b.size.height,
+    ]
+    .iter()
+    .all(|v| v.abs() <= 1.)
+}
+pub(super) fn maximized(window: &Window) -> Result<bool, String> {
+    let mtm = MainThreadMarker::new().ok_or("AppKit zoom requires main thread")?;
+    let native = app_window(window, mtm)?;
+    if window.is_decorated() {
+        return Ok(native.isZoomed());
+    }
+    Ok(native
+        .screen()
+        .is_some_and(|screen| same_frame(native.frame(), screen.visibleFrame())))
+}
+pub(super) fn toggle_custom_zoom(window: &Window, cache: &mut CustomZoom) -> Result<(), String> {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let mtm = MainThreadMarker::new().ok_or("AppKit zoom requires main thread")?;
+    let native = app_window(window, mtm)?;
+    let visible = native
+        .screen()
+        .ok_or("window has no screen")?
+        .visibleFrame();
+    let current = native.frame();
+    let target = if same_frame(current, visible) {
+        cache.restore.take().unwrap_or_else(|| {
+            let w = (visible.size.width * 0.75)
+                .max(320.)
+                .min(visible.size.width);
+            let h = (visible.size.height * 0.75)
+                .max(240.)
+                .min(visible.size.height);
+            NSRect::new(
+                NSPoint::new(
+                    visible.origin.x + (visible.size.width - w) / 2.,
+                    visible.origin.y + (visible.size.height - h) / 2.,
+                ),
+                NSSize::new(w, h),
+            )
+        })
+    } else {
+        cache.restore = Some(current);
+        visible
+    };
+    native.setFrame_display(target, true);
+    Ok(())
+}
+#[cfg(test)]
+mod zoom_tests {
+    use super::*;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    #[test]
+    fn zoom_state_requires_matching_size_and_origin_with_point_rounding_tolerance() {
+        let r = |x, y, w, h| NSRect::new(NSPoint::new(x, y), NSSize::new(w, h));
+        assert!(same_frame(r(0., 24., 1440., 900.), r(0., 24., 1440., 900.)));
+        assert!(same_frame(
+            r(0.5, 24., 1439.5, 900.),
+            r(0., 24., 1440., 900.)
+        ));
+        assert!(!same_frame(
+            r(10., 24., 1440., 900.),
+            r(0., 24., 1440., 900.)
+        ));
+        assert!(!same_frame(
+            r(0., 24., 1100., 800.),
+            r(0., 24., 1440., 900.)
+        ));
     }
 }

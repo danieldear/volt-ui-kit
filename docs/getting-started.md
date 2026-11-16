@@ -7,7 +7,7 @@ your Rust closures when something happens.
 
 ## Add the dependency
 
-Version **0.5.0** is prepared in the repository but is not yet on crates.io.
+Version **0.6.0** is prepared in the repository but is not yet on crates.io.
 Use a Git or path dependency until it is published:
 
 ```toml
@@ -29,8 +29,8 @@ Nothing is enabled by default; pick what your application needs.
 | --- | --- |
 | `native` | A window host: winit, cosmic-text, software drawing (tiny-skia), images, clipboard, IME and AccessKit accessibility. Includes `rust-ui`. |
 | `native-gpu` | GPU drawing with Vello on wgpu (Metal, DX12 or Vulkan), with automatic software fallback. Includes `native`. |
-| `native-desktop` | macOS application menus, a tray menu, and native open/save panels. |
-| `native-notifications` | macOS local notifications. |
+| `native-desktop` | macOS integrations; Linux portal dialogs, file actions, immediate notifications, checked Trash and supported tray hosts. |
+| `native-notifications` | macOS local notifications; Linux immediate desktop notifications. |
 | `rust-ui` | The Rust builders (`ui` module) without a window, for custom hosts. |
 | `declarative` | The validated document tree, runtime and optional JSON frontend. |
 | `dev-tools` | The `cargo volt` command: project templates, a rebuild-and-restart dev loop, and macOS app bundles. |
@@ -97,7 +97,27 @@ Templates: `minimal`, `navigation`, `mail`, `settings` and `agent`. Add
 `--desktop` for macOS menus and a tray item. `new` never overwrites an existing
 directory. All but `minimal` start from `navigation_split_view`, the Catalog's
 own sidebar-and-detail shell, with a sidebar you resize by dragging its
-divider. Every template also uses the Catalog's colours:
+divider. All templates wire window actions through the shared header/control
+helpers. Linux defaults to integrated Custom controls (editable Symbols or
+TrafficLights); macOS keeps native integrated traffic lights, and Windows keeps
+native decorations. No extra global title bar is added. The app ID and generated
+`packaging/linux/*.desktop` entry and editable SVG icon match; nothing is installed or run.
+After `cargo build --release`, use `cargo volt install-linux --binary target/release/my-app --app-id dev.volt.my_app --name "My App" --icon packaging/linux/dev.volt.my_app.svg`
+to explicitly register your Linux app for proper menu/taskbar identity. The binary
+stays at that path; use `--replace` to update a registration made by this command.
+See [Linux identity and diagnostics](windows-and-rendering.md#linux-identity-launchers-and-backend-diagnostics)
+for backend selection, launcher setup and capability limits.
+
+You can choose these at creation (desktop templates only):
+
+```sh
+cargo volt new my-workspace --kit-path /path/to/volt-ui-kit --template navigation --chrome custom --control-style traffic-lights --app-id com.example.my_workspace
+```
+
+`--chrome native` keeps the system title bar; `borderless` intentionally hides
+controls. The generated helpers remain editable Rust, not a mandatory app shell.
+
+Every template also uses the Catalog's colours:
 its `theme()` function picks `Palette::zinc_light()` or `Palette::zinc_dark()`
 to match the system appearance (see
 [Built-in palettes](styling-and-themes.md#built-in-palettes)).
@@ -145,7 +165,7 @@ the launcher script, which intentionally only accepts `--check` and `--help`.
 | macOS 11+ | Primary platform; tested on Apple silicon with Metal. |
 | Windows | Cross-compilation checked; headless CI configured (DX12). Native runtime not yet validated. |
 | Linux | Cross-compilation checked; headless CI configured (Vulkan, X11/Wayland). Native runtime not yet validated. |
-| iOS | [Experimental reusable host/template](ios-prototype.md): Rust screens without per-app Swift glue. Simulator workflows tested; physical-device GPU acceptance pending. |
+| iOS | [Experimental host/template](ios-prototype.md): Rust pages with UIKit's bar, scrolling, controls and keyboard, no per-app Swift. UI tests pass on a physical iPhone; still experimental. |
 | Android | [Experimental host/template](android-prototype.md): Rust UI + shared SurfaceView/JNI/native editor; APK/emulator validation separate from hardware GPU acceptance. |
 | WebAssembly | [Experimental browser host](web-prototype.md): live Rust buttons, tabs, forms and scrolling with WebGPU/software rendering; not full web parity. |
 

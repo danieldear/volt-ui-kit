@@ -1,0 +1,513 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2179E18C90734C0E5BB43FC5 /* ReturnTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B36A659275D623A6F3B9B56 /* ReturnTests.swift */; };
+		2A3AF3AEB28A6890E9F19CB2 /* VoltUIHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D94C24E2683FAC28E38C2D /* VoltUIHost.swift */; };
+		7D792349A1FF8B6966E2AF74 /* ScrollTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72149E19E8D69D046FACD965 /* ScrollTests.swift */; };
+		9DCE269B4B2FB61854183425 /* GalleryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F168476E42878162D20EC3E /* GalleryTests.swift */; };
+		A89EFDFA4F3FB8BB80C20DC5 /* KeyboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 476F358F744ADFF933C85F5D /* KeyboardTests.swift */; };
+		ED858077CBDEF818576B8454 /* ShopTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C19BE5F112DAC85791375F8 /* ShopTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		9B723C124A896784E24FC288 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 81C354518DFB9E2B166A3320 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8C96D7934A3FBB909856B613;
+			remoteInfo = VoltGallery;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		08F58F854D4AD7B602A281B8 /* VoltGalleryUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = VoltGalleryUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0B36A659275D623A6F3B9B56 /* ReturnTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReturnTests.swift; sourceTree = "<group>"; };
+		2381D195091DB4E893CBF2CA /* VoltGallery.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = VoltGallery.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		476F358F744ADFF933C85F5D /* KeyboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardTests.swift; sourceTree = "<group>"; };
+		5F168476E42878162D20EC3E /* GalleryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalleryTests.swift; sourceTree = "<group>"; };
+		72149E19E8D69D046FACD965 /* ScrollTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollTests.swift; sourceTree = "<group>"; };
+		7C19BE5F112DAC85791375F8 /* ShopTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopTests.swift; sourceTree = "<group>"; };
+		D4D94C24E2683FAC28E38C2D /* VoltUIHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoltUIHost.swift; sourceTree = "<group>"; };
+		FB926568D3D9D66CE3FC3E7B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		02B65FBF48DCDC98578E6FBB /* crates */ = {
+			isa = PBXGroup;
+			children = (
+				FB4B913DD9F207038E5E7706 /* volt-ui-kit-mobile */,
+			);
+			path = crates;
+			sourceTree = "<group>";
+		};
+		03E3F92731D0F8A710706855 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				2381D195091DB4E893CBF2CA /* VoltGallery.app */,
+				08F58F854D4AD7B602A281B8 /* VoltGalleryUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		48C8E97F9A0C700CF16E25CA /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				02B65FBF48DCDC98578E6FBB /* crates */,
+			);
+			name = ios;
+			path = ../..;
+			sourceTree = "<group>";
+		};
+		5D1B67933BEDE37D28C4CB3F = {
+			isa = PBXGroup;
+			children = (
+				6D0ED1153FB436570F1C7C71 /* App */,
+				48C8E97F9A0C700CF16E25CA /* ios */,
+				9760A7CB9DF7E958F57739CE /* Tests */,
+				03E3F92731D0F8A710706855 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6D0ED1153FB436570F1C7C71 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				FB926568D3D9D66CE3FC3E7B /* Info.plist */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		9760A7CB9DF7E958F57739CE /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				5F168476E42878162D20EC3E /* GalleryTests.swift */,
+				476F358F744ADFF933C85F5D /* KeyboardTests.swift */,
+				0B36A659275D623A6F3B9B56 /* ReturnTests.swift */,
+				72149E19E8D69D046FACD965 /* ScrollTests.swift */,
+				7C19BE5F112DAC85791375F8 /* ShopTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		C57B6DA9D870BC3734874B7F /* apple */ = {
+			isa = PBXGroup;
+			children = (
+				D4D94C24E2683FAC28E38C2D /* VoltUIHost.swift */,
+			);
+			path = apple;
+			sourceTree = "<group>";
+		};
+		FB4B913DD9F207038E5E7706 /* volt-ui-kit-mobile */ = {
+			isa = PBXGroup;
+			children = (
+				C57B6DA9D870BC3734874B7F /* apple */,
+			);
+			path = "volt-ui-kit-mobile";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2BC9C5EAB653AABEADAE9187 /* VoltGalleryUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D8FC8519C18737435A5B95CF /* Build configuration list for PBXNativeTarget "VoltGalleryUITests" */;
+			buildPhases = (
+				CD5D1A1580C17E6756525982 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1C0F80A5AD244FBA8C1E5A5A /* PBXTargetDependency */,
+			);
+			name = VoltGalleryUITests;
+			packageProductDependencies = (
+			);
+			productName = VoltGalleryUITests;
+			productReference = 08F58F854D4AD7B602A281B8 /* VoltGalleryUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		8C96D7934A3FBB909856B613 /* VoltGallery */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 88A54E9292B7CFDF816A79E2 /* Build configuration list for PBXNativeTarget "VoltGallery" */;
+			buildPhases = (
+				1063738D693BB0242F0FD6EF /* Build Rust Volt UI */,
+				31EA49CCFFE9C9581B5B4182 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VoltGallery;
+			packageProductDependencies = (
+			);
+			productName = VoltGallery;
+			productReference = 2381D195091DB4E893CBF2CA /* VoltGallery.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		81C354518DFB9E2B166A3320 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					2BC9C5EAB653AABEADAE9187 = {
+						TestTargetID = 8C96D7934A3FBB909856B613;
+					};
+				};
+			};
+			buildConfigurationList = E22C9F42C0955DBD0ED40E3D /* Build configuration list for PBXProject "VoltGallery" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 5D1B67933BEDE37D28C4CB3F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 03E3F92731D0F8A710706855 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8C96D7934A3FBB909856B613 /* VoltGallery */,
+				2BC9C5EAB653AABEADAE9187 /* VoltGalleryUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1063738D693BB0242F0FD6EF /* Build Rust Volt UI */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Volt UI";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n# Generated by cargo volt. The implementation lives in the Rust host dependency.\nset -eu\nexport PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\nMANIFEST=\"${VOLT_RUST_MANIFEST:-${SRCROOT:?Xcode project root required}/../Cargo.toml}\"\nMETA=$(mktemp \"${TMPDIR:-/tmp}/volt-ios-metadata.XXXXXX\")\ntrap 'rm -f \"$META\"' EXIT HUP INT TERM\n# A fresh template has no lockfile. Resolve it once; subsequent builds are locked.\nif [ -f \"$(dirname \"$MANIFEST\")/Cargo.lock\" ]; then\n    cargo metadata --locked --format-version 1 --manifest-path \"$MANIFEST\" > \"$META\"\nelse\n    cargo metadata --format-version 1 --manifest-path \"$MANIFEST\" > \"$META\"\nfi\nHOST=$(python3 - \"$META\" <<'PY'\nimport json,sys,os\nm=json.load(open(sys.argv[1]));root=m['resolve']['root']\nnode=next(n for n in m['resolve']['nodes'] if n['id']==root)\nids={d['pkg'] for d in node['deps']}\nh=[p for p in m['packages'] if p['id'] in ids and p['name']=='volt-ui-kit-mobile']\nif len(h)!=1:raise SystemExit('Root app must depend directly on volt-ui-kit-mobile')\nprint(os.path.dirname(h[0]['manifest_path']))\nPY\n)\n/bin/sh \"$HOST/apple/build-rust.sh\" \"$META\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		31EA49CCFFE9C9581B5B4182 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2A3AF3AEB28A6890E9F19CB2 /* VoltUIHost.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CD5D1A1580C17E6756525982 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9DCE269B4B2FB61854183425 /* GalleryTests.swift in Sources */,
+				A89EFDFA4F3FB8BB80C20DC5 /* KeyboardTests.swift in Sources */,
+				2179E18C90734C0E5BB43FC5 /* ReturnTests.swift in Sources */,
+				7D792349A1FF8B6966E2AF74 /* ScrollTests.swift in Sources */,
+				ED858077CBDEF818576B8454 /* ShopTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1C0F80A5AD244FBA8C1E5A5A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8C96D7934A3FBB909856B613 /* VoltGallery */;
+			targetProxy = 9B723C124A896784E24FC288 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		05D5F18477B505925587252E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VOLT_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = VoltGallery;
+			};
+			name = Release;
+		};
+		0685F3CE1D7CEB7F9AC0AD7D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CARGO_TARGET_DIR = "$(SRCROOT)/../../target/ios-gallery";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lvolt_app",
+					"-lc++",
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					CoreText,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VOLT_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "../../crates/volt-ui-kit-mobile/apple/VoltBridge.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VOLT_RUST_MANIFEST = "$(SRCROOT)/rust/Cargo.toml";
+			};
+			name = Debug;
+		};
+		6FABCEEA6A31CF61F68A8664 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VOLT_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = VoltGallery;
+			};
+			name = Debug;
+		};
+		73E396FC58DA8AF9E8AFE056 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CARGO_TARGET_DIR = "$(SRCROOT)/../../target/ios-gallery";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lvolt_app",
+					"-lc++",
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					CoreText,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VOLT_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "../../crates/volt-ui-kit-mobile/apple/VoltBridge.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VOLT_RUST_MANIFEST = "$(SRCROOT)/rust/Cargo.toml";
+			};
+			name = Release;
+		};
+		94256505B88BC94B707F174D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				VOLT_BUNDLE_ID = dev.volt.ui.gallery;
+			};
+			name = Debug;
+		};
+		E7345CA9A1D8F484AE8D37EA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VOLT_BUNDLE_ID = dev.volt.ui.gallery;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		88A54E9292B7CFDF816A79E2 /* Build configuration list for PBXNativeTarget "VoltGallery" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0685F3CE1D7CEB7F9AC0AD7D /* Debug */,
+				73E396FC58DA8AF9E8AFE056 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D8FC8519C18737435A5B95CF /* Build configuration list for PBXNativeTarget "VoltGalleryUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FABCEEA6A31CF61F68A8664 /* Debug */,
+				05D5F18477B505925587252E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E22C9F42C0955DBD0ED40E3D /* Build configuration list for PBXProject "VoltGallery" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				94256505B88BC94B707F174D /* Debug */,
+				E7345CA9A1D8F484AE8D37EA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 81C354518DFB9E2B166A3320 /* Project object */;
+}

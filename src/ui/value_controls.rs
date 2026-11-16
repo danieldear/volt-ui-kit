@@ -20,7 +20,19 @@ pub fn slider<C>(value: f32) -> Slider<C> {
     });
     Slider(element)
 }
+/// A rotary slider with the same controlled range, step, keyboard and AT behavior.
+pub fn knob<C>(value: f32) -> Slider<C> {
+    let mut k = slider(value);
+    k.0.node.width = Some(112.);
+    k.0.node.height = Some(112.);
+    k.0.node.effects.dial = Some(crate::graphics::DialStyle::default());
+    k
+}
 impl<C> Slider<C> {
+    pub fn dial_style(mut self, style: crate::graphics::DialStyle) -> Self {
+        self.0.node.effects.dial = Some(style);
+        self
+    }
     pub fn range(mut self, range: RangeInclusive<f32>) -> Self {
         let props = self.0.node.slider.as_mut().expect("slider metadata");
         props.min = *range.start();
@@ -151,6 +163,7 @@ struct SelectOptions<C, T> {
     on_select: Option<Selected<C, T>>,
     on_open_change: Option<Opened<C>>,
     surface: Option<String>,
+    motion: bool,
 }
 pub fn select<C, T>(items: impl IntoIterator<Item = SelectItem<T>>) -> Select<C, T> {
     let mut element = Element::new(Kind::Column);
@@ -165,6 +178,7 @@ pub fn select<C, T>(items: impl IntoIterator<Item = SelectItem<T>>) -> Select<C,
             on_select: None,
             on_open_change: None,
             surface: None,
+            motion: true,
         },
     )
 }
@@ -193,6 +207,12 @@ impl<C, T> Select<C, T> {
     /// blurred, so over busy content give it an opaque one.
     pub fn surface(mut self, color: impl Into<String>) -> Self {
         self.1.surface = Some(color.into());
+        self
+    }
+    /// Built-in motion (default on): the list fades in while settling into
+    /// place and fades out on close. `false` shows it instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.1.motion = value;
         self
     }
 }
@@ -370,6 +390,9 @@ impl<C: 'static, T: Clone + PartialEq + 'static> From<Select<C, T>> for Element<
             Box::new(move |app: &mut C| (close.borrow_mut())(app, false)),
         );
         popup.node.overlay.as_mut().expect("popup metadata").anchor = Some(trigger_key);
+        if select.1.motion {
+            popup.node.effects.transition = Some(super::dialogs::popup_motion());
+        }
         select.0.children.push(popup);
         select.0
     }

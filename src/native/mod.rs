@@ -3,7 +3,15 @@
 mod accessibility;
 mod application;
 pub use application::{Application, RendererPreference};
+mod backdrop;
+pub use backdrop::{BackdropProtocol, BackdropStatus, BackdropUnavailable};
+mod identity;
+pub use identity::{LinuxBackend, WindowBackend, WindowDiagnostics};
+mod chrome;
+pub use chrome::WindowState;
 mod commands;
+#[cfg(target_os = "linux")]
+pub mod linux_backdrop;
 pub use commands::{
     ApplicationRequest, CloseDecision, CloseReason, Command, CommandDispatch, CommandInfo,
     CommandRegistry, Shortcut,
@@ -13,6 +21,11 @@ pub mod clipboard;
 pub mod file_dialog;
 pub mod files;
 pub mod links;
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "native-desktop", feature = "native-notifications")
+))]
+pub mod linux_services;
 #[cfg(target_os = "macos")]
 mod macos_chrome;
 #[cfg(all(target_os = "macos", feature = "native-gpu"))]

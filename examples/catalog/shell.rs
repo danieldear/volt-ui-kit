@@ -60,7 +60,11 @@ pub fn view(app: &App) -> El<App> {
                 SidebarPlace::Column => "side",
                 SidebarPlace::Drawer => "drawer",
             };
-            vstack(page_links(app, prefix))
+            let mut links = page_links(app, prefix);
+            if place == SidebarPlace::Drawer {
+                links.insert(0, chrome_settings(app, "drawer-chrome-mode"));
+            }
+            vstack(links)
                 .accessible_label("Component navigation")
                 .gap(2., Axis::Vertical)
                 .align(Align::Stretch)
@@ -69,9 +73,26 @@ pub fn view(app: &App) -> El<App> {
         content,
     )
     .key("shell")
-    .title("Volt UI")
-    .sidebar_header(brand())
-    .sidebar_footer(glass_controls(app))
+    .title("Volt UI Kit")
+    .sidebar_header(brand(app))
+    .integrated_header(app.chrome == volt_ui_kit::native::WindowChrome::Custom)
+    .sidebar_footer(
+        vstack![
+            chrome_settings(app, "footer-chrome-mode"),
+            glass_controls(app)
+        ]
+        .gap(8., Axis::Vertical),
+    )
+    .titlebar_inset(
+        cfg!(target_os = "macos")
+            && matches!(
+                app.chrome,
+                volt_ui_kit::native::WindowChrome::Overlay
+                    | volt_ui_kit::native::WindowChrome::CompactOverlay
+                    | volt_ui_kit::native::WindowChrome::Custom
+            )
+            && !app.window_state.fullscreen,
+    )
     .toolbar(header(app))
     .drawer_open(app.nav_open)
     .on_drawer_change(|app: &mut App, open| app.nav_open = open)
@@ -80,6 +101,7 @@ pub fn view(app: &App) -> El<App> {
     .material(app.glass);
     let mut layers: Vec<El<App>> = vec![shell.into()];
     layers.extend(dialogs(app));
+    layers.push(window_settings(app));
     layers.push(palette(app));
     layers.push(toast(app));
     layers.extend(super::lifecycle::overlays(app));
@@ -98,6 +120,152 @@ pub fn view(app: &App) -> El<App> {
             ColorToken::Base200.into()
         })
         .into()
+}
+
+fn chrome_selector(app: &App, key: &'static str) -> El<App> {
+    use volt_ui_kit::native::WindowChrome as W;
+    let mut modes = vec![
+        select_item(0u8, "Native"),
+        select_item(1, "Custom"),
+        select_item(2, "Borderless"),
+    ];
+    modes.push(select_item(
+        3,
+        if cfg!(target_os = "macos") {
+            "Unified"
+        } else {
+            "Overlay"
+        },
+    ));
+    select(modes)
+        .key(key)
+        .accessible_label("Window decoration mode")
+        .open(app.chrome_picker == Some(key))
+        .on_open_change(move |app: &mut App, open| {
+            app.chrome_picker = if open { Some(key) } else { None }
+        })
+        .selected(match app.chrome {
+            W::Custom => 1,
+            W::Borderless => 2,
+            W::Overlay | W::CompactOverlay => 3,
+            W::Native => 0,
+        })
+        .enabled(!app.window_state.fullscreen)
+        .width(118.)
+        .height(34.)
+        .on_select(|app: &mut App, mode| {
+            app.chrome_picker = None;
+            app.window_menu = None;
+            app.chrome = match mode {
+                1 => W::Custom,
+                2 => W::Borderless,
+                3 => W::Overlay,
+                _ => W::Native,
+            };
+        })
+        .into()
+}
+fn chrome_settings(app: &App, key: &'static str) -> El<App> {
+    vstack![
+        hstack![
+            text("Window").font_size(12.).color(ColorToken::Muted),
+            spacer(),
+            chrome_selector(app, key)
+        ]
+        .align(Align::Center),
+        text(match app.chrome {
+            volt_ui_kit::native::WindowChrome::Custom =>
+                if cfg!(target_os = "macos") {
+                    "Native traffic lights in app content · rounded frame · material blur"
+                } else {
+                    "Inline controls · drag / double-click existing header · resize edges"
+                },
+            volt_ui_kit::native::WindowChrome::Borderless =>
+                if cfg!(target_os = "macos") {
+                    "Hidden controls · native rounded frame, shadow and material blur"
+                } else {
+                    "No controls or resize frame · choose Native to restore"
+                },
+            _ => "System window controls and resize frame",
+        })
+        .font_size(10.)
+        .color(ColorToken::Muted),
+    ]
+    .gap(6., Axis::Vertical)
+    .padding(12., Edge::Vertical)
+    .padding(18., Edge::Horizontal)
+    .into()
+}
+fn window_settings(app: &App) -> El<App> {
+    let host = app
+        .window_diagnostics
+        .as_ref()
+        .map(|d| {
+            format!(
+                "{} · {} · {:.2}×\n{}\nBackdrop: {}",
+                d.backend.name(),
+                d.renderer,
+                d.scale_factor,
+                d.app_id,
+                d.backdrop.description()
+            )
+        })
+        .unwrap_or_else(|| "Host diagnostics available in a native window.".into());
+    popover(vstack![
+        text("Window settings").font_size(17.).font_weight(600),
+        chrome_settings(app, "popup-chrome-mode"),
+        text("Application-drawn controls").font_size(12.).color(ColorToken::Muted),
+        segmented_control([(0u8, "Symbols"), (1, "Traffic lights")])
+            .key("window-control-style")
+            .selected(if app.window_control_style == WindowControlStyle::Symbols {0} else {1})
+            .on_select(|app: &mut App, value| app.window_control_style = if value == 1 { WindowControlStyle::TrafficLights } else { WindowControlStyle::Symbols }),
+        text(if cfg!(target_os = "macos") { "macOS retains native traffic lights. The style choice applies to app-drawn previews and Linux/Windows Custom controls." } else { "Control style applies to Custom mode. Borderless intentionally hides the controls." }).font_size(12.).color(ColorToken::Muted),
+        divider(),
+        text(host).font_family("SF Mono").font_size(11.).color(ColorToken::Muted),
+    ].gap(12., Axis::Vertical).align(Align::Stretch))
+        .key("window-settings").anchor("window-settings-button")
+        .open(app.chrome_panel_open)
+        .on_dismiss(|app: &mut App| { app.chrome_panel_open = false; app.chrome_picker = None; })
+        .into()
+}
+
+fn window_header_menu(app: &App, bar: El<App>) -> El<App> {
+    context_menu(
+        bar,
+        [
+            menu_item(WindowAction::Minimize, "Minimize"),
+            menu_item(
+                WindowAction::ToggleMaximize,
+                if app.window_state.maximized {
+                    "Restore"
+                } else {
+                    "Maximize"
+                },
+            )
+            .enabled(app.window_state.resizable && !app.window_state.fullscreen),
+            menu_item(WindowAction::Close, "Close window"),
+        ],
+    )
+    .fill()
+    .key("window-header-menu")
+    .height(56.)
+    .min_height(56.)
+    .flex(1.)
+    .open(app.window_menu.is_some())
+    .position(app.window_menu.unwrap_or([0., 56.]))
+    .on_context_open(|app: &mut App, at| app.window_menu = Some(at))
+    .on_open_change(|app: &mut App, open| {
+        if !open {
+            app.window_menu = None;
+        }
+    })
+    .on_action(|app: &mut App, action| {
+        app.window_menu = None;
+        if let Some(sender) = &app.window_actions {
+            let _ = sender.send(action);
+        }
+    })
+    .into()
 }
 
 fn mode_button(app: &App) -> El<App> {
@@ -132,6 +300,10 @@ fn mode_button(app: &App) -> El<App> {
 }
 
 fn header(app: &App) -> El<App> {
+    header_for_platform(app, cfg!(target_os = "macos"))
+}
+
+pub(super) fn header_for_platform(app: &App, macos: bool) -> El<App> {
     let nav = |label: &'static str, target: Page| -> El<App> {
         let active = match target {
             Page::Introduction => app.page == Page::Introduction,
@@ -183,6 +355,23 @@ fn header(app: &App) -> El<App> {
     .height(36.)
     .align(Align::Stretch);
     // Below Md the search box becomes an icon button.
+    let window_settings_button = tooltip(
+        "Window settings",
+        zstack![
+            button("")
+                .key("window-settings-button")
+                .accessible_label("Window settings")
+                .variant(ButtonVariant::Ghost)
+                .width(36.)
+                .height(36.)
+                .on_click(|app: &mut App| app.chrome_panel_open = !app.chrome_panel_open),
+            icon(Icon::Window, 18., ColorToken::BaseContent),
+        ]
+        .width(36.)
+        .height(36.)
+        .flow(Flow::Center),
+    )
+    .key("window-settings-tooltip");
     let search_compact = zstack![
         button("")
             .key("open-palette-compact")
@@ -197,7 +386,11 @@ fn header(app: &App) -> El<App> {
     .width(36.)
     .height(36.)
     .flow(Flow::Center)
-    .visible(responsive(true).at(Breakpoint::Md, false));
+    .visible(
+        responsive(false)
+            .at(Breakpoint::MinWidth(400.), true)
+            .at(Breakpoint::Md, false),
+    );
     let search = search.visible(responsive(false).at(Breakpoint::Md, true));
     let themes = menu(
         if app.custom_palettes.is_some() {
@@ -222,8 +415,36 @@ fn header(app: &App) -> El<App> {
         app.custom_palettes = None;
     })
     .on_open_change(|app: &mut App, open| app.theme_menu_open = open);
-    // The shell adds the menu button, height, padding and drag region.
-    hstack![
+    // Controls are ordinary content in the existing toolbar, never another row.
+    let custom_controls: El<App> =
+        if app.chrome == volt_ui_kit::native::WindowChrome::Custom && !macos {
+            window_controls_with_style(
+                WindowControlsState {
+                    maximized: app.window_state.maximized,
+                    can_maximize: app.window_state.resizable && !app.window_state.fullscreen,
+                    ..Default::default()
+                },
+                app.window_control_style,
+                |app: &mut App, action| {
+                    if let Some(sender) = &app.window_actions {
+                        let _ = sender.send(action);
+                    }
+                },
+            )
+            .key("inline-window-controls")
+            .into()
+        } else {
+            spacer().width(0.).flex(0.).into()
+        };
+    let themes: El<App> = if !macos {
+        themes
+            .visible(responsive(false).at(Breakpoint::Md, true))
+            .into()
+    } else {
+        themes.into()
+    };
+    // The shell owns the original toolbar's geometry and drag region.
+    let header_content: El<App> = hstack![
         hstack![
             nav("Docs", Page::Introduction),
             nav("Components", Page::Button),
@@ -240,13 +461,24 @@ fn header(app: &App) -> El<App> {
         .flex(1.),
         search,
         search_compact,
+        window_settings_button,
+        chrome_selector(app, "header-chrome-mode")
+            .visible(responsive(false).at(Breakpoint::Xl, true)),
         themes,
         mode_button(app),
     ]
-    .key("site-header")
+    .key("header-content")
     .gap(6., Axis::Horizontal)
     .align(Align::Center)
-    .into()
+    .into();
+    let bar = window_header(header_content, custom_controls)
+        .key("site-header")
+        .into();
+    if app.chrome == volt_ui_kit::native::WindowChrome::Custom {
+        window_header_menu(app, bar)
+    } else {
+        bar
+    }
 }
 
 /// The filter field and grouped page links. `prefix` keeps the sidebar's
@@ -311,10 +543,13 @@ fn page_links(app: &App, prefix: &str) -> Vec<El<App>> {
 }
 
 /// The brand row at the top of the sidebar, under the macOS window controls.
-fn brand() -> El<App> {
+fn brand(app: &App) -> El<App> {
+    let embedded = app.chrome == volt_ui_kit::native::WindowChrome::Custom;
     hstack![
-        mark(24.),
-        text("Volt UI").font_size(15.).font_weight(700),
+        mark(if embedded { 18. } else { 24. }),
+        text(if embedded { "Volt UI" } else { "Volt UI Kit" })
+            .font_size(if embedded { 14. } else { 15. })
+            .font_weight(700),
         badge(concat!(
             env!("CARGO_PKG_VERSION_MAJOR"),
             ".",
@@ -323,13 +558,15 @@ fn brand() -> El<App> {
         .font_size(10.)
         .rounded(Rounding::Full)
         .background(ColorToken::BaseContent.alpha(8))
-        .color(ColorToken::Muted),
+        .color(ColorToken::Muted)
+        .visible(!embedded),
     ]
+    .drag_region(true)
     .key("brand")
     .height(40.)
     .gap(8., Axis::Horizontal)
     .align(Align::Center)
-    .padding(18., Edge::Horizontal)
+    .padding(if embedded { 8. } else { 18. }, Edge::Horizontal)
     .into()
 }
 
@@ -396,13 +633,9 @@ fn glass_controls(app: &App) -> El<App> {
             .key("window-blur")
             .on_change(|app: &mut App, value| app.blur = value),
         source,
-        text(if app.compositor_blur {
-            "Compositor: private macOS API"
-        } else {
-            "Material adds its own system tint"
-        })
-        .font_size(10.)
-        .color(ColorToken::Muted),
+        text(&app.backdrop_status)
+            .font_size(10.)
+            .color(ColorToken::Muted),
     ]
     .key("glass-controls")
     .gap(8., Axis::Vertical)
@@ -510,17 +743,19 @@ fn article(app: &App) -> El<App> {
         );
     }
     if !content.api.is_empty() {
-        let rows = content
-            .api
-            .iter()
-            .enumerate()
-            .map(|(i, (name, about))| table_row(i, [*name, *about]).key(format!("api-{i}")));
+        let rows = content.api.iter().enumerate().map(|(i, (name, about))| {
+            // Unicode line breaking never breaks before "." or "/", even
+            // after a space, so ".a / .b" would only split mid-word; a
+            // zero-width space before each method marks a clean break.
+            let name = name.replace(" .", " \u{200B}.");
+            table_row(i, [name, (*about).to_owned()]).key(format!("api-{i}"))
+        });
         parts.push(text("API reference").font_size(20.).font_weight(600).into());
         parts.push(
             table(
                 [
-                    table_column(0u8, "Method").width(340.).sortable(false),
-                    table_column(1, "Description").width(400.).sortable(false),
+                    table_column(0u8, "Method").width(380.).sortable(false),
+                    table_column(1, "Description").width(420.).sortable(false),
                 ],
                 rows,
             )

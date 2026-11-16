@@ -57,18 +57,23 @@ requested only when you click the notification permission button. Use
 `--check` to build/verify without opening it. Requires Cargo, Python 3 and, on
 macOS, the command-line tools. Individual library features remain optional.
 
+For the new interactive recipes, choose **Motion studio**, **Instruments** or
+**Image** in the Catalog. The same Rust examples run in the
+[live component reference](https://danieldear.github.io/volt-ui-kit/reference/)
+after the corresponding documentation revision is deployed.
+
 ## Experimental Rust-first iOS apps
 
-[Field Notes](docs/ios-prototype.md) is an opt-in iOS integration prototype:
-Rust-owned screens, navigation, touch scrolling and editable profile forms,
-with a reusable UIKit keyboard/Metal host. Generate a Rust app with
-`cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`:
-no per-app Swift application code is needed. See the guide for setup, tests
-and limits. An [experimental Android host/template](docs/android-prototype.md)
-also builds Rust-owned screens with shared native OS glue; neither mobile
-adapter is production support. Simulator software drawing is reported
-explicitly; physical-device GPU acceptance is still pending. Desktop remains
-the primary supported host.
+Write iPhone apps in Rust: [the iOS guide](docs/ios-prototype.md). iOS supplies
+the navigation bar and back swipe, scrolling, switches, sliders and the
+keyboard; Volt draws your pages in iOS's colours and system font, or in your
+own brand. Generate an app with
+`cargo volt new my-ios-app --platform ios --kit-path /path/to/volt-ui-kit`;
+no per-app Swift is needed. The [iPhone gallery](examples/ios-gallery) shows
+every part, including a branded shop, and its UI tests run on a physical
+iPhone. An [experimental Android host/template](docs/android-prototype.md)
+shares the Rust layer. Neither mobile path is production support yet; desktop
+remains the primary supported host.
 
 ## Highlights
 
@@ -85,14 +90,18 @@ the primary supported host.
   can still wake the app.
 - **Desktop integration.** Window chrome and blur, native menus and tray, file
   panels, notifications, commands with shortcuts, close guards and `.app`
-  bundles (macOS first).
+  bundles (macOS first). Optional custom chrome embeds controls in the existing app layout (native macOS
+  traffic lights, inline Linux/Windows controls), with live Native/Custom/Borderless switching; see [window chrome](docs/windows-and-rendering.md#custom-controls-and-live-mode-switching).
 - **Accessible.** Roles, labels, values and actions go to screen readers
   through AccessKit, with full keyboard navigation.
 - **App-owned navigation.** Typed route links, bounded Back/Forward history and
   standalone keyboard-accessible web links. Browser opening is explicit; see
   [navigation and links](docs/components.md#typed-navigation-and-web-links).
-- **Deliberate motion.** Finite spring responses, staggered entrances and explicit
-  replay, with reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
+- **Deliberate motion.** Interactive 2D transforms, keyed/shared layout transitions,
+  bounded drag momentum, pose timelines and animated text, alongside spring
+  responses and staggered entrances. Sliding carousels, scroll-triggered reveals,
+  bottom sheets and floating quick actions are showcased in Motion studio.
+  Logical-pixel scaling and reduced-motion support. See [motion recipes](docs/styling-and-themes.md#animation-and-transitions).
 - **A fast dev loop.** `cargo volt dev` rebuilds on save and restarts the app
   with its state and window position intact.
 
@@ -124,10 +133,13 @@ menus and file panels, but not the local-notification demo. Adding
 `native-notifications` alone is not enough on macOS; use the launcher for that
 end-to-end test. For software-only component testing, use `--features native`.
 See [examples](examples/README.md#catalog-launch-modes) for the launch modes.
+Button, Select and Table Code panels also provide complete runnable Rust programs.
+See [component recipes](examples/README.md#runnable-component-recipes) for the
+eight sample commands and copied-program setup.
 
 ## Use it
 
-Version **0.5.0** is prepared in this repository but is **not published on
+Version **0.6.0** is prepared in this repository but is **not published on
 crates.io**. Until publication, depend on it from Git:
 
 ```toml
@@ -148,12 +160,21 @@ cargo volt new my-app --kit-path /path/to/volt-ui-kit --template navigation
 cargo volt dev my-app
 ```
 
+On Linux, register a built app's matching icon and launcher explicitly with
+[`cargo volt install-linux`](docs/windows-and-rendering.md#linux-identity-launchers-and-backend-diagnostics).
+This avoids generic Wayland icons; `new` and `run` never install anything.
+
+Desktop templates include shared integrated-header controls and Linux app
+identity/launcher metadata. The launcher is opt-in, never auto-installed; macOS
+keeps native traffic lights. See [window controls and Linux diagnostics](docs/windows-and-rendering.md#linux-identity-launchers-and-backend-diagnostics).
+
+
 | Feature | Adds |
 | --- | --- |
 | `native` | A window with software drawing, text, images, clipboard, IME and accessibility |
 | `native-gpu` | GPU drawing with Vello (implies `native`) |
-| `native-desktop` | macOS menus, tray and file panels |
-| `native-notifications` | macOS local notifications |
+| `native-desktop` | macOS integrations; Linux portals, notifications, checked Trash and supported tray hosts |
+| `native-notifications` | macOS local / Linux immediate notifications |
 | `rust-ui` / `declarative` | The builders and runtime without a window, for custom hosts |
 | `dev-tools` | The `cargo volt` command |
 | `rendering` / `rendering-gpu` | Shared drawing adapters without desktop window/clipboard integration |
@@ -163,12 +184,15 @@ Rust 1.89 or newer.
 
 ## Status
 
-Version 0.5.0, pre-1.0. macOS is the primary platform and is tested on Apple
-silicon. Windows and Linux have local cross-compilation checks and a configured
-headless CI matrix; their native runtime has not been validated yet. Check
+Version 0.6.0, pre-1.0. Tested on macOS on Apple silicon. Windows and Linux
+have local cross-compilation checks and a configured headless CI matrix; their native runtime has not been validated yet. Check
 [Actions](https://github.com/danieldear/volt-ui-kit/actions) for actual remote
 results; configured jobs are not evidence of a passing run. The core compiles to
 WebAssembly; an [experimental browser host](docs/web-prototype.md) now renders the original Catalog components directly in the documentation, with WebGPU/software rendering. This is not full web parity. Expect API changes before 1.0.
+
+Linux native backdrop blur now negotiates modern and legacy Wayland protocols;
+Catalog reports the request status and unsupported cases. The compositor still
+controls the visible effect. See [Linux blur and diagnostics](docs/windows-and-rendering.md#linux-desktop-blur).
 
 ## Documentation
 
@@ -227,3 +251,7 @@ python3 scripts/build_web.py  # requires wasm32 target and wasm-bindgen-cli 0.2.
 python3 -m http.server 8768 --bind 127.0.0.1 --directory docs
 # Open http://127.0.0.1:8768/index.html or /reference/index.html
 ```
+
+Linux desktop services use optional Rust D-Bus adapters, not GTK or a WebView.
+See [Linux desktop services](docs/app-services.md#linux-desktop-services) for
+portal dialogs, default-app dispatch, notifications, checked Trash and tray limits.

@@ -365,14 +365,16 @@ impl Palette {
             on_accent: base[0],
             neutral: c(0x18181B, 0xFAFAFA),
             on_neutral: c(0xFAFAFA, 0x18181B),
-            info: c(0x2563EB, 0x3B82F6),
-            on_info: contrast(c(0x2563EB, 0x3B82F6)),
-            success: c(0x16A34A, 0x22C55E),
-            on_success: contrast(c(0x16A34A, 0x22C55E)),
-            warning: c(0xD97706, 0xF59E0B),
-            on_warning: c(0x18181B, 0x18181B),
-            error: c(0xDC2626, 0xDC2626),
-            on_error: c(0xFFFFFF, 0xFAFAFA),
+            // Status colours double as text (badges, deltas, form errors), so
+            // each reads at 4.5:1 on the page and on a 15% tint of itself.
+            info: c(0x1D4ED8, 0x3B82F6),
+            on_info: contrast(c(0x1D4ED8, 0x3B82F6)),
+            success: c(0x166534, 0x22C55E),
+            on_success: contrast(c(0x166534, 0x22C55E)),
+            warning: c(0x92400E, 0xF59E0B),
+            on_warning: contrast(c(0x92400E, 0xF59E0B)),
+            error: c(0xB91C1C, 0xEF4444),
+            on_error: contrast(c(0xB91C1C, 0xEF4444)),
             border: c(0xE4E4E7, 0x27272A),
             muted: c(0x71717A, 0xA1A1AA),
         }
@@ -710,6 +712,33 @@ mod tests {
             }
         }
         let violet = parse_hex("#7C3AED").unwrap();
+        // Status text: on the page and on a 15% tint of the role (the badge
+        // recipe), in both modes and whatever the accent.
+        for p in [&light, &dark] {
+            for role in [
+                ColorToken::Info,
+                ColorToken::Success,
+                ColorToken::Warning,
+                ColorToken::Error,
+            ] {
+                let (text, page) = (p.color(role), p.base[0]);
+                let tint: [f32; 4] = std::array::from_fn(|i| {
+                    if i == 3 {
+                        1.
+                    } else {
+                        0.15 * text[i] + 0.85 * page[i]
+                    }
+                });
+                assert!(contrast_ratio(text, page) >= 4.5, "{role:?} on the page");
+                assert!(contrast_ratio(text, tint) >= 4.5, "{role:?} on its tint");
+                let accented = p.clone().with_accent(violet);
+                assert_eq!(
+                    accented.color(role),
+                    text,
+                    "{role:?} is unchanged by the accent"
+                );
+            }
+        }
         let accented = light.clone().with_accent(violet);
         assert_eq!((accented.primary, accented.accent), (violet, violet));
         assert_eq!(accented.on_primary, [1.; 4]);

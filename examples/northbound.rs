@@ -14,11 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = northbound::App::new();
     let mut forwarded = vec!["--size".to_owned(), "1320x900".to_owned()];
     let mut args = std::env::args().skip(1);
-    let mut chrome = if cfg!(target_os = "macos") {
-        WindowChrome::Overlay
-    } else {
-        WindowChrome::Native
-    };
+    let mut chrome = app.chrome;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--screen" => {
@@ -36,7 +32,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .ok_or("--accent must be aurora, ember, glacier or heather")?;
             }
             "--reserve" => app.reserve_open = true,
+            "--control-style" => {
+                app.window_control_style = match args.next().as_deref() {
+                    Some("symbols") => volt_ui_kit::ui::WindowControlStyle::Symbols,
+                    Some("traffic-lights") => volt_ui_kit::ui::WindowControlStyle::TrafficLights,
+                    _ => return Err("--control-style must be symbols or traffic-lights".into()),
+                }
+            }
             "--native-chrome" => chrome = WindowChrome::Native,
+            "--chrome" => {
+                chrome = match args.next().as_deref() {
+                    Some("native") => WindowChrome::Native,
+                    Some("overlay") => WindowChrome::Overlay,
+                    Some("custom") => WindowChrome::Custom,
+                    Some("borderless") => WindowChrome::Borderless,
+                    _ => {
+                        return Err("--chrome must be native, overlay, custom or borderless".into())
+                    }
+                };
+            }
             "--theme" => {
                 let value = args.next().ok_or("missing --theme value")?;
                 app.mode = match value.as_str() {
@@ -49,7 +63,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => forwarded.push(arg),
         }
     }
-    support::launch_themed_with_args(
+    app.chrome = chrome;
+    support::launch_themed_with_application(
         "Northbound",
         app,
         northbound::view,
@@ -58,6 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             chrome,
             background: WindowBackground::Opaque,
             args: forwarded,
+        },
+        |application| {
+            application
+                .app_id("dev.volt.northbound")
+                .chrome_from_state(|app| app.chrome)
+                .window_actions(|app, sender| app.window_actions = Some(sender))
+                .on_window_state(|app, state| app.window_state = state)
         },
     )
 }

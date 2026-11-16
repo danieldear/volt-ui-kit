@@ -23,6 +23,22 @@ fn mount(app: &App, size: [f32; 2]) -> Runtime {
 }
 
 #[test]
+#[cfg(all(
+    feature = "native-desktop",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn desktop_services_catalog_passes_application_startup_validation() {
+    let mut app = App::new();
+    app.page = Page::DesktopServices;
+    volt_ui_kit::native::Application::new("Volt UI Kit", app, view)
+        .app_id("dev.volt.catalog")
+        .commands(lifecycle::commands())
+        .desktop(lifecycle::desktop(), |_, _| {})
+        .validate()
+        .expect("Catalog's real desktop configuration must pass startup validation");
+}
+
+#[test]
 fn desktop_services_cancellation_controls_and_modal_scope_are_guarded() {
     let mut app = App::new();
     app.page = Page::DesktopServices;
@@ -135,7 +151,7 @@ fn every_page_builds_in_both_modes_with_code_and_overlays() {
     }
     app.palette.open = true;
     app.dialog_open = true;
-    app.fruit_open = true;
+    app.samples.select.open = true;
     mount(&app, [1440., 920.]);
 }
 
@@ -151,6 +167,147 @@ fn slugs_are_unique_and_every_theme_is_valid() {
             app.mode = mode;
             app.theme = theme_index;
             assert!(theme(&app, ThemeMode::Light).palette.is_valid());
+        }
+    }
+}
+
+#[test]
+fn gallery_workflows_recompose_and_settle_at_fractional_dpi() {
+    use std::time::Duration;
+    use volt_ui_kit::ui::prelude::*;
+    for scale in [1., 1.25, 2.] {
+        for (page, section, action) in [
+            (
+                Page::MotionStudio,
+                "studio-carousel",
+                "studio-carousel-control-next",
+            ),
+            (Page::MotionStudio, "studio-card", "studio-card-reveal"),
+            (Page::MotionStudio, "studio-sheet", "studio-sheet-open"),
+            (Page::MotionStudio, "studio-fab", "studio-speed-dial-toggle"),
+            (
+                Page::MotionStudio,
+                "studio-scroll-reveal",
+                "studio-scroll-replay",
+            ),
+            (
+                Page::Instruments,
+                "instruments-controls",
+                "instrument-charge",
+            ),
+            (Page::Image, "image-blend", "image-blend-mode-4"),
+        ] {
+            let mut app = App::new();
+            let demo = |app: &App| -> Element<App> {
+                vstack![
+                    pages::doc(page, app)
+                        .sections
+                        .into_iter()
+                        .find(|s| s.id == section)
+                        .unwrap()
+                        .demo
+                ]
+                .fill_width()
+                .into()
+            };
+            let (doc, mut h) = demo(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(700. * scale, 650. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            assert!(
+                r.accessibility_activate(action, &mut h, &mut app)
+                    .unwrap()
+                    .activated,
+                "{section}: {action}"
+            );
+            match section {
+                "studio-carousel" => assert_eq!(app.gallery.slide, 1),
+                "studio-card" => assert!(app.gallery.expanded),
+                "studio-sheet" => assert!(app.gallery.sheet),
+                "studio-fab" => assert!(app.gallery.dial_open),
+                "studio-scroll-reveal" => assert_eq!(app.gallery.reveals, 1),
+                "instruments-controls" => assert!((app.gallery.battery - 0.77).abs() < 0.001),
+                "image-blend" => assert_eq!(app.gallery.blend, BlendMode::ColorBurn),
+                _ => unreachable!(),
+            }
+            let (doc, next) = demo(&app).build().unwrap().into_parts();
+            r.replace_document(doc, &next, &Bindings::default())
+                .unwrap();
+            h = next;
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            for time in [1, 90, 220, 600, 1000] {
+                r.advance_animations(Duration::from_millis(time));
+                let b = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+                p.rasterize(&b, [1.; 4]).expect(section);
+            }
+            assert!(!r.is_animating(), "{section} must become idle");
+            if section == "studio-sheet" {
+                assert!(
+                    !r.accessibility_activate("studio-sheet-open", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(
+                    r.accessibility_activate("studio-sheet-confirm", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(!app.gallery.sheet);
+            }
+            if section == "studio-fab" {
+                assert!(
+                    r.accessibility_activate("studio-speed-dial-action-1", &mut h, &mut app)
+                        .unwrap()
+                        .activated
+                );
+                assert!(!app.gallery.dial_open);
+                assert_eq!(app.gallery.action, "Waypoint added");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires real GPU readback; not native presentation timing"]
+fn gallery_gpu_compact_dpi_masks_and_inflight_motion_stay_admitted() {
+    use std::time::Duration;
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().expect("real GPU required");
+    for scale in [1., 1.25, 2.] {
+        for mode in [ThemeMode::Light, ThemeMode::Dark] {
+            for width in [300., 700.] {
+                let mut app = App::new();
+                app.mode = mode;
+                app.gallery.expanded = true;
+                app.gallery.dial_open = true;
+                let sections = motion_showcase::doc(&app)
+                    .sections
+                    .into_iter()
+                    .chain(motion_showcase::instruments(&app).sections)
+                    .chain(motion_showcase::image_sections(&app));
+                for s in sections {
+                    let id = s.id;
+                    let demo: Element<App> = vstack![s.demo].fill_width().into();
+                    let (doc, h) = demo.build().unwrap().into_parts();
+                    let mut r = Runtime::new(doc, &h, &Bindings::default()).unwrap();
+                    let vp = Viewport::new(width * scale, 600. * scale, scale).unwrap();
+                    let mut p = RasterPainter::new(vp);
+                    r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                    for time in [0, 80, 500] {
+                        r.advance_animations(Duration::from_millis(time));
+                        let b = r.paint_ui(&mut p, &theme(&app, mode));
+                        gpu.render(&mut p, &b, [0.; 4])
+                            .unwrap_or_else(|e| panic!("{id}: {e}"));
+                        assert_eq!(gpu.last_over_budget(), None, "{id} {scale}x {width}");
+                        assert_eq!(gpu.framebuffer_upload_bytes(), 0);
+                    }
+                    r.set_reduced_motion(true);
+                    assert_eq!(r.animation_wait(), None, "{id}");
+                }
+            }
         }
     }
 }
@@ -239,6 +396,8 @@ fn launch_options_are_order_independent_and_glass_follows_the_renderer() {
         options.chrome,
         if cfg!(target_os = "macos") {
             volt_ui_kit::native::WindowChrome::Overlay
+        } else if cfg!(target_os = "linux") {
+            volt_ui_kit::native::WindowChrome::Custom
         } else {
             volt_ui_kit::native::WindowChrome::Native
         }
@@ -427,11 +586,11 @@ fn data_view_first_last_focus_and_selection_never_overpaint_the_frame() {
                     let mut app = App::new();
                     app.mode = mode;
                     app.go(page);
-                    app.row = None;
+                    app.samples.table.row = None;
                     app.file = None;
                     if let Some((index, _)) = target {
                         if page == Page::Table {
-                            app.row = Some(if index == 0 { 0 } else { 5 });
+                            app.samples.table.row = Some(if index == 0 { 0 } else { 5 });
                         } else {
                             app.file = Some(if index == 0 { 1 } else { 7 });
                         }
@@ -548,9 +707,10 @@ fn data_view_frame_borders_survive_gpu_selection_and_focus() {
                     let mut app = App::new();
                     app.mode = mode;
                     app.go(page);
-                    app.row = state
-                        .filter(|_| page == Page::Table)
-                        .map(|i| if i == 0 { 0 } else { 5 });
+                    app.samples.table.row =
+                        state
+                            .filter(|_| page == Page::Table)
+                            .map(|i| if i == 0 { 0 } else { 5 });
                     app.file =
                         state
                             .filter(|_| page == Page::TreeView)
@@ -659,12 +819,12 @@ fn rounded_and_square_catalog_tables_share_working_sort_and_selection() {
             runtime
                 .accessibility_activate(row_id, &mut handlers, &mut app)
                 .unwrap();
-            assert_eq!(app.row, Some(row_value));
+            assert_eq!(app.samples.table.row, Some(row_value));
             let header = format!("{frame}-column-3");
             runtime
                 .accessibility_activate(&header, &mut handlers, &mut app)
                 .unwrap();
-            assert_eq!(app.sort.as_ref().unwrap().0, 3);
+            assert_eq!(app.samples.table.sort.as_ref().unwrap().0, 3);
             let (doc, next) = view(&app).build().unwrap().into_parts();
             runtime
                 .replace_document(doc, &next, &Bindings::default())
@@ -693,7 +853,7 @@ fn rounded_and_square_catalog_tables_share_working_sort_and_selection() {
                     .unwrap();
                 assert_eq!(
                     sort_header.table.unwrap().sort_ascending,
-                    Some(app.sort.as_ref().unwrap().1 == SortDirection::Ascending)
+                    Some(app.samples.table.sort.as_ref().unwrap().1 == SortDirection::Ascending)
                 );
             }
         }
@@ -751,7 +911,7 @@ fn catalog_rounded_table_clips_header_and_last_focus_without_changing_cells() {
                         .unwrap()
                         .activated
                 );
-                assert_eq!(app.row, Some(5));
+                assert_eq!(app.samples.table.row, Some(5));
                 let demo = pages::doc(Page::Table, &app)
                     .sections
                     .into_iter()
@@ -804,7 +964,7 @@ fn catalog_rounded_table_clips_header_and_last_focus_without_changing_cells() {
                         .unwrap()
                         .activated
                 );
-                assert!(app.sort.is_some());
+                assert!(app.samples.table.sort.is_some());
             }
         }
     }
@@ -1009,7 +1169,12 @@ fn compositor_launch_is_explicit_and_defaults_remain_public() {
 
 #[test]
 fn scrolling_pages_by_shifting_matches_a_full_layout() {
-    for page in [Page::Introduction, Page::Table, Page::Settings] {
+    for page in [
+        Page::Introduction,
+        Page::Table,
+        Page::Settings,
+        Page::Effects,
+    ] {
         let mut app = App::new();
         app.go(page);
         app.glass = true;
@@ -1804,14 +1969,16 @@ fn catalog_context_menu_opens_from_the_preview_surface() {
 #[test]
 fn notification_setup_help_explains_feature_and_bundle_requirements() {
     let help = desktop_services::notification_setup_help();
-    if !cfg!(target_os = "macos") {
-        assert!(help.contains("no notification adapter"));
+    if cfg!(target_os = "linux") {
+        assert!(help.contains("No macOS-style permission prompt"));
+    } else if !cfg!(target_os = "macos") {
+        assert!(help.contains("not available"));
     } else if !cfg!(feature = "native-notifications") {
         assert!(help.contains("./scripts/run_catalog.sh"));
-        assert!(help.contains("bundled Catalog"));
+        assert!(help.contains("full Catalog app"));
     } else {
         assert!(help.contains("not cargo run"));
-        assert!(help.contains("Request alert permission"));
+        assert!(help.contains("Allow notifications"));
     }
 }
 
@@ -2131,6 +2298,633 @@ fn motion_cards_render_inflight_and_reduced_on_gpu_without_fallback() {
                 assert_eq!(gpu.last_over_budget(), None, "{id} reduced motion");
                 assert!(!r.is_animating());
             }
+        }
+    }
+}
+
+#[test]
+fn custom_chrome_modes_preserve_catalog_content_and_header_menu_dispatch() {
+    use volt_ui_kit::native::WindowChrome;
+    for chrome in [
+        WindowChrome::Native,
+        WindowChrome::Custom,
+        WindowChrome::Borderless,
+        WindowChrome::Overlay,
+    ] {
+        for size in [[620., 800.], [1440., 920.]] {
+            let mut app = App::new();
+            app.chrome = chrome;
+            let r = mount(&app, size);
+            assert!(!r.boxes().iter().any(|b| b.id == "custom-titlebar"));
+            let toolbar = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == "shell-toolbar")
+                .unwrap()
+                .bounds
+                .bounds();
+            assert!(toolbar[1] <= 8., "no additional title strip: {toolbar:?}");
+            if chrome == WindowChrome::Custom {
+                assert_eq!(toolbar[1], if app.glass { 8. } else { 0. });
+                assert_eq!(toolbar[3], 56.);
+                assert_eq!(
+                    r.boxes().iter().any(|b| b.id == "inline-window-controls"),
+                    !cfg!(target_os = "macos")
+                );
+            }
+            assert!(r.boxes().iter().any(|b| b.id == "site-header"));
+        }
+    }
+    let mut app = App::new();
+    app.chrome = WindowChrome::Custom;
+    let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+    let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let v = Viewport::new(1440., 920., 1.).unwrap();
+    r.layout(v, &Bindings::default(), &mut RasterPainter::new(v))
+        .unwrap();
+    let [x, y, w, h] = r
+        .boxes()
+        .iter()
+        .find(|b| b.id == "window-header-menu")
+        .unwrap()
+        .bounds
+        .bounds();
+    assert!(r.drag_region_hit(x + w / 2., y + h - 2.));
+    let outcome = r
+        .context_menu_at(x + w / 2., y + h / 2., &mut handlers, &mut app)
+        .unwrap();
+    assert!(outcome.activated);
+    assert!(app.window_menu.is_some());
+}
+
+#[test]
+fn custom_chrome_keeps_controls_and_mode_picker_reachable_in_compact_drawer() {
+    let mut app = App::new();
+    app.glass = true;
+    app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+    app.nav_open = true;
+    for size in [[560., 460.], [620., 800.], [1440., 920.]] {
+        let mut r = mount(&app, size);
+        let header = r.boxes().iter().find(|b| b.id == "shell-toolbar").unwrap();
+        assert_eq!(header.bounds.bounds()[3], 56.);
+        assert_eq!(header.bounds.bounds()[1], 8.);
+        let picker = r
+            .boxes()
+            .iter()
+            .find(|b| {
+                b.id == if size[0] < 1024. {
+                    "drawer-chrome-mode-trigger"
+                } else {
+                    "footer-chrome-mode-trigger"
+                }
+            })
+            .unwrap();
+        let [x, y, w, h] = picker.bounds.bounds();
+        assert!(
+            h > 0. && y >= 0. && y + h <= size[1],
+            "{size:?}: {:?}",
+            picker.bounds
+        );
+        assert!(r.pointer_down(x + w / 2., y + h / 2.), "{size:?}");
+    }
+}
+
+#[test]
+fn custom_panel_matches_unified_and_borderless_with_only_the_sidebar_translucent() {
+    use volt_ui_kit::native::WindowChrome as W;
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 1.25, 2.] {
+            let mut reference = None;
+            let mut geometry = None;
+            for chrome in [W::Overlay, W::Borderless, W::Custom] {
+                let mut app = App::new();
+                app.chrome = chrome;
+                app.glass = true;
+                app.mode = mode;
+                let v = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+                let (doc, handlers) = view(&app).build().unwrap().into_parts();
+                let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+                let mut painter = RasterPainter::new(v);
+                runtime
+                    .layout(v, &Bindings::default(), &mut painter)
+                    .unwrap();
+                runtime.settle_animations();
+                let panel_boxes: Vec<_> = [
+                    "shell-sheet",
+                    "shell-sheet-drag",
+                    "shell-detail",
+                    "shell-toolbar",
+                ]
+                .into_iter()
+                .map(|id| {
+                    let b = runtime.boxes().iter().find(|b| b.id == id).unwrap();
+                    (b.bounds.bounds(), b.clip.bounds())
+                })
+                .collect();
+                if let Some(expected) = &geometry {
+                    assert_eq!(&panel_boxes, expected, "{chrome:?} panel geometry changed");
+                } else {
+                    geometry = Some(panel_boxes);
+                }
+                let ui = theme(&app, mode);
+                let mut clear = ui.legacy_theme().background;
+                clear[3] = app.opacity as f32 / 100.;
+                let batches = runtime.paint_ui(&mut painter, &ui);
+                let pixels = painter.rasterize(&batches, clear).unwrap();
+                let sample = |x: f32, y: f32| {
+                    pixels
+                        .pixel((x * scale) as u32, (y * scale) as u32)
+                        .unwrap()
+                };
+                let samples = [sample(600., 12.), sample(1000., 500.)];
+                assert!(
+                    samples.iter().all(|p| p.alpha() == 255),
+                    "{mode:?} {scale} {chrome:?}: toolbar and page must be opaque"
+                );
+                assert!(
+                    sample(5., 3.)
+                        .alpha()
+                        .abs_diff((app.opacity as f32 * 2.55).round() as u8)
+                        <= 1,
+                    "sidebar keeps its glass backdrop"
+                );
+                if let Some(expected) = reference {
+                    assert_eq!(
+                        samples, expected,
+                        "{mode:?} {scale}: chrome mode must not restyle the panel"
+                    );
+                } else {
+                    reference = Some(samples);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+fn linux_rounded_frame_keeps_catalog_pages_inside_gpu_budgets() {
+    check_rounded_frame_budgets(None);
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires an actual GPU; rounded client-frame readback acceptance"]
+fn actual_gpu_rounded_catalog_frame() {
+    check_rounded_frame_budgets(Some(
+        volt_ui_kit::native::GpuOffscreenRenderer::new().unwrap(),
+    ));
+}
+
+#[cfg(feature = "native-gpu")]
+fn check_rounded_frame_budgets(mut gpu: Option<volt_ui_kit::native::GpuOffscreenRenderer>) {
+    use volt_ui_kit::{
+        declarative::{DocumentPainter, PaintBatch},
+        graphics::ClipRegion,
+        Painter, Rect,
+    };
+    for scale in [1., 1.25, 2.] {
+        let vp = Viewport::new(1440. * scale, 920. * scale, scale).unwrap();
+        let mut painter = RasterPainter::new(vp);
+        for page in [
+            Page::Introduction,
+            Page::Table,
+            Page::ThemeEditor,
+            Page::Effects,
+        ] {
+            let mut app = App::new();
+            app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+            app.go(page);
+            let (document, handlers) = view(&app).build().unwrap().into_parts();
+            let mut runtime = Runtime::new(document, &handlers, &Bindings::default()).unwrap();
+            runtime
+                .layout(vp, &Bindings::default(), &mut painter)
+                .unwrap();
+            runtime.settle_animations();
+            let ui = theme(&app, ThemeMode::Dark);
+            let mut batches = runtime.paint_ui(&mut painter, &ui);
+            // Model the native host's extra frame clip through public painter
+            // primitives. It must not push dense pages into software fallback.
+            let mut begin = vec![];
+            painter.ui_clip_begin(
+                &mut begin,
+                ClipRegion::Rounded {
+                    bounds: [0., 0., vp.width, vp.height],
+                    radii: [12. * scale; 4],
+                },
+            );
+            painter.draw_rect(&mut begin, 0., 0., vp.width, vp.height, ui.palette.base[0]);
+            let clip = Rect::new(0., 0., vp.width, vp.height).unwrap();
+            batches.insert(
+                0,
+                PaintBatch {
+                    clip,
+                    shapes: begin,
+                    glyphs: vec![],
+                },
+            );
+            let mut end = vec![];
+            painter.ui_clip_end(&mut end);
+            batches.push(PaintBatch {
+                clip,
+                shapes: end,
+                glyphs: vec![],
+            });
+            let estimate = volt_ui_kit::native::estimate_gpu_scene(&mut painter, &batches).unwrap();
+            assert_eq!(estimate.over_budget, None, "{page:?} at {scale}x");
+            if let Some(gpu) = &mut gpu {
+                let pixels = gpu.render(&mut painter, &batches, [0.; 4]).unwrap();
+                assert_eq!(
+                    gpu.last_over_budget(),
+                    None,
+                    "{page:?} at {scale}x fell back"
+                );
+                for [x, y] in [
+                    [0, 0],
+                    [pixels.width() - 1, 0],
+                    [0, pixels.height() - 1],
+                    [pixels.width() - 1, pixels.height() - 1],
+                ] {
+                    assert_eq!(
+                        pixels.pixel(x, y).unwrap().alpha(),
+                        0,
+                        "{page:?} at {scale}x: corner is opaque"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn converted_recipe_panels_use_cached_complete_program_sources() {
+    let app = App::new();
+    for (page, id, recipe) in [
+        (Page::Button, "button-variants", "button_variants"),
+        (Page::Button, "button-sizes", "button_sizes"),
+        (Page::Button, "button-states", "button_states"),
+        (Page::Select, "select", "select"),
+        (Page::Select, "select-disabled", "select_disabled"),
+        (Page::Select, "select-vs-combobox", "select_vs_combobox"),
+        (Page::Table, "table", "table"),
+        (Page::Table, "table-square", "table_square"),
+    ] {
+        let section = pages::doc(page, &app)
+            .sections
+            .into_iter()
+            .find(|s| s.id == id)
+            .unwrap();
+        assert!(
+            std::ptr::eq(section.code, super::samples::code(recipe)),
+            "{id}: source must come from the compiled recipe"
+        );
+        assert!(section.code.contains("pub fn main()"));
+    }
+}
+
+#[test]
+fn mapped_recipe_callbacks_keep_button_and_select_state_isolated() {
+    let mut app = App::new();
+    let demo = pages::doc(Page::Button, &app)
+        .sections
+        .into_iter()
+        .find(|s| s.id == "button-states")
+        .unwrap()
+        .demo;
+    let (doc, mut handlers) = demo.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    let viewport = Viewport::new(1000., 600., 1.).unwrap();
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(
+        !runtime
+            .accessibility_activate("b-disabled", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(
+        runtime
+            .accessibility_activate("b-like", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert!(app.samples.button_states.liked);
+    assert_eq!(app.samples.select.fruit, 1);
+    assert_eq!(app.samples.table.row, Some(2));
+
+    app.samples.select.open = true;
+    let demo = pages::doc(Page::Select, &app)
+        .sections
+        .into_iter()
+        .find(|s| s.id == "select")
+        .unwrap()
+        .demo;
+    let (doc, mut handlers) = demo.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(
+        runtime
+            .accessibility_activate("select-fruit-option-4", &mut handlers, &mut app)
+            .unwrap()
+            .activated
+    );
+    assert_eq!(app.samples.select.fruit, 4);
+    let comparison = pages::doc(Page::Select, &app)
+        .sections
+        .into_iter()
+        .find(|s| s.id == "select-vs-combobox")
+        .unwrap()
+        .demo;
+    let (doc, handlers) = comparison.build().unwrap().into_parts();
+    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+    runtime
+        .layout(
+            viewport,
+            &Bindings::default(),
+            &mut RasterPainter::new(viewport),
+        )
+        .unwrap();
+    assert!(runtime
+        .accessibility_nodes()
+        .iter()
+        .any(|n| n.label == "Pineapple"));
+    app.samples.select.country_search.open = true;
+    app.samples.select_disabled.open = true;
+    app.go(Page::Button);
+    assert!(
+        !app.samples.select.open
+            && !app.samples.select.country_search.open
+            && !app.samples.select_disabled.open
+    );
+}
+
+#[test]
+fn window_settings_are_in_the_existing_header_at_every_supported_width() {
+    use volt_ui_kit::native::WindowChrome as W;
+    for chrome in [W::Native, W::Custom, W::Borderless, W::Overlay] {
+        for size in [[360., 460.], [560., 460.], [1100., 650.], [1440., 920.]] {
+            let mut app = App::new();
+            app.chrome = chrome;
+            let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let v = Viewport::new(size[0], size[1], 1.).unwrap();
+            r.layout(v, &Bindings::default(), &mut RasterPainter::new(v))
+                .unwrap();
+            let n = r
+                .accessibility_nodes()
+                .into_iter()
+                .find(|n| n.label == "Window settings")
+                .unwrap();
+            let [x, y, w, h] = r
+                .boxes()
+                .iter()
+                .find(|b| b.id == n.id)
+                .unwrap()
+                .bounds
+                .bounds();
+            assert!(
+                x >= 0. && x + w <= size[0] && y >= 0. && y + h <= 64.,
+                "{chrome:?} {size:?}: {x},{y},{w},{h}"
+            );
+            assert!(
+                r.accessibility_activate(&n.id, &mut handlers, &mut app)
+                    .unwrap()
+                    .activated
+            );
+            assert!(app.chrome_panel_open);
+            let popup = mount(&app, size);
+            assert!(popup
+                .boxes()
+                .iter()
+                .any(|b| b.id == "popup-chrome-mode-trigger"));
+        }
+    }
+}
+
+#[test]
+fn linux_header_controls_stay_inside_the_existing_compact_toolbar() {
+    use volt_ui_kit::ui::prelude::*;
+    let mut app = App::new();
+    app.chrome = volt_ui_kit::native::WindowChrome::Custom;
+    for style in [
+        WindowControlStyle::Symbols,
+        WindowControlStyle::TrafficLights,
+    ] {
+        app.window_control_style = style;
+        for width in [320., 360., 560., 1100., 1440.] {
+            let ui: Element<App> = vstack![super::shell::header_for_platform(&app, false)]
+                .align(Align::Stretch)
+                .into();
+            let (doc, handlers) = ui.build().unwrap().into_parts();
+            let mut r = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+            let vp = Viewport::new(width - 32., 56., 1.).unwrap();
+            r.layout(vp, &Bindings::default(), &mut RasterPainter::new(vp))
+                .unwrap();
+            for n in r.accessibility_nodes().into_iter().filter(|n| {
+                [
+                    "Window settings",
+                    "Close window",
+                    "Minimize window",
+                    "Maximize window",
+                ]
+                .contains(&n.label.as_str())
+            }) {
+                let [x, y, w, h] = r
+                    .boxes()
+                    .iter()
+                    .find(|b| b.id == n.id)
+                    .unwrap()
+                    .bounds
+                    .bounds();
+                assert!(
+                    x >= 0. && x + w <= vp.width + 0.01 && y >= 0. && y + h <= 56.01,
+                    "{width} {style:?} {}: {x},{y},{w},{h}",
+                    n.label
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn new_motion_recipes_preserve_typed_actions_and_reduce_motion() {
+    use volt_ui_kit::ui::prelude::*;
+    let mut app = App::new();
+    for (recipe, actions) in [
+        (
+            motion_lab::transforms as fn(&App) -> pages::Section,
+            vec!["motion-transform-toggle", "motion-affine-button"],
+        ),
+        (
+            motion_lab::layout,
+            vec!["motion-reorder", "motion-resize", "motion-layout-tab-2"],
+        ),
+        (
+            motion_lab::timeline,
+            vec![
+                "motion-replay-timeline",
+                "motion-pause-timeline",
+                "motion-resume-timeline",
+                "motion-reverse-timeline",
+            ],
+        ),
+        (
+            motion_lab::text_presets,
+            vec!["motion-replay-text", "motion-change-text"],
+        ),
+    ] {
+        let section = recipe(&app);
+        let (d, mut h) = section.demo.build().unwrap().into_parts();
+        let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+        let vp = Viewport::new(1000., 800., 1.25).unwrap();
+        let mut p = RasterPainter::new(vp);
+        r.layout(vp, &Bindings::default(), &mut p).unwrap();
+        for action in actions {
+            assert!(
+                r.accessibility_activate(action, &mut h, &mut app)
+                    .unwrap()
+                    .activated,
+                "{action}"
+            );
+            let (d, next) = recipe(&app).demo.build().unwrap().into_parts();
+            r.replace_document(d, &next, &Bindings::default()).unwrap();
+            h = next;
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            let batches = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            p.rasterize(&batches, [0.; 4]).unwrap();
+        }
+        r.set_reduced_motion(true);
+        assert_eq!(r.animation_wait(), None);
+    }
+    assert!(
+        app.motion.rotated && app.motion.reordered && app.motion.compact && app.motion.text_changed
+    );
+    assert_eq!(app.motion.transform_actions, 1);
+    assert_eq!(app.motion.selected, 2);
+    assert_eq!(app.motion.text_revision, 1);
+    assert_eq!(app.motion.timeline_revision, 1);
+}
+
+#[cfg(feature = "native-gpu")]
+#[test]
+#[ignore = "requires a real GPU; fractional DPI vector transforms, geometry, text and clips"]
+fn new_motion_recipes_render_on_gpu_at_fractional_dpi_without_framebuffer_uploads() {
+    use std::time::Duration;
+    use volt_ui_kit::{native::GpuOffscreenRenderer, ui::prelude::*};
+    let mut gpu = GpuOffscreenRenderer::new().unwrap();
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for scale in [1., 1.25, 1.5, 2.] {
+            let mut app = App::new();
+            for recipe in [
+                motion_lab::transforms,
+                motion_lab::layout,
+                motion_lab::gestures,
+                motion_lab::timeline,
+                motion_lab::text_presets,
+            ] {
+                let section = recipe(&app);
+                let id = section.id;
+                let (d, h) = section.demo.build().unwrap().into_parts();
+                let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+                let vp = Viewport::new(800. * scale, 620. * scale, scale).unwrap();
+                let mut p = RasterPainter::new(vp);
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                r.paint_ui(&mut p, &theme(&app, mode));
+                app.motion.rotated = !app.motion.rotated;
+                app.motion.reordered = !app.motion.reordered;
+                app.motion.compact = !app.motion.compact;
+                app.motion.text_changed = !app.motion.text_changed;
+                app.motion.number += 1234;
+                let (d, h) = recipe(&app).demo.build().unwrap().into_parts();
+                r.replace_document(d, &h, &Bindings::default()).unwrap();
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                for t in [85, 210, 1800] {
+                    r.advance_animations(Duration::from_millis(t));
+                    let batches = r.paint_ui(&mut p, &theme(&app, mode));
+                    let frame = gpu
+                        .render(&mut p, &batches, theme(&app, mode).palette.base[0])
+                        .unwrap();
+                    assert_eq!(gpu.last_over_budget(), None, "{id} {mode:?} {scale} {t}");
+                    assert_eq!(gpu.framebuffer_upload_bytes(), 0);
+                    assert!(frame.pixels().iter().any(|p| p.alpha() > 0));
+                }
+                r.set_reduced_motion(true);
+                assert_eq!(r.animation_wait(), None);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "local scroll-stage timing report; not a portable performance threshold"]
+fn motion_scroll_stage_profile() {
+    use std::time::{Duration, Instant};
+    for page in [
+        Page::Effects,
+        Page::MotionStudio,
+        Page::Instruments,
+        Page::Table,
+    ] {
+        for scale in [1.25, 2.] {
+            let mut app = App::new();
+            app.go(page);
+            let (d, mut h) = view(&app).build().unwrap().into_parts();
+            let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+            let vp = Viewport::new(1280. * scale, 800. * scale, scale).unwrap();
+            let mut p = RasterPainter::new(vp);
+            r.layout(vp, &Bindings::default(), &mut p).unwrap();
+            r.advance_animations(Duration::from_secs(10));
+            r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+            let mut input = vec![];
+            let mut paint = vec![];
+            let mut clock = vec![];
+            for i in 0..160 {
+                let now = Duration::from_secs(10) + Duration::from_secs_f64(f64::from(i) / 120.);
+                let at = Instant::now();
+                r.scroll_outcome(
+                    900. * scale,
+                    500. * scale,
+                    [0., if i < 80 { 24. } else { -24. }],
+                    &mut h,
+                    &mut app,
+                )
+                .unwrap();
+                r.layout(vp, &Bindings::default(), &mut p).unwrap();
+                r.pointer_move(900. * scale, 500. * scale);
+                r.cursor_at(900. * scale, 500. * scale);
+                r.dispatch_hover_regions(Some([900. * scale, 500. * scale]), &mut h, &mut app)
+                    .unwrap();
+                input.push(at.elapsed().as_secs_f64() * 1000.);
+                let at = Instant::now();
+                r.advance_animations(now);
+                r.animation_wait();
+                r.is_animating();
+                clock.push(at.elapsed().as_secs_f64() * 1000.);
+                let at = Instant::now();
+                let batches = r.paint_ui(&mut p, &theme(&app, ThemeMode::Light));
+                std::hint::black_box(batches);
+                paint.push(at.elapsed().as_secs_f64() * 1000.);
+            }
+            let stats = |v: &mut [f64]| {
+                v.sort_by(f64::total_cmp);
+                (
+                    v.iter().sum::<f64>() / v.len() as f64,
+                    v[v.len() / 2],
+                    v[v.len() * 95 / 100],
+                )
+            };
+            println!("SCROLL_PROFILE {page:?} scale={scale} nodes={} input_avg_p50_p95_ms={:?} clock={:?} paint={:?}",r.boxes().len(),stats(&mut input),stats(&mut clock),stats(&mut paint));
         }
     }
 }

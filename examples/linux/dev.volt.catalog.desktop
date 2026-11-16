@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Volt UI Kit Catalog
+Exec=volt-catalog
+TryExec=volt-catalog
+Icon=dev.volt.catalog
+Terminal=false
+Categories=Development;
+StartupNotify=false
+StartupWMClass=dev.volt.catalog

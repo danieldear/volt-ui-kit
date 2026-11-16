@@ -12,7 +12,7 @@ root. It handles build features and macOS packaging; direct Cargo commands in
 profiling/snapshot guides intentionally exercise a narrower path. See the
 [launch modes](../examples/README.md#catalog-launch-modes).
 
-The current repository version is **0.5.0**; it is not a crates.io publication.
+The current repository version is **0.6.0**; it is not a crates.io publication.
 Installation instructions remain Git/path based until publication is verified.
 
 1. [Getting started](getting-started.md): install, features, your first window, templates and platform support.
@@ -24,7 +24,7 @@ Installation instructions remain Git/path based until publication is verified.
 7. [JSON interfaces](json-ui.md): the optional file-based frontend with live reload.
 8. [Architecture](architecture.md): layers, the frame pipeline, accessibility, security limits and dependencies.
 
-Experimental platform work: [reusable iOS host and Rust-first project template](ios-prototype.md), and the [Android host/template](android-prototype.md), with explicit emulator/device limits.
+Experimental platform work: [iOS apps in Rust](ios-prototype.md) with UIKit's navigation, scrolling, controls and keyboard, tested on a physical iPhone, and the [Android host/template](android-prototype.md), with explicit emulator/device limits.
 
 Also see the [examples](../examples/README.md), [contributing](../CONTRIBUTING.md),
 the [roadmap](../ROADMAP.md) and the [changelog](../CHANGELOG.md).
@@ -33,7 +33,15 @@ Rust examples in these guides are covered by `cargo test --all-features --doc`.
 Some are compile-only or explicitly ignored; a passing doctest run is not
 proof that every example was exercised in a native window.
 
-Maintainers: [public-release checklist](public-release.md). Distributors: [third-party notes](third-party.md).
+## Maintainer checklists
+
+1. [Release readiness](public-release.md): verified baseline, open gates, platform
+   acceptance, dependency review, packaging, publication and final docs checks.
+2. [Announcements and live projects](announcements-and-projects.md): runnable
+   applications, egui/Iced evaluation guides, community/news submissions and
+   support for external adopters.
+
+Distributors: [third-party notes](third-party.md).
 
 Repository maintenance: [low-disk Git identity correction](git-identity.md).
 

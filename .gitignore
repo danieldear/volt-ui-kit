@@ -1,4 +1,7 @@
 /target/
+# Build output of the separately built security crate and its demo app.
+/crates/volt-ui-kit-security/target/
+/crates/volt-ui-kit-security/signin-demo/target/
 .DS_Store
 
 /work/
@@ -32,3 +35,7 @@ __pycache__/
 /docs/live/volt-host.js
 
 /docs/live/text-input.js
+
+# Share attribution policy, never local agent permissions, sessions or worktrees.
+/.claude/*
+!/.claude/settings.json

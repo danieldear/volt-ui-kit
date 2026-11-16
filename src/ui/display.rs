@@ -166,41 +166,48 @@ impl<C> From<Avatar> for Element<C> {
 pub fn avatar_group<C>(avatars: impl IntoIterator<Item = Avatar>, max: usize) -> Element<C> {
     let all: Vec<Avatar> = avatars.into_iter().collect();
     let size = all.first().map_or(32., |a| a.size);
+    // Each avatar sits on a ring of the page colour, so overlapped avatars
+    // stay distinct; a 22% overlap keeps most of every face or initial in view.
+    let ring = 2.;
+    let outer = size + ring * 2.;
+    let step = outer * 0.78;
     let extra = all.len().saturating_sub(max);
-    let step = size * 0.68;
+    let ringed = |child: Element<C>| -> Element<C> {
+        vstack![child]
+            .padding(ring, Edge::All)
+            .rounded(Rounding::Full)
+            .background(ColorToken::Base100)
+            .into()
+    };
     let mut layers: Vec<Element<C>> = Vec::new();
     let shown = all.len().min(max);
     for (i, a) in all.into_iter().take(max).enumerate() {
         layers.push(
-            hstack![vstack![Element::from(a)]
-                .rounded(Rounding::Full)
-                .border_color(ColorToken::Base100)
-                .border_width(2.)]
-            .padding(i as f32 * step, Edge::Left)
-            .into(),
+            hstack![ringed(Element::from(a))]
+                .padding(i as f32 * step, Edge::Left)
+                .into(),
         );
     }
     if extra > 0 {
+        let more = vstack![text(format!("+{extra}"))
+            .font_size((size * 0.36).round())
+            .font_weight(600)]
+        .width(size)
+        .height(size)
+        .flow(Flow::Center)
+        .rounded(Rounding::Full)
+        .background(ColorToken::Base300);
         layers.push(
-            hstack![vstack![text(format!("+{extra}"))
-                .font_size((size * 0.36).round())
-                .font_weight(600)]
-            .width(size)
-            .height(size)
-            .flow(Flow::Center)
-            .rounded(Rounding::Full)
-            .background(ColorToken::Base300)
-            .border_color(ColorToken::Base100)
-            .border_width(2.)]
-            .padding(shown as f32 * step, Edge::Left)
-            .into(),
+            hstack![ringed(more.into())]
+                .padding(shown as f32 * step, Edge::Left)
+                .into(),
         );
     }
     let count = shown + usize::from(extra > 0);
     zstack(layers)
         .flow(Flow::TopLeft)
-        .width(size + count.saturating_sub(1) as f32 * step)
-        .height(size)
+        .width(outer + count.saturating_sub(1) as f32 * step)
+        .height(outer)
         .into()
 }
 
@@ -1045,6 +1052,11 @@ pub struct Carousel<C> {
     on_change: Option<Page<C>>,
     height: f32,
     wrap: bool,
+    motion: bool,
+    transition: Transition,
+    sliding: Option<Animation>,
+    controls_below: bool,
+    labels: Vec<String>,
 }
 pub fn carousel<C>(slides: impl IntoIterator<Item = Element<C>>, index: usize) -> Carousel<C> {
     Carousel {
@@ -1054,15 +1066,38 @@ pub fn carousel<C>(slides: impl IntoIterator<Item = Element<C>>, index: usize) -
         on_change: None,
         height: 240.,
         wrap: true,
+        motion: true,
+        transition: Transition::fade().duration_ms(180),
+        sliding: None,
+        controls_below: false,
+        labels: Vec::new(),
     }
 }
 impl<C> Carousel<C> {
+    /// Slide retained pages by the resolved viewport width. Paint/input share
+    /// the affine pose; no timer or fixed pixel width is required.
+    pub fn slide_animation(mut self, animation: Animation) -> Self {
+        self.sliding = Some(animation);
+        self
+    }
+
+    /// Enter/exit effect; defaults to the existing short crossfade.
+    pub fn transition(mut self, effect: Transition) -> Self {
+        self.transition = effect;
+        self
+    }
+
     pub fn key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
     }
     pub fn height(mut self, value: f32) -> Self {
         self.height = value;
+        self
+    }
+    /// Built-in motion (default on): slides cross-fade. `false` switches instantly.
+    pub fn motion(mut self, value: bool) -> Self {
+        self.motion = value;
         self
     }
     /// Loop from the last slide to the first (default true).
@@ -1073,6 +1108,19 @@ impl<C> Carousel<C> {
     /// Called with the requested slide index.
     pub fn on_change(mut self, f: impl FnMut(&mut C, usize) + 'static) -> Self {
         self.on_change = Some(Rc::new(RefCell::new(f)));
+        self
+    }
+    /// Put the previous and next buttons under the slide, either side of the
+    /// position markers, instead of over its edges (default false). Use it
+    /// when the slides are interactive and edge buttons would cover them.
+    pub fn controls_below(mut self, value: bool) -> Self {
+        self.controls_below = value;
+        self
+    }
+    /// Name the slides, in order. The names replace the position dots as
+    /// small buttons; give one name per slide.
+    pub fn labels<S: Into<String>>(mut self, names: impl IntoIterator<Item = S>) -> Self {
+        self.labels = names.into_iter().map(Into::into).collect();
         self
     }
 }
@@ -1088,13 +1136,61 @@ impl<C: 'static> From<Carousel<C>> for Element<C> {
         if n == 0 {
             return invalid("carousel requires at least one slide");
         }
+        if !c.labels.is_empty() && c.labels.len() != n {
+            return invalid("carousel labels must name every slide");
+        }
         let i = c.index.min(n - 1);
         let (prev, next) = if c.wrap {
             ((i + n - 1) % n, (i + 1) % n)
         } else {
             (i.saturating_sub(1), (i + 1).min(n - 1))
         };
-        let mut slide = c.slides.into_iter().nth(i).unwrap();
+        if c.sliding.is_some() && n > 32 {
+            return invalid("sliding carousel supports at most 32 pages");
+        }
+        let mut slide: Element<C> = if let Some(animation) = c.sliding {
+            zstack(
+                c.slides
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, child)| -> Element<C> {
+                        let mut e: Element<C> = vstack![child]
+                            .key(format!("{key}-page-{at}"))
+                            .width_fraction(1.)
+                            .height(c.height)
+                            .align(Align::Stretch)
+                            .animation(if c.motion {
+                                animation
+                            } else {
+                                Animation::linear().duration_ms(0)
+                            })
+                            .into();
+                        fn inert<C>(e: &mut Element<C>) {
+                            e.node.effects.inert = true;
+                            // Portals escape the slide's clip and input scope.
+                            // An inactive page must not publish a hidden modal
+                            // or popup which traps focus on the active page.
+                            e.children.retain(|c| c.node.overlay.is_none());
+                            for c in &mut e.children {
+                                inert(c)
+                            }
+                        }
+                        if at != i {
+                            inert(&mut e);
+                        }
+                        e.node.effects.carousel_slot = Some(at as i16 - i as i16);
+                        e
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .flow(Flow::TopLeft)
+            .width_fraction(1.)
+            .height(c.height)
+            .clip_contents(true)
+            .into()
+        } else {
+            c.slides.into_iter().nth(i).unwrap()
+        };
         if slide.node.flex == 0. {
             slide.node.flex = 1.;
         }
@@ -1119,9 +1215,22 @@ impl<C: 'static> From<Carousel<C>> for Element<C> {
             .height(34.)
             .flow(Flow::Center)
         };
-        let dots: Vec<Element<C>> = (0..n)
+        let markers: Vec<Element<C>> = (0..n)
             .map(|d| {
                 let f = change.clone();
+                let pick = move |app: &mut C| (f.borrow_mut())(app, d);
+                if let Some(name) = c.labels.get(d) {
+                    return button(name.clone())
+                        .key(format!("{key}-dot-{d}"))
+                        .size(ControlSize::Small)
+                        .variant(if d == i {
+                            ButtonVariant::Soft
+                        } else {
+                            ButtonVariant::Ghost
+                        })
+                        .on_click(pick)
+                        .into();
+                }
                 button("")
                     .key(format!("{key}-dot-{d}"))
                     .accessible_label(format!("Slide {} of {n}", d + 1))
@@ -1134,47 +1243,61 @@ impl<C: 'static> From<Carousel<C>> for Element<C> {
                     } else {
                         ColorToken::BaseContent.alpha(25)
                     })
-                    .on_click(move |app: &mut C| (f.borrow_mut())(app, d))
+                    .on_click(pick)
                     .into()
             })
             .collect();
-        vstack![
-            zstack![
-                vstack![slide]
-                    .key(format!("{key}-slide-{i}"))
-                    .align(Align::Stretch)
-                    .transition(Transition::fade().duration_ms(180)),
-                hstack![
-                    arrow(
-                        format!("{key}-prev"),
-                        "Previous slide",
-                        Icon::ChevronLeft,
-                        prev,
-                        c.wrap || i > 0
-                    ),
-                    spacer(),
-                    arrow(
-                        format!("{key}-next"),
-                        "Next slide",
-                        Icon::ChevronRight,
-                        next,
-                        c.wrap || i + 1 < n
-                    ),
-                ]
+        let markers = hstack(markers)
+            .key(format!("{key}-dots"))
+            .gap(6., Axis::Horizontal)
+            .align(Align::Center);
+        let slide = super::dialogs::with_motion(
+            vstack![slide]
+                .key(if c.sliding.is_some() {
+                    format!("{key}-slide-track")
+                } else {
+                    format!("{key}-slide-{i}")
+                })
+                .align(Align::Stretch),
+            c.motion && c.sliding.is_none(),
+            c.transition,
+        );
+        let previous = arrow(
+            format!("{key}-prev"),
+            "Previous slide",
+            Icon::ChevronLeft,
+            prev,
+            c.wrap || i > 0,
+        );
+        let following = arrow(
+            format!("{key}-next"),
+            "Next slide",
+            Icon::ChevronRight,
+            next,
+            c.wrap || i + 1 < n,
+        );
+        let (layers, controls): (Vec<Element<C>>, Element<C>) = if c.controls_below {
+            let row = hstack![previous, markers, following]
+                .key(format!("{key}-controls"))
+                .gap(12., Axis::Horizontal)
+                .align(Align::Center);
+            (vec![slide], row.into())
+        } else {
+            let edges = hstack![previous, spacer(), following]
                 .key(format!("{key}-arrows"))
                 .align(Align::Center)
                 .padding(10., Edge::Horizontal)
-                .scroll_passthrough(true),
-            ]
-            .key(format!("{key}-stage"))
-            .align(Align::Stretch)
-            .height(c.height)
-            .rounded(12.)
-            .clip_contents(true),
-            hstack(dots)
-                .key(format!("{key}-dots"))
-                .gap(6., Axis::Horizontal)
-                .align(Align::Center),
+                .scroll_passthrough(true);
+            (vec![slide, edges.into()], markers.into())
+        };
+        vstack![
+            zstack(layers)
+                .key(format!("{key}-stage"))
+                .align(Align::Stretch)
+                .height(c.height)
+                .rounded(12.)
+                .clip_contents(true),
+            controls,
         ]
         .key(key)
         .gap(10., Axis::Vertical)

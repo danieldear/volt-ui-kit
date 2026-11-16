@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 #[cfg(feature = "rust-ui")]
 mod input;
 #[cfg(feature = "rust-ui")]
-pub use input::{InputKey, InputKeyEvent, InputModifiers, InputSource, PointerActivation};
+pub use input::{
+    InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
+    PointerPhase, PressedKey,
+};
 
 /// Event signatures accepted by the initial component contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -420,13 +423,19 @@ pub(crate) mod document;
 pub(crate) mod effects;
 pub(crate) mod extras;
 pub use extras::{
-    BorderStyle, Cursor, Gradient, GridColumns, Justify, Sides, SplitHandle, TextAlign,
+    BorderStyle, Cursor, Gradient, GridColumns, Justify, NavigationBar, Sides, SplitHandle,
+    TextAlign,
 };
 mod responsive;
 pub use effects::{
-    Ambient, Animation, Easing, Glow, Interaction, Shadow, Spring, Transition, VisualStyle,
+    Ambient, Animation, Easing, Glow, Interaction, Motion, Shadow, Spring, Transition, VisualStyle,
 };
 mod motion;
+mod motion_geometry;
+mod motion_gesture;
+#[cfg(feature = "rust-ui")]
+mod motion_text;
+mod motion_timeline;
 mod runtime;
 pub use document::{
     Align, Bindings, Document, DocumentError, EditorHighlights, Flow, Kind, Node, Rounding, Scroll,

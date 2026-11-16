@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Window chrome, GPU drawing, transparency and desktop blur."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Windows and rendering — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="reference-header"><a class="reference-brand" href="../index.html"><img src="../assets/favicon.svg" width="30" height="30" alt="">Volt <span>UI Kit</span></a><nav aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../guides/getting-started.html">Guides</a><a href="https://github.com/danieldear/volt-ui-kit">GitHub ↗</a></nav><span class="reference-version">0.5 / Pre-1.0</span></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html" aria-current="page">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html">WebAssembly prototype</a><a href="../guides/android-prototype.html">Experimental Android</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html" aria-current="page">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html">WebAssembly prototype</a><a href="../guides/android-prototype.html">Experimental Android</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Windows and rendering</div><div class="reference-title"><p>Guide</p><h1>Windows and rendering</h1><div class="reference-description">Window chrome, GPU drawing, transparency and desktop blur.</div></div><article class="guide-article"><h2 id="configuring-the-window">Configuring the window</h2>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Window chrome, GPU drawing, transparency and desktop blur."><meta name="color-scheme" content="light dark"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>Windows and rendering — Volt UI Kit</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="preload" href="../assets/fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="../assets/site.css"><link rel="stylesheet" href="../assets/reference.css"></head><body class="reference-page"><a class="skip" href="#main">Skip to content</a><header class="topbar"><div class="topbar-inner topbar-wide"><a class="brand" href="../index.html" aria-label="Volt UI Kit home"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="currentColor"/><path d="M13.5 4 7 13.5h4.5l-1 6.5 6.5-9.5h-4.5z" fill="#fff"/></svg><span class="brand-name">Volt UI Kit</span><span class="brand-version">0.6</span></a><nav class="topnav" aria-label="Main navigation"><a href="../reference/index.html">Components</a><a href="../live/index.html">Live demo</a><a href="../guides/getting-started.html" aria-current="page">Guides</a><a class="topnav-wide" href="https://github.com/danieldear/volt-ui-kit/tree/main/examples">Examples <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a><a href="https://github.com/danieldear/volt-ui-kit">GitHub <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></nav><a class="cta cta-filled cta-small" href="../guides/getting-started.html">Get started</a></div></header><div class="reference-layout"><aside class="reference-sidebar" aria-label="Documentation navigation"><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html" aria-current="page">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html">WebAssembly prototype</a><a href="../guides/android-prototype.html">Experimental Android</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a><a href="../reference/motion-studio.html">Motion studio</a><a href="../reference/instruments.html">Instruments</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></aside><details class="mobile-doc-nav"><summary>Browse documentation</summary><div class="reference-nav"><a class="nav-overview" href="../reference/index.html">All components &amp; patterns</a><div class="nav-group"><p>Guides</p><a href="../guides/getting-started.html">Getting started</a><a href="../guides/building-uis.html">Building interfaces</a><a href="../guides/components.html">Component recipes</a><a href="../guides/styling-and-themes.html">Styling and themes</a><a href="../guides/windows-and-rendering.html" aria-current="page">Windows and rendering</a><a href="../guides/app-services.html">Application services</a><a href="../guides/json-ui.html">Optional JSON frontend</a><a href="../guides/architecture.html">Architecture</a><a href="../guides/web-prototype.html">WebAssembly prototype</a><a href="../guides/android-prototype.html">Experimental Android</a><a href="../guides/ios-prototype.html">Experimental iOS</a></div><div class="nav-group"><p>Foundations</p><a href="../reference/introduction.html">Introduction</a><a href="../reference/theming.html">Theming</a><a href="../reference/theme-editor.html">Theme editor</a><a href="../reference/accessibility.html">Accessibility</a><a href="../reference/layout.html">Layout</a><a href="../reference/utilities.html">Utilities</a></div><div class="nav-group"><p>Components</p><a href="../reference/icons.html">Icons</a><a href="../reference/rich-text.html">Rich text</a><a href="../reference/badge.html">Badge</a><a href="../reference/button.html">Button</a><a href="../reference/button-group.html">Button group</a><a href="../reference/toolbar.html">Toolbar</a><a href="../reference/segmented-control.html">Segmented control</a><a href="../reference/tabs.html">Tabs</a><a href="../reference/navigation.html">Navigation</a><a href="../reference/checkbox.html">Checkbox</a><a href="../reference/switch.html">Switch</a><a href="../reference/text-field.html">Text field</a><a href="../reference/text-area.html">Text area</a><a href="../reference/slider.html">Slider</a><a href="../reference/select.html">Select</a><a href="../reference/date-time.html">Date &amp; time</a><a href="../reference/form-inputs.html">Form inputs</a><a href="../reference/dialog.html">Dialog</a><a href="../reference/menu.html">Menu</a><a href="../reference/context-menu.html">Context menu</a><a href="../reference/popover.html">Popover</a><a href="../reference/tooltip.html">Tooltip</a><a href="../reference/overlays.html">Overlays</a><a href="../reference/progress.html">Progress</a><a href="../reference/spinner.html">Spinner</a><a href="../reference/toast.html">Toast</a><a href="../reference/card.html">Card</a><a href="../reference/scroll-area.html">Scroll area</a><a href="../reference/table.html">Table</a><a href="../reference/tree-view.html">Tree view</a><a href="../reference/virtual-list.html">Virtual list</a><a href="../reference/split-pane.html">Split pane</a><a href="../reference/canvas.html">Canvas</a><a href="../reference/image.html">Image</a><a href="../reference/data-display.html">Data display</a><a href="../reference/charts.html">Charts</a><a href="../reference/effects-motion.html">Effects &amp; motion</a><a href="../reference/motion-studio.html">Motion studio</a><a href="../reference/instruments.html">Instruments</a></div><div class="nav-group"><p>Patterns</p><a href="../reference/background-tasks.html">Background tasks</a><a href="../reference/application-lifecycle.html">Application lifecycle</a><a href="../reference/documents.html">Documents</a><a href="../reference/desktop-services.html">Desktop services</a><a href="../reference/dashboard.html">Dashboard</a><a href="../reference/sign-in-form.html">Sign-in form</a><a href="../reference/settings-panel.html">Settings panel</a></div><a class="nav-source" href="https://github.com/danieldear/volt-ui-kit">Source on GitHub ↗</a></div></details><main id="main" class="reference-main"><div class="reference-breadcrumb"><a href="../index.html">Docs</a><span aria-hidden="true">/</span>Windows and rendering</div><div class="reference-title"><p>Guide</p><h1>Windows and rendering</h1><div class="reference-description">Window chrome, GPU drawing, transparency and desktop blur.</div></div><article class="guide-article"><h2 id="configuring-the-window">Configuring the window</h2>
 <p><code>Application</code> holds the window settings. Everything is validated before the
 window opens.</p>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{
@@ -32,19 +32,239 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
         .renderer(RendererPreference::Auto)
         .run()
 }</code></pre></div><h2 id="title-bar-and-chrome">Title bar and chrome</h2>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowChrome</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Native</code> (default)</td><td>The platform&#39;s standard title bar.</td></tr><tr><td><code>Overlay</code></td><td>macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar.</td></tr><tr><td><code>CompactOverlay</code></td><td>The same with the shorter, older macOS title bar geometry.</td></tr><tr><td><code>Borderless</code></td><td>No system decorations; you supply the window controls.</td></tr></tbody></table></div><p>Mark your header with <code>.drag_region(true)</code> so the window can be dragged by it.
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowChrome</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Native</code> (default)</td><td>The platform&#39;s standard title bar.</td></tr><tr><td><code>Overlay</code></td><td>macOS: content fills the window under a transparent, unified title bar; the traffic lights stay native. Reserve about 60 pt of header and 100 pt on the left for them. Other platforms keep a native title bar.</td></tr><tr><td><code>CompactOverlay</code></td><td>The same with the shorter, older macOS title bar geometry.</td></tr><tr><td><code>Borderless</code></td><td>No visible title or system controls. macOS keeps an invisible native frame for rounded corners, shadow, resizing and public material blur. Linux/Windows are undecorated; you own the complete window UI.</td></tr><tr><td><code>Custom</code></td><td>Content extends into the existing app header; no extra title strip. macOS retains native traffic lights, rounded frame, resizing and material blur. Linux/Windows use inline <code>window_controls</code> and toolkit-managed edge resizing.</td></tr></tbody></table></div><p>Mark your header with <code>.drag_region(true)</code> so the window can be dragged by it.
 Buttons and other controls inside the header still receive clicks.</p>
+<h3 id="custom-controls-and-live-mode-switching">Custom controls and live mode switching</h3>
+<p>The native Catalog has a <strong>Window settings</strong> button in the existing header at
+all supported widths. It opens the mode selector, app-drawn control style and
+actual host diagnostics. The sidebar footer/drawer and wide-header selectors
+remain available: Native, Custom, Borderless and Unified (Overlay on Linux).
+Changing chrome is live: it does not replace the window, restart workers or
+clear application state. <code>--chrome native|custom|borderless|overlay</code> chooses the
+initial mode; <code>--control-style symbols|traffic-lights</code> chooses the app-drawn style.
+macOS retains native traffic lights; the style picker changes the simulated
+preview there, never draws duplicate buttons over AppKit.</p>
+<h3 id="reuse-the-existing-header">Reuse the existing header</h3>
+<p><code>window_header(content, controls)</code> composes one existing row with a draggable
+background and interactive children. It does not insert a global title bar or
+change the native decoration policy. Its default height (56 logical pixels),
+gap and padding are ordinary container properties you can customize.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>window_header(
+    text(&quot;Workspace&quot;).font_weight(600),
+    window_controls_with_style(
+        WindowControlsState { maximized: app.window.maximized,
+            can_maximize: app.window.resizable, ..Default::default() },
+        WindowControlStyle::TrafficLights, // or Symbols (the legacy default)
+        |app: &amp;mut App, action| {
+            if let Some(sender) = &amp;app.actions { let _ = sender.send(action); }
+        },
+    ),
+).key(&quot;workspace-header&quot;).padding(16., Edge::Horizontal)</code></pre></div><p>Connect <code>Application::window_actions</code> and <code>on_window_state</code> as below. Close still
+uses the application&#39;s close guard. On macOS, omit application-drawn controls
+and reserve the native control safe area. Borderless intentionally hides controls;
+simple legacy examples retain native chrome unless their layouts opt in.</p>
+<p>Custom mode embeds controls in the existing layout, not a new bar. The Catalog
+uses <code>navigation_split_view(...).integrated_header(true)</code> to put native traffic
+lights and the brand in the existing sidebar header. Its right panel retains
+exactly the same opaque toolbar/content, 8pt top/right/bottom inset, rounded
+corners and floating-sheet shadow as Unified and Borderless. Chrome selection
+does not change the panel&#39;s material styling. The sidebar still reveals the
+window backdrop; text and controls stay opaque.</p>
+<p><code>integrated_header</code> controls layout only and is opt-in, preserving the old
+split-view defaults. <code>.window_controls_inset(100.)</code> sets the logical horizontal
+safe area (0–480, finite), without repositioning OS buttons.</p>
+<p>Toolbar glass is a separate developer choice:
+<code>navigation_split_view(...).material(true).toolbar_translucent(true)</code> reveals
+the window backdrop through the existing toolbar while keeping page content
+opaque. It works with or without an integrated header and defaults to <strong>false</strong>.
+For that explicit glass toolbar the sheet shadow is omitted so its interior
+cannot darken the transparent header. The panel keeps its normal top inset.
+The host&#39;s <code>WindowBackground</code> independently selects blur/transparency; this
+builder never enables native blur or changes foreground opacity. Apps may also
+paint their own toolbar background. Catalog does not opt into toolbar glass.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::{native::{Application, WindowChrome, WindowState, UiSender}, ui::prelude::*};
+#[derive(Default)]
+struct State {
+    chrome: WindowChrome,
+    window: WindowState,
+    actions: Option&lt;UiSender&lt;WindowAction&gt;&gt;,
+    sidebar_open: bool,
+}
+fn view(app: &amp;State) -&gt; Element&lt;State&gt; {
+    let mut items: Vec&lt;Element&lt;State&gt;&gt; = vec![text(&quot;Search or workspace actions&quot;).into(), spacer().into()];
+    if !cfg!(target_os = &quot;macos&quot;) {
+        items.push(window_controls(app.window.maximized, |app: &amp;mut State, action| {
+            if let Some(sender) = &amp;app.actions { let _ = sender.send(action); }
+        }).into());
+    }
+    navigation_split_view(|_| text(&quot;Inbox&quot;), text(&quot;Your content&quot;))
+        .key(&quot;workspace&quot;)
+        .sidebar_header(text(&quot;My workspace&quot;))
+        .toolbar(hstack(items).align(Align::Center).drag_region(true))
+        .integrated_header(true)
+        .titlebar_inset(cfg!(target_os = &quot;macos&quot;) &amp;&amp; !app.window.fullscreen)
+        .window_controls_inset(100.)
+        .material(true)
+        .drawer_open(app.sidebar_open)
+        .on_drawer_change(|app: &amp;mut State, open| app.sidebar_open = open)
+        .into()
+}
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let state = State { chrome: WindowChrome::Custom, ..Default::default() };
+    Application::new(&quot;Workspace&quot;, state, view)
+        .chrome_from_state(|app| app.chrome)
+        .background(volt_ui_kit::native::WindowBackground::Blur { opacity: 0.72 })
+        .custom_resize_border(6.)
+        .window_actions(|app, sender| app.actions = Some(sender))
+        .on_window_state(|app, state| app.window = state)
+        .run()
+}</code></pre></div><ul>
+<li><code>window_controls</code> draws accessible vector buttons; it emits <code>WindowAction</code>
+intents, not OS calls. Its returned row accepts ordinary gap/padding/style
+modifiers, and can be replaced entirely with application-owned controls. Pass
+<code>WindowControlsState</code> instead of a boolean to disable individual actions (for
+example maximize when the window is not resizable or is fullscreen).</li>
+<li><code>window_actions</code> uses a separate bounded queue, leaving existing application
+command IDs and <code>ApplicationRequest</code> unchanged. Close always follows
+<code>on_close_request</code>, including Save/Discard/Cancel policies.</li>
+<li><code>on_window_state</code> reports native maximize/fullscreen/focus/resizable state;
+its <code>chrome</code> field is the host&#39;s applied decoration policy, not compositor
+acknowledgement. It runs only on the UI thread, with no idle polling timer.</li>
+<li>Linux/Windows Custom edges use a logical resize border (default 6 px,
+configurable 0–24). Maximized/fullscreen/non-resizable windows have no edge
+hits. Reserve that border around interactive content. Header buttons never
+start a window drag. Double-click a blank draggable header to maximize or
+restore. Custom-header dragging waits for 4 logical pixels of movement before
+asking the OS to move the window, so the first click does not swallow a second
+click. Pending drags are cancelled on release, focus loss, resize, suspension,
+maximize and chrome changes.</li>
+<li><strong>Header system menu:</strong> right-click blank Custom drag regions on Wayland or
+Windows to request the native window menu through winit. Buttons, fields and
+other interactive children keep their application context-menu behavior.
+X11/macOS retain application-defined context menus (the Catalog includes a
+fallback); this does not add a separate title bar.</li>
+<li><strong>macOS:</strong> Custom keeps the full-size-content window and native traffic
+lights, so AppKit retains outer rounded corners, shadow, edge resizing,
+fullscreen and public material blur. Borderless is visually undecorated:
+it hides the title/buttons but retains the same invisible frame and material.
+This is not a raw <code>NSWindowStyleMask::Borderless</code> window. Mode switches restore
+the full-size-content style, button visibility and native shadow. No delegate,
+content view, native button sizing or Metal layer ownership is replaced.
+Private compositor blur is never enabled silently.</li>
+<li><strong>Linux GPU client frames:</strong> On alpha-capable surfaces, Custom and Borderless
+clip the <em>outer window</em> to antialiased 12-logical-pixel corners, including its background clear and
+all content. A translucent swapchain is used even for an opaque background;
+only the corners become transparent, not text or controls. The Wayland blur
+region follows the rounded shape, resize and scale changes. Maximized and
+fullscreen windows become rectangular; restoring them brings the corners back.
+Native X11 surfaces that advertise only opaque/inherited alpha retain GPU
+rendering and custom controls with an opaque rectangular frame, even when
+transparency was requested. They do not apply a transparent corner mask or
+promise blur; <code>GpuRequired</code> requires GPU drawing, not transparent alpha.
+This policy also applies to live chrome/background changes and device recovery.
+Software fallback remains opaque/rectangular. Native/Overlay mode still uses
+the desktop&#39;s decorations, whose corner shape and buttons are compositor-owned.</li>
+<li>Chrome changes requested while fullscreen are deferred until fullscreen ends;
+the Catalog disables its selector there. Compositor shadows, native frame
+shaping, snapping affordances and decoration policy are still platform-owned—custom
+painting does not promise identical OS behavior everywhere. GNOME Wayland
+generally provides no compositor shadow for undecorated surfaces. Custom
+Windows 11 controls do not provide the native maximize-button Snap Layouts
+flyout; use Native chrome when that affordance is required.</li>
+<li>Native remains the host default. Northbound and Catalog default to Custom
+on Linux, placing minimize/maximize/close in their existing headers; use
+<code>--chrome native</code> to request desktop decorations instead. Catalog also has
+a live Window selector. Borderless deliberately has no window buttons.
+<code>WindowChrome</code> gains <code>Custom</code>; downstream exhaustive
+matches on that enum need to handle the new variant. Existing option structs,
+core painters, application request variants and rendering defaults are unchanged.</li>
+</ul>
+<h3 id="linux-desktop-acceptance-checklist">Linux desktop acceptance checklist</h3>
+<p>Cross-compiling and frame-pixel tests do not prove compositor behavior. Test the
+native GPU Catalog on the actual KDE/GNOME/COSMIC session at 100% and 125% scale:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo run --release --locked --features native-gpu,native-desktop \
+  --example catalog -- --chrome custom</code></pre></div><ul>
+<li>Drag blank existing header space; double-click to maximize and restore.</li>
+<li>Resize from all four edges and all four corners.</li>
+<li>Minimize, maximize/restore (including icon change), close and test close guards.</li>
+<li>Test Super+Up/Down and switch light/dark appearance.</li>
+<li>Verify rounded floating corners, rectangular maximized/fullscreen corners and
+rounded corners after restoring; verify blur if supported by the compositor.</li>
+<li>Right-click blank header space for the native menu on Wayland; on X11 verify
+the Catalog fallback. Controls and fields must not initiate dragging.</li>
+<li>Switch Native / Custom / Borderless without recreating the window; Borderless
+intentionally has no system buttons. Native decorations remain desktop-owned.</li>
+</ul>
 <h2 id="transparency-and-blur">Transparency and blur</h2>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowBackground</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Opaque</code> (default)</td><td>A solid window.</td></tr><tr><td><code>Transparent { opacity }</code></td><td>The window&#39;s background is see-through; content stays opaque.</td></tr><tr><td><code>Blur { opacity }</code></td><td>macOS: the public system material (<code>NSVisualEffectView</code>) blurs the desktop behind the window. Requires <code>native-gpu</code> and a decorated window.</td></tr><tr><td><code>CompositorBlur { opacity }</code></td><td>A stronger blur through winit&#39;s compositor request. On macOS this uses a private API, so it is not App Store safe.</td></tr></tbody></table></div><ul>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col"><code>WindowBackground</code></th><th scope="col">Result</th></tr></thead><tbody><tr><td><code>Opaque</code> (default)</td><td>A solid window.</td></tr><tr><td><code>Transparent { opacity }</code></td><td>The window&#39;s background is see-through; content stays opaque.</td></tr><tr><td><code>Blur { opacity }</code></td><td>macOS: public system material (<code>NSVisualEffectView</code>), requiring a decorated window. Linux Wayland: negotiated compositor blur. Both require <code>native-gpu</code>.</td></tr><tr><td><code>CompositorBlur { opacity }</code></td><td>A raw compositor blur request (Wayland uses the same negotiated adapter). On macOS this uses a private API, so it is not App Store safe.</td></tr></tbody></table></div><ul>
 <li><code>opacity</code> applies only to the window background. Text and controls keep their
 own opacity; give your root a translucent or no background to let the blur show.</li>
 <li><code>.background_from_state(|app| WindowBackground::..)</code> changes the background
 from your state, and <code>UiTheme::with_background_color(..)</code> tints it.</li>
-<li>Blur is a request to the OS. Windows and X11 have no equivalent, and
+<li>Blur is a request to the OS. The current Windows and X11 adapters do not request it, and
 Reduce Transparency switches the macOS blur to an opaque background.</li>
 <li>The window blur shows what is behind the window. Blurring the app&#39;s own
 content behind a panel is not supported yet.</li>
 </ul>
+<h2 id="linux-desktop-blur">Linux desktop blur</h2>
+<p>On native Wayland windows, the Linux adapter prefers
+<code>ext-background-effect-v1</code> when advertised by the compositor,
+then falls back to the older <code>org_kde_kwin_blur_manager</code> protocol. It discovers
+capabilities on the existing window connection and updates the request after
+resize, scale changes, capability changes and user toggles. At 125% scale the
+blur region uses <strong>logical surface coordinates</strong>, not framebuffer pixels.</p>
+<p>winit 0.30.13 is still the latest stable release at the time of this change.
+The newer 0.31 beta has the modern protocol but is not API-compatible with the
+current AccessKit adapter. A Linux-only compatibility bridge preserves the
+stable winit/desktop interfaces instead of requiring that migration.</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>Application::new(&quot;Glass&quot;, app, view)
+    .background(WindowBackground::Blur { opacity: 0.72 })
+    .on_backdrop_status(|app, status| {
+        app.backdrop_status = status.description().to_owned();
+    })
+    .run()?;</code></pre></div><p><code>BackdropStatus</code> distinguishes <code>Disabled</code>, <code>Discovering</code>, <code>Requested(protocol)</code>,
+<code>Unsupported(reason)</code> and <code>Failed</code>. <strong>Requested is not proof of visible blur</strong>:
+the compositor still controls its blur algorithm, enabled effects and policy.
+Catalog shows this report instead of macOS material instructions on Linux.
+X11, missing protocols, a declined blur capability and opaque software drawing
+are reported explicitly. No desktop capture, compositor configuration changes
+or automatic fallback to a different drawing backend is performed by this adapter.</p>
+<p>The dispatcher blocks on socket/command readiness when idle; there is no periodic
+redraw timer. It never attaches buffers or commits the renderer&#39;s <code>wl_surface</code>.
+After a blur-region change, it requests a normal host redraw so the renderer&#39;s
+next surface commit applies the double-buffered effect state.</p>
+<p>Existing winit consumers can reuse <code>native::linux_backdrop::Controller</code> on Linux,
+passing their <code>Arc&lt;Window&gt;</code> and matching <code>event_loop.owned_display_handle()</code>.
+Retain the controller, call <code>update</code> on size/scale/blur changes and route its
+worker-thread status callback through an event-loop proxy. Do not also enable
+winit&#39;s own blur object for that window. Keep only one controller per window;
+duplicate controller creation is rejected before sending protocol requests.
+The native Volt host manages this automatically. An older standalone terminal
+binary using only <code>Window::set_blur</code> does <strong>not</strong> inherit this fix automatically.</p>
+<p>The native host logs <code>VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)</code>
+or the actual unsupported/failure status. Wire-level mock-compositor tests cover
+modern-only/legacy-only servers, missing protocols, capability withdrawal and
+restoration, global removal/rebinding, resize, disable/re-enable, idle behavior,
+disconnect and teardown. These tests and cross-compilation are not a substitute
+for native KDE/COSMIC/NVIDIA visual acceptance on the user&#39;s machine.</p>
+<h3 id="testing-on-linux">Testing on Linux</h3>
+<p>Run from a terminal in your Wayland desktop session, not from a virtual console
+started with <code>startx</code> (which starts X11). Use <code>native-gpu</code>; <code>native-desktop</code> alone
+does not enable translucent GPU presentation.</p>
+<div class="reference-code"><div>bash<span>Source</span></div><pre tabindex="0" role="region" aria-label="bash"><code>printf &#39;Desktop=%s Session=%s Wayland=%s\n&#39; \
+  &quot;$XDG_CURRENT_DESKTOP&quot; &quot;$XDG_SESSION_TYPE&quot; &quot;$WAYLAND_DISPLAY&quot;
+
+VOLT_UI_RENDERER=gpu cargo run --release --locked \
+  --features native-gpu --example catalog -- \
+  --page theming --theme dark --background blur \
+  --window-opacity 0.45 --tint 0</code></pre></div><p>Place a window with text behind the Catalog sidebar. Toggle <strong>Backdrop blur</strong>:
+the text behind the sidebar should soften when enabled, while Catalog text stays
+sharp. Move <strong>Background opacity</strong> between low and high values, resize the window,
+and repeat at 100% and 125% display scale. Repeat with <code>--theme light</code>.</p>
+<p>Look for <code>VOLT_UI_BACKDROP status=Requested(WaylandBackgroundEffect)</code> (modern)
+or <code>Requested(WaylandKde)</code> (legacy) in the terminal and the protocol description
+in the sidebar. A request with no visible blur still needs compositor-side
+investigation; an explicit unsupported/failure status identifies a different gate.</p>
 <h2 id="gpu-and-software-drawing">GPU and software drawing</h2>
 <p>With <code>native-gpu</code>, each window draws through <strong>Vello</strong> on wgpu (Metal on macOS,
 DX12 on Windows, Vulkan on Linux). Without it, or when the GPU cannot be used,
@@ -68,6 +288,9 @@ draws a frame in software only when it cannot fit. Images are admitted up to
 <ul>
 <li>A settled window draws nothing and uses no timers. Animations request frames
 only while they run.</li>
+<li>Decorative animation frames share immutable vector artwork and do not publish
+an identical native accessibility tree each frame. Input, focus, layout and
+initial assistive-technology activation still publish updated semantics.</li>
 <li><code>VOLT_UI_TRACE=1</code> prints per-frame timings (layout, paint, GPU encode and
 present, text cache misses), GPU scene statistics (shapes, glyphs, layers,
 estimated buffer use) and the font and surface setup. It never logs your
@@ -89,6 +312,88 @@ Actual GPU readback remains a separate, explicit acceptance test:</p>
   actual_gpu_editor_heavy_pages -- --ignored --nocapture</code></pre></div><p>That command requires a working GPU adapter and fails rather than silently
 skipping when one is unavailable.</p>
 <h2 id="resource-limits">Resource limits</h2>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Resource</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>Window framebuffer</td><td>64 megapixels</td></tr><tr><td>GPU image cache</td><td>64 MiB</td></tr><tr><td>GPU glyph cache</td><td>16 MiB / 4,096 glyphs</td></tr><tr><td>Opacity layer depth / clip depth</td><td>24 / 48</td></tr><tr><td>Shadow work per frame (software)</td><td>16 megapixels; extra shadows are skipped and counted</td></tr></tbody></table></div><p>These bound the kit&#39;s own caches. GPU drivers, Vello&#39;s internal buffers and the
+<div class="table-scroll" tabindex="0" role="region" aria-label="Guide table"><table><thead><tr><th scope="col">Resource</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>Window framebuffer</td><td>64 megapixels</td></tr><tr><td>GPU image cache</td><td>64 MiB</td></tr><tr><td>Registered GPU image textures</td><td>96 MiB</td></tr><tr><td>GPU glyph cache</td><td>16 MiB / 4,096 glyphs</td></tr><tr><td>Opacity layer depth / clip depth</td><td>24 / 48</td></tr><tr><td>Shadow work per frame (software)</td><td>16 megapixels; extra shadows are skipped and counted</td></tr></tbody></table></div><p>These bound the kit&#39;s own caches. GPU drivers, Vello&#39;s internal buffers and the
 OS compositor use additional memory.</p>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#configuring-the-window">Configuring the window</a><a href="#title-bar-and-chrome">Title bar and chrome</a><a href="#transparency-and-blur">Transparency and blur</a><a href="#gpu-and-software-drawing">GPU and software drawing</a><a href="#large-scenes">Large scenes</a><a href="#performance-and-diagnostics">Performance and diagnostics</a><a href="#headless-scene-budget-checks">Headless scene-budget checks</a><a href="#resource-limits">Resource limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+<p>The 64 MiB image-data cache is used by the scene encoder&#39;s CPU-backed image path;
+the 96 MiB texture registry keeps native/offscreen GPU uploads reusable. Images
+still owned by the application remain warm, even off-screen. Once only the
+registry owns an image, its registered texture is released on the next admitted
+frame. Dropping a view is not enough if application state still retains the image.
+Vello&#39;s internal atlas can retain capacity; this is not a total GPU-memory limit
+or a promise that the OS immediately returns memory to the system.</p>
+<p>Large scenes can use a temporary band-rendering texture. It stays warm while
+frames at the same viewport alternate between banded and single-pass rendering,
+avoiding allocation churn. A later single-pass frame at a different viewport
+releases the obsolete band target. Quality, animation durations and native
+refresh-rate pacing are unchanged.</p>
+<p>Explicit GPU resource-lifetime regressions (require an actual GPU):</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo test --locked --all-features --lib gpu_images_release_when -- --ignored
+cargo test --locked --all-features --lib returning_from_banded_rendering -- --ignored</code></pre></div><h2 id="linux-identity-launchers-and-backend-diagnostics">Linux identity, launchers and backend diagnostics</h2>
+<p>winit remains the window/input host. On a Wayland session it creates a normal
+Wayland toplevel, not a dialog wrapper; on X11 it uses the X11 backend. Volt&#39;s
+blur adapter attaches to the same Wayland surface. No compositor fork or second
+window is involved.</p>
+<p>Set a stable reverse-DNS ID matching your desktop-entry filename:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>Application::new(&quot;My app&quot;, app, view)
+    .app_id(&quot;com.example.my_app&quot;) // Wayland app_id and X11 WM_CLASS
+    .on_window_diagnostics(|app, state| app.diagnostics = Some(state))
+    .run()?;</code></pre></div><p><code>WindowDiagnostics</code> reports the actual backend, renderer, chrome, scale and
+backdrop request state. The host also emits an event-driven <code>VOLT_UI_WINDOW</code>
+line on changes (not per frame). An unset ID gets a deterministic development
+fallback hash derived from the initial title (not its plaintext); explicitly choose
+a unique ID for distribution. This is a development ID, not a privacy/security hash.
+This property does not replace a macOS bundle ID or Windows package identity.</p>
+<p>The default is automatic backend selection. To constrain Linux testing:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>VOLT_UI_BACKEND=wayland cargo run --release --locked --features native-gpu,native-desktop --example catalog -- --chrome custom --background blur --control-style traffic-lights
+VOLT_UI_BACKEND=x11 cargo run --release --locked --features native-gpu --example northbound -- --chrome custom</code></pre></div><p>The builder equivalent is <code>.linux_backend(LinuxBackend::Wayland)</code> (or <code>X11</code> /
+<code>Auto</code>), overriding the environment. Unsupported or unavailable explicit choices
+fail clearly; they never silently select a different backend. Non-Linux accepts
+only <code>Auto</code>. GPU/Vulkan is a rendering backend, not a window-system backend.</p>
+<p>Current native blur requires Wayland and a compositor supporting one of Volt&#39;s
+negotiated protocols. X11 blur is unsupported; software is opaque. Linux GPU
+Custom/Borderless windows use the rounded mask when transparent alpha is
+supported; X11 surfaces without it retain an opaque rectangular GPU window, not
+a renderer failure. Maximized/fullscreen windows are rectangular. Compositor
+shadows/effects remain desktop policy and
+need live KDE/COSMIC acceptance, not just successful compilation.</p>
+<p><code>cargo volt new</code> generates wired Custom controls on Linux, native integrated
+controls on macOS and native decorations on Windows. All templates use the
+shared header/control helpers; you can change the style or chrome policy in Rust.
+Creation options <code>--chrome</code>, <code>--control-style</code> and <code>--app-id</code> configure those
+policies directly; mobile templates reject these desktop-only options.
+The generated <code>packaging/linux/&lt;app_id&gt;.desktop</code> and editable SVG icon match the
+source identity. Neither <code>new</code> nor <code>run</code> installs them. Without a registered
+launcher/icon, KDE may show the generic Wayland icon even with a correct app ID;
+that does not mean the app is a dialog or running inside a Wayland wrapper.</p>
+<p>After building a generated app, explicitly register it with the current user:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo build --release
+cargo volt install-linux --binary target/release/my-app \
+  --app-id dev.volt.my_app --name &quot;My App&quot; \
+  --icon packaging/linux/dev.volt.my_app.svg</code></pre></div><p>This writes a matching desktop entry in <code>$XDG_DATA_HOME/applications</code> and copies
+its icon into <code>$XDG_DATA_HOME/icons/hicolor</code> (default <code>~/.local/share</code>). The
+installed desktop entry uses the explicit icon path, avoiding Plasma/Qt theme
+lookup or cache differences while retaining the matching themed icon asset. The
+launcher points directly to the canonical executable path, with no shell or PATH
+lookup. Executable paths containing <code>%</code> or <code>=</code> are rejected for desktop/GIO
+compatibility; build at another path before registering. <strong>Keep that binary at its
+registered path</strong>. Rebuild in place, then restart
+the app. Re-run registration with <code>--replace</code> to update a managed launcher/icon;
+unmanaged entries, destination symlinks and ordinary overwrite attempts are
+refused. Keep the same SVG/PNG format on updates. SVG or a 256×256 PNG is supported;
+icons are size/header checked, not fully decoded. No startup service, sudo,
+permission request, compositor setting or dependency is installed. No app is
+launched by registration. <code>--data-dir /absolute/path</code> isolates packaging tests.</p>
+<p>For the checkout&#39;s examples:</p>
+<div class="reference-code"><div>sh<span>Source</span></div><pre tabindex="0" role="region" aria-label="sh"><code>cargo build --release --locked --features native-gpu,native-desktop,dev-tools \
+  --example catalog --example northbound --bin cargo-volt
+./target/release/cargo-volt install-linux --binary target/release/examples/catalog \
+  --app-id dev.volt.catalog --name &quot;Volt Catalog&quot; \
+  --icon examples/linux/dev.volt.catalog.svg
+./target/release/cargo-volt install-linux --binary target/release/examples/northbound \
+  --app-id dev.volt.northbound --name &quot;Northbound&quot; \
+  --icon examples/linux/dev.volt.northbound.svg</code></pre></div><p>Restart running apps after registering; desktop menus/icon caches may refresh
+asynchronously. This is local registration, not a portable Linux package or a
+system-wide installer. To unregister, remove only the matching managed <code>.desktop</code>
+and icon paths printed by the command; the executable is never copied/deleted.
+Update the source app ID, desktop filename and icon name together if rebranding.</p>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/windows-and-rendering.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#configuring-the-window">Configuring the window</a><a href="#title-bar-and-chrome">Title bar and chrome</a><a href="#custom-controls-and-live-mode-switching">Custom controls and live mode switching</a><a href="#reuse-the-existing-header">Reuse the existing header</a><a href="#linux-desktop-acceptance-checklist">Linux desktop acceptance checklist</a><a href="#transparency-and-blur">Transparency and blur</a><a href="#linux-desktop-blur">Linux desktop blur</a><a href="#testing-on-linux">Testing on Linux</a><a href="#gpu-and-software-drawing">GPU and software drawing</a><a href="#large-scenes">Large scenes</a><a href="#performance-and-diagnostics">Performance and diagnostics</a><a href="#headless-scene-budget-checks">Headless scene-budget checks</a><a href="#resource-limits">Resource limits</a><a href="#linux-identity-launchers-and-backend-diagnostics">Linux identity, launchers and backend diagnostics</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

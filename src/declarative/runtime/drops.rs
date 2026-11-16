@@ -27,10 +27,7 @@ impl Runtime {
         let in_scope = |id: &str| self.scope_allows_id(id);
         if let Some([x, y]) = at.filter(|p| p.iter().all(|v| v.is_finite())) {
             if let Some(mut index) = self.boxes.iter().rposition(|b| {
-                in_scope(&b.id)
-                    && b.clip.contains(x, y)
-                    && b.clip_regions.iter().all(|clip| clip.contains(x, y))
-                    && b.bounds.contains_corners(b.radii(self.scale), x, y)
+                in_scope(&b.id) && self.hit_clip(b, x, y) && self.hit_rounded(b, x, y)
             }) {
                 loop {
                     let b = &self.boxes[index];

@@ -25,8 +25,8 @@ No Apple font binaries are included. SF and SF Mono refer to fonts available
 on supported systems or explicitly supplied by the application developer;
 other platforms may use fallbacks. Do not copy Apple fonts into an app or web
 bundle without verifying the applicable license. The documentation website
-uses system fonts for interface text/code and a self-hosted Bricolage Grotesque display face. There are no third-party font
-requests at runtime.
+uses only self-hosted open fonts: Bricolage Grotesque, Inter, JetBrains Mono and
+Instrument Serif. There are no third-party font requests at runtime.
 
 The images in `docs/images/` are screenshots of synthetic Catalog content.
 They illustrate native output, not customer data or an embedded web demo.
@@ -43,6 +43,26 @@ Source: [Google Fonts](https://github.com/google/fonts/tree/94301472b4d809299b47
 revision `94301472b4d809299b4775bc6502592b83dd6934`, retrieved 2026-10-15.
 The upstream TrueType file is 408,496 bytes and the WOFF2 file 204,904 bytes; no
 Apple font binaries are redistributed.
+
+### Website text, label and accent fonts
+
+The site's reading, label and accent faces are WOFF2 files trimmed to Latin
+text, punctuation, arrows and shapes (plus box drawing for the monospace face)
+with fontTools 4.67.0 `pyftsubset`, keeping every layout feature and variable
+axis. Each license ships beside its font in `docs/assets/fonts/`.
+
+- `inter.woff2` (117,060 bytes) is made from the repository's
+  `docs/live/InterVariable.ttf` (Inter v4.1, described below); license
+  `Inter-OFL.txt`.
+- `jetbrains-mono.woff2` (56,160 bytes) is made from the repository's
+  `docs/live/JetBrainsMono.ttf` (JetBrains Mono v2.304, described below);
+  license `JetBrainsMono-OFL.txt`.
+- `instrument-serif-italic.woff2` (24,788 bytes) is made from
+  **InstrumentSerif-Italic.ttf** by The Instrument Serif Project Authors, SIL
+  Open Font License 1.1, license `InstrumentSerif-OFL.txt`. Source:
+  [Google Fonts](https://github.com/google/fonts/tree/5e0122a40050ed2cc20e9d5c387d19dd13c6c69f/ofl/instrumentserif),
+  revision `5e0122a40050ed2cc20e9d5c387d19dd13c6c69f`, retrieved 2026-11-08.
+  The upstream TrueType file is 71,592 bytes.
 
 ## Live browser demo font
 

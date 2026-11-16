@@ -7,6 +7,7 @@ on:
       - 'Cargo.lock'
       - 'src/**'
       - 'examples/ios/**'
+      - 'examples/ios-gallery/**'
       - 'crates/volt-ui-kit-mobile/**'
       - '.github/workflows/ios-prototype.yml'
 permissions:
@@ -18,22 +19,42 @@ jobs:
   rust-host:
     runs-on: macos-latest
     timeout-minutes: 30
+    # Line numbers without full debug info: smaller, quicker builds to cache.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
           components: clippy, rustfmt
+      # Compiled dependencies and downloads from earlier runs on this branch
+      # (or main). Saved again at the end, even when a later step fails.
+      - name: Restore build cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ios-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ios-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-
       - name: Shared host and scaffolding regression tests
         run: |
           cargo fmt --manifest-path crates/volt-ui-kit-mobile/Cargo.toml -- --check
           cargo fmt --manifest-path examples/ios/rust/Cargo.toml -- --check
+          cargo fmt --manifest-path examples/ios-gallery/rust/Cargo.toml -- --check
           cargo test --locked --manifest-path crates/volt-ui-kit-mobile/Cargo.toml --target-dir target/ios-prototype
           cargo test --locked --features dev-tools --bin cargo-volt
       - name: Rust prototype behavior
-        run: cargo test --locked --manifest-path examples/ios/rust/Cargo.toml --target-dir target/ios-prototype
+        run: |
+          cargo test --locked --manifest-path examples/ios/rust/Cargo.toml --target-dir target/ios-prototype
+          cargo test --locked --manifest-path examples/ios-gallery/rust/Cargo.toml --target-dir target/ios-prototype
       - name: Compile both iOS targets without desktop services
         run: |
           cargo check --locked --lib --no-default-features --features mobile --target aarch64-apple-ios
@@ -42,6 +63,13 @@ jobs:
         run: |
           cargo clippy --locked --manifest-path crates/volt-ui-kit-mobile/Cargo.toml --target-dir target/ios-prototype --target aarch64-apple-ios-sim -- -D warnings
           cargo clippy --locked --manifest-path examples/ios/rust/Cargo.toml --target-dir target/ios-prototype --target aarch64-apple-ios-sim -- -D warnings
+          cargo clippy --locked --manifest-path examples/ios-gallery/rust/Cargo.toml --target-dir target/ios-prototype --target aarch64-apple-ios-sim -- -D warnings
+      - name: Compile the iPhone gallery for the Simulator
+        run: |
+          xcodebuild -project examples/ios-gallery/VoltGallery.xcodeproj -scheme VoltGallery \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath "$RUNNER_TEMP/VoltGalleryDerivedData" build
       - name: Generate and compile a Rust-first project (paths with spaces)
         shell: bash
         run: |
@@ -55,5 +83,15 @@ jobs:
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
             -derivedDataPath "$RUNNER_TEMP/VoltIOSDerivedData" build
-      # Simulator UI workflows and hardware GPU/energy acceptance are distinct
-      # from this compilation job; see docs/ios-prototype.md for local tests.
+      # Simulator and device UI tests (the gallery's run on a phone) are local
+      # acceptance, separate from this compilation job; see docs/ios-prototype.md.
+      - name: Save build cache
+        if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.cache.outputs.cache-primary-key }}

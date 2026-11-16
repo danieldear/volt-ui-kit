@@ -475,3 +475,40 @@ fn exiting_control_is_paint_only_and_reinsert_uses_new_handler() {
     assert_eq!(old_calls.get(), 0);
     assert_eq!(new_calls.get(), 1);
 }
+
+/// `.shadows` with an inset shadow paints inside the element, above its
+/// fill: the top inner edge darkens (the shadow falls downward), the middle
+/// keeps the fill, and outside stays clear.
+#[test]
+fn inset_shadows_paint_inside_above_the_fill() {
+    let element: Element<()> = zstack![vstack(Vec::<Element<()>>::new())
+        .key("card")
+        .width(60.)
+        .height(40.)
+        .background("#FFFFFF")
+        .rounded(6.)
+        .shadows([Shadow::new()
+            .inset(true)
+            .color("#0000FFFF")
+            .blur(6.)
+            .offset(0., 4.)])
+        .offset(20., 20.)]
+    .key("root")
+    .flow(Flow::TopLeft)
+    .width(100.)
+    .height(80.)
+    .background("#000000")
+    .into();
+    let (runtime, mut painter) = setup(element, 1.);
+    let batches = runtime.paint_ui(&mut painter, &UiTheme::light());
+    let frame = painter.rasterize(&batches, [0., 0., 0., 1.]).unwrap();
+    let px = |x: usize, y: usize| frame.pixels()[y * 100 + x];
+    let top = px(50, 21);
+    let middle = px(50, 45);
+    assert!(
+        top.blue() > 200 && top.red() < 120,
+        "top edge shadowed: {top:?}"
+    );
+    assert!(middle.red() > 240, "middle keeps its fill: {middle:?}");
+    assert_eq!(px(50, 10).blue(), 0, "nothing outside");
+}

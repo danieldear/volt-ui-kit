@@ -1,26 +1,25 @@
 //! Relay: a desktop coding-agent client in the style of today's agent apps.
 //! Threads grouped by project, a streaming transcript with collapsible work
 //! steps and file changes, a composer with model/effort/permission menus and
-//! an inspector card. The "agent" is a local scripted worker thread, so the
-//! whole flow — streaming, cancel, retry — runs offline.
+//! an inspector card. The "agent" is a local script played on a worker thread
+//! (or, in the browser, on the frame clock), so the whole flow — streaming,
+//! cancel, retry — runs offline.
 pub mod icons;
 mod script;
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests;
 mod view;
 
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
+#[cfg(feature = "native")]
+use std::time::Duration;
 pub use view::view;
-use volt_ui_kit::{
-    native::{UiSendError, UiSender},
-    ui::{Palette, ThemeMode, UiTheme},
-};
+#[cfg(feature = "native")]
+use volt_ui_kit::native::{UiSendError, UiSender};
+use volt_ui_kit::ui::{Palette, ThemeMode, UiTheme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Model {
@@ -205,7 +204,16 @@ pub struct App {
     pub toast: Option<(u32, String)>,
     next_toast: u32,
     next_thread: u32,
+    #[cfg(feature = "native")]
     pub sender: Option<UiSender<Event>>,
+    /// Browser builds: the current reply's events still to play, each with
+    /// the milliseconds to wait before it.
+    #[cfg(not(feature = "native"))]
+    scheduled: std::collections::VecDeque<(u64, Event)>,
+    /// Time waited towards the next event. A `Cell`, so the frame clock can
+    /// move it without rebuilding the app (see `elapse`).
+    #[cfg(not(feature = "native"))]
+    clock: std::cell::Cell<f64>,
     run: Option<Run>,
     next_run: u64,
 }
@@ -236,7 +244,12 @@ impl App {
             tint: 72,
             toast: None,
             next_toast: 0,
+            #[cfg(feature = "native")]
             sender: None,
+            #[cfg(not(feature = "native"))]
+            scheduled: Default::default(),
+            #[cfg(not(feature = "native"))]
+            clock: Default::default(),
             run: None,
             next_run: 0,
         }
@@ -404,54 +417,81 @@ impl App {
             thread,
             cancel: cancel.clone(),
         });
-        let Some(sender) = self.sender.clone() else {
-            // Headless snapshots have no worker; show the run as in progress.
-            return;
-        };
-        let (run, script) = (self.next_run, script::reply_for(prompt, self.effort));
-        std::thread::spawn(move || {
-            let pace = |ms| std::thread::sleep(Duration::from_millis(ms));
-            let send = |kind: EventKind| {
-                deliver(&cancel, || {
-                    sender.send(Event {
-                        run,
-                        kind: kind.clone(),
-                    })
-                })
+        let run = self.next_run;
+        let events = timeline(script::reply_for(prompt, self.effort));
+        #[cfg(feature = "native")]
+        {
+            let Some(sender) = self.sender.clone() else {
+                // Headless snapshots have no worker; show the run as in progress.
+                return;
             };
-            let mut worked = 2;
-            for (label, detail, ms) in script.steps {
-                pace(180);
-                if !send(EventKind::Step(label.into())) {
-                    return;
+            std::thread::spawn(move || {
+                for (wait, kind) in events {
+                    if wait > 0 {
+                        std::thread::sleep(Duration::from_millis(wait));
+                    }
+                    if !deliver(&cancel, || {
+                        sender.send(Event {
+                            run,
+                            kind: kind.clone(),
+                        })
+                    }) {
+                        return;
+                    }
                 }
-                pace(ms);
-                worked += (ms / 300) as u32 + 1;
-                if !send(EventKind::StepDone(detail.into())) {
-                    return;
-                }
+            });
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            self.scheduled = events
+                .into_iter()
+                .map(|(wait, kind)| (wait, Event { run, kind }))
+                .collect();
+            self.clock.set(0.);
+        }
+    }
+    /// Browser builds have no worker thread, so the host plays the reply from
+    /// its frame clock. Returns whether anything changed.
+    #[cfg(not(feature = "native"))]
+    pub fn advance(&mut self, milliseconds: f64) -> bool {
+        let mut clock = self.clock.get() + milliseconds;
+        let mut changed = false;
+        while let Some(&(wait, _)) = self.scheduled.front() {
+            if clock < wait as f64 {
+                break;
             }
-            for file in script.files {
-                if !send(EventKind::File(file)) {
-                    return;
-                }
+            clock -= wait as f64;
+            if let Some((_, event)) = self.scheduled.pop_front() {
+                update(self, event);
+                changed = true;
             }
-            // Stream the answer a few words at a time, like a token stream.
-            let words: Vec<&str> = script.answer.split_inclusive(' ').collect();
-            for chunk in words.chunks(3) {
-                pace(28);
-                if !send(EventKind::Text(chunk.concat())) {
-                    return;
-                }
-            }
-            send(EventKind::Done(worked));
-        });
+        }
+        self.clock
+            .set(if self.scheduled.is_empty() { 0. } else { clock });
+        changed
+    }
+    /// Let time pass on the frame clock without changing anything on screen;
+    /// true once the next event is due, which `advance(0.)` then plays. A
+    /// host calls this every frame and rebuilds the app only when it's true.
+    #[cfg(not(feature = "native"))]
+    pub fn elapse(&self, milliseconds: f64) -> bool {
+        self.clock.set(self.clock.get() + milliseconds);
+        self.scheduled
+            .front()
+            .is_some_and(|&(wait, _)| self.clock.get() >= wait as f64)
+    }
+    /// Whether a browser build still has reply events to play.
+    #[cfg(not(feature = "native"))]
+    pub fn busy(&self) -> bool {
+        !self.scheduled.is_empty()
     }
     pub fn stop(&mut self) {
         let Some(run) = self.run.take() else {
             return;
         };
         run.cancel.store(true, Ordering::Relaxed);
+        #[cfg(not(feature = "native"))]
+        self.scheduled.clear();
         if let Some(m) = self
             .thread_mut(run.thread)
             .and_then(|t| t.messages.last_mut())
@@ -480,8 +520,35 @@ impl Drop for App {
     }
 }
 
+/// A scripted reply as timed events: milliseconds to wait, then the event.
+fn timeline(script: script::Reply) -> Vec<(u64, EventKind)> {
+    let mut events = Vec::new();
+    let mut worked = 2;
+    for (label, detail, ms) in script.steps {
+        events.push((180, EventKind::Step(label.into())));
+        events.push((ms, EventKind::StepDone(detail.into())));
+        worked += (ms / 300) as u32 + 1;
+    }
+    events.extend(
+        script
+            .files
+            .into_iter()
+            .map(|file| (0, EventKind::File(file))),
+    );
+    // Stream the answer a few words at a time, like a token stream.
+    let words: Vec<&str> = script.answer.split_inclusive(' ').collect();
+    events.extend(
+        words
+            .chunks(3)
+            .map(|chunk| (28, EventKind::Text(chunk.concat()))),
+    );
+    events.push((0, EventKind::Done(worked)));
+    events
+}
+
 /// Every event matters (text chunks are not coalescable), so a full queue
 /// waits on the worker thread; cancellation or a closed window ends it.
+#[cfg(feature = "native")]
 pub(crate) fn deliver(
     cancel: &AtomicBool,
     mut send: impl FnMut() -> Result<(), UiSendError>,

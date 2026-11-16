@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
@@ -43,8 +43,8 @@ jobs:
             --output "$RUNNER_TEMP/gitleaks.tar.gz"
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
-      - name: Scan reachable Git history without printing secret values
-        run: '"$RUNNER_TEMP/gitleaks" git --log-opts="--all" --redact=100 --no-banner .'
+      - name: Scan reachable Git history including merge resolutions without printing secret values
+        run: '"$RUNNER_TEMP/gitleaks" git --log-opts="--all -m" --redact=100 --no-banner .'
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
@@ -57,3 +57,4 @@ jobs:
       - run: cargo install cargo-audit --version 0.22.2 --locked
       # Maintenance warnings stay visible; known vulnerabilities fail the job.
       - run: cargo audit
+      - run: cargo audit --file crates/volt-ui-kit-security/Cargo.lock

@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_FILES = (
     "index.html", ".nojekyll", "assets/site.css", "assets/favicon.svg",
     "images/og-card.jpg", "assets/fonts/bricolage-grotesque.woff2", "assets/fonts/OFL.txt",
+    "assets/fonts/inter.woff2", "assets/fonts/Inter-OFL.txt",
+    "assets/fonts/jetbrains-mono.woff2", "assets/fonts/JetBrainsMono-OFL.txt",
+    "assets/fonts/instrument-serif-italic.woff2", "assets/fonts/InstrumentSerif-OFL.txt",
     "assets/reference.css", "live/index.html", "live/live.css", "live/live.js", "live/OFL.txt",
     "live/catalog-previews.js", "live/JetBrainsMono-OFL.txt",
 )

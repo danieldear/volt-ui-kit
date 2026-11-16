@@ -61,7 +61,11 @@ pub fn write(output: &Path) -> Result<(), Box<dyn std::error::Error>> {
                     y + h
                 })
                 .fold(160_f32, f32::max);
-            let height = if page == Page::Dialog {
+            let height = if section.id == "studio-sheet" {
+                // The closed trigger is short, but opening the shared modal
+                // needs enough canvas space for a usable live preview.
+                540
+            } else if page == Page::Dialog {
                 600
             } else {
                 (extent + 32.).clamp(200., 1600.).ceil() as u32

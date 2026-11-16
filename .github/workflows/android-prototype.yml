@@ -17,14 +17,31 @@ jobs:
   rust-host:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Line numbers without full debug info: smaller, quicker builds to cache.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: aarch64-linux-android
           components: rustfmt, clippy
+      # Compiled dependencies and downloads from earlier runs on this branch
+      # (or main). Saved again at the end, even when a later step fails.
+      - name: Restore build cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: android-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: android-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-
       - run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
       - name: Shared host and JNI checks (not APK/device acceptance)
         run: |
@@ -44,3 +61,13 @@ jobs:
           cargo check --locked --manifest-path "$qa/rust-pocket/Cargo.toml" --target aarch64-linux-android
       # APK build and native emulator/device smoke tests are separate acceptance
       # gates. See docs/android-prototype.md; no silent SDK license acceptance.
+      - name: Save build cache
+        if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.cache.outputs.cache-primary-key }}

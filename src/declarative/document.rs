@@ -329,6 +329,12 @@ pub struct Node {
     pub(crate) on_activate_input: Option<String>,
     #[serde(skip)]
     pub(crate) on_input_key: Option<String>,
+    /// Takes application keys nothing else used (`on_key_press`).
+    #[serde(skip)]
+    pub(crate) on_key_press: Option<String>,
+    /// A pointer surface's events (`on_pointer`).
+    #[serde(skip)]
+    pub(crate) on_pointer: Option<String>,
     #[serde(skip)]
     pub(crate) input_focus: bool,
     #[serde(skip)]
@@ -539,7 +545,8 @@ pub enum Scroll {
     Auto,
 }
 impl Scroll {
-    pub(crate) fn axes(self) -> [bool; 2] {
+    /// Whether it scrolls horizontally and vertically, as `[x, y]`.
+    pub fn axes(self) -> [bool; 2] {
         match self {
             Self::Vertical => [false, true],
             Self::Horizontal => [true, false],
@@ -627,6 +634,8 @@ impl Node {
             on_key: None,
             on_activate_input: None,
             on_input_key: None,
+            on_key_press: None,
+            on_pointer: None,
             input_focus: false,
             input_focus_epoch: 0,
             tab_stop: true,
@@ -768,14 +777,21 @@ impl Document {
         spacer_defaults(&mut doc.root, &raw["root"]);
         let mut ids = BTreeSet::new();
         let mut count = 0;
-        check_node(&doc.root, "root", 0, &mut count, &mut ids)?;
+        check_node(
+            &doc.root,
+            "root",
+            0,
+            &mut count,
+            &mut ids,
+            &mut BTreeSet::new(),
+        )?;
         Ok(Self { root: doc.root })
     }
     /// Constructs the same validated tree as JSON, without serializing Rust UI.
     #[cfg(feature = "rust-ui")]
     pub(crate) fn from_node(root: Node) -> Result<Self, DocumentError> {
         let mut ids = BTreeSet::new();
-        check_node(&root, "root", 0, &mut 0, &mut ids)?;
+        check_node(&root, "root", 0, &mut 0, &mut ids, &mut BTreeSet::new())?;
         fn references(
             node: &Node,
             ids: &BTreeSet<String>,
@@ -890,6 +906,18 @@ impl Document {
                         .validate_input(name, key)
                         .map_err(|e| error(&n.id, &e.to_string()))?;
                 }
+            }
+            #[cfg(feature = "rust-ui")]
+            if let Some(name) = &n.on_key_press {
+                handlers
+                    .validate_key_press(name)
+                    .map_err(|e| error(&n.id, &e.to_string()))?;
+            }
+            #[cfg(feature = "rust-ui")]
+            if let Some(name) = &n.on_pointer {
+                handlers
+                    .validate_pointer(name)
+                    .map_err(|e| error(&n.id, &e.to_string()))?;
             }
             if let Some(slider) = &n.slider {
                 for name in [&slider.on_change, &slider.on_lower_change]
@@ -1148,8 +1176,24 @@ fn check_node(
     depth: usize,
     count: &mut usize,
     ids: &mut BTreeSet<String>,
+    shared: &mut BTreeSet<String>,
 ) -> Result<(), DocumentError> {
     n.effects.validate(path)?;
+    if n.effects
+        .shared
+        .as_ref()
+        .is_some_and(|key| !shared.insert(key.clone()))
+    {
+        return Err(error(path, "duplicate shared element identity"));
+    }
+    if n.effects.text_effect.is_some()
+        && (n.kind != Kind::Text
+            || !n.ext.spans.is_empty()
+            || n.text.as_ref().is_some_and(|t| t.len() > 8192))
+    {
+        return Err(error(path, "text effects require plain text up to 8 KiB"));
+    }
+
     if n.hover_link
         .as_ref()
         .is_some_and(|key| key.is_empty() || key.len() > 128)
@@ -1158,6 +1202,13 @@ fn check_node(
     }
     if !n.ext.valid() {
         return Err(error(path, "invalid layout or style extension value"));
+    }
+    // A mask is painted into its parent's mask layer after everything
+    // else, so it must be the parent's last child, and only one.
+    if let Some(i) = n.children.iter().position(|c| c.ext.mask.is_some()) {
+        if i + 1 != n.children.len() {
+            return Err(error(path, "a mask must be its container's last child"));
+        }
     }
     *count += 1;
     if *count > MAX_NODES || depth > MAX_DEPTH {
@@ -1444,6 +1495,8 @@ fn check_node(
         &n.on_key,
         &n.on_activate_input,
         &n.on_input_key,
+        &n.on_key_press,
+        &n.on_pointer,
         &n.on_context,
         &n.on_files_dropped,
     ]
@@ -1461,6 +1514,7 @@ fn check_node(
             depth + 1,
             count,
             ids,
+            shared,
         )?;
     }
     Ok(())

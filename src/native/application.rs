@@ -28,6 +28,11 @@ impl RendererPreference {
 pub(super) type CommandCallback<C> = Box<dyn FnMut(&mut C, &str)>;
 pub(super) type CloseCallback<C> = Box<dyn FnMut(&mut C, CloseReason) -> CloseDecision>;
 pub(super) type WindowVisible<C> = Box<dyn Fn(&C) -> bool>;
+pub(super) type BackdropCallback<C> = Box<dyn FnMut(&mut C, super::BackdropStatus)>;
+pub(super) type DiagnosticsFn<C> = Box<dyn FnMut(&mut C, super::WindowDiagnostics)>;
+pub(super) type ChromeFn<C> = Box<dyn Fn(&C) -> WindowChrome>;
+pub(super) type WindowStateFn<C> = Box<dyn FnMut(&mut C, super::WindowState)>;
+pub(super) type WindowActionPump = Box<dyn Messages<Vec<crate::ui::WindowAction>>>;
 pub(super) type BackgroundFn<C> = Box<dyn Fn(&C) -> WindowBackground>;
 pub(super) type AppearanceFn<C> = Box<dyn Fn(&C) -> ThemeMode>;
 pub(super) type RequestPump = Box<dyn Messages<Vec<ApplicationRequest>>>;
@@ -43,6 +48,10 @@ pub(super) fn dev_dir() -> Option<std::path::PathBuf> {
 }
 pub(super) type LaunchHook<C> = Box<dyn FnOnce(&mut C)>;
 pub(super) struct HostExtensions<C> {
+    pub app_id: Option<String>,
+    pub linux_backend: Option<super::LinuxBackend>,
+    pub diagnostics: Option<DiagnosticsFn<C>>,
+    pub last_diagnostics: Option<super::WindowDiagnostics>,
     pub renderer: Option<RendererPreference>,
     pub window_visible: Option<WindowVisible<C>>,
     pub last_window_visible: Option<bool>,
@@ -54,6 +63,11 @@ pub(super) struct HostExtensions<C> {
     pub close: Option<CloseCallback<C>>,
     pub requests: Option<RequestPump>,
     pub background: Option<BackgroundFn<C>>,
+    pub backdrop_status: Option<BackdropCallback<C>>,
+    pub chrome: Option<ChromeFn<C>>,
+    pub resize_border: f32,
+    pub window_state: Option<WindowStateFn<C>>,
+    pub window_actions: Option<WindowActionPump>,
     /// The app's chosen appearance, and the one last applied to the window.
     pub appearance: Option<AppearanceFn<C>>,
     pub applied_appearance: Option<ThemeMode>,
@@ -67,6 +81,10 @@ pub(super) struct HostExtensions<C> {
 impl<C> Default for HostExtensions<C> {
     fn default() -> Self {
         Self {
+            app_id: None,
+            linux_backend: None,
+            diagnostics: None,
+            last_diagnostics: None,
             renderer: None,
             window_visible: None,
             last_window_visible: None,
@@ -77,6 +95,11 @@ impl<C> Default for HostExtensions<C> {
             close: None,
             requests: None,
             background: None,
+            backdrop_status: None,
+            chrome: None,
+            resize_border: 6.,
+            window_state: None,
+            window_actions: None,
             appearance: None,
             applied_appearance: None,
             dev_state: None,
@@ -208,6 +231,62 @@ impl<C: 'static> Application<C> {
         self.extensions.window_visible = Some(Box::new(visible));
         self
     }
+    /// Bounded native-window intents, separate from application commands.
+    /// Close always goes through the existing close-request guard.
+    pub fn window_actions(
+        mut self,
+        initialize: impl FnOnce(&mut C, UiSender<crate::ui::WindowAction>),
+    ) -> Self {
+        let (sender, pump) =
+            messages::channel(|actions: &mut Vec<crate::ui::WindowAction>, action| {
+                actions.push(action)
+            });
+        initialize(&mut self.context, sender);
+        self.extensions.window_actions = Some(pump);
+        self
+    }
+    /// Stable Linux Wayland app_id and X11 WM_CLASS. Match your .desktop filename.
+    /// Other platforms still need their own bundle/package identity; this does not
+    /// change signing, install a launcher or create a dialog/parent relationship.
+    pub fn app_id(mut self, id: impl Into<String>) -> Self {
+        self.extensions.app_id = Some(id.into());
+        self
+    }
+    /// Constrain Linux window creation, rather than guessing from the desktop.
+    /// Auto uses winit's normal preference. A requested backend never falls back.
+    /// Non-Linux accepts only Auto. An explicit value overrides VOLT_UI_BACKEND.
+    pub fn linux_backend(mut self, backend: super::LinuxBackend) -> Self {
+        self.extensions.linux_backend = Some(backend);
+        self
+    }
+    /// Observe actual backend, renderer, chrome, scale and requested blur state.
+    /// Called on changes on the UI thread, never on a polling worker.
+    pub fn on_window_diagnostics(
+        mut self,
+        callback: impl FnMut(&mut C, super::WindowDiagnostics) + 'static,
+    ) -> Self {
+        self.extensions.diagnostics = Some(Box::new(callback));
+        self
+    }
+    /// Change chrome after UI actions without restarting or replacing the window.
+    pub fn chrome_from_state(mut self, chrome: impl Fn(&C) -> WindowChrome + 'static) -> Self {
+        self.extensions.chrome = Some(Box::new(chrome));
+        self
+    }
+    /// Observe actual native maximize/fullscreen/focus state on the UI thread.
+    pub fn on_window_state(
+        mut self,
+        changed: impl FnMut(&mut C, super::WindowState) + 'static,
+    ) -> Self {
+        self.extensions.window_state = Some(Box::new(changed));
+        self
+    }
+    /// Custom-chrome resize hit area in logical pixels (0 disables edge hits).
+    /// Values must be finite and between 0 and 24. Native/Borderless ignore it.
+    pub fn custom_resize_border(mut self, logical_pixels: f32) -> Self {
+        self.extensions.resize_border = logical_pixels;
+        self
+    }
     pub fn renderer(mut self, preference: RendererPreference) -> Self {
         self.extensions.renderer = Some(preference);
         self
@@ -230,7 +309,18 @@ impl<C: 'static> Application<C> {
         self.extensions.background = Some(Box::new(background));
         self
     }
+    /// Observe native blur discovery/request status on the UI thread. A
+    /// `Requested` status identifies the protocol, not proof of visible blur.
+    /// Unsupported or failed backdrop setup never changes the drawing backend.
+    pub fn on_backdrop_status(
+        mut self,
+        callback: impl FnMut(&mut C, super::BackdropStatus) + 'static,
+    ) -> Self {
+        self.extensions.backdrop_status = Some(Box::new(callback));
+        self
+    }
     pub fn chrome(mut self, chrome: WindowChrome) -> Self {
+        self.extensions.chrome = None;
         self.options.window.chrome = chrome;
         self
     }
@@ -242,6 +332,18 @@ impl<C: 'static> Application<C> {
         self.options.palette = Some(palette);
         self
     }
+    /// App-wide motion level. [`Motion::Default`] plays each component's
+    /// built-in animations; [`Motion::None`] settles every change instantly.
+    /// `VOLT_UI_REDUCED_MOTION=1` and the macOS Reduce Motion setting still
+    /// turn motion off when the app asks for `Default`.
+    ///
+    /// [`Motion::Default`]: crate::declarative::Motion::Default
+    /// [`Motion::None`]: crate::declarative::Motion::None
+    pub fn motion(mut self, motion: crate::declarative::Motion) -> Self {
+        self.options.window.reduced_motion = motion == crate::declarative::Motion::None;
+        self
+    }
+    /// Same as `.motion(Motion::None)` when `true`.
     pub fn reduced_motion(mut self, value: bool) -> Self {
         self.options.window.reduced_motion = value;
         self
@@ -300,7 +402,8 @@ impl<C: 'static> Application<C> {
         self.extensions.before_launch = Some(Box::new(setup));
         self
     }
-    /// Optional native menus/tray. Requires `native-desktop` on macOS.
+    /// Optional native menus/tray. Requires `native-desktop` on macOS or Linux.
+    /// Linux supplies the tray host, not a native global menu bar.
     pub fn desktop(
         mut self,
         config: super::system::DesktopConfig,
@@ -331,13 +434,22 @@ impl<C: 'static> Application<C> {
             return Err("invalid application title or window size".into());
         }
         window::validate_options(&self.options)?;
+        if let Some(id) = &self.extensions.app_id {
+            super::identity::validate_app_id(id)?;
+        }
+        if let Some(backend) = self.extensions.linux_backend {
+            super::identity::backend_preference(Some(backend), None)?;
+        }
         self.renderer_preference()
             .policy(cfg!(feature = "native-gpu"))?;
         self.extensions.commands.validate()?;
         if let Some(desktop) = &self.extensions.desktop {
             desktop.validate()?;
-            if !super::system::capabilities().native_menu {
-                return Err("native desktop integration requires native-desktop on macOS".into());
+            let capabilities = super::system::capabilities();
+            if !capabilities.native_menu && !capabilities.tray_icon {
+                return Err(
+                    "native desktop integration requires native-desktop on macOS or Linux".into(),
+                );
             }
         }
         Ok(())
@@ -384,6 +496,74 @@ impl<C: 'static> Application<C> {
 mod lifecycle_tests {
     use super::*;
     #[test]
+    fn desktop_validation_accepts_the_compiled_host_without_creating_resources() {
+        use crate::native::system::{DesktopCommand, DesktopConfig, DesktopMenu, TrayConfig};
+        use crate::ui::spacer;
+        let desktop = DesktopConfig::new("Desktop validation")
+            .menu(DesktopMenu::new(
+                "Actions",
+                [DesktopCommand::new("count", "Count")],
+            ))
+            .tray(TrayConfig {
+                tooltip: "Desktop validation".into(),
+                rgba: vec![255; 4],
+                width: 1,
+                height: 1,
+                template: false,
+                commands: vec![DesktopCommand::new("count", "Count")],
+            });
+        // This calls the same validation as run(), without a window, session bus,
+        // notification permission or running tray watcher. Linux deliberately has
+        // no native global menu, but its tray host must still pass startup.
+        let result = Application::new("Desktop validation", (), |_| spacer().into())
+            .desktop(desktop, |_, _| {})
+            .validate();
+        assert_eq!(
+            result.is_ok(),
+            cfg!(all(
+                feature = "native-desktop",
+                any(target_os = "macos", target_os = "linux")
+            )),
+            "desktop startup validation: {result:?}"
+        );
+    }
+
+    #[test]
+    fn desktop_validation_still_rejects_invalid_configuration() {
+        use crate::native::system::DesktopConfig;
+        use crate::ui::spacer;
+        let error = Application::new("Desktop validation", (), |_| spacer().into())
+            .desktop(DesktopConfig::new(""), |_, _| {})
+            .validate()
+            .unwrap_err();
+        assert!(error.contains("invalid desktop app/menu label"), "{error}");
+    }
+
+    #[test]
+    fn app_identity_and_diagnostics_configuration_is_additive() {
+        use crate::ui::spacer;
+        assert!(Application::new("Identity", (), |_| spacer().into())
+            .app_id("dev.volt.test_app")
+            .validate()
+            .is_ok());
+        assert!(Application::new("Identity", (), |_| spacer().into())
+            .app_id("bad\nExec=anything")
+            .validate()
+            .is_err());
+        let mut app = Application::new("Identity", None, |_| spacer().into())
+            .on_window_diagnostics(|state, diagnostics| *state = Some(diagnostics));
+        let value = super::super::WindowDiagnostics {
+            backend: super::super::WindowBackend::Wayland,
+            app_id: "dev.volt.test_app".into(),
+            renderer: "gpu",
+            chrome: WindowChrome::Custom,
+            backdrop: super::super::BackdropStatus::Disabled,
+            scale_factor: 1.25,
+        };
+        app.extensions.diagnostics.as_mut().unwrap()(&mut app.context, value.clone());
+        assert_eq!(app.context, Some(value));
+    }
+    #[test]
     fn dev_handoff_restores_state_and_window_frame_only_when_opted_in() {
         use crate::ui::spacer;
         let dir = std::env::temp_dir().join(format!("volt-dev-test-{}", std::process::id()));
@@ -410,6 +590,75 @@ mod lifecycle_tests {
         dirty: bool,
         prompts: usize,
         saves: usize,
+    }
+    #[test]
+    fn motion_setting_maps_to_the_reduced_motion_host_option() {
+        use crate::declarative::Motion;
+        use crate::ui::spacer;
+        let app = |motion| Application::new("Motion", (), |_| spacer().into()).motion(motion);
+        assert!(!app(Motion::Default).options.window.reduced_motion);
+        assert!(app(Motion::None).options.window.reduced_motion);
+        assert_eq!(Motion::default(), Motion::Default);
+        let legacy = Application::new("Motion", (), |_| spacer().into()).reduced_motion(true);
+        assert!(legacy.options.window.reduced_motion);
+    }
+    #[test]
+    fn backdrop_reporting_is_additive_and_does_not_change_the_background_policy() {
+        use super::super::{BackdropProtocol, BackdropStatus};
+        use crate::ui::spacer;
+        let mut app = Application::new("Glass", BackdropStatus::Disabled, |_| spacer().into())
+            .on_backdrop_status(|state, status| *state = status);
+        assert_eq!(app.options.background, WindowBackground::Opaque);
+        let status = BackdropStatus::Requested(BackdropProtocol::WaylandBackgroundEffect);
+        app.extensions.backdrop_status.as_mut().unwrap()(&mut app.context, status);
+        assert_eq!(app.context, status);
+        assert!(HostExtensions::<()>::default().backdrop_status.is_none());
+    }
+    #[test]
+    fn window_action_queue_and_state_chrome_are_additive_and_bounded() {
+        use crate::ui::{spacer, WindowAction};
+        struct State {
+            actions: Option<UiSender<WindowAction>>,
+            chrome: WindowChrome,
+        }
+        let mut app = Application::new(
+            "Chrome",
+            State {
+                actions: None,
+                chrome: WindowChrome::Custom,
+            },
+            |_| spacer().into(),
+        )
+        .chrome_from_state(|s| s.chrome)
+        .window_actions(|s, sender| s.actions = Some(sender));
+        assert_eq!(app.options.chrome, WindowChrome::Native);
+        assert_eq!(
+            app.extensions.chrome.as_ref().unwrap()(&app.context),
+            WindowChrome::Custom
+        );
+        assert!(app.extensions.requests.is_none());
+        let sender = app.context.actions.as_ref().unwrap().clone();
+        for _ in 0..256 {
+            sender.send(WindowAction::Close).unwrap();
+        }
+        assert_eq!(
+            sender.send(WindowAction::Minimize),
+            Err(super::super::UiSendError::Full)
+        );
+        let mut actions = vec![];
+        app.extensions
+            .window_actions
+            .as_mut()
+            .unwrap()
+            .drain(&mut actions);
+        assert_eq!(actions.len(), 64);
+        app.extensions.window_actions.as_mut().unwrap().close();
+        assert_eq!(
+            sender.send(WindowAction::Close),
+            Err(super::super::UiSendError::Closed)
+        );
+        let app = app.chrome(WindowChrome::Borderless);
+        assert!(app.extensions.chrome.is_none());
     }
     #[test]
     fn state_background_callback_is_additive_and_keeps_public_defaults() {

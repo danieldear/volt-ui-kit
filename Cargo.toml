@@ -1,6 +1,6 @@
 [package]
 name = "volt-ui-kit"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT"
@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/danieldear/volt-ui-kit"
 keywords = ["gui", "ui", "desktop", "declarative", "gpu"]
 categories = ["gui", "graphics", "rendering", "accessibility"]
-include = ["docs/*.md", "docs/assets/catalog-data.json", "src/**", "examples/**", "tests/**", "Cargo.toml", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["docs/*.md", "docs/assets/catalog-data.json", "src/**", "examples/**", "tests/**", "/Cargo.toml", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [package.metadata.docs.rs]
 # Document the Rust UI, native host and GPU renderer, not just the core.
@@ -23,23 +23,23 @@ rust-ui = ["declarative", "dep:unicode-segmentation", "dep:js-sys"]
 rendering = ["rust-ui", "dep:tiny-skia", "dep:cosmic-text", "dep:image"]
 rendering-gpu = ["rendering", "dep:vello", "dep:wgpu", "dep:pollster", "dep:guillotiere"]
 mobile = ["rendering-gpu"]
-native = ["rendering", "dep:winit", "dep:softbuffer", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
-native-desktop = ["native", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSPasteboard", "objc2-foundation?/NSData", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL", "objc2-foundation?/NSFileManager", "objc2-foundation?/NSError", "objc2-foundation?/NSPathUtilities", "dep:rustix"]
-native-notifications = ["native", "dep:objc2-user-notifications", "dep:block2", "objc2-foundation?/NSBundle", "objc2-foundation?/NSURL"]
+native = ["rendering", "dep:winit", "dep:softbuffer", "dep:arboard", "dep:accesskit", "dep:accesskit_winit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:wayland-client", "dep:wayland-backend", "dep:wayland-protocols", "dep:wayland-protocols-plasma", "dep:rustix"]
+native-desktop = ["native", "dep:zbus", "dep:futures-lite", "dep:async-io", "dep:chrono", "dep:async-channel", "rustix?/fs", "rustix?/process", "dep:muda", "dep:tray-icon", "objc2-app-kit?/NSPasteboard", "objc2-foundation?/NSData", "objc2-app-kit?/NSOpenPanel", "objc2-app-kit?/NSSavePanel", "objc2-app-kit?/NSPanel", "objc2-foundation?/NSURL", "objc2-foundation?/NSFileManager", "objc2-foundation?/NSError", "objc2-foundation?/NSPathUtilities", "dep:rustix"]
+native-notifications = ["native", "dep:zbus", "dep:futures-lite", "dep:async-io", "dep:objc2-user-notifications", "dep:block2", "objc2-foundation?/NSBundle", "objc2-foundation?/NSURL"]
 dev-tools = ["dep:serde_json"]
 native-gpu = ["native", "rendering-gpu"]
 
 [dependencies]
 unicode-width = "0.2"
 unicode-segmentation = { version = "=1.13.3", optional = true }
-arboard = { version = "=3.6.1", default-features = false, optional = true }
+arboard = { version = "=3.7.0", default-features = false, optional = true }
 
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 winit = { version = "0.30.13", optional = true }
 # Screen-reader/assistive-technology tree for native windows (macOS, Windows, Linux AT-SPI).
-accesskit = { version = "=0.25.1", optional = true }
-accesskit_winit = { version = "=0.34.1", optional = true }
+accesskit = { version = "=0.25.2", optional = true }
+accesskit_winit = { version = "=0.34.2", optional = true }
 softbuffer = { version = "0.4.8", optional = true }
 tiny-skia = { version = "0.11.4", optional = true }
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"], optional = true }
@@ -50,25 +50,39 @@ pollster = { version = "0.4", optional = true }
 # Reuse Vello's already-transitive atlas allocator for packing admission. This
 # adds no new locked packages and is absent from the default/native CPU build.
 guillotiere = { version = "=0.7.0", optional = true }
-cosmic-text = { version = "0.14.2", optional = true }
+cosmic-text = { version = "0.19.0", optional = true }
 
 # One native compute backend per platform; iOS opts in through `mobile`.
 [target.'cfg(target_os = "ios")'.dependencies]
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "metal"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 # Safe local-volume metadata queries for opt-in checked Trash; already locked transitively.
-rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs"], optional = true }
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "fs"], optional = true }
 # Narrow, independent modern local-notification adapter; no delegate/actions/locations.
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger"], optional = true }
 block2 = { version = "=0.6.2", default-features = false, features = ["std"], optional = true }
 objc2 = { version = "=0.6.5", default-features = false, features = ["std"], optional = true }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSGeometry"], optional = true }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSWindow", "NSView", "NSResponder", "NSToolbar", "NSButton", "NSControl", "NSVisualEffectView", "NSGraphics", "NSWorkspace", "NSAccessibility", "NSText", "NSTextView", "NSMenu", "NSMenuItem", "NSEvent"], optional = true }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSWindow", "NSScreen", "NSView", "NSResponder", "NSToolbar", "NSButton", "NSControl", "NSVisualEffectView", "NSGraphics", "NSWorkspace", "NSAccessibility", "NSText", "NSTextView", "NSMenu", "NSMenuItem", "NSEvent"], optional = true }
 muda = { version = "=0.19.3", default-features = false, optional = true }
 tray-icon = { version = "=0.24.2", default-features = false, optional = true }
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "metal"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "dx12"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+# Shared Rust D-Bus stack already locked through accessibility; no GTK/WebView.
+zbus = { version = "=5.19.0", optional = true }
+async-channel = { version = "=2.5.0", optional = true }
+futures-lite = { version = "=2.6.1", optional = true }
+async-io = { version = "=2.6.0", optional = true }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock"], optional = true }
+# Already transitive through winit; the compatibility adapter adds the modern
+# background-effect protocol without a breaking winit/accessibility migration.
+wayland-protocols-plasma = { version = "=0.3.12", optional = true, features = ["client"] }
+wayland-client = { version = "=0.31.15", optional = true }
+wayland-backend = { version = "=0.3.17", optional = true, features = ["client_system", "dlopen"] }
+wayland-protocols = { version = "=0.32.13", optional = true, features = ["client", "staging"] }
+rustix = { version = "=1.1.6", optional = true, default-features = false, features = ["std", "event"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = { version = "=0.3.106", optional = true }
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "wgsl", "webgpu"] }
@@ -89,6 +103,9 @@ name = "complete_app"
 required-features = ["native"]
 [[example]]
 name = "components"
+required-features = ["native"]
+[[example]]
+name = "samples"
 required-features = ["native"]
 
 [[example]]
@@ -139,6 +156,12 @@ name = "northbound"
 required-features = ["native"]
 
 [[example]]
+# A test bed for map providers drawn by Volt: open maps, Mapbox, Google and
+# Apple. It downloads styles and tiles, so it needs a network connection.
+name = "maps"
+required-features = ["native"]
+
+[[example]]
 name = "specimen"
 required-features = ["native"]
 
@@ -154,3 +177,29 @@ required-features = ["native"]
 name = "cargo-volt"
 path = "src/bin/cargo-volt.rs"
 required-features = ["dev-tools"]
+
+[target.'cfg(all(unix, not(target_os = "linux")))'.dev-dependencies]
+wayland-client = "=0.31.15"
+wayland-backend = "=0.3.17"
+wayland-protocols = { version = "=0.32.13", features = ["client", "server", "staging"] }
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "event"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+wayland-server = "=0.31.14"
+wayland-protocols-plasma = { version = "=0.3.12", features = ["client", "server"] }
+wayland-protocols = { version = "=0.32.13", features = ["server", "staging"] }
+
+[dev-dependencies]
+# The `maps` example only: HTTPS for map styles and tiles, and gzip for
+# vector tiles that arrive compressed. Neither is a library dependency.
+ureq = "=3.4.3"
+flate2 = "=1.1.10"
+
+# The `maps` example on macOS: Apple Maps through MapKit snapshots.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-map-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-location", "MKMapSnapshotter", "MKMapSnapshotOptions", "MKMapSnapshot", "MKGeometry", "MKTypes", "MKMapView", "MKLocalSearch", "MKLocalSearchRequest", "MKLocalSearchResponse", "MKMapItem", "MKPlacemark", "MKAddress", "MKDirections", "MKDirectionsRequest", "MKDirectionsResponse", "MKDirectionsTypes", "MKMultiPoint", "MKPolyline", "MKShape", "MKOverlay", "MKAnnotation", "MKPointOfInterestCategory"] }
+objc2-core-location = { version = "=0.3.2", default-features = false, features = ["std", "CLLocation", "CLPlacemark", "CLLocationManager"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSAppearance"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSString", "NSDate", "NSRunLoop", "NSArray", "NSRange", "NSEnumerator"] }
+block2 = { version = "=0.6.2", default-features = false, features = ["std"] }
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }

@@ -223,7 +223,7 @@ impl Runtime {
                     let offset = self.scroll_offset(&b.id);
                     [offset[0], offset[1], b.scroll_max[0], b.scroll_max[1]]
                 }),
-                bounds: b.bounds.bounds(),
+                bounds: self.world_transform(b).bounds(b.bounds.bounds()),
                 enabled: b.enabled,
                 focused: focused == Some(b.id.as_str()),
                 password: editor.is_some_and(|e| e.password),
