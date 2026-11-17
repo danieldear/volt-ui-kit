@@ -458,8 +458,9 @@ mod disclosure;
 mod display;
 mod rich_text;
 pub use charts::{
-    area_chart, candlestick_chart, donut_chart, nice_ticks, short_number, stacked_bar_chart,
-    AreaChart, Candle, CandlestickChart, DonutChart, StackedBarChart,
+    area_chart, candlestick_chart, donut_chart, line_plot, nice_ticks, range_chart, short_number,
+    stacked_bar_chart, timeline_chart, AreaChart, Candle, CandlestickChart, DonutChart, LinePlot,
+    RangeChart, StackedBarChart, TimelineChart, TimelineSpan, ValueRange,
 };
 pub use rich_text::{rich_text, span, Span};
 mod forms;
@@ -1893,7 +1894,10 @@ pub mod prelude {
         steps, timeline, toaster, CommandPaletteState, DrawerSide, Presence, Severity,
         TimelineItem, Toast, ToastPosition,
     };
-    pub use super::{area_chart, candlestick_chart, donut_chart, stacked_bar_chart, Candle};
+    pub use super::{
+        area_chart, candlestick_chart, donut_chart, line_plot, range_chart, stacked_bar_chart,
+        timeline_chart, Candle, ValueRange,
+    };
     pub use super::{
         badge, button, button_bar, canvas, canvas_frames, checkbox, column, context_menu,
         data_item, dialog, divider, grid, hstack, lazy_list, loading, mask_difference,

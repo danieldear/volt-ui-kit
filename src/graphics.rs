@@ -173,6 +173,30 @@ impl VectorPath {
             .line_to(x, y + h)
             .close()
     }
+    /// A rectangle with rounded corners; the radius is capped at half the
+    /// shorter side (a capsule).
+    pub fn rounded_rectangle(x: f32, y: f32, w: f32, h: f32, radius: f32) -> Self {
+        let r = radius.max(0.).min(w * 0.5).min(h * 0.5);
+        if !(r > 0.) {
+            return Self::rectangle(x, y, w, h);
+        }
+        let k = 0.552_284_8 * r;
+        Self::new()
+            .move_to(x + r, y)
+            .line_to(x + w - r, y)
+            .cubic_to([x + w - r + k, y], [x + w, y + r - k], [x + w, y + r])
+            .line_to(x + w, y + h - r)
+            .cubic_to(
+                [x + w, y + h - r + k],
+                [x + w - r + k, y + h],
+                [x + w - r, y + h],
+            )
+            .line_to(x + r, y + h)
+            .cubic_to([x + r - k, y + h], [x, y + h - r + k], [x, y + h - r])
+            .line_to(x, y + r)
+            .cubic_to([x, y + r - k], [x + r - k, y], [x + r, y])
+            .close()
+    }
     pub fn circle(x: f32, y: f32, r: f32) -> Self {
         Self::ellipse(x, y, r, r)
     }
@@ -722,7 +746,7 @@ impl StrokeStyle {
     pub fn is_valid(&self) -> bool {
         self.width.is_finite()
             && self.width > 0.
-            && self.width <= 512.
+            && self.width <= 256.
             && self.dash.len() <= 32
             && self
                 .dash
@@ -767,7 +791,7 @@ impl CanvasFrames {
 }
 impl Canvas {
     pub fn fill(&mut self, path: VectorPath, color: impl Into<String>) {
-        self.paths.push(DrawPath {
+        self.push(DrawPath {
             path,
             color: color.into(),
             stroke: None,
@@ -775,7 +799,7 @@ impl Canvas {
         });
     }
     pub fn stroke(&mut self, path: VectorPath, color: impl Into<String>, width: f32) {
-        self.paths.push(DrawPath {
+        self.push(DrawPath {
             path,
             color: color.into(),
             stroke: Some(width),
@@ -784,7 +808,7 @@ impl Canvas {
     }
     /// Stroke with caps, joins and dashes: `StrokeStyle::new(2.).round()`.
     pub fn stroke_with(&mut self, path: VectorPath, color: impl Into<String>, style: StrokeStyle) {
-        self.paths.push(DrawPath {
+        self.push(DrawPath {
             path,
             color: color.into(),
             stroke: Some(style.width),
@@ -797,7 +821,7 @@ impl Canvas {
     /// Fill with a gradient laid over the path's bounds.
     pub fn fill_gradient(&mut self, path: VectorPath, gradient: crate::declarative::Gradient) {
         let color = gradient.first_color();
-        self.paths.push(DrawPath {
+        self.push(DrawPath {
             path,
             color,
             stroke: None,
@@ -816,7 +840,7 @@ impl Canvas {
         style: StrokeStyle,
     ) {
         let color = gradient.first_color();
-        self.paths.push(DrawPath {
+        self.push(DrawPath {
             path,
             color,
             stroke: Some(style.width),
@@ -825,6 +849,19 @@ impl Canvas {
                 stroke: Some(style),
             })),
         });
+    }
+    /// Adds a path unless it draws nothing: an empty path, or one that only
+    /// moves (a draw-in's first frame), is skipped rather than rejected.
+    fn push(&mut self, path: DrawPath) {
+        let draws = path.path.commands.iter().any(|c| {
+            matches!(
+                c,
+                PathCommand::Line(_) | PathCommand::Quad(..) | PathCommand::Cubic(..)
+            )
+        });
+        if draws {
+            self.paths.push(path);
+        }
     }
     /// A soft glow under a stroke: wider, fainter copies beneath it, then
     /// the stroke itself. `color` is a hex colour (`#RRGGBB`) or a token;
@@ -843,7 +880,7 @@ impl Canvas {
         };
         for (spread, alpha) in [(4.5, 0.10), (2.8, 0.16), (1.7, 0.26)] {
             let halo = StrokeStyle {
-                width: style.width * spread,
+                width: (style.width * spread).min(256.),
                 cap: LineCap::Round,
                 join: LineJoin::Round,
                 ..style.clone()
