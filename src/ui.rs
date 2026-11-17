@@ -130,7 +130,7 @@ pub use crate::declarative::{
 
 pub use crate::graphics::{
     BackgroundImage, BlendMode, Canvas, CanvasFrames, Clip, DialStyle, Image, ImageFit,
-    ImagePosition, MaskMode, VectorPath,
+    ImagePosition, LineCap, LineJoin, MaskMode, PathStyle, StrokeStyle, VectorPath,
 };
 pub use crate::{ColorToken, Palette, ThemeMode, UiTheme};
 
@@ -1907,13 +1907,14 @@ pub mod prelude {
         BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
         ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, DialStyle, Dialog, Direction,
         Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image,
-        ImageFit, ImagePosition, Interaction, Justify, LazyList, MaskMode, Menu, MenuItem, Motion,
-        Navigation, NavigationItem, NavigationPlacement, Palette, Popover, Progress, Responsive,
-        Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl, Shadow, Sides, Slider,
-        SortDirection, SpeedDial, SplitHandle, SplitPane, Spring, Tab, TabItem, TabPlacement,
-        TabVariant, Table, TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone,
-        Toolbar, Tooltip, Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList,
-        VisualStyle, WindowAction, WindowControlStyle, WindowControlsState,
+        ImageFit, ImagePosition, Interaction, Justify, LazyList, LineCap, LineJoin, MaskMode, Menu,
+        MenuItem, Motion, Navigation, NavigationItem, NavigationPlacement, Palette, Popover,
+        Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl,
+        Shadow, Sides, Slider, SortDirection, SpeedDial, SplitHandle, SplitPane, Spring,
+        StrokeStyle, Tab, TabItem, TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs,
+        TextAlign, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
+        UiTheme, VectorPath, VirtualList, VisualStyle, WindowAction, WindowControlStyle,
+        WindowControlsState,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,

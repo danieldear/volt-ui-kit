@@ -126,6 +126,13 @@ impl Gradient {
             stops: stops.into_iter().map(|(at, c)| (at, c.into())).collect(),
         }
     }
+    /// The first stop's colour: what a painter without gradients uses.
+    pub(crate) fn first_color(&self) -> String {
+        self.stops
+            .first()
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default()
+    }
     pub(crate) fn valid(&self) -> bool {
         (2..=16).contains(&self.stops.len())
             && self

@@ -198,6 +198,23 @@ pub trait DocumentPainter: Painter + TextMetrics {
         _stroke: Option<f32>,
     ) {
     }
+    /// A canvas path with gradient paint (resolved stops, laid over the
+    /// path's bounds) and/or a stroke with caps, joins and dashes, in
+    /// physical pixels. The default paints it as a plain path in the first
+    /// stop's colour, for adapters without these.
+    fn ui_styled_path(
+        &mut self,
+        out: &mut Vec<Self::Shape>,
+        path: &VectorPath,
+        color: [f32; 4],
+        stroke: Option<&crate::graphics::StrokeStyle>,
+        gradient: Option<(&super::extras::Gradient, &[(f32, [f32; 4])])>,
+    ) {
+        let color = gradient
+            .and_then(|(_, stops)| stops.first().map(|s| s.1))
+            .unwrap_or(color);
+        self.ui_path(out, path, color, stroke.map(|s| s.width));
+    }
 
     /// A gradient-filled rounded rectangle with resolved stop colours. The
     /// default fills with the first stop for adapters without gradients.
@@ -4231,13 +4248,50 @@ impl Runtime {
                 .path
                 .clone()
                 .transformed([self.scale, 0., 0., self.scale, r[0], r[1]]);
-            if let Some(color) = ui.resolve(&path.color) {
-                p.ui_path(
-                    &mut shapes,
-                    &physical,
-                    color,
-                    path.stroke.map(|w| w * self.scale),
-                );
+            match path.style.as_deref() {
+                None => {
+                    if let Some(color) = ui.resolve(&path.color) {
+                        p.ui_path(
+                            &mut shapes,
+                            &physical,
+                            color,
+                            path.stroke.map(|w| w * self.scale),
+                        );
+                    }
+                }
+                Some(style) => {
+                    let stroke = style
+                        .stroke
+                        .as_ref()
+                        .filter(|s| s.is_valid())
+                        .map(|s| s.scaled(self.scale))
+                        .or_else(|| {
+                            path.stroke
+                                .map(|w| crate::graphics::StrokeStyle::new(w * self.scale))
+                        });
+                    let stops: Vec<(f32, [f32; 4])> = style
+                        .gradient
+                        .as_ref()
+                        .filter(|g| g.valid())
+                        .map(|g| {
+                            g.stops
+                                .iter()
+                                .filter_map(|(at, c)| ui.resolve(c).map(|c| (*at, c)))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let gradient = style
+                        .gradient
+                        .as_ref()
+                        .filter(|_| stops.len() >= 2)
+                        .map(|g| (g, stops.as_slice()));
+                    let color = ui
+                        .resolve(&path.color)
+                        .or_else(|| stops.first().map(|s| s.1));
+                    if let Some(color) = color {
+                        p.ui_styled_path(&mut shapes, &physical, color, stroke.as_ref(), gradient);
+                    }
+                }
             }
         }
         // A separator's clip moves with its snapped line.
