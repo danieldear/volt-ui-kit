@@ -263,12 +263,16 @@ fn framed<C>(
 }
 /// Labels centred under their x positions in the plot area.
 fn x_label_row<C>(x_labels: Vec<(f32, String)>, width: f32) -> Element<C> {
+    x_label_row_at(x_labels, width, AXIS)
+}
+/// As [`x_label_row`], for a plot whose value axis is `axis` wide.
+fn x_label_row_at<C>(x_labels: Vec<(f32, String)>, width: f32, axis: f32) -> Element<C> {
     let xs: Vec<Element<C>> = x_labels
         .into_iter()
         .map(|(x, label)| {
             // Centred on x, but kept inside the chart at both ends.
             let w = label.chars().count() as f32 * 6.5;
-            let left = (AXIS + x - w / 2.).clamp(AXIS, (width - w - 2.).max(AXIS));
+            let left = (axis + x - w / 2.).clamp(axis, (width - w - 2.).max(axis));
             hstack![text(label)
                 .font_size(11.)
                 .color(ColorToken::Muted)
@@ -1169,5 +1173,1004 @@ mod tests {
         e.build().unwrap();
         let sector = sector(50., 50., 50., 30., 0., 1.5);
         assert!(sector.is_valid());
+    }
+}
+
+// ── Draw-in, axes and readouts shared by the plots below ────────────────
+
+/// A draw-in: 28 frames 24 ms apart (about 0.7 s), progress eased out.
+const DRAW_FRAMES: usize = 28;
+const DRAW_FRAME_MS: u32 = 24;
+fn draw_in_steps() -> impl Iterator<Item = f32> {
+    (1..=DRAW_FRAMES).map(|i| {
+        let t = i as f32 / DRAW_FRAMES as f32;
+        1. - (1. - t).powi(3)
+    })
+}
+/// A plot's canvas: horizontal gridlines at `grid` (y pixels), then `draw` at
+/// progress `t`. With `animate`, the draw-in plays once per revision and key
+/// (`canvas_frames_once`): returning to a chart with the same data doesn't
+/// replay it. Reduced motion shows the last frame at once.
+fn plot_canvas<C>(
+    size: [f32; 2],
+    grid: Vec<f32>,
+    animate: Option<u64>,
+    key: Option<&str>,
+    draw: impl Fn(&mut Canvas, f32) + 'static,
+) -> Element<C> {
+    let [w, h] = size;
+    let paint = move |c: &mut Canvas, t: f32| {
+        for y in &grid {
+            let y = y.round() + 0.5;
+            c.stroke(
+                VectorPath::new().move_to(0., y).line_to(w, y),
+                ColorToken::Border,
+                1.,
+            );
+        }
+        draw(c, t);
+    };
+    let element: Element<C> = match animate {
+        Some(revision) => {
+            let frames = draw_in_steps()
+                .map(|t| {
+                    let mut c = Canvas::default();
+                    paint(&mut c, t);
+                    c
+                })
+                .collect();
+            let e = canvas_frames_once(frames, DRAW_FRAME_MS, revision);
+            match key {
+                Some(k) => e.key(format!("{k}-plot")),
+                None => e,
+            }
+        }
+        None => canvas(move |c| paint(c, 1.)),
+    };
+    element.width(w).height(h)
+}
+/// Labels at the left of a plot, each centred on its y.
+/// How wide the value axis must be for its labels (at least the usual 44).
+fn axis_width(labels: &[String]) -> f32 {
+    let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32;
+    (longest * 6.3 + 12.).clamp(AXIS, 120.)
+}
+fn y_axis<C>(labels: Vec<(f32, String)>, plot_h: f32, axis: f32) -> Element<C> {
+    let labels: Vec<Element<C>> = labels
+        .into_iter()
+        .map(|(y, label)| {
+            hstack![text(label)
+                .font_size(11.)
+                .color(ColorToken::Muted)
+                .no_wrap(true)]
+            .width(axis - 8.)
+            .justify(Justify::End)
+            .padding((y - 7.).clamp(0., (plot_h - 14.).max(0.)), Edge::Top)
+            .into()
+        })
+        .collect();
+    zstack(labels)
+        .width(axis)
+        .height(plot_h)
+        .flow(Flow::TopLeft)
+        .into()
+}
+/// The selected point's description above the plot, for touch screens where
+/// tooltips don't show; a hint when nothing is selected.
+fn readout<C>(line: Option<String>, axis: f32) -> Element<C> {
+    let t = match line {
+        Some(line) => text(line.replace('\n', " · "))
+            .font_size(12.)
+            .font_weight(600)
+            .color(ColorToken::BaseContent),
+        None => text("Tap the chart to read a value")
+            .font_size(12.)
+            .color(ColorToken::Muted),
+    };
+    hstack![t.no_wrap(true)]
+        .height(18.)
+        .padding(axis, Edge::Left)
+        .into()
+}
+/// Plot, axes, labels and optional readout and legend, stacked.
+#[allow(clippy::too_many_arguments)]
+fn assemble<C>(
+    width: f32,
+    plot: Element<C>,
+    plot_size: [f32; 2],
+    overlays: Vec<Element<C>>,
+    y_labels: Vec<(f32, String)>,
+    x_labels: Vec<(f32, String)>,
+    readout_line: Option<Option<String>>,
+    legend_names: Option<&[String]>,
+) -> Element<C> {
+    let [plot_w, plot_h] = plot_size;
+    let axis = (width - plot_w).max(0.);
+    let mut layers = vec![plot];
+    layers.extend(overlays);
+    let plot: Element<C> = zstack(layers)
+        .width(plot_w)
+        .height(plot_h)
+        .flow(Flow::TopLeft)
+        .into();
+    let mut parts = Vec::new();
+    if let Some(line) = readout_line {
+        parts.push(readout(line, axis));
+    }
+    parts.push(
+        hstack![y_axis(y_labels, plot_h, axis), plot]
+            .align(Align::Start)
+            .into(),
+    );
+    if !x_labels.is_empty() {
+        parts.push(x_label_row_at(x_labels, width, axis));
+    }
+    if let Some(names) = legend_names {
+        parts.push(legend(names));
+    }
+    vstack(parts).gap(6., Axis::Vertical).width(width).into()
+}
+/// Tick labels for `range` and the y mapping, inside a plot `plot_h` tall.
+fn value_axis(range: (f32, f32), plot_h: f32) -> impl Fn(f32) -> f32 + Copy {
+    move |v: f32| plot_h - (v - range.0) / (range.1 - range.0).max(f32::EPSILON) * plot_h
+}
+/// A polyline through `points`, cut at `x_max` (interpolating the last point).
+fn cut_polyline(points: &[[f32; 2]], x_max: f32) -> Vec<[f32; 2]> {
+    let mut out = Vec::new();
+    for (i, p) in points.iter().enumerate() {
+        if p[0] <= x_max {
+            out.push(*p);
+        } else {
+            if let Some(prev) = i.checked_sub(1).map(|j| points[j]) {
+                let t = (x_max - prev[0]) / (p[0] - prev[0]).max(f32::EPSILON);
+                out.push([x_max, prev[1] + (p[1] - prev[1]) * t]);
+            }
+            break;
+        }
+    }
+    out
+}
+/// A run split into pieces of at most 400 points that share their ends, so
+/// no path passes the 1,024-command limit however long the data.
+fn pieces(run: &[[f32; 2]]) -> Vec<&[[f32; 2]]> {
+    const MOST: usize = 400;
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start + 1 < run.len() {
+        let end = (start + MOST).min(run.len());
+        out.push(&run[start..end]);
+        start = end - 1;
+    }
+    out
+}
+fn through(points: &[[f32; 2]]) -> VectorPath {
+    let mut path = VectorPath::new().move_to(points[0][0], points[0][1]);
+    for p in &points[1..] {
+        path = path.line_to(p[0], p[1]);
+    }
+    path
+}
+
+// ── Line plot ───────────────────────────────────────────────────────────
+
+/// Lines over shared x positions, built for real-world readings: a missing
+/// value (`f32::NAN`) leaves a gap instead of a line to zero; dashed guides
+/// mark reference values; lines can glow, sit over a soft area and draw
+/// themselves in. With `.key(..)`, tapping (or hovering) reads a point, and
+/// `.readout(true)` writes it above the plot for touch screens.
+///
+/// ```
+/// use volt_ui_kit::ui::prelude::*;
+/// let resting = vec![58., 57., f32::NAN, 60., 59.];
+/// let _plot: Element<()> = line_plot([("Resting", resting)])
+///     .x_labels(["Mon", "Tue", "Wed", "Thu", "Fri"])
+///     .guide(60., "60")
+///     .area(true)
+///     .glow(true)
+///     .animate(1)
+///     .key("resting")
+///     .readout(true)
+///     .into();
+/// ```
+pub struct LinePlot<C> {
+    series: Vec<(String, Vec<f32>)>,
+    size: [f32; 2],
+    x_labels: Vec<String>,
+    range: Option<(f32, f32)>,
+    guides: Vec<(f32, String)>,
+    colors: Vec<String>,
+    legend: bool,
+    area: bool,
+    glow: bool,
+    points: bool,
+    readout: bool,
+    animate: Option<u64>,
+    format: Format,
+    interact: Interact<C>,
+}
+pub fn line_plot<C>(
+    series: impl IntoIterator<Item = (impl Into<String>, Vec<f32>)>,
+) -> LinePlot<C> {
+    LinePlot {
+        series: series.into_iter().map(|(n, v)| (n.into(), v)).collect(),
+        size: [480., 220.],
+        x_labels: Vec::new(),
+        range: None,
+        guides: Vec::new(),
+        colors: Vec::new(),
+        legend: true,
+        area: false,
+        glow: false,
+        points: true,
+        readout: false,
+        animate: None,
+        format: short_number,
+        interact: Interact::default(),
+    }
+}
+interactive!(LinePlot);
+impl<C> LinePlot<C> {
+    pub fn size(mut self, width: f32, height: f32) -> Self {
+        self.size = [width, height];
+        self
+    }
+    pub fn x_labels(mut self, labels: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.x_labels = labels.into_iter().map(Into::into).collect();
+        self
+    }
+    /// A fixed value range instead of one fitted to the data.
+    pub fn range(mut self, low: f32, high: f32) -> Self {
+        self.range = Some((low, high));
+        self
+    }
+    /// A dashed reference line at `value`, labelled at its right end.
+    pub fn guide(mut self, value: f32, label: impl Into<String>) -> Self {
+        self.guides.push((value, label.into()));
+        self
+    }
+    /// Series colours (hex or theme tokens) instead of the default palette.
+    pub fn colors(mut self, colors: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.colors = colors.into_iter().map(Into::into).collect();
+        self
+    }
+    pub fn legend(mut self, value: bool) -> Self {
+        self.legend = value;
+        self
+    }
+    /// A soft fill under each line, fading to transparent.
+    pub fn area(mut self, value: bool) -> Self {
+        self.area = value;
+        self
+    }
+    /// A glow under each line.
+    pub fn glow(mut self, value: bool) -> Self {
+        self.glow = value;
+        self
+    }
+    /// Dots on each value while they stay apart (default on).
+    pub fn points(mut self, value: bool) -> Self {
+        self.points = value;
+        self
+    }
+    /// Write the selected point above the plot (for touch screens).
+    pub fn readout(mut self, value: bool) -> Self {
+        self.readout = value;
+        self
+    }
+    /// Draw the lines in from the left, once per `revision`: pass a number
+    /// that changes when the data does.
+    pub fn animate(mut self, revision: u64) -> Self {
+        self.animate = Some(revision);
+        self
+    }
+    pub fn value_format(mut self, f: fn(f32) -> String) -> Self {
+        self.format = f;
+        self
+    }
+}
+impl<C: 'static> From<LinePlot<C>> for Element<C> {
+    fn from(a: LinePlot<C>) -> Self {
+        let n = a.series.iter().map(|(_, v)| v.len()).max().unwrap_or(0);
+        let finite: Vec<f32> = a
+            .series
+            .iter()
+            .flat_map(|(_, v)| v.iter().copied())
+            .chain(a.guides.iter().map(|(v, _)| *v))
+            .filter(|v| v.is_finite())
+            .collect();
+        let (ticks, range) = match a.range.filter(|(lo, hi)| lo.is_finite() && hi > lo) {
+            Some((lo, hi)) => {
+                let (ticks, _) = nice_ticks(lo, hi, 4);
+                (
+                    ticks.into_iter().filter(|t| *t >= lo && *t <= hi).collect(),
+                    (lo, hi),
+                )
+            }
+            None => {
+                let lo = finite.iter().copied().fold(f32::MAX, f32::min);
+                let hi = finite.iter().copied().fold(f32::MIN, f32::max);
+                if finite.is_empty() {
+                    nice_ticks(0., 1., 4)
+                } else {
+                    // A little room, so extreme points don't sit on the edges.
+                    let pad = (hi - lo).max(1.) * 0.06;
+                    nice_ticks(lo - pad, hi.max(lo + 1.) + pad, 4)
+                }
+            }
+        };
+        let names: Vec<String> = a.series.iter().map(|(n, _)| n.clone()).collect();
+        let show_legend = a.legend && a.series.len() > 1;
+        let interactive = a.interact.key.is_some();
+        let width = a.size[0];
+        let tick_labels: Vec<String> = ticks.iter().map(|t| (a.format)(*t)).collect();
+        let plot_w = (width - axis_width(&tick_labels)).max(10.);
+        let plot_h = (a.size[1]
+            - X_LABELS
+            - if show_legend { 26. } else { 0. }
+            - if a.readout && interactive { 24. } else { 0. })
+        .max(10.);
+        let to_y = value_axis(range, plot_h);
+        let x_at = move |i: usize| {
+            if n > 1 {
+                i as f32 * plot_w / (n - 1) as f32
+            } else {
+                plot_w / 2.
+            }
+        };
+        let colors: Vec<String> = (0..a.series.len())
+            .map(|i| {
+                a.colors
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| series_color(i).to_owned())
+            })
+            .collect();
+        // Runs of present values per series, in plot pixels.
+        let runs: Vec<Vec<Vec<[f32; 2]>>> = a
+            .series
+            .iter()
+            .map(|(_, v)| {
+                let mut runs = vec![Vec::new()];
+                for (i, value) in v.iter().enumerate() {
+                    if value.is_finite() {
+                        runs.last_mut().unwrap().push([x_at(i), to_y(*value)]);
+                    } else if !runs.last().unwrap().is_empty() {
+                        runs.push(Vec::new());
+                    }
+                }
+                runs.retain(|r| !r.is_empty());
+                runs
+            })
+            .collect();
+        let value = |s: usize, x: usize| a.series[s].1.get(x).copied().filter(|v| v.is_finite());
+        let tip = |x: usize| {
+            let mut tip = a
+                .x_labels
+                .get(x)
+                .cloned()
+                .unwrap_or_else(|| format!("#{}", x + 1));
+            for (s, name) in names.iter().enumerate() {
+                let v = value(s, x).map_or("no value".to_owned(), a.format);
+                tip.push_str(&format!("\n{name}: {v}"));
+            }
+            tip
+        };
+        let selected = a.interact.selected.filter(|i| *i < n);
+        let readout_line = (a.readout && interactive).then(|| selected.map(tip));
+        let overlay = a.interact.key.as_deref().filter(|_| n > 1).map(|key| {
+            let dx = plot_w / (n - 1) as f32;
+            let widths: Vec<f32> = (0..n)
+                .map(|i| if i == 0 || i == n - 1 { dx / 2. } else { dx })
+                .collect();
+            hit_columns(
+                key,
+                &widths,
+                plot_h,
+                (0..n).map(tip).collect(),
+                &a.interact.on_select,
+            )
+        });
+        let selected_points: Vec<(f32, Vec<(f32, String)>)> = selected
+            .map(|x| {
+                let ys = (0..a.series.len())
+                    .filter_map(|s| value(s, x).map(|v| (to_y(v), colors[s].clone())))
+                    .collect();
+                vec![(x_at(x), ys)]
+            })
+            .unwrap_or_default();
+        let guides: Vec<f32> = a.guides.iter().map(|(v, _)| to_y(*v)).collect();
+        let (area, glow, dots) = (
+            a.area,
+            a.glow,
+            a.points && n > 1 && plot_w / (n - 1).max(1) as f32 >= 6.,
+        );
+        let draw_colors = colors.clone();
+        let plot = plot_canvas(
+            [plot_w, plot_h],
+            ticks.iter().map(|t| to_y(*t)).collect(),
+            a.animate,
+            a.interact.key.as_deref(),
+            move |c, t| {
+                let reach = plot_w * t;
+                for y in &guides {
+                    c.stroke_with(
+                        VectorPath::new().move_to(0., *y).line_to(plot_w, *y),
+                        ColorToken::BaseContent.alpha(40),
+                        StrokeStyle::new(1.).dash([4., 4.]),
+                    );
+                }
+                // Later series first, so the first stays on top. Each series
+                // is one stroke and one area, its runs as subpaths, so gaps
+                // never multiply the canvas's paths.
+                let mut strokes = Vec::new();
+                for (s, series_runs) in runs.iter().enumerate().rev() {
+                    let color = &draw_colors[s];
+                    let (mut lines, mut fills) = (PathBatch::new(), PathBatch::new());
+                    let mut marks = PathBatch::new();
+                    for run in series_runs {
+                        let shown = if t >= 1. {
+                            run.clone()
+                        } else {
+                            cut_polyline(run, reach)
+                        };
+                        for piece in pieces(&shown) {
+                            lines.add(through(piece));
+                            let (first, last) = (piece[0], piece[piece.len() - 1]);
+                            fills.add(
+                                through(piece)
+                                    .line_to(last[0], plot_h)
+                                    .line_to(first[0], plot_h)
+                                    .close(),
+                            );
+                        }
+                        // A lone value between gaps still shows, as a dot.
+                        let lone = run.len() == 1 && shown.len() == 1;
+                        for p in shown.iter().filter(|p| (dots || lone) && run.contains(p)) {
+                            marks.add(VectorPath::circle(p[0], p[1], 2.5));
+                        }
+                    }
+                    if area {
+                        for fill in fills.0 {
+                            c.fill_gradient(
+                                fill,
+                                Gradient::linear(
+                                    180.,
+                                    [(0., faded(color, 28)), (1., faded(color, 0))],
+                                ),
+                            );
+                        }
+                    }
+                    strokes.push((color.clone(), lines, marks));
+                }
+                // Lines over every area, so no fill dims another series' line.
+                for (color, lines, marks) in strokes {
+                    for line in lines.0 {
+                        let style = StrokeStyle::new(2.).round();
+                        if glow {
+                            c.glow_stroke(line, &color, style, 1.);
+                        } else {
+                            c.stroke_with(line, color.clone(), style);
+                        }
+                    }
+                    marks.fill(c, color);
+                }
+                if t >= 1. {
+                    for (x, ys) in &selected_points {
+                        let px = x.round() + 0.5;
+                        c.stroke(
+                            VectorPath::new().move_to(px, 0.).line_to(px, plot_h),
+                            ColorToken::BaseContent.alpha(45),
+                            1.,
+                        );
+                        for (y, color) in ys {
+                            c.fill(VectorPath::circle(px, *y, 5.5), ColorToken::Base100);
+                            c.fill(VectorPath::circle(px, *y, 3.5), color.clone());
+                        }
+                    }
+                }
+            },
+        );
+        // Guide labels at the right end of their lines.
+        let guide_labels: Vec<Element<C>> = a
+            .guides
+            .iter()
+            .map(|(v, label)| {
+                hstack![text(label.clone())
+                    .font_size(10.)
+                    .color(ColorToken::Muted)
+                    .no_wrap(true)]
+                .width(plot_w)
+                .justify(Justify::End)
+                .padding(4., Edge::Right)
+                .padding(
+                    (to_y(*v) - 14.).clamp(0., (plot_h - 12.).max(0.)),
+                    Edge::Top,
+                )
+                .into()
+            })
+            .collect();
+        let mut overlays = Vec::new();
+        if !guide_labels.is_empty() {
+            overlays.push(
+                zstack(guide_labels)
+                    .width(plot_w)
+                    .height(plot_h)
+                    .flow(Flow::TopLeft)
+                    .into(),
+            );
+        }
+        overlays.extend(overlay);
+        assemble(
+            width,
+            plot,
+            [plot_w, plot_h],
+            overlays,
+            ticks.iter().map(|t| to_y(*t)).zip(tick_labels).collect(),
+            spread_labels(&a.x_labels, plot_w, false),
+            readout_line,
+            show_legend.then_some(names.as_slice()),
+        )
+    }
+}
+
+// ── Range chart ─────────────────────────────────────────────────────────
+
+/// One column of a range chart: lowest and highest, and a middle value
+/// (median, mean or close) shown as a dot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ValueRange {
+    pub low: f32,
+    pub high: f32,
+    pub mid: Option<f32>,
+}
+impl ValueRange {
+    pub fn new(low: f32, high: f32) -> Self {
+        Self {
+            low: low.min(high),
+            high: high.max(low),
+            mid: None,
+        }
+    }
+    pub fn mid(mut self, value: f32) -> Self {
+        self.mid = Some(value);
+        self
+    }
+    fn present(&self) -> bool {
+        self.low.is_finite() && self.high.is_finite()
+    }
+}
+/// Columns from lowest to highest with a dot for the middle: daily ranges of
+/// heart rate, temperature or prices without open/close. Ranges grow from
+/// their middle when `.animate(..)` is set.
+pub struct RangeChart<C> {
+    columns: Vec<ValueRange>,
+    size: [f32; 2],
+    x_labels: Vec<String>,
+    range: Option<(f32, f32)>,
+    color: String,
+    readout: bool,
+    animate: Option<u64>,
+    format: Format,
+    interact: Interact<C>,
+}
+pub fn range_chart<C>(columns: impl IntoIterator<Item = ValueRange>) -> RangeChart<C> {
+    RangeChart {
+        columns: columns.into_iter().collect(),
+        size: [480., 220.],
+        x_labels: Vec::new(),
+        range: None,
+        color: "@primary".into(),
+        readout: false,
+        animate: None,
+        format: short_number,
+        interact: Interact::default(),
+    }
+}
+interactive!(RangeChart);
+impl<C> RangeChart<C> {
+    pub fn size(mut self, width: f32, height: f32) -> Self {
+        self.size = [width, height];
+        self
+    }
+    pub fn x_labels(mut self, labels: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.x_labels = labels.into_iter().map(Into::into).collect();
+        self
+    }
+    pub fn range(mut self, low: f32, high: f32) -> Self {
+        self.range = Some((low, high));
+        self
+    }
+    pub fn color(mut self, color: impl Into<String>) -> Self {
+        self.color = color.into();
+        self
+    }
+    pub fn readout(mut self, value: bool) -> Self {
+        self.readout = value;
+        self
+    }
+    pub fn animate(mut self, revision: u64) -> Self {
+        self.animate = Some(revision);
+        self
+    }
+    pub fn value_format(mut self, f: fn(f32) -> String) -> Self {
+        self.format = f;
+        self
+    }
+}
+impl<C: 'static> From<RangeChart<C>> for Element<C> {
+    fn from(a: RangeChart<C>) -> Self {
+        let n = a.columns.len();
+        let present: Vec<&ValueRange> = a.columns.iter().filter(|c| c.present()).collect();
+        let (ticks, range) = match a.range.filter(|(lo, hi)| lo.is_finite() && hi > lo) {
+            Some((lo, hi)) => (
+                nice_ticks(lo, hi, 4)
+                    .0
+                    .into_iter()
+                    .filter(|t| *t >= lo && *t <= hi)
+                    .collect(),
+                (lo, hi),
+            ),
+            None if present.is_empty() => nice_ticks(0., 1., 4),
+            None => {
+                let lo = present.iter().map(|c| c.low).fold(f32::MAX, f32::min);
+                let hi = present.iter().map(|c| c.high).fold(f32::MIN, f32::max);
+                nice_ticks(lo, hi.max(lo + 1.), 4)
+            }
+        };
+        let interactive = a.interact.key.is_some();
+        let width = a.size[0];
+        let tick_labels: Vec<String> = ticks.iter().map(|t| (a.format)(*t)).collect();
+        let plot_w = (width - axis_width(&tick_labels)).max(10.);
+        let plot_h =
+            (a.size[1] - X_LABELS - if a.readout && interactive { 24. } else { 0. }).max(10.);
+        let to_y = value_axis(range, plot_h);
+        let slot = plot_w / n.max(1) as f32;
+        let bar = (slot * 0.42).clamp(3., 18.);
+        let format = a.format;
+        let tip = |i: usize| {
+            let c = a.columns[i];
+            let label = a
+                .x_labels
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("#{}", i + 1));
+            if !c.present() {
+                return format!("{label}\nno value");
+            }
+            let mut tip = format!("{label}\n{} to {}", format(c.low), format(c.high));
+            if let Some(m) = c.mid.filter(|m| m.is_finite()) {
+                tip.push_str(&format!(", middle {}", format(m)));
+            }
+            tip
+        };
+        let selected = a.interact.selected.filter(|i| *i < n);
+        let readout_line = (a.readout && interactive).then(|| selected.map(tip));
+        let overlay = a.interact.key.as_deref().filter(|_| n > 0).map(|key| {
+            hit_columns(
+                key,
+                &vec![slot; n],
+                plot_h,
+                (0..n).map(tip).collect(),
+                &a.interact.on_select,
+            )
+        });
+        let columns = a.columns.clone();
+        let color = a.color.clone();
+        let plot = plot_canvas(
+            [plot_w, plot_h],
+            ticks.iter().map(|t| to_y(*t)).collect(),
+            a.animate,
+            a.interact.key.as_deref(),
+            move |c, t| {
+                if let Some(i) = selected {
+                    c.fill(
+                        VectorPath::rounded_rectangle(i as f32 * slot, 0., slot, plot_h, 6.),
+                        ColorToken::BaseContent.alpha(7),
+                    );
+                }
+                // Capsules from low to high, rings and dots for the middles:
+                // one batch each (columns never overlap), the selected capsule
+                // apart, stronger.
+                let (mut bars, mut rings, mut dots) =
+                    (PathBatch::new(), PathBatch::new(), PathBatch::new());
+                let mut chosen = None;
+                for (i, col) in columns.iter().enumerate().filter(|(_, c)| c.present()) {
+                    let x = (i as f32 + 0.5) * slot;
+                    let mid = col
+                        .mid
+                        .filter(|m| m.is_finite())
+                        .unwrap_or((col.low + col.high) / 2.);
+                    let (top, bottom) = (
+                        to_y(mid + (col.high - mid) * t),
+                        to_y(mid + (col.low - mid) * t),
+                    );
+                    let capsule = VectorPath::rounded_rectangle(
+                        x - bar / 2.,
+                        top - 0.5,
+                        bar,
+                        (bottom - top).max(0.) + 1.,
+                        bar / 2.,
+                    );
+                    if selected == Some(i) {
+                        chosen = Some(capsule);
+                    } else {
+                        bars.add(capsule);
+                    }
+                    if let Some(m) = col.mid.filter(|m| m.is_finite()) {
+                        let r = (bar * 0.55).max(3.) * t;
+                        if r > 0. {
+                            rings.add(VectorPath::circle(x, to_y(m), r + 1.5));
+                            dots.add(VectorPath::circle(x, to_y(m), r));
+                        }
+                    }
+                }
+                bars.fill(c, faded(&color, 45));
+                if let Some(capsule) = chosen {
+                    c.fill(capsule, faded(&color, 80));
+                }
+                rings.fill(c, ColorToken::Base100);
+                dots.fill(c, color.clone());
+            },
+        );
+        assemble(
+            width,
+            plot,
+            [plot_w, plot_h],
+            overlay.into_iter().collect(),
+            ticks.iter().map(|t| to_y(*t)).zip(tick_labels).collect(),
+            spread_labels(&a.x_labels, plot_w, true),
+            readout_line,
+            None,
+        )
+    }
+}
+
+// ── Timeline ────────────────────────────────────────────────────────────
+
+/// One stretch of a state on a timeline: its lane and when it starts and
+/// ends, in the chart's own units (minutes, hours, seconds).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimelineSpan {
+    pub lane: usize,
+    pub start: f32,
+    pub end: f32,
+}
+/// States over time, one lane per state: sleep stages, a device's modes, a
+/// build pipeline's steps. Spans that follow each other are joined by thin
+/// connectors. It reveals from the left with `.animate(..)`.
+pub struct TimelineChart<C> {
+    lanes: Vec<(String, String)>,
+    spans: Vec<TimelineSpan>,
+    size: [f32; 2],
+    domain: Option<(f32, f32)>,
+    x_labels: Vec<String>,
+    connectors: bool,
+    readout: bool,
+    animate: Option<u64>,
+    format: Format,
+    interact: Interact<C>,
+}
+/// `lanes` are (name, colour) from the top; `spans` are (lane, start, end).
+pub fn timeline_chart<C>(
+    lanes: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    spans: impl IntoIterator<Item = (usize, f32, f32)>,
+) -> TimelineChart<C> {
+    TimelineChart {
+        lanes: lanes
+            .into_iter()
+            .map(|(n, c)| (n.into(), c.into()))
+            .collect(),
+        spans: spans
+            .into_iter()
+            .map(|(lane, start, end)| TimelineSpan {
+                lane,
+                start: start.min(end),
+                end: end.max(start),
+            })
+            .collect(),
+        size: [480., 180.],
+        domain: None,
+        x_labels: Vec::new(),
+        connectors: true,
+        readout: false,
+        animate: None,
+        format: short_number,
+        interact: Interact::default(),
+    }
+}
+interactive!(TimelineChart);
+impl<C> TimelineChart<C> {
+    pub fn size(mut self, width: f32, height: f32) -> Self {
+        self.size = [width, height];
+        self
+    }
+    /// The time span shown; defaults to the first start and last end.
+    pub fn domain(mut self, start: f32, end: f32) -> Self {
+        self.domain = Some((start, end));
+        self
+    }
+    /// Labels spread evenly from the domain's start to its end.
+    pub fn x_labels(mut self, labels: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.x_labels = labels.into_iter().map(Into::into).collect();
+        self
+    }
+    /// Thin lines joining spans that follow each other (default on).
+    pub fn connectors(mut self, value: bool) -> Self {
+        self.connectors = value;
+        self
+    }
+    pub fn readout(mut self, value: bool) -> Self {
+        self.readout = value;
+        self
+    }
+    pub fn animate(mut self, revision: u64) -> Self {
+        self.animate = Some(revision);
+        self
+    }
+    /// How a time in the chart's units reads in tooltips ("23:40", "2.5 h").
+    pub fn value_format(mut self, f: fn(f32) -> String) -> Self {
+        self.format = f;
+        self
+    }
+}
+impl<C: 'static> From<TimelineChart<C>> for Element<C> {
+    fn from(a: TimelineChart<C>) -> Self {
+        let lanes = a.lanes.len().max(1);
+        let spans: Vec<TimelineSpan> = a
+            .spans
+            .iter()
+            .copied()
+            .filter(|s| s.lane < a.lanes.len() && s.start.is_finite() && s.end.is_finite())
+            .collect();
+        let (d0, d1) = a
+            .domain
+            .filter(|(s, e)| s.is_finite() && e > s)
+            .unwrap_or_else(|| {
+                let s = spans.iter().map(|s| s.start).fold(f32::MAX, f32::min);
+                let e = spans.iter().map(|s| s.end).fold(f32::MIN, f32::max);
+                if spans.is_empty() || e <= s {
+                    (0., 1.)
+                } else {
+                    (s, e)
+                }
+            });
+        let interactive = a.interact.key.is_some();
+        let width = a.size[0];
+        let names: Vec<String> = a.lanes.iter().map(|(n, _)| n.clone()).collect();
+        let plot_w = (width - axis_width(&names)).max(10.);
+        let plot_h =
+            (a.size[1] - X_LABELS - if a.readout && interactive { 24. } else { 0. }).max(10.);
+        let lane_h = plot_h / lanes as f32;
+        let x_of = move |v: f32| (v - d0) / (d1 - d0) * plot_w;
+        let format = a.format;
+
+        let tip = |i: usize| {
+            let s = spans[i];
+            format!(
+                "{}\n{} to {}",
+                names[s.lane],
+                format(s.start),
+                format(s.end)
+            )
+        };
+        let selected = a.interact.selected.filter(|i| *i < spans.len());
+        let readout_line = (a.readout && interactive).then(|| selected.map(tip));
+        // Hit targets sit on their spans, in their lanes.
+        let overlay = a.interact.key.as_deref().map(|key| {
+            let targets: Vec<Element<C>> = spans
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let (x0, x1) = (
+                        x_of(s.start).clamp(0., plot_w),
+                        x_of(s.end).clamp(0., plot_w),
+                    );
+                    vstack![hit_target(
+                        key,
+                        i,
+                        [(x1 - x0).max(4.), lane_h],
+                        tip(i),
+                        a.interact.on_select.clone(),
+                    )]
+                    .padding(x0, Edge::Left)
+                    .padding(s.lane as f32 * lane_h, Edge::Top)
+                    .into()
+                })
+                .collect();
+            zstack(targets)
+                .key(format!("{key}-hits"))
+                .width(plot_w)
+                .height(plot_h)
+                .flow(Flow::TopLeft)
+                .into()
+        });
+        let colors: Vec<String> = a.lanes.iter().map(|(_, c)| c.clone()).collect();
+        let connectors = a.connectors;
+        let draw_spans = spans.clone();
+        let plot = plot_canvas(
+            [plot_w, plot_h],
+            (1..lanes).map(|i| i as f32 * lane_h).collect(),
+            a.animate,
+            a.interact.key.as_deref(),
+            move |c, t| {
+                let reach = plot_w * t;
+                let bar = (lane_h * 0.62).max(2.);
+                let centre = |lane: usize| (lane as f32 + 0.5) * lane_h;
+                if connectors {
+                    let mut joins = PathBatch::new();
+                    for pair in draw_spans.windows(2) {
+                        let (a, b) = (pair[0], pair[1]);
+                        let x = x_of(a.end).round() + 0.5;
+                        if a.lane != b.lane
+                            && (b.start - a.end).abs() <= (d1 - d0) * 1e-3
+                            && x <= reach
+                        {
+                            joins.add(
+                                VectorPath::new()
+                                    .move_to(x, centre(a.lane))
+                                    .line_to(x, centre(b.lane)),
+                            );
+                        }
+                    }
+                    joins.stroke(c, ColorToken::BaseContent.alpha(22), 1.);
+                }
+                // One batch per lane (spans in a lane never overlap), and the
+                // selected span on its own, at full strength.
+                for (lane, color) in colors.iter().enumerate() {
+                    let mut batch = PathBatch::new();
+                    let mut chosen = None;
+                    for (i, s) in draw_spans
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.lane == lane)
+                    {
+                        let x0 = x_of(s.start).clamp(0., plot_w);
+                        let x1 = x_of(s.end).clamp(0., plot_w).min(reach);
+                        if x1 <= x0 {
+                            continue;
+                        }
+                        let y = centre(lane) - bar / 2.;
+                        let shape = VectorPath::rounded_rectangle(
+                            x0,
+                            y,
+                            (x1 - x0).max(1.),
+                            bar,
+                            (bar * 0.3).min(4.),
+                        );
+                        if selected == Some(i) {
+                            chosen = Some(shape);
+                        } else {
+                            batch.add(shape);
+                        }
+                    }
+                    batch.fill(
+                        c,
+                        if selected.is_some() {
+                            faded(color, 45)
+                        } else {
+                            color.clone()
+                        },
+                    );
+                    if let Some(shape) = chosen {
+                        c.fill(shape, color.clone());
+                    }
+                }
+            },
+        );
+        let lane_labels: Vec<(f32, String)> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| ((i as f32 + 0.5) * lane_h, n.clone()))
+            .collect();
+        assemble(
+            width,
+            plot,
+            [plot_w, plot_h],
+            overlay.into_iter().collect(),
+            lane_labels,
+            spread_labels(&a.x_labels, plot_w, false),
+            readout_line,
+            None,
+        )
     }
 }

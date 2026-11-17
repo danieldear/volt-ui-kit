@@ -2174,11 +2174,71 @@
       ],
       [
         ".key(k) / .selected(i) / .on_select(f)",
-        "Area, candlestick, donut, stacked bars: tooltips, keyboard and click selection."
+        "Area, candlestick, donut, stacked bars, line plots, ranges and timelines: tooltips, keyboard and click selection."
+      ],
+      [
+        "line_plot(series)",
+        "Gaps for NaN, .guide(v, label), .area, .glow, .points, .range, .colors, .readout, .animate(revision)."
+      ],
+      [
+        "range_chart(columns)",
+        "ValueRange::new(low, high).mid(m) per column; .color, .range, .readout, .animate."
+      ],
+      [
+        "timeline_chart(lanes, spans)",
+        "(name, colour) lanes and (lane, start, end) spans; .domain, .connectors, .value_format, .readout, .animate."
+      ],
+      [
+        "VectorPath::arc / sector / rounded_rectangle / trimmed",
+        "Clockwise arcs and ring slices, capsules, and partial paths for draw-ins."
+      ],
+      [
+        "Canvas::stroke_with / fill_gradient / stroke_gradient / glow_stroke",
+        "StrokeStyle caps, joins and dashes; gradient paint over the path's bounds; soft halos."
+      ],
+      [
+        "canvas_frames_once(frames, ms, revision)",
+        "A frame sequence that plays once per revision and key, not on every visit."
       ]
     ],
     "group": "Components",
     "sections": [
+      {
+        "code": "line_plot([(\"Resting\", resting), (\"Asleep\", asleep)])   // NaN = no reading\n    .key(\"heart\").x_labels(weeks)\n    .guide(55., \"55 bpm\").area(true).glow(true)\n    .animate(app.data_revision)       // draws in once per revision\n    .readout(true)                    // tap to read, on touch screens too\n    .selected(app.week)\n    .on_select(|app: &mut App, i| app.week = Some(i))",
+        "height": 383,
+        "id": "chart-plot",
+        "image": "charts-chart-plot.png",
+        "note": "Built for real readings: a missing value leaves a gap instead of dropping to zero, dashed guides mark reference values, and lines can glow over a soft area. It draws in once per data revision (not on every visit), and .readout(true) writes the tapped point above the plot, for touch screens where tooltips don't show.",
+        "title": "Line plot",
+        "width": 1000
+      },
+      {
+        "code": "range_chart(days.iter().map(|d| ValueRange::new(d.low, d.high).mid(d.median)))\n    .key(\"pressure\").x_labels(labels).readout(true).animate(app.revision)",
+        "height": 300,
+        "id": "chart-range",
+        "image": "charts-chart-range.png",
+        "note": "Lowest to highest per column, with a dot for the middle value: daily blood pressure, temperature or prices without open and close. Ranges grow from their middle as they draw in.",
+        "title": "Range chart",
+        "width": 1000
+      },
+      {
+        "code": "timeline_chart(\n    [(\"Awake\", \"#F59E0B\"), (\"REM\", \"#A5B4FC\"), (\"Light\", \"#818CF8\"), (\"Deep\", \"#4F46E5\")],\n    spans,                            // (lane, start, end)\n)\n.domain(0., 480.).x_labels([\"23:00\", \"01:00\", \"03:00\", \"05:00\", \"07:00\"])\n.value_format(clock).readout(true).animate(app.revision)",
+        "height": 260,
+        "id": "chart-timeline",
+        "image": "charts-chart-timeline.png",
+        "note": "States over time, one lane each, joined where one follows another: sleep stages, a device's modes, a pipeline's steps. Times are in your own units; value_format says how they read.",
+        "title": "Timeline",
+        "width": 1000
+      },
+      {
+        "code": "c.stroke_with(VectorPath::arc(70., 70., 52., -120., 240.), ColorToken::Border,\n    StrokeStyle::new(12.).round());\nc.stroke_gradient(VectorPath::arc(70., 70., 52., -120., 240. * t),\n    Gradient::linear(90., [(0., \"#22D3EE\"), (1., \"#A78BFA\")]), StrokeStyle::new(12.).round());\nc.fill(VectorPath::sector(60., 70., 36., 20., 0., 112.), \"#F59E0B\");\nc.stroke_with(VectorPath::circle(60., 70., 46.), ColorToken::Muted,\n    StrokeStyle::new(2.).round().dash([0., 7.]));          // dots\nc.glow_stroke(wave, \"#4C9BFF\", StrokeStyle::new(2.5).round(), 1.);\nc.fill_gradient(VectorPath::rounded_rectangle(270., 30., 90., 80., 16.), gradient);\ncanvas_frames_once(frames, 24, app.revision)            // a draw-in per revision",
+        "height": 204,
+        "id": "chart-canvas",
+        "image": "charts-chart-canvas.png",
+        "note": "The canvas the plots are drawn on: arcs and ring slices (0° at 12 o'clock, clockwise), round caps and dashes, gradient fills and strokes, glows, and frames that play once per revision.",
+        "title": "Drawing your own",
+        "width": 1000
+      },
       {
         "code": "icicle_chart(nodes.clone()).key(\"folders\").size(560., 180.)\n    .on_select(|app: &mut App, key| app.selected_folder = key);\ntreemap_chart(nodes).key(\"space\").size(560., 180.);",
         "height": 472,
@@ -2377,11 +2437,11 @@
         "width": 1000
       },
       {
-        "code": "if app.reveal {\n    message.key(\"message\").transition(Transition::fade().duration_ms(260))\n}",
+        "code": "if app.reveal {\n    message.key(\"message\").transition(Transition::fade().duration_ms(260))\n}\n// Plays on first appearance only, and leaves without fading:\ncard.key(\"card\").transition(Transition::slide(0., 12.).once().enter_only())",
         "height": 200,
         "id": "fx-transition",
         "image": "effects-motion-fx-transition.png",
-        "note": "Keyed elements fade when they appear and leave; reduced motion settles instantly.",
+        "note": "Keyed elements fade when they appear and leave; reduced motion settles instantly. `.once()` plays an entrance only the first time its key appears (coming back to a page shows it in place) and `.enter_only()` skips the exit, so a page's cards don't fade out over the next page.",
         "title": "Transitions",
         "width": 1000
       }

@@ -338,6 +338,10 @@ fn shape_bounds(s: &Shape) -> Option<Rect> {
             path(&raster::native_path(p)?).bounding_box(),
             raster::stroke_extent(w.unwrap_or(0.)),
         ),
+        Shape::StyledPath(p, _, stroke) => pad(
+            path(&raster::native_path(p)?).bounding_box(),
+            raster::stroke_extent(stroke.as_ref().map_or(0., |s| s.width)),
+        ),
         Shape::Shadow(b, _, blur, spread, offset, _) => pad(
             rect([b[0] + offset[0], b[1] + offset[1], b[2], b[3]]),
             spread.max(0.) + blur * 1.5,
@@ -1215,6 +1219,41 @@ impl GpuSceneEncoder {
                     &corners(*b, *r)?,
                 );
             }
+            Shape::StyledPath(p, paint, stroke) => {
+                let Some(p) = raster::native_path(p) else {
+                    return Ok(());
+                };
+                let p = path(&p);
+                let stroke = match stroke {
+                    Some(style) if style.is_valid() => Some(kurbo_stroke(style)),
+                    Some(_) => return Ok(()),
+                    None => None,
+                };
+                match (paint, stroke) {
+                    (raster::PathPaint::Solid(c), Some(st)) => {
+                        self.scene
+                            .stroke(&st, Affine::IDENTITY, color(*c), None, &p)
+                    }
+                    (raster::PathPaint::Solid(c), None) => {
+                        self.scene
+                            .fill(Fill::EvenOdd, Affine::IDENTITY, color(*c), None, &p)
+                    }
+                    (raster::PathPaint::Gradient(g, stops), Some(st)) => self.scene.stroke(
+                        &st,
+                        Affine::IDENTITY,
+                        &gradient_brush(*g, stops),
+                        None,
+                        &p,
+                    ),
+                    (raster::PathPaint::Gradient(g, stops), None) => self.scene.fill(
+                        Fill::EvenOdd,
+                        Affine::IDENTITY,
+                        &gradient_brush(*g, stops),
+                        None,
+                        &p,
+                    ),
+                }
+            }
             _ => unreachable!("structural commands handled by encoder"),
         }
         Ok(())
@@ -1551,6 +1590,54 @@ impl GpuSceneEncoder {
         }
         Ok(())
     }
+}
+
+/// Vello's stroke for a styled one (caps, joins, dashes).
+fn kurbo_stroke(style: &crate::graphics::StrokeStyle) -> Stroke {
+    use crate::graphics::{LineCap, LineJoin};
+    use vello::kurbo::{Cap, Join};
+    let cap = match style.cap {
+        LineCap::Butt => Cap::Butt,
+        LineCap::Round => Cap::Round,
+        LineCap::Square => Cap::Square,
+    };
+    let join = match style.join {
+        LineJoin::Miter => Join::Miter,
+        LineJoin::Round => Join::Round,
+        LineJoin::Bevel => Join::Bevel,
+    };
+    let stroke = Stroke::new(f64::from(style.width))
+        .with_caps(cap)
+        .with_join(join);
+    if style.dash.is_empty() {
+        stroke
+    } else {
+        stroke.with_dashes(0., style.dash.iter().map(|d| f64::from(*d)))
+    }
+}
+/// A Vello gradient for resolved stops, ends pinned as CSS pads them.
+fn gradient_brush(
+    geometry: raster::GradientGeometry,
+    stops: &[(f32, [f32; 4])],
+) -> vello::peniko::Gradient {
+    let mut stops: Vec<(f32, Color)> = stops.iter().map(|(at, c)| (*at, color(*c))).collect();
+    if let Some(&(_, c)) = stops.first().filter(|s| s.0 > 0.) {
+        stops.insert(0, (0., c));
+    }
+    if let Some(&(_, c)) = stops.last().filter(|s| s.0 < 1.) {
+        stops.push((1., c));
+    }
+    match geometry {
+        raster::GradientGeometry::Linear { start, end } => vello::peniko::Gradient::new_linear(
+            (f64::from(start[0]), f64::from(start[1])),
+            (f64::from(end[0]), f64::from(end[1])),
+        ),
+        raster::GradientGeometry::Radial { centre, radius } => vello::peniko::Gradient::new_radial(
+            (f64::from(centre[0]), f64::from(centre[1])),
+            radius,
+        ),
+    }
+    .with_stops(stops.as_slice())
 }
 
 #[cfg(test)]

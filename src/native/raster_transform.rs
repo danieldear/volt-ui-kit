@@ -126,6 +126,23 @@ fn scaled_batch(batch: &PaintBatch<Shape, Glyph>, s: f32) -> PaintBatch<Shape, G
                     *w *= s;
                 }
             }
+            Shape::StyledPath(p, paint, stroke) => {
+                *p = std::mem::take(p).transformed([s, 0., 0., s, 0., 0.]);
+                if let Some(style) = stroke {
+                    *style = style.scaled(s);
+                }
+                match paint {
+                    PathPaint::Gradient(GradientGeometry::Linear { start, end }, _) => {
+                        scale_point(start);
+                        scale_point(end);
+                    }
+                    PathPaint::Gradient(GradientGeometry::Radial { centre, radius }, _) => {
+                        scale_point(centre);
+                        *radius *= s;
+                    }
+                    PathPaint::Solid(_) => {}
+                }
+            }
             Shape::Image(r, _, scale) => {
                 scale_bounds(r);
                 *scale *= s;

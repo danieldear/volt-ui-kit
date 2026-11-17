@@ -278,6 +278,35 @@ fn actual_gpu_readback_matches_software_shapes_text_images_clips_and_opacity() {
                     [0.5, 0.9, 0.8, 1.],
                     None,
                 ),
+                // Styled paths: a gradient ring slice, and a dashed round-capped arc.
+                Shape::StyledPath(
+                    VectorPath::sector(
+                        100. * scale,
+                        100. * scale,
+                        22. * scale,
+                        12. * scale,
+                        -90.,
+                        180.,
+                    ),
+                    super::raster::PathPaint::Gradient(
+                        super::raster::GradientGeometry::Linear {
+                            start: [78. * scale, 0.],
+                            end: [122. * scale, 0.],
+                        },
+                        vec![(0., [1., 0.3, 0.2, 1.]), (1., [0.2, 0.4, 1., 1.])],
+                    ),
+                    None,
+                ),
+                Shape::StyledPath(
+                    VectorPath::arc(100. * scale, 100. * scale, 26. * scale, 100., 140.),
+                    super::raster::PathPaint::Solid([0.9, 0.9, 0.2, 1.]),
+                    Some(
+                        crate::graphics::StrokeStyle::new(3.)
+                            .round()
+                            .dash([6., 5.])
+                            .scaled(scale),
+                    ),
+                ),
             ],
         };
         painter.ui_text_styled(

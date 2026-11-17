@@ -227,15 +227,43 @@ pub enum Motion {
 /// Animate a keyed subtree in and out: a fade, optionally sliding from an
 /// offset. Exiting nodes are paint-only, never interactive.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Transition(pub(crate) Animation, pub(crate) [f32; 2]);
+pub struct Transition(
+    pub(crate) Animation,
+    pub(crate) [f32; 2],
+    pub(crate) TransitionOptions,
+);
+/// When a transition plays (see [`Transition::enter_only`] and [`Transition::once`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TransitionOptions {
+    pub enter_only: bool,
+    pub once: bool,
+}
 impl Transition {
     pub fn fade() -> Self {
-        Self(Animation::linear(), [0.; 2])
+        Self(Animation::linear(), [0.; 2], TransitionOptions::default())
     }
     /// Fade in while sliding from (`x`, `y`) logical pixels to place; exit
     /// reverses it. `slide(0., 12.)` rises into view.
     pub fn slide(x: f32, y: f32) -> Self {
-        Self(Animation::ease_out().duration_ms(220), [x, y])
+        Self(
+            Animation::ease_out().duration_ms(220),
+            [x, y],
+            TransitionOptions::default(),
+        )
+    }
+    /// Play only the entrance: when the subtree is removed it goes at once,
+    /// instead of fading out over whatever replaces it (a page's cards as
+    /// the next page slides in).
+    pub fn enter_only(mut self) -> Self {
+        self.2.enter_only = true;
+        self
+    }
+    /// Play the entrance the first time this key appears; when it appears
+    /// again (back on a page you left), show it in place at once. A new
+    /// `transition_revision` plays it again.
+    pub fn once(mut self) -> Self {
+        self.2.once = true;
+        self
     }
     pub fn duration_ms(mut self, milliseconds: u64) -> Self {
         self.0.duration = milliseconds;

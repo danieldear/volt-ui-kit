@@ -68,6 +68,12 @@ pub struct State {
     pub dash_quarter: Option<usize>,
     /// Charts page: the selected column in the interactive demo.
     pub chart_pick: Option<usize>,
+    /// Charts page: selections in the line plot, range chart and timeline,
+    /// and the draw-in revision ("Draw in again" bumps it).
+    pub plot_pick: Option<usize>,
+    pub range_pick: Option<usize>,
+    pub span_pick: Option<usize>,
+    pub draw_in: u64,
     /// Rich text page: the last link target clicked.
     pub last_link: Option<String>,
 }
@@ -129,6 +135,10 @@ impl Default for State {
             dash_month: None,
             dash_quarter: None,
             chart_pick: None,
+            plot_pick: None,
+            range_pick: None,
+            span_pick: None,
+            draw_in: 1,
             last_link: None,
         }
     }
@@ -1373,6 +1383,71 @@ pub fn rich_text_doc(app: &App) -> Doc {
 
 // ----------------------------------------------------------------- Charts
 
+/// Minutes after 23:00 as a clock time, for the timeline demo.
+fn clock(minutes: f32) -> String {
+    let m = (23. * 60. + minutes) as u32 % (24 * 60);
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+fn flip(current: Option<usize>, i: usize) -> Option<usize> {
+    if current == Some(i) {
+        None
+    } else {
+        Some(i)
+    }
+}
+/// A gauge that sweeps in, a dashed ring, slices, a glowing stroke and a
+/// gradient card: the canvas features the plots are built from.
+fn canvas_demo(revision: u64) -> El<App> {
+    let sweep = Gradient::linear(90., [(0., "#22D3EE"), (1., "#A78BFA")]);
+    let gauge: Vec<Canvas> = (1..=28)
+        .map(|i| {
+            let t = 1. - (1. - i as f32 / 28.).powi(3);
+            let mut c = Canvas::default();
+            c.stroke_with(
+                VectorPath::arc(70., 70., 52., -120., 240.),
+                ColorToken::Border,
+                StrokeStyle::new(12.).round(),
+            );
+            c.stroke_gradient(
+                VectorPath::arc(70., 70., 52., -120., 240. * 0.72 * t),
+                sweep.clone(),
+                StrokeStyle::new(12.).round(),
+            );
+            c
+        })
+        .collect();
+    let shapes = canvas(|c| {
+        c.stroke_with(
+            VectorPath::circle(60., 70., 46.),
+            ColorToken::Muted,
+            StrokeStyle::new(2.).round().dash([0., 7.]),
+        );
+        for (i, color) in ["#F59E0B", "#10B981", "#6366F1"].iter().enumerate() {
+            c.fill(
+                VectorPath::sector(60., 70., 36., 20., i as f32 * 120. + 4., 112.),
+                *color,
+            );
+        }
+        let wave = (0..=24).fold(VectorPath::new().move_to(130., 90.), |p, i| {
+            let x = 130. + i as f32 * 5.;
+            p.line_to(x, 70. + (i as f32 * 0.6).sin() * 22.)
+        });
+        c.glow_stroke(wave, "#4C9BFF", StrokeStyle::new(2.5).round(), 1.);
+        c.fill_gradient(
+            VectorPath::rounded_rectangle(270., 30., 90., 80., 16.),
+            Gradient::linear(135., [(0., "#F472B6"), (1., "#6366F1")]),
+        );
+    });
+    hstack![
+        canvas_frames_once(gauge, 24, revision)
+            .key("canvas-gauge")
+            .width(140.)
+            .height(140.),
+        shapes.width(380.).height(140.),
+    ]
+    .gap(20., Axis::Horizontal)
+    .into()
+}
 pub fn charts_doc(app: &App) -> Doc {
     let s = &app.kit;
     let quarters = ["Q1", "Q2", "Q3", "Q4"];
@@ -1460,8 +1535,164 @@ pub fn charts_doc(app: &App) -> Doc {
         }),
     ]
     .gap(16., Axis::Vertical);
+    let weeks: Vec<String> = (1..=12).map(|w| format!("W{w}")).collect();
+    let plot = vstack![
+        line_plot([
+            (
+                "Resting",
+                vec![
+                    58.,
+                    57.,
+                    59.,
+                    f32::NAN,
+                    f32::NAN,
+                    61.,
+                    60.,
+                    59.,
+                    58.,
+                    57.,
+                    58.,
+                    56.
+                ]
+            ),
+            (
+                "Asleep",
+                vec![
+                    52.,
+                    51.,
+                    53.,
+                    52.,
+                    f32::NAN,
+                    54.,
+                    53.,
+                    52.,
+                    51.,
+                    50.,
+                    51.,
+                    50.
+                ]
+            ),
+        ])
+        .key("plot-demo")
+        .size(560., 270.)
+        .x_labels(weeks)
+        .guide(55., "55 bpm")
+        .area(true)
+        .glow(true)
+        .readout(true)
+        .animate(s.draw_in)
+        .value_format(|v| format!("{v:.0} bpm"))
+        .selected(s.plot_pick)
+        .on_select(|app: &mut App, i| app.kit.plot_pick = flip(app.kit.plot_pick, i)),
+        hstack![button("Draw in again")
+            .key("plot-replay")
+            .variant(ButtonVariant::Outline)
+            .on_click(|app: &mut App| app.kit.draw_in += 1)],
+    ]
+    .gap(10., Axis::Vertical);
+    let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let ranges = range_chart([
+        ValueRange::new(112., 128.).mid(121.),
+        ValueRange::new(110., 131.).mid(119.),
+        ValueRange::new(115., 126.).mid(120.),
+        ValueRange::new(f32::NAN, f32::NAN),
+        ValueRange::new(108., 124.).mid(117.),
+        ValueRange::new(111., 133.).mid(123.),
+        ValueRange::new(109., 127.).mid(118.),
+    ])
+    .key("range-demo")
+    .size(560., 230.)
+    .x_labels(days)
+    .readout(true)
+    .animate(s.draw_in)
+    .selected(s.range_pick)
+    .on_select(|app: &mut App, i| app.kit.range_pick = flip(app.kit.range_pick, i));
+    let stages = timeline_chart(
+        [
+            ("Awake", "#F59E0B"),
+            ("REM", "#A5B4FC"),
+            ("Light", "#818CF8"),
+            ("Deep", "#4F46E5"),
+        ],
+        [
+            (0, 0., 14.),
+            (2, 14., 40.),
+            (3, 40., 95.),
+            (2, 95., 120.),
+            (1, 120., 142.),
+            (2, 142., 170.),
+            (3, 170., 215.),
+            (2, 215., 250.),
+            (0, 250., 256.),
+            (2, 256., 290.),
+            (1, 290., 325.),
+            (2, 325., 370.),
+            (3, 370., 395.),
+            (2, 395., 430.),
+            (1, 430., 470.),
+            (0, 470., 480.),
+        ],
+    )
+    .key("timeline-demo")
+    .size(560., 190.)
+    .domain(0., 480.)
+    .x_labels(["23:00", "01:00", "03:00", "05:00", "07:00"])
+    .value_format(clock)
+    .readout(true)
+    .animate(s.draw_in)
+    .selected(s.span_pick)
+    .on_select(|app: &mut App, i| app.kit.span_pick = flip(app.kit.span_pick, i));
     Doc {
         sections: vec![
+            section(
+                "chart-plot",
+                "Line plot",
+                "Built for real readings: a missing value leaves a gap instead of dropping to zero, dashed guides mark reference values, and lines can glow over a soft area. It draws in once per data revision (not on every visit), and .readout(true) writes the tapped point above the plot, for touch screens where tooltips don't show.",
+                plot,
+                r#"line_plot([("Resting", resting), ("Asleep", asleep)])   // NaN = no reading
+    .key("heart").x_labels(weeks)
+    .guide(55., "55 bpm").area(true).glow(true)
+    .animate(app.data_revision)       // draws in once per revision
+    .readout(true)                    // tap to read, on touch screens too
+    .selected(app.week)
+    .on_select(|app: &mut App, i| app.week = Some(i))"#,
+            ),
+            section(
+                "chart-range",
+                "Range chart",
+                "Lowest to highest per column, with a dot for the middle value: daily blood pressure, temperature or prices without open and close. Ranges grow from their middle as they draw in.",
+                ranges,
+                r#"range_chart(days.iter().map(|d| ValueRange::new(d.low, d.high).mid(d.median)))
+    .key("pressure").x_labels(labels).readout(true).animate(app.revision)"#,
+            ),
+            section(
+                "chart-timeline",
+                "Timeline",
+                "States over time, one lane each, joined where one follows another: sleep stages, a device's modes, a pipeline's steps. Times are in your own units; value_format says how they read.",
+                stages,
+                r##"timeline_chart(
+    [("Awake", "#F59E0B"), ("REM", "#A5B4FC"), ("Light", "#818CF8"), ("Deep", "#4F46E5")],
+    spans,                            // (lane, start, end)
+)
+.domain(0., 480.).x_labels(["23:00", "01:00", "03:00", "05:00", "07:00"])
+.value_format(clock).readout(true).animate(app.revision)"##,
+            ),
+            section(
+                "chart-canvas",
+                "Drawing your own",
+                "The canvas the plots are drawn on: arcs and ring slices (0° at 12 o'clock, clockwise), round caps and dashes, gradient fills and strokes, glows, and frames that play once per revision.",
+                canvas_demo(s.draw_in),
+                r##"c.stroke_with(VectorPath::arc(70., 70., 52., -120., 240.), ColorToken::Border,
+    StrokeStyle::new(12.).round());
+c.stroke_gradient(VectorPath::arc(70., 70., 52., -120., 240. * t),
+    Gradient::linear(90., [(0., "#22D3EE"), (1., "#A78BFA")]), StrokeStyle::new(12.).round());
+c.fill(VectorPath::sector(60., 70., 36., 20., 0., 112.), "#F59E0B");
+c.stroke_with(VectorPath::circle(60., 70., 46.), ColorToken::Muted,
+    StrokeStyle::new(2.).round().dash([0., 7.]));          // dots
+c.glow_stroke(wave, "#4C9BFF", StrokeStyle::new(2.5).round(), 1.);
+c.fill_gradient(VectorPath::rounded_rectangle(270., 30., 90., 80., 16.), gradient);
+canvas_frames_once(frames, 24, app.revision)            // a draw-in per revision"##,
+            ),
             section("chart-hierarchy", "Hierarchy explorer", "Icicle depth bands and squarified treemap tiles. Inclusive values, exact tooltips and native keyboard/click activation.", hierarchy,
                 r#"icicle_chart(nodes.clone()).key("folders").size(560., 180.)
     .on_select(|app: &mut App, key| app.selected_folder = key);
@@ -1511,7 +1742,31 @@ treemap_chart(nodes).key("space").size(560., 180.);"#),
             ),
             (
                 ".key(k) / .selected(i) / .on_select(f)",
-                "Area, candlestick, donut, stacked bars: tooltips, keyboard and click selection.",
+                "Area, candlestick, donut, stacked bars, line plots, ranges and timelines: tooltips, keyboard and click selection.",
+            ),
+            (
+                "line_plot(series)",
+                "Gaps for NaN, .guide(v, label), .area, .glow, .points, .range, .colors, .readout, .animate(revision).",
+            ),
+            (
+                "range_chart(columns)",
+                "ValueRange::new(low, high).mid(m) per column; .color, .range, .readout, .animate.",
+            ),
+            (
+                "timeline_chart(lanes, spans)",
+                "(name, colour) lanes and (lane, start, end) spans; .domain, .connectors, .value_format, .readout, .animate.",
+            ),
+            (
+                "VectorPath::arc / sector / rounded_rectangle / trimmed",
+                "Clockwise arcs and ring slices, capsules, and partial paths for draw-ins.",
+            ),
+            (
+                "Canvas::stroke_with / fill_gradient / stroke_gradient / glow_stroke",
+                "StrokeStyle caps, joins and dashes; gradient paint over the path's bounds; soft halos.",
+            ),
+            (
+                "canvas_frames_once(frames, ms, revision)",
+                "A frame sequence that plays once per revision and key, not on every visit.",
             ),
         ],
     }
