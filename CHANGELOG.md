@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Display text or a label over 8 KiB no longer fails `build()` and loses the
+  window. The Rust builder shortens it on a character boundary, ends it with
+  `…`, keeps the text spans that still fit and warns once per run. Editable
+  text is never shortened and keeps its checks; JSON documents stay strict.
 - Make boxed page-navigation ownership explicit during state mapping and add
   regression coverage for owned titles, multiple bar buttons and both Volt
   and native-host activation without mutating sibling state.
