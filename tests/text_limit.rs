@@ -11,7 +11,10 @@ fn long_display_text_is_shortened_instead_of_failing_the_tree() {
     ]
     .key("root")
     .into();
-    let (doc, _) = ui.build().expect("long text no longer fails the tree").into_parts();
+    let (doc, _) = ui
+        .build()
+        .expect("long text no longer fails the tree")
+        .into_parts();
     let shown = format!("{doc:?}");
     assert!(!shown.contains(&long), "the full text was kept");
     assert!(shown.contains("é…"), "the cut is marked with an ellipsis");
