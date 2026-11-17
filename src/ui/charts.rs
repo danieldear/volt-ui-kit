@@ -1184,8 +1184,9 @@ fn draw_in_steps() -> impl Iterator<Item = f32> {
     })
 }
 /// A plot's canvas: horizontal gridlines at `grid` (y pixels), then `draw` at
-/// progress `t`. With `animate`, the draw-in plays once per revision
-/// (`canvas_frames`), and reduced motion shows the last frame at once.
+/// progress `t`. With `animate`, the draw-in plays once per revision and key
+/// (`canvas_frames_once`): returning to a chart with the same data doesn't
+/// replay it. Reduced motion shows the last frame at once.
 fn plot_canvas<C>(
     size: [f32; 2],
     grid: Vec<f32>,
@@ -1214,7 +1215,7 @@ fn plot_canvas<C>(
                     c
                 })
                 .collect();
-            let e = canvas_frames(frames, DRAW_FRAME_MS, revision);
+            let e = canvas_frames_once(frames, DRAW_FRAME_MS, revision);
             match key {
                 Some(k) => e.key(format!("{k}-plot")),
                 None => e,

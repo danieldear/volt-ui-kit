@@ -145,6 +145,19 @@ pub(crate) struct Motion {
     pub exits: Vec<Exit>,
     /// Frame sequences by element id: revision, start and length.
     frames: BTreeMap<String, (u64, Duration, Duration)>,
+    /// `once` entrances that have played, by id: their transition revision.
+    /// Kept after the element leaves, so coming back doesn't replay it.
+    entered: BTreeMap<String, u64>,
+    /// `once` frame sequences that have played, by id: their revision.
+    played: BTreeMap<String, u64>,
+}
+/// Most ids remembered for `once` entrances and frame sequences.
+const ONCE_MEMORY: usize = 4096;
+fn remember(map: &mut BTreeMap<String, u64>, id: &str, revision: u64) {
+    if map.len() >= ONCE_MEMORY && !map.contains_key(id) {
+        map.clear();
+    }
+    map.insert(id.to_owned(), revision);
 }
 impl Motion {
     pub fn node_matrix(
@@ -281,15 +294,23 @@ impl Motion {
             let fresh = self.seen.get(&b.id) != Some(&(b.kind, b.effects.transition_revision));
             if (fresh || restoring.contains_key(&b.id)) && !self.reduced {
                 if let Some(transition) = b.effects.transition {
-                    self.mounts.insert(
-                        b.id.clone(),
-                        Fade {
-                            start: self.now,
-                            animation: transition.0,
-                            from: restoring.get(&b.id).copied().unwrap_or(0.),
-                            slide: transition.1,
-                        },
-                    );
+                    let again = transition.2.once
+                        && !restoring.contains_key(&b.id)
+                        && self.entered.get(&b.id) == Some(&b.effects.transition_revision);
+                    if !again {
+                        self.mounts.insert(
+                            b.id.clone(),
+                            Fade {
+                                start: self.now,
+                                animation: transition.0,
+                                from: restoring.get(&b.id).copied().unwrap_or(0.),
+                                slide: transition.1,
+                            },
+                        );
+                    }
+                    if transition.2.once {
+                        remember(&mut self.entered, &b.id, b.effects.transition_revision);
+                    }
                 }
             }
         }
@@ -324,12 +345,19 @@ impl Motion {
                 } else {
                     f.duration()
                 };
-                let entry = self
-                    .frames
-                    .entry(b.id.clone())
-                    .or_insert((f.revision, now, length));
+                // A `once` sequence back with a revision it already played
+                // starts finished: its last frame, no replay.
+                let replay = f.once && self.played.get(&b.id) == Some(&f.revision);
+                let entry = self.frames.entry(b.id.clone()).or_insert((
+                    f.revision,
+                    now,
+                    if replay { Duration::ZERO } else { length },
+                ));
                 if entry.0 != f.revision {
                     *entry = (f.revision, now, length);
+                }
+                if f.once {
+                    remember(&mut self.played, &b.id, f.revision);
                 }
             }
         }
@@ -365,7 +393,7 @@ impl Motion {
             while i < old.len() {
                 let b = &old[i];
                 if !next.contains(&b.id) {
-                    if let Some(t) = b.effects.transition {
+                    if let Some(t) = b.effects.transition.filter(|t| !t.2.enter_only) {
                         let end = (i + 1..old.len())
                             .find(|&j| old[j].depth <= b.depth)
                             .unwrap_or(old.len());

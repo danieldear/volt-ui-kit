@@ -776,6 +776,9 @@ pub struct CanvasFrames {
     pub frames: std::sync::Arc<[Canvas]>,
     pub frame_ms: u32,
     pub revision: u64,
+    /// Play each revision once per key: coming back to it (after navigating
+    /// away) shows the last frame at once (`ui::canvas_frames_once`).
+    pub once: bool,
 }
 impl CanvasFrames {
     /// How long the sequence plays.

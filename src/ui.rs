@@ -1285,6 +1285,16 @@ pub fn canvas<C>(draw: impl FnOnce(&mut Canvas)) -> Element<C> {
 /// unrelated recompositions don't replay it. Reduced motion shows the last
 /// frame at once. Give it a stable `.key(...)`.
 pub fn canvas_frames<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64) -> Element<C> {
+    frames_element(frames, frame_ms, revision, false)
+}
+/// Like [`canvas_frames`], but each revision plays once per key: a canvas
+/// that comes back (you navigate away and return) with a revision it has
+/// already played shows its last frame at once. For draw-ins that should
+/// greet new data, not every visit.
+pub fn canvas_frames_once<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64) -> Element<C> {
+    frames_element(frames, frame_ms, revision, true)
+}
+fn frames_element<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64, once: bool) -> Element<C> {
     let mut element = Element::new(Kind::Canvas);
     element.node.surface.canvas = frames.last().cloned().unwrap_or_default();
     if frames.len() > 1 {
@@ -1292,6 +1302,7 @@ pub fn canvas_frames<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64) -> El
             frames: frames.into(),
             frame_ms: frame_ms.clamp(8, 1000),
             revision,
+            once,
         });
     }
     element
@@ -1899,26 +1910,26 @@ pub mod prelude {
         timeline_chart, Candle, ValueRange,
     };
     pub use super::{
-        badge, button, button_bar, canvas, canvas_frames, checkbox, column, context_menu,
-        data_item, dialog, divider, grid, hstack, lazy_list, loading, mask_difference,
-        mask_exclude, mask_intersection, mask_union, menu, menu_item, menu_separator, menu_submenu,
-        navigation, navigation_item, panel, popover, progress, progress_indeterminate,
-        range_slider, responsive, row, segmented_control, select, select_item, separator, slider,
-        spacer, speed_dial, spinner, split, stack, tab, tab_bar, tab_item, table, table_column,
-        table_row, tabs, text, text_area, text_field, toggle, toolbar, tooltip, tree_node,
-        tree_view, virtual_list, vstack, window_controls, window_controls_with_style,
-        window_header, zstack, Align, Ambient, Animation, Axes, Axis, BackgroundImage, BlendMode,
-        BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas, Clip, ColorToken, ContextMenu,
-        ControlSize, Corner, CornerSet, Corners, Cursor, DataItem, DialStyle, Dialog, Direction,
-        Easing, Edge, Edges, Element, Flow, FontStyle, Glow, Gradient, GridColumns, Image,
-        ImageFit, ImagePosition, Interaction, Justify, LazyList, LineCap, LineJoin, MaskMode, Menu,
-        MenuItem, Motion, Navigation, NavigationItem, NavigationPlacement, Palette, Popover,
-        Progress, Responsive, Rounding, Scroll, Scrollbars, Select, SelectItem, SelectionControl,
-        Shadow, Sides, Slider, SortDirection, SpeedDial, SplitHandle, SplitPane, Spring,
-        StrokeStyle, Tab, TabItem, TabPlacement, TabVariant, Table, TableColumn, TableRow, Tabs,
-        TextAlign, TextInput, ThemeMode, Tone, Toolbar, Tooltip, Transition, TreeNode, TreeView,
-        UiTheme, VectorPath, VirtualList, VisualStyle, WindowAction, WindowControlStyle,
-        WindowControlsState,
+        badge, button, button_bar, canvas, canvas_frames, canvas_frames_once, checkbox, column,
+        context_menu, data_item, dialog, divider, grid, hstack, lazy_list, loading,
+        mask_difference, mask_exclude, mask_intersection, mask_union, menu, menu_item,
+        menu_separator, menu_submenu, navigation, navigation_item, panel, popover, progress,
+        progress_indeterminate, range_slider, responsive, row, segmented_control, select,
+        select_item, separator, slider, spacer, speed_dial, spinner, split, stack, tab, tab_bar,
+        tab_item, table, table_column, table_row, tabs, text, text_area, text_field, toggle,
+        toolbar, tooltip, tree_node, tree_view, virtual_list, vstack, window_controls,
+        window_controls_with_style, window_header, zstack, Align, Ambient, Animation, Axes, Axis,
+        BackgroundImage, BlendMode, BorderStyle, Breakpoint, ButtonBar, ButtonVariant, Canvas,
+        Clip, ColorToken, ContextMenu, ControlSize, Corner, CornerSet, Corners, Cursor, DataItem,
+        DialStyle, Dialog, Direction, Easing, Edge, Edges, Element, Flow, FontStyle, Glow,
+        Gradient, GridColumns, Image, ImageFit, ImagePosition, Interaction, Justify, LazyList,
+        LineCap, LineJoin, MaskMode, Menu, MenuItem, Motion, Navigation, NavigationItem,
+        NavigationPlacement, Palette, Popover, Progress, Responsive, Rounding, Scroll, Scrollbars,
+        Select, SelectItem, SelectionControl, Shadow, Sides, Slider, SortDirection, SpeedDial,
+        SplitHandle, SplitPane, Spring, StrokeStyle, Tab, TabItem, TabPlacement, TabVariant, Table,
+        TableColumn, TableRow, Tabs, TextAlign, TextInput, ThemeMode, Tone, Toolbar, Tooltip,
+        Transition, TreeNode, TreeView, UiTheme, VectorPath, VirtualList, VisualStyle,
+        WindowAction, WindowControlStyle, WindowControlsState,
     };
     pub use super::{
         calendar, date_picker, date_range_picker, time_picker, CalendarDate, DatePickerState,
