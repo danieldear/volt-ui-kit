@@ -213,11 +213,11 @@ fn plots_stay_within_the_canvas_limits_and_draw_in_as_frames() {
 }
 
 #[test]
-fn trimmed_first_frames_and_empty_paths_are_skipped_not_rejected() {
+fn trimmed_first_frames_are_skipped_not_rejected() {
     let mut c = Canvas::default();
     let line = VectorPath::new().move_to(0., 0.).line_to(10., 0.);
     c.stroke_with(line.trimmed(0.), "#ffffff", StrokeStyle::new(2.).round());
-    c.stroke(VectorPath::new(), "#ffffff", 1.);
+    c.fill(VectorPath::new().move_to(5., 5.), "#ffffff");
     assert!(c.paths.is_empty());
     let page: Element<()> = canvas(move |x| *x = c).width(10.).height(10.);
     assert!(page.build().is_ok());

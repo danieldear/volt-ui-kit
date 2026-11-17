@@ -443,8 +443,8 @@ pub use document::{
 };
 pub use responsive::{responsive, Breakpoint, Direction, Responsive};
 pub use runtime::{
-    ButtonState, DocumentPainter, InputOutcome, LayoutBox, PaintBatch, Runtime, SelectionKey,
-    TextMetrics, TextRun, TextStyle,
+    ButtonState, DocumentPainter, InputOutcome, LayoutBox, PaintBatch, ResolvedGradient, Runtime,
+    SelectionKey, TextMetrics, TextRun, TextStyle,
 };
 
 #[cfg(feature = "rust-ui")]

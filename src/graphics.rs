@@ -177,7 +177,7 @@ impl VectorPath {
     /// shorter side (a capsule).
     pub fn rounded_rectangle(x: f32, y: f32, w: f32, h: f32, radius: f32) -> Self {
         let r = radius.max(0.).min(w * 0.5).min(h * 0.5);
-        if !(r > 0.) {
+        if r <= 0. {
             return Self::rectangle(x, y, w, h);
         }
         let k = 0.552_284_8 * r;
@@ -674,6 +674,7 @@ pub struct PathStyle {
     /// Paint with this gradient instead of the colour. It is laid over the
     /// path's bounds as a CSS gradient is over a box: `Gradient::linear(90., ..)`
     /// runs from the path's left edge to its right.
+    #[cfg(feature = "declarative")]
     pub gradient: Option<crate::declarative::Gradient>,
     /// Stroke with these caps, joins and dashes instead of a plain width.
     pub stroke: Option<StrokeStyle>,
@@ -816,12 +817,13 @@ impl Canvas {
             color: color.into(),
             stroke: Some(style.width),
             style: Some(Box::new(PathStyle {
-                gradient: None,
                 stroke: Some(style),
+                ..PathStyle::default()
             })),
         });
     }
     /// Fill with a gradient laid over the path's bounds.
+    #[cfg(feature = "declarative")]
     pub fn fill_gradient(&mut self, path: VectorPath, gradient: crate::declarative::Gradient) {
         let color = gradient.first_color();
         self.push(DrawPath {
@@ -836,6 +838,7 @@ impl Canvas {
     }
     /// Stroke with a gradient laid over the path's bounds: a line that
     /// shades from one colour to another along its run.
+    #[cfg(feature = "declarative")]
     pub fn stroke_gradient(
         &mut self,
         path: VectorPath,
@@ -853,16 +856,17 @@ impl Canvas {
             })),
         });
     }
-    /// Adds a path unless it draws nothing: an empty path, or one that only
-    /// moves (a draw-in's first frame), is skipped rather than rejected.
+    /// Adds a path, except one that only moves (a draw-in's first frame,
+    /// `trimmed(0.)`), which draws nothing and is skipped rather than
+    /// rejected. An empty path is still an error, as before.
     fn push(&mut self, path: DrawPath) {
-        let draws = path.path.commands.iter().any(|c| {
-            matches!(
-                c,
-                PathCommand::Line(_) | PathCommand::Quad(..) | PathCommand::Cubic(..)
-            )
-        });
-        if draws {
+        let moves_only = !path.path.commands.is_empty()
+            && path
+                .path
+                .commands
+                .iter()
+                .all(|c| matches!(c, PathCommand::Move(_)));
+        if !moves_only {
             self.paths.push(path);
         }
     }

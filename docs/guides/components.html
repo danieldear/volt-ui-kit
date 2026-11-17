@@ -492,6 +492,46 @@ rule with dots, a popped-out donut slice, an emphasised column);
 <li><code>Candle::new(open, high, low, close).volume(v)</code> builds candlestick data;
 <code>.value_format(f)</code> formats tooltip and axis values.</li>
 </ul>
+<h3 id="readings-ranges-and-timelines">Readings, ranges and timelines</h3>
+<p><code>line_plot</code>, <code>range_chart</code> and <code>timeline_chart</code> take the same <code>.key</code>,
+<code>.selected</code> and <code>.on_select</code>, and add what measured data needs:</p>
+<div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
+#[derive(Default)]
+struct App { day: Option&lt;usize&gt;, revision: u64 }
+fn heart(app: &amp;App) -&gt; Element&lt;App&gt; {
+    let resting = vec![58., 57., f32::NAN, 60., 59.]; // NaN: no reading that day
+    vstack![
+        line_plot([(&quot;Resting&quot;, resting)])
+            .key(&quot;resting&quot;)
+            .x_labels([&quot;Mon&quot;, &quot;Tue&quot;, &quot;Wed&quot;, &quot;Thu&quot;, &quot;Fri&quot;])
+            .guide(55., &quot;55 bpm&quot;)
+            .area(true)
+            .glow(true)
+            .readout(true)
+            .animate(app.revision)
+            .selected(app.day)
+            .on_select(|app: &amp;mut App, i| app.day = Some(i)),
+        range_chart([ValueRange::new(112., 128.).mid(121.), ValueRange::new(110., 131.)])
+            .x_labels([&quot;Mon&quot;, &quot;Tue&quot;]),
+        timeline_chart(
+            [(&quot;Awake&quot;, &quot;#F59E0B&quot;), (&quot;Asleep&quot;, &quot;#6366F1&quot;)],
+            [(0, 0., 20.), (1, 20., 400.)],
+        ),
+    ]
+    .into()
+}
+heart(&amp;App::default()).build()?;</code></pre></div><ul>
+<li>A missing value (<code>f32::NAN</code>) leaves a gap instead of a line to zero; a lone
+value between gaps shows as a dot.</li>
+<li><code>.readout(true)</code> writes the selected point above the plot, for touch screens
+where tooltips don&#39;t show.</li>
+<li><code>.animate(revision)</code> draws the chart in once per revision and key: coming
+back to a page doesn&#39;t replay it, and reduced motion shows it finished.</li>
+<li>The canvas underneath is yours too: <code>VectorPath::arc</code>, <code>::sector</code>,
+<code>::rounded_rectangle</code> and <code>::trimmed</code>; <code>StrokeStyle</code> caps, joins and dashes;
+<code>Canvas::fill_gradient</code>, <code>::stroke_gradient</code> and <code>::glow_stroke</code>; and
+<code>canvas_frames_once</code> for draw-ins.</li>
+</ul>
 <h2 id="icons">Icons</h2>
 <div class="reference-code"><div>rust<span>Source</span></div><pre tabindex="0" role="region" aria-label="rust"><code>use volt_ui_kit::ui::prelude::*;
 let logo = SvgIcon::parse(
@@ -586,4 +626,4 @@ targets stay where they were. Use <code>.transform(..)</code>, <code>.layout_ani
 <code>.drag_motion(..)</code> when input must follow the animated content. Text morphing
 is a shaped-label crossfade, not arbitrary font-outline deformation.</li>
 </ul>
-</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#runnable-recipes">Runnable recipes</a><a href="#buttons-and-actions">Buttons and actions</a><a href="#floating-actions-and-bottom-sheets">Floating actions and bottom sheets</a><a href="#radial-instruments">Radial instruments</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#typed-navigation-and-web-links">Typed navigation and web links</a><a href="#navigation-bars">Navigation bars</a><a href="#motion-and-effects">Motion and effects</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>
+</article><div class="guide-source-link"><a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/components.md">Edit this guide on GitHub ↗</a></div><footer class="reference-footer">Built with Rust. Documented with the source.<a href="https://github.com/danieldear/volt-ui-kit/blob/main/docs/third-party.md">Licenses &amp; credits</a></footer></main><aside class="reference-toc" aria-label="On this page"><p>On this page</p><a href="#runnable-recipes">Runnable recipes</a><a href="#buttons-and-actions">Buttons and actions</a><a href="#floating-actions-and-bottom-sheets">Floating actions and bottom sheets</a><a href="#radial-instruments">Radial instruments</a><a href="#rich-text">Rich text</a><a href="#navigation-and-tabs">Navigation and tabs</a><a href="#typed-navigation-and-web-links">Typed navigation and web links</a><a href="#navigation-bars">Navigation bars</a><a href="#motion-and-effects">Motion and effects</a><a href="#customizing-component-spacing">Customizing component spacing</a><a href="#fields-value-controls-and-dialogs">Fields, value controls and dialogs</a><a href="#forms">Forms</a><a href="#menus-and-overlays">Menus and overlays</a><a href="#large-lists">Large lists</a><a href="#tables-trees-and-split-panes">Tables, trees and split panes</a><a href="#progress-and-loading">Progress and loading</a><a href="#display">Display</a><a href="#charts">Charts</a><a href="#readings-ranges-and-timelines">Readings, ranges and timelines</a><a href="#icons">Icons</a><a href="#hierarchy-charts">Hierarchy charts</a><a href="#known-limits">Known limits</a><div class="toc-note">Prose stays static. The Catalog declarations render live in WASM. Native-only OS services require the native app.</div></aside></div></body></html>

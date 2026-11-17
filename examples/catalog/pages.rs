@@ -2361,23 +2361,48 @@ fn effects_doc(app: &App) -> Doc {
         .key("fx-toggle")
         .variant(ButtonVariant::Outline)
         .on_click(|app: &mut App| app.reveal = !app.reveal),
-        if app.reveal {
-            El::from(
-                hstack![
-                    icon(Icon::Spark, 16., ColorToken::Primary),
-                    text("Fades in and out with a keyed transition.")
-                ]
-                .key("fx-message")
-                .gap(8., Axis::Horizontal)
-                .align(Align::Center)
-                .padding(12., Edge::All)
-                .background(ColorToken::Primary.alpha(10))
-                .rounded(10.)
-                .transition(Transition::fade().duration_ms(260)),
-            )
-        } else {
-            spacer().height(44.).flex(0.).into()
-        },
+        hstack![
+            if app.reveal {
+                El::from(
+                    hstack![
+                        icon(Icon::Spark, 16., ColorToken::Primary),
+                        text("Fades in and out with a keyed transition.")
+                    ]
+                    .key("fx-message")
+                    .gap(8., Axis::Horizontal)
+                    .align(Align::Center)
+                    .padding(12., Edge::All)
+                    .background(ColorToken::Primary.alpha(10))
+                    .rounded(10.)
+                    .transition(Transition::fade().duration_ms(260)),
+                )
+            } else {
+                spacer().height(44.).flex(0.).into()
+            },
+            if app.reveal {
+                El::from(
+                    hstack![
+                        icon(Icon::Spark, 16., ColorToken::Primary),
+                        text("Slides in once; leaves at once.")
+                    ]
+                    .key("fx-once")
+                    .gap(8., Axis::Horizontal)
+                    .align(Align::Center)
+                    .padding(12., Edge::All)
+                    .background(ColorToken::Primary.alpha(6))
+                    .rounded(10.)
+                    .transition(
+                        Transition::slide(0., 12.)
+                            .duration_ms(320)
+                            .once()
+                            .enter_only(),
+                    ),
+                )
+            } else {
+                spacer().height(44.).flex(0.).into()
+            },
+        ]
+        .gap(12., Axis::Horizontal),
     ]
     .gap(12., Axis::Vertical);
     Doc {
@@ -2409,11 +2434,13 @@ fn effects_doc(app: &App) -> Doc {
             section(
                 "fx-transition",
                 "Transitions",
-                "Keyed elements fade when they appear and leave; reduced motion settles instantly.",
+                "Keyed elements fade when they appear and leave; reduced motion settles instantly. `.once()` plays an entrance only the first time its key appears (coming back to a page shows it in place) and `.enter_only()` skips the exit, so a page's cards don't fade out over the next page.",
                 reveal,
                 r#"if app.reveal {
     message.key("message").transition(Transition::fade().duration_ms(260))
-}"#,
+}
+// Plays on first appearance only, and leaves without fading:
+card.key("card").transition(Transition::slide(0., 12.).once().enter_only())"#,
             ),
         ],
         api: vec![

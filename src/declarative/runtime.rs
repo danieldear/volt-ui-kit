@@ -134,6 +134,8 @@ pub trait TextMetrics {
         vec![]
     }
 }
+/// A gradient and its stops resolved to colours, for painting a canvas path.
+pub type ResolvedGradient<'a> = (&'a super::extras::Gradient, &'a [(f32, [f32; 4])]);
 /// Paint adapters for the new runtime provide the same measurement and draw rules.
 pub trait DocumentPainter: Painter + TextMetrics {
     fn ui_text(
@@ -208,7 +210,7 @@ pub trait DocumentPainter: Painter + TextMetrics {
         path: &VectorPath,
         color: [f32; 4],
         stroke: Option<&crate::graphics::StrokeStyle>,
-        gradient: Option<(&super::extras::Gradient, &[(f32, [f32; 4])])>,
+        gradient: Option<ResolvedGradient<'_>>,
     ) {
         let color = gradient
             .and_then(|(_, stops)| stops.first().map(|s| s.1))

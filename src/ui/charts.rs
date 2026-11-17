@@ -263,12 +263,16 @@ fn framed<C>(
 }
 /// Labels centred under their x positions in the plot area.
 fn x_label_row<C>(x_labels: Vec<(f32, String)>, width: f32) -> Element<C> {
+    x_label_row_at(x_labels, width, AXIS)
+}
+/// As [`x_label_row`], for a plot whose value axis is `axis` wide.
+fn x_label_row_at<C>(x_labels: Vec<(f32, String)>, width: f32, axis: f32) -> Element<C> {
     let xs: Vec<Element<C>> = x_labels
         .into_iter()
         .map(|(x, label)| {
             // Centred on x, but kept inside the chart at both ends.
             let w = label.chars().count() as f32 * 6.5;
-            let left = (AXIS + x - w / 2.).clamp(AXIS, (width - w - 2.).max(AXIS));
+            let left = (axis + x - w / 2.).clamp(axis, (width - w - 2.).max(axis));
             hstack![text(label)
                 .font_size(11.)
                 .color(ColorToken::Muted)
@@ -1226,7 +1230,12 @@ fn plot_canvas<C>(
     element.width(w).height(h)
 }
 /// Labels at the left of a plot, each centred on its y.
-fn y_axis<C>(labels: Vec<(f32, String)>, plot_h: f32) -> Element<C> {
+/// How wide the value axis must be for its labels (at least the usual 44).
+fn axis_width(labels: &[String]) -> f32 {
+    let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32;
+    (longest * 6.3 + 12.).clamp(AXIS, 120.)
+}
+fn y_axis<C>(labels: Vec<(f32, String)>, plot_h: f32, axis: f32) -> Element<C> {
     let labels: Vec<Element<C>> = labels
         .into_iter()
         .map(|(y, label)| {
@@ -1234,21 +1243,21 @@ fn y_axis<C>(labels: Vec<(f32, String)>, plot_h: f32) -> Element<C> {
                 .font_size(11.)
                 .color(ColorToken::Muted)
                 .no_wrap(true)]
-            .width(AXIS - 8.)
+            .width(axis - 8.)
             .justify(Justify::End)
             .padding((y - 7.).clamp(0., (plot_h - 14.).max(0.)), Edge::Top)
             .into()
         })
         .collect();
     zstack(labels)
-        .width(AXIS)
+        .width(axis)
         .height(plot_h)
         .flow(Flow::TopLeft)
         .into()
 }
 /// The selected point's description above the plot, for touch screens where
 /// tooltips don't show; a hint when nothing is selected.
-fn readout<C>(line: Option<String>) -> Element<C> {
+fn readout<C>(line: Option<String>, axis: f32) -> Element<C> {
     let t = match line {
         Some(line) => text(line.replace('\n', " · "))
             .font_size(12.)
@@ -1260,7 +1269,7 @@ fn readout<C>(line: Option<String>) -> Element<C> {
     };
     hstack![t.no_wrap(true)]
         .height(18.)
-        .padding(AXIS, Edge::Left)
+        .padding(axis, Edge::Left)
         .into()
 }
 /// Plot, axes, labels and optional readout and legend, stacked.
@@ -1276,6 +1285,7 @@ fn assemble<C>(
     legend_names: Option<&[String]>,
 ) -> Element<C> {
     let [plot_w, plot_h] = plot_size;
+    let axis = (width - plot_w).max(0.);
     let mut layers = vec![plot];
     layers.extend(overlays);
     let plot: Element<C> = zstack(layers)
@@ -1285,15 +1295,15 @@ fn assemble<C>(
         .into();
     let mut parts = Vec::new();
     if let Some(line) = readout_line {
-        parts.push(readout(line));
+        parts.push(readout(line, axis));
     }
     parts.push(
-        hstack![y_axis(y_labels, plot_h), plot]
+        hstack![y_axis(y_labels, plot_h, axis), plot]
             .align(Align::Start)
             .into(),
     );
     if !x_labels.is_empty() {
-        parts.push(x_label_row(x_labels, width));
+        parts.push(x_label_row_at(x_labels, width, axis));
     }
     if let Some(names) = legend_names {
         parts.push(legend(names));
@@ -1482,7 +1492,9 @@ impl<C: 'static> From<LinePlot<C>> for Element<C> {
                 if finite.is_empty() {
                     nice_ticks(0., 1., 4)
                 } else {
-                    nice_ticks(lo, hi.max(lo + 1.), 4)
+                    // A little room, so extreme points don't sit on the edges.
+                    let pad = (hi - lo).max(1.) * 0.06;
+                    nice_ticks(lo - pad, hi.max(lo + 1.) + pad, 4)
                 }
             }
         };
@@ -1490,7 +1502,8 @@ impl<C: 'static> From<LinePlot<C>> for Element<C> {
         let show_legend = a.legend && a.series.len() > 1;
         let interactive = a.interact.key.is_some();
         let width = a.size[0];
-        let plot_w = (width - AXIS).max(10.);
+        let tick_labels: Vec<String> = ticks.iter().map(|t| (a.format)(*t)).collect();
+        let plot_w = (width - axis_width(&tick_labels)).max(10.);
         let plot_h = (a.size[1]
             - X_LABELS
             - if show_legend { 26. } else { 0. }
@@ -1589,6 +1602,7 @@ impl<C: 'static> From<LinePlot<C>> for Element<C> {
                 // Later series first, so the first stays on top. Each series
                 // is one stroke and one area, its runs as subpaths, so gaps
                 // never multiply the canvas's paths.
+                let mut strokes = Vec::new();
                 for (s, series_runs) in runs.iter().enumerate().rev() {
                     let color = &draw_colors[s];
                     let (mut lines, mut fills) = (PathBatch::new(), PathBatch::new());
@@ -1626,15 +1640,19 @@ impl<C: 'static> From<LinePlot<C>> for Element<C> {
                             );
                         }
                     }
+                    strokes.push((color.clone(), lines, marks));
+                }
+                // Lines over every area, so no fill dims another series' line.
+                for (color, lines, marks) in strokes {
                     for line in lines.0 {
                         let style = StrokeStyle::new(2.).round();
                         if glow {
-                            c.glow_stroke(line, color, style, 1.);
+                            c.glow_stroke(line, &color, style, 1.);
                         } else {
                             c.stroke_with(line, color.clone(), style);
                         }
                     }
-                    marks.fill(c, color.clone());
+                    marks.fill(c, color);
                 }
                 if t >= 1. {
                     for (x, ys) in &selected_points {
@@ -1663,6 +1681,7 @@ impl<C: 'static> From<LinePlot<C>> for Element<C> {
                     .no_wrap(true)]
                 .width(plot_w)
                 .justify(Justify::End)
+                .padding(4., Edge::Right)
                 .padding(
                     (to_y(*v) - 14.).clamp(0., (plot_h - 12.).max(0.)),
                     Edge::Top,
@@ -1686,7 +1705,7 @@ impl<C: 'static> From<LinePlot<C>> for Element<C> {
             plot,
             [plot_w, plot_h],
             overlays,
-            ticks.iter().map(|t| (to_y(*t), (a.format)(*t))).collect(),
+            ticks.iter().map(|t| to_y(*t)).zip(tick_labels).collect(),
             spread_labels(&a.x_labels, plot_w, false),
             readout_line,
             show_legend.then_some(names.as_slice()),
@@ -1800,7 +1819,8 @@ impl<C: 'static> From<RangeChart<C>> for Element<C> {
         };
         let interactive = a.interact.key.is_some();
         let width = a.size[0];
-        let plot_w = (width - AXIS).max(10.);
+        let tick_labels: Vec<String> = ticks.iter().map(|t| (a.format)(*t)).collect();
+        let plot_w = (width - axis_width(&tick_labels)).max(10.);
         let plot_h =
             (a.size[1] - X_LABELS - if a.readout && interactive { 24. } else { 0. }).max(10.);
         let to_y = value_axis(range, plot_h);
@@ -1897,7 +1917,7 @@ impl<C: 'static> From<RangeChart<C>> for Element<C> {
             plot,
             [plot_w, plot_h],
             overlay.into_iter().collect(),
-            ticks.iter().map(|t| (to_y(*t), format(*t))).collect(),
+            ticks.iter().map(|t| to_y(*t)).zip(tick_labels).collect(),
             spread_labels(&a.x_labels, plot_w, true),
             readout_line,
             None,
@@ -2016,13 +2036,14 @@ impl<C: 'static> From<TimelineChart<C>> for Element<C> {
             });
         let interactive = a.interact.key.is_some();
         let width = a.size[0];
-        let plot_w = (width - AXIS).max(10.);
+        let names: Vec<String> = a.lanes.iter().map(|(n, _)| n.clone()).collect();
+        let plot_w = (width - axis_width(&names)).max(10.);
         let plot_h =
             (a.size[1] - X_LABELS - if a.readout && interactive { 24. } else { 0. }).max(10.);
         let lane_h = plot_h / lanes as f32;
         let x_of = move |v: f32| (v - d0) / (d1 - d0) * plot_w;
         let format = a.format;
-        let names: Vec<String> = a.lanes.iter().map(|(n, _)| n.clone()).collect();
+
         let tip = |i: usize| {
             let s = spans[i];
             format!(

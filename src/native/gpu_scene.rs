@@ -1592,6 +1592,54 @@ impl GpuSceneEncoder {
     }
 }
 
+/// Vello's stroke for a styled one (caps, joins, dashes).
+fn kurbo_stroke(style: &crate::graphics::StrokeStyle) -> Stroke {
+    use crate::graphics::{LineCap, LineJoin};
+    use vello::kurbo::{Cap, Join};
+    let cap = match style.cap {
+        LineCap::Butt => Cap::Butt,
+        LineCap::Round => Cap::Round,
+        LineCap::Square => Cap::Square,
+    };
+    let join = match style.join {
+        LineJoin::Miter => Join::Miter,
+        LineJoin::Round => Join::Round,
+        LineJoin::Bevel => Join::Bevel,
+    };
+    let stroke = Stroke::new(f64::from(style.width))
+        .with_caps(cap)
+        .with_join(join);
+    if style.dash.is_empty() {
+        stroke
+    } else {
+        stroke.with_dashes(0., style.dash.iter().map(|d| f64::from(*d)))
+    }
+}
+/// A Vello gradient for resolved stops, ends pinned as CSS pads them.
+fn gradient_brush(
+    geometry: raster::GradientGeometry,
+    stops: &[(f32, [f32; 4])],
+) -> vello::peniko::Gradient {
+    let mut stops: Vec<(f32, Color)> = stops.iter().map(|(at, c)| (*at, color(*c))).collect();
+    if let Some(&(_, c)) = stops.first().filter(|s| s.0 > 0.) {
+        stops.insert(0, (0., c));
+    }
+    if let Some(&(_, c)) = stops.last().filter(|s| s.0 < 1.) {
+        stops.push((1., c));
+    }
+    match geometry {
+        raster::GradientGeometry::Linear { start, end } => vello::peniko::Gradient::new_linear(
+            (f64::from(start[0]), f64::from(start[1])),
+            (f64::from(end[0]), f64::from(end[1])),
+        ),
+        raster::GradientGeometry::Radial { centre, radius } => vello::peniko::Gradient::new_radial(
+            (f64::from(centre[0]), f64::from(centre[1])),
+            radius,
+        ),
+    }
+    .with_stops(stops.as_slice())
+}
+
 #[cfg(test)]
 mod tile_depth_tests {
     use super::*;
@@ -1718,52 +1766,4 @@ mod tile_depth_tests {
         assert_eq!(encoder.depth, [0, 0, 1, 0, 0, 1]);
         assert!(encoder.open_tiles.is_empty());
     }
-}
-
-/// Vello's stroke for a styled one (caps, joins, dashes).
-fn kurbo_stroke(style: &crate::graphics::StrokeStyle) -> Stroke {
-    use crate::graphics::{LineCap, LineJoin};
-    use vello::kurbo::{Cap, Join};
-    let cap = match style.cap {
-        LineCap::Butt => Cap::Butt,
-        LineCap::Round => Cap::Round,
-        LineCap::Square => Cap::Square,
-    };
-    let join = match style.join {
-        LineJoin::Miter => Join::Miter,
-        LineJoin::Round => Join::Round,
-        LineJoin::Bevel => Join::Bevel,
-    };
-    let stroke = Stroke::new(f64::from(style.width))
-        .with_caps(cap)
-        .with_join(join);
-    if style.dash.is_empty() {
-        stroke
-    } else {
-        stroke.with_dashes(0., style.dash.iter().map(|d| f64::from(*d)))
-    }
-}
-/// A Vello gradient for resolved stops, ends pinned as CSS pads them.
-fn gradient_brush(
-    geometry: raster::GradientGeometry,
-    stops: &[(f32, [f32; 4])],
-) -> vello::peniko::Gradient {
-    let mut stops: Vec<(f32, Color)> = stops.iter().map(|(at, c)| (*at, color(*c))).collect();
-    if let Some(&(_, c)) = stops.first().filter(|s| s.0 > 0.) {
-        stops.insert(0, (0., c));
-    }
-    if let Some(&(_, c)) = stops.last().filter(|s| s.0 < 1.) {
-        stops.push((1., c));
-    }
-    match geometry {
-        raster::GradientGeometry::Linear { start, end } => vello::peniko::Gradient::new_linear(
-            (f64::from(start[0]), f64::from(start[1])),
-            (f64::from(end[0]), f64::from(end[1])),
-        ),
-        raster::GradientGeometry::Radial { centre, radius } => vello::peniko::Gradient::new_radial(
-            (f64::from(centre[0]), f64::from(centre[1])),
-            radius,
-        ),
-    }
-    .with_stops(stops.as_slice())
 }

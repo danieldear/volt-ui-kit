@@ -3205,7 +3205,7 @@ impl DocumentPainter for RasterPainter {
         path: &VectorPath,
         color: [f32; 4],
         stroke: Option<&crate::graphics::StrokeStyle>,
-        gradient: Option<(&crate::declarative::Gradient, &[(f32, [f32; 4])])>,
+        gradient: Option<crate::declarative::ResolvedGradient<'_>>,
     ) {
         let paint = match (gradient, path.bounds()) {
             (Some((g, stops)), Some(b)) => PathPaint::Gradient(
