@@ -657,6 +657,48 @@ impl<C> BuiltUi<C> {
         (self.document, self.handlers)
     }
 }
+
+/// The most bytes one text or label node may hold (the document limit).
+const MAX_DISPLAY_TEXT: usize = 8192;
+
+/// Shorten display text over the document limit instead of rejecting the whole
+/// tree: an app showing a long message, file or error should lose the tail of
+/// that one node, not its window. Editable text is left alone (cutting it would
+/// change what the person typed) and stays under the document's own checks.
+fn fit_display_text(node: &mut Node, path: &str) {
+    if node.editor.is_some() {
+        return;
+    }
+    let mut cut = false;
+    if let Some(text) = node.text.as_mut().filter(|t| t.len() > MAX_DISPLAY_TEXT) {
+        let kept = shorten(text, MAX_DISPLAY_TEXT);
+        node.ext.spans.retain(|s| s.end <= kept);
+        cut = true;
+    }
+    if let Some(label) = node.label.as_mut().filter(|t| t.len() > MAX_DISPLAY_TEXT) {
+        shorten(label, MAX_DISPLAY_TEXT);
+        cut = true;
+    }
+    if cut {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("volt-ui-kit: {path}: text over {MAX_DISPLAY_TEXT} bytes was shortened to fit (shown once per run)");
+        }
+    }
+}
+
+/// Cut `text` to at most `limit` bytes on a character boundary, ending in an
+/// ellipsis. Returns the length kept before the ellipsis.
+fn shorten(text: &mut String, limit: usize) -> usize {
+    let mut end = limit - '…'.len_utf8();
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    text.push('…');
+    end
+}
+
 impl<C: 'static> Element<C> {
     /// Embed a view written for its own state inside a larger app.
     ///
@@ -779,6 +821,7 @@ impl<C: 'static> Element<C> {
             if let Some(message) = validation_error {
                 return Err(DocumentError(format!("{path}: {message}")));
             }
+            fit_display_text(&mut node, &path);
             if auto_id {
                 node.id = path.clone();
             }
