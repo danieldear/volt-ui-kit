@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Gradients drawn away from where their batch was recorded keep their colours
+  with them. Moving a batch moved a gradient's box but not its colour line, so
+  `color_picker(..).area(true)` showed a solid red hue strip and a square that
+  never reached black once the picker sat a little way into a window. Both
+  renderers are fixed (`tests/gradient_offset.rs`).
 - Charts for real-world data: `line_plot` leaves a gap where a value is
   missing (`f32::NAN`) instead of dropping to zero, and adds dashed `.guide`
   lines, a soft gradient `.area`, `.glow` and fixed `.range`s; `range_chart`
