@@ -184,8 +184,19 @@ fn translated_batch(
             | Shape::Outline(b, _, _, _)
             | Shape::Shadow(b, _, _, _, _, _)
             | Shape::InnerShadow(b, _, _, _, _, _)
-            | Shape::Gradient(b, _, _, _)
             | Shape::Image(b, _, _) => bounds(b),
+            // The colour line moves with the box, or a moved gradient shows
+            // the colours of where it used to be.
+            Shape::Gradient(b, _, geometry, _) => {
+                bounds(b);
+                match geometry {
+                    GradientGeometry::Linear { start, end } => {
+                        point(start);
+                        point(end);
+                    }
+                    GradientGeometry::Radial { centre, .. } => point(centre),
+                }
+            }
             Shape::Triangle(points, _) => points.iter_mut().for_each(point),
             Shape::Line(a, b, _, _) => {
                 point(a);
