@@ -101,3 +101,47 @@ fn a_long_menu_label_stays_on_one_line() {
     let lines = inked.windows(2).filter(|p| !p[0] && p[1]).count() + usize::from(inked[0]);
     assert_eq!(lines, 1, "the long label shows {lines} lines");
 }
+
+#[test]
+fn a_menu_separator_takes_the_hairline_colour_not_the_text_colour_around_it() {
+    // A host view sets light text; its menu's dividers must still be the
+    // theme's hairline (here a pure red), whatever text colour wraps them.
+    let e: Element<()> = vstack([menu(
+        "Actions",
+        [
+            menu_item((), "Save").key("save"),
+            menu_separator(),
+            menu_item((), "Export").key("export"),
+        ],
+    )
+    .key("actions")
+    .open(true)
+    .on_action(|_: &mut (), _| {})
+    .on_open_change(|_: &mut (), _| {})
+    .into()])
+    .color("#00FF00")
+    .into();
+    let (d, h) = e.build().unwrap().into_parts();
+    let mut r = Runtime::new(d, &h, &Bindings::default()).unwrap();
+    let vp = Viewport::new(400., 400., 2.).unwrap();
+    let mut p = RasterPainter::new(vp);
+    r.set_reduced_motion(true);
+    r.layout(vp, &Bindings::default(), &mut p).unwrap();
+    r.settle_animations();
+    let mut palette = Palette::dark();
+    palette.border = [0.9, 0., 0., 1.];
+    let batches = r.paint_ui(&mut p, &UiTheme::from_palette(palette));
+    let pixels = p.rasterize(&batches, [0., 0., 0., 1.]).unwrap().clone();
+    let (save, export) = (find(&r, "save"), find(&r, "export"));
+    let x = (save[0] + 40.) as u32;
+    let line: Vec<_> = ((save[1] + save[3]) as u32..export[1] as u32)
+        .filter_map(|y| pixels.pixel(x, y))
+        .filter(|q| q.red() > 150 || q.green() > 150)
+        .map(|q| (q.red(), q.green()))
+        .collect();
+    assert!(!line.is_empty(), "no separator line");
+    assert!(
+        line.iter().all(|&(r, g)| r > 150 && g < 60),
+        "the separator isn't the hairline colour: {line:?}"
+    );
+}
