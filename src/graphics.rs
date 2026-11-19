@@ -173,6 +173,30 @@ impl VectorPath {
             .line_to(x, y + h)
             .close()
     }
+    /// A rectangle with rounded corners; the radius is capped at half the
+    /// shorter side (a capsule).
+    pub fn rounded_rectangle(x: f32, y: f32, w: f32, h: f32, radius: f32) -> Self {
+        let r = radius.max(0.).min(w * 0.5).min(h * 0.5);
+        if r <= 0. {
+            return Self::rectangle(x, y, w, h);
+        }
+        let k = 0.552_284_8 * r;
+        Self::new()
+            .move_to(x + r, y)
+            .line_to(x + w - r, y)
+            .cubic_to([x + w - r + k, y], [x + w, y + r - k], [x + w, y + r])
+            .line_to(x + w, y + h - r)
+            .cubic_to(
+                [x + w, y + h - r + k],
+                [x + w - r + k, y + h],
+                [x + w - r, y + h],
+            )
+            .line_to(x + r, y + h)
+            .cubic_to([x + r - k, y + h], [x, y + h - r + k], [x, y + h - r])
+            .line_to(x, y + r)
+            .cubic_to([x, y + r - k], [x + r - k, y], [x + r, y])
+            .close()
+    }
     pub fn circle(x: f32, y: f32, r: f32) -> Self {
         Self::ellipse(x, y, r, r)
     }
@@ -185,6 +209,102 @@ impl VectorPath {
             .cubic_to([x - rx, y - k * ry], [x - k * rx, y - ry], [x, y - ry])
             .cubic_to([x + k * rx, y - ry], [x + rx, y - k * ry], [x + rx, y])
             .close()
+    }
+    /// An arc of a circle as an open path, for stroking (gauges, rings,
+    /// progress). Angles are degrees, 0° at 12 o'clock and clockwise, as a
+    /// clock or a gauge reads; a negative `sweep` runs anticlockwise. Sweeps
+    /// beyond a full turn draw one full turn.
+    pub fn arc(cx: f32, cy: f32, radius: f32, start: f32, sweep: f32) -> Self {
+        let mut path = Self::new();
+        let first = polar(cx, cy, radius, start);
+        path = path.move_to(first[0], first[1]);
+        arc_segments(path, cx, cy, radius, start, sweep.clamp(-360., 360.))
+    }
+    /// A ring segment between `inner` and `outer` radii, as a closed shape to
+    /// fill (donut and sunburst slices, gauge tracks); `inner` 0 gives a pie
+    /// slice. Angles as for [`VectorPath::arc`].
+    pub fn sector(cx: f32, cy: f32, outer: f32, inner: f32, start: f32, sweep: f32) -> Self {
+        let sweep = sweep.clamp(-360., 360.);
+        let mut path = Self::arc(cx, cy, outer, start, sweep);
+        if inner > 0. {
+            let back = polar(cx, cy, inner, start + sweep);
+            path = path.line_to(back[0], back[1]);
+            path = arc_segments(path, cx, cy, inner, start + sweep, -sweep);
+        } else {
+            path = path.line_to(cx, cy);
+        }
+        path.close()
+    }
+    /// The box the path's points span, control points included:
+    /// `[x, y, width, height]`. `None` for an empty path.
+    pub fn bounds(&self) -> Option<[f32; 4]> {
+        let mut points = self.commands.iter().flat_map(|c| match c {
+            PathCommand::Move(p) | PathCommand::Line(p) => vec![*p],
+            PathCommand::Quad(a, b) => vec![*a, *b],
+            PathCommand::Cubic(a, b, c) => vec![*a, *b, *c],
+            PathCommand::Close => vec![],
+        });
+        let first = points.next()?;
+        let [mut x0, mut y0, mut x1, mut y1] = [first[0], first[1], first[0], first[1]];
+        for [x, y] in points {
+            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+        }
+        Some([x0, y0, x1 - x0, y1 - y0])
+    }
+    /// The path's length along its segments (curves measured on a flattened
+    /// copy), in its own units.
+    pub fn length(&self) -> f32 {
+        segments(self).iter().map(|s| s.length).sum()
+    }
+    /// The first `fraction` (0..=1) of the path by length: a line that draws
+    /// itself in is `path.trimmed(t)` for each animation frame. Curves are
+    /// cut at the matching point, so the shape doesn't change as it grows.
+    pub fn trimmed(&self, fraction: f32) -> Self {
+        let fraction = if fraction.is_finite() {
+            fraction.clamp(0., 1.)
+        } else {
+            0.
+        };
+        if fraction >= 1. {
+            return self.clone();
+        }
+        if fraction <= 0. {
+            // Only the start: no drawing command, so nothing is painted (not
+            // even a round cap's dot).
+            return Self {
+                commands: self.commands.first().cloned().into_iter().collect(),
+            };
+        }
+        let segs = segments(self);
+        let mut left = fraction * segs.iter().map(|s| s.length).sum::<f32>();
+        let mut out = Self::new();
+        for seg in segs {
+            match &seg.command {
+                PathCommand::Move(p) => out.commands.push(PathCommand::Move(*p)),
+                _ if left >= seg.length => {
+                    out.commands.push(seg.command.clone());
+                    left -= seg.length;
+                }
+                command => {
+                    let t = seg.parameter_at(left);
+                    out.commands.push(match command {
+                        PathCommand::Line(p) => PathCommand::Line(lerp(seg.from, *p, t)),
+                        PathCommand::Close => PathCommand::Line(lerp(seg.from, seg.start, t)),
+                        PathCommand::Quad(c, e) => {
+                            let (c1, e1) = split_quad(seg.from, *c, *e, t);
+                            PathCommand::Quad(c1, e1)
+                        }
+                        PathCommand::Cubic(a, b, e) => {
+                            let (a1, b1, e1) = split_cubic(seg.from, *a, *b, *e, t);
+                            PathCommand::Cubic(a1, b1, e1)
+                        }
+                        PathCommand::Move(_) => unreachable!("handled above"),
+                    });
+                    break;
+                }
+            }
+        }
+        out
     }
     /// Parse SVG path data (the `d` attribute): M L H V C S Q T A Z, absolute
     /// and relative, with implicit repeats. Arcs become cubic curves. Use it
@@ -377,6 +497,137 @@ pub enum MaskMode {
     /// transparent hide (0.2126 R + 0.7152 G + 0.0722 B, times alpha).
     Luminance,
 }
+/// A point on a circle; 0° at 12 o'clock, clockwise.
+fn polar(cx: f32, cy: f32, r: f32, degrees: f32) -> [f32; 2] {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    [cx + r * sin, cy - r * cos]
+}
+/// Cubic arcs of at most 90° each, continuing `path` from the arc's start.
+fn arc_segments(
+    mut path: VectorPath,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    start: f32,
+    sweep: f32,
+) -> VectorPath {
+    let pieces = (sweep.abs() / 90.).ceil().max(1.) as usize;
+    let step = sweep / pieces as f32;
+    let k = 4. / 3. * (step.to_radians() / 4.).tan() * r;
+    for i in 0..pieces {
+        let (a0, a1) = (start + step * i as f32, start + step * (i + 1) as f32);
+        let (p0, p1) = (polar(cx, cy, r, a0), polar(cx, cy, r, a1));
+        // Tangents, clockwise-positive: d/dθ of (sin θ, −cos θ) is (cos θ, sin θ).
+        let (s0, c0) = a0.to_radians().sin_cos();
+        let (s1, c1) = a1.to_radians().sin_cos();
+        path = path.cubic_to(
+            [p0[0] + k * c0, p0[1] + k * s0],
+            [p1[0] - k * c1, p1[1] - k * s1],
+            p1,
+        );
+    }
+    path
+}
+/// One drawable piece of a path with its start point and length.
+struct Segment {
+    command: PathCommand,
+    from: [f32; 2],
+    /// The subpath's start, for `Close`.
+    start: [f32; 2],
+    length: f32,
+    /// Cumulative lengths of a flattened copy, for curves (parameter lookup).
+    steps: Vec<f32>,
+}
+const FLATTEN: usize = 24;
+impl Segment {
+    /// The curve parameter at `distance` along the segment.
+    fn parameter_at(&self, distance: f32) -> f32 {
+        if self.length <= 0. {
+            return 0.;
+        }
+        if self.steps.is_empty() {
+            return (distance / self.length).clamp(0., 1.);
+        }
+        let i = self
+            .steps
+            .iter()
+            .position(|d| *d >= distance)
+            .unwrap_or(FLATTEN - 1);
+        let before = if i == 0 { 0. } else { self.steps[i - 1] };
+        let span = (self.steps[i] - before).max(f32::EPSILON);
+        ((i as f32 + (distance - before) / span) / FLATTEN as f32).clamp(0., 1.)
+    }
+}
+fn lerp(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+}
+fn split_quad(p0: [f32; 2], c: [f32; 2], e: [f32; 2], t: f32) -> ([f32; 2], [f32; 2]) {
+    let a = lerp(p0, c, t);
+    let b = lerp(c, e, t);
+    (a, lerp(a, b, t))
+}
+fn split_cubic(
+    p0: [f32; 2],
+    a: [f32; 2],
+    b: [f32; 2],
+    e: [f32; 2],
+    t: f32,
+) -> ([f32; 2], [f32; 2], [f32; 2]) {
+    let (ab, bc, cd) = (lerp(p0, a, t), lerp(a, b, t), lerp(b, e, t));
+    let (abc, bcd) = (lerp(ab, bc, t), lerp(bc, cd, t));
+    (ab, abc, lerp(abc, bcd, t))
+}
+fn distance(a: [f32; 2], b: [f32; 2]) -> f32 {
+    (b[0] - a[0]).hypot(b[1] - a[1])
+}
+fn segments(path: &VectorPath) -> Vec<Segment> {
+    let mut out = Vec::new();
+    let (mut at, mut start) = ([0.; 2], [0.; 2]);
+    for command in &path.commands {
+        let command = command.clone();
+        let (end, length, steps) = match command {
+            PathCommand::Move(p) => {
+                start = p;
+                (p, 0., Vec::new())
+            }
+            PathCommand::Line(p) => (p, distance(at, p), Vec::new()),
+            PathCommand::Close => (start, distance(at, start), Vec::new()),
+            PathCommand::Quad(c, e) => {
+                let point = |t: f32| lerp(lerp(at, c, t), lerp(c, e, t), t);
+                flatten(point, e)
+            }
+            PathCommand::Cubic(a, b, e) => {
+                let point = |t: f32| {
+                    let (ab, bc, cd) = (lerp(at, a, t), lerp(a, b, t), lerp(b, e, t));
+                    lerp(lerp(ab, bc, t), lerp(bc, cd, t), t)
+                };
+                flatten(point, e)
+            }
+        };
+        out.push(Segment {
+            command,
+            from: at,
+            start,
+            length,
+            steps,
+        });
+        at = end;
+    }
+    out
+}
+/// A curve's end, its flattened length and the cumulative step lengths.
+fn flatten(point: impl Fn(f32) -> [f32; 2], end: [f32; 2]) -> ([f32; 2], f32, Vec<f32>) {
+    let mut steps = Vec::with_capacity(FLATTEN);
+    let (mut prev, mut total) = (point(0.), 0.);
+    for i in 1..=FLATTEN {
+        let p = point(i as f32 / FLATTEN as f32);
+        total += distance(prev, p);
+        steps.push(total);
+        prev = p;
+    }
+    (end, total, steps)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Clip {
     Bounds,
@@ -413,6 +664,105 @@ pub struct DrawPath {
     pub path: VectorPath,
     pub color: String,
     pub stroke: Option<f32>,
+    /// Gradient paint and stroke caps, joins and dashes, when set
+    /// ([`Canvas::stroke_with`], [`Canvas::fill_gradient`], [`Canvas::stroke_gradient`]).
+    pub style: Option<Box<PathStyle>>,
+}
+/// How a canvas path is painted beyond a plain colour and width.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PathStyle {
+    /// Paint with this gradient instead of the colour. It is laid over the
+    /// path's bounds as a CSS gradient is over a box: `Gradient::linear(90., ..)`
+    /// runs from the path's left edge to its right.
+    #[cfg(feature = "declarative")]
+    pub gradient: Option<crate::declarative::Gradient>,
+    /// Stroke with these caps, joins and dashes instead of a plain width.
+    pub stroke: Option<StrokeStyle>,
+}
+/// Where an open stroke's ends stop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineCap {
+    /// Flat, at the end point.
+    #[default]
+    Butt,
+    /// A half circle past the end point.
+    Round,
+    /// A half square past the end point.
+    Square,
+}
+/// How a stroke turns a corner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineJoin {
+    #[default]
+    Miter,
+    Round,
+    Bevel,
+}
+/// A stroke beyond a plain width: caps, joins and dashes, in logical pixels.
+///
+/// ```
+/// use volt_ui_kit::graphics::StrokeStyle;
+/// let dotted = StrokeStyle::new(3.).round().dash([0., 8.]);
+/// assert!(dotted.is_valid());
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct StrokeStyle {
+    pub width: f32,
+    pub cap: LineCap,
+    pub join: LineJoin,
+    /// On/off lengths, repeating; empty for a solid stroke. A zero "on"
+    /// length with round caps draws dots.
+    pub dash: Vec<f32>,
+}
+impl StrokeStyle {
+    pub fn new(width: f32) -> Self {
+        Self {
+            width,
+            cap: LineCap::Butt,
+            join: LineJoin::Miter,
+            dash: Vec::new(),
+        }
+    }
+    pub fn cap(mut self, cap: LineCap) -> Self {
+        self.cap = cap;
+        self
+    }
+    pub fn join(mut self, join: LineJoin) -> Self {
+        self.join = join;
+        self
+    }
+    /// Round caps and joins: soft line ends, smooth corners.
+    pub fn round(self) -> Self {
+        self.cap(LineCap::Round).join(LineJoin::Round)
+    }
+    /// On/off lengths, repeating. An odd count repeats once more, as SVG does.
+    pub fn dash(mut self, pattern: impl IntoIterator<Item = f32>) -> Self {
+        self.dash = pattern.into_iter().collect();
+        if self.dash.len() % 2 == 1 {
+            self.dash.extend(self.dash.clone());
+        }
+        self
+    }
+    /// A width the renderers accept, and a dash pattern with some length.
+    pub fn is_valid(&self) -> bool {
+        self.width.is_finite()
+            && self.width > 0.
+            && self.width <= 256.
+            && self.dash.len() <= 32
+            && self
+                .dash
+                .iter()
+                .all(|d| d.is_finite() && *d >= 0. && *d <= 65_536.)
+            && (self.dash.is_empty() || self.dash.iter().sum::<f32>() > 0.)
+    }
+    /// The same stroke at `scale` (logical to physical pixels).
+    pub fn scaled(&self, scale: f32) -> Self {
+        Self {
+            width: self.width * scale,
+            dash: self.dash.iter().map(|d| d * scale).collect(),
+            ..self.clone()
+        }
+    }
 }
 /// A retained list built by an ordinary Rust closure when the view composes.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -427,6 +777,9 @@ pub struct CanvasFrames {
     pub frames: std::sync::Arc<[Canvas]>,
     pub frame_ms: u32,
     pub revision: u64,
+    /// Play each revision once per key: coming back to it (after navigating
+    /// away) shows the last frame at once (`ui::canvas_frames_once`).
+    pub once: bool,
 }
 impl CanvasFrames {
     /// How long the sequence plays.
@@ -442,18 +795,117 @@ impl CanvasFrames {
 }
 impl Canvas {
     pub fn fill(&mut self, path: VectorPath, color: impl Into<String>) {
-        self.paths.push(DrawPath {
+        self.push(DrawPath {
             path,
             color: color.into(),
             stroke: None,
+            style: None,
         });
     }
     pub fn stroke(&mut self, path: VectorPath, color: impl Into<String>, width: f32) {
-        self.paths.push(DrawPath {
+        self.push(DrawPath {
             path,
             color: color.into(),
             stroke: Some(width),
+            style: None,
         });
+    }
+    /// Stroke with caps, joins and dashes: `StrokeStyle::new(2.).round()`.
+    pub fn stroke_with(&mut self, path: VectorPath, color: impl Into<String>, style: StrokeStyle) {
+        self.push(DrawPath {
+            path,
+            color: color.into(),
+            stroke: Some(style.width),
+            style: Some(Box::new(PathStyle {
+                stroke: Some(style),
+                ..PathStyle::default()
+            })),
+        });
+    }
+    /// Fill with a gradient laid over the path's bounds.
+    #[cfg(feature = "declarative")]
+    pub fn fill_gradient(&mut self, path: VectorPath, gradient: crate::declarative::Gradient) {
+        let color = gradient.first_color();
+        self.push(DrawPath {
+            path,
+            color,
+            stroke: None,
+            style: Some(Box::new(PathStyle {
+                gradient: Some(gradient),
+                stroke: None,
+            })),
+        });
+    }
+    /// Stroke with a gradient laid over the path's bounds: a line that
+    /// shades from one colour to another along its run.
+    #[cfg(feature = "declarative")]
+    pub fn stroke_gradient(
+        &mut self,
+        path: VectorPath,
+        gradient: crate::declarative::Gradient,
+        style: StrokeStyle,
+    ) {
+        let color = gradient.first_color();
+        self.push(DrawPath {
+            path,
+            color,
+            stroke: Some(style.width),
+            style: Some(Box::new(PathStyle {
+                gradient: Some(gradient),
+                stroke: Some(style),
+            })),
+        });
+    }
+    /// Adds a path, except one that only moves (a draw-in's first frame,
+    /// `trimmed(0.)`), which draws nothing and is skipped rather than
+    /// rejected. An empty path is still an error, as before.
+    fn push(&mut self, path: DrawPath) {
+        let moves_only = !path.path.commands.is_empty()
+            && path
+                .path
+                .commands
+                .iter()
+                .all(|c| matches!(c, PathCommand::Move(_)));
+        if !moves_only {
+            self.paths.push(path);
+        }
+    }
+    /// A soft glow under a stroke: wider, fainter copies beneath it, then
+    /// the stroke itself. `color` is a hex colour (`#RRGGBB`) or a token;
+    /// `strength` 0..=1 sets how bright the halo is.
+    pub fn glow_stroke(
+        &mut self,
+        path: VectorPath,
+        color: &str,
+        style: StrokeStyle,
+        strength: f32,
+    ) {
+        let strength = if strength.is_finite() {
+            strength.clamp(0., 1.)
+        } else {
+            0.
+        };
+        for (spread, alpha) in [(4.5, 0.10), (2.8, 0.16), (1.7, 0.26)] {
+            let halo = StrokeStyle {
+                width: (style.width * spread).min(256.),
+                cap: LineCap::Round,
+                join: LineJoin::Round,
+                ..style.clone()
+            };
+            self.stroke_with(path.clone(), faded(color, alpha * strength), halo);
+        }
+        self.stroke_with(path, color, style);
+    }
+}
+/// `color` at `alpha` (0..=1): an alpha byte on hex colours, `/NN` on tokens.
+pub(crate) fn faded(color: &str, alpha: f32) -> String {
+    let percent = (alpha.clamp(0., 1.) * 100.).round() as u8;
+    if color.starts_with('@') {
+        format!("{color}/{percent}")
+    } else if color.len() == 7 && color.starts_with('#') {
+        format!("{color}{:02X}", (alpha.clamp(0., 1.) * 255.).round() as u8)
+    } else {
+        color.to_owned()
     }
 }
 #[cfg(test)]

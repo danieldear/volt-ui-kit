@@ -70,6 +70,7 @@ fn a_frame_is_chosen_by_time_and_the_last_one_holds() {
         frames: vec![Canvas::default(), c.clone()].into(),
         frame_ms: 30,
         revision: 0,
+        once: false,
     };
     assert_eq!(f.duration(), Duration::from_millis(60));
     assert!(f.at(Duration::from_millis(10)).unwrap().paths.is_empty());

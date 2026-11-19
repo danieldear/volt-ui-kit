@@ -636,6 +636,52 @@ revenue(&App::default()).build()?;
 - `Candle::new(open, high, low, close).volume(v)` builds candlestick data;
   `.value_format(f)` formats tooltip and axis values.
 
+### Readings, ranges and timelines
+
+`line_plot`, `range_chart` and `timeline_chart` take the same `.key`,
+`.selected` and `.on_select`, and add what measured data needs:
+
+```rust
+use volt_ui_kit::ui::prelude::*;
+#[derive(Default)]
+struct App { day: Option<usize>, revision: u64 }
+fn heart(app: &App) -> Element<App> {
+    let resting = vec![58., 57., f32::NAN, 60., 59.]; // NaN: no reading that day
+    vstack![
+        line_plot([("Resting", resting)])
+            .key("resting")
+            .x_labels(["Mon", "Tue", "Wed", "Thu", "Fri"])
+            .guide(55., "55 bpm")
+            .area(true)
+            .glow(true)
+            .readout(true)
+            .animate(app.revision)
+            .selected(app.day)
+            .on_select(|app: &mut App, i| app.day = Some(i)),
+        range_chart([ValueRange::new(112., 128.).mid(121.), ValueRange::new(110., 131.)])
+            .x_labels(["Mon", "Tue"]),
+        timeline_chart(
+            [("Awake", "#F59E0B"), ("Asleep", "#6366F1")],
+            [(0, 0., 20.), (1, 20., 400.)],
+        ),
+    ]
+    .into()
+}
+heart(&App::default()).build()?;
+# Ok::<(), volt_ui_kit::declarative::DocumentError>(())
+```
+
+- A missing value (`f32::NAN`) leaves a gap instead of a line to zero; a lone
+  value between gaps shows as a dot.
+- `.readout(true)` writes the selected point above the plot, for touch screens
+  where tooltips don't show.
+- `.animate(revision)` draws the chart in once per revision and key: coming
+  back to a page doesn't replay it, and reduced motion shows it finished.
+- The canvas underneath is yours too: `VectorPath::arc`, `::sector`,
+  `::rounded_rectangle` and `::trimmed`; `StrokeStyle` caps, joins and dashes;
+  `Canvas::fill_gradient`, `::stroke_gradient` and `::glow_stroke`; and
+  `canvas_frames_once` for draw-ins.
+
 ## Icons
 
 ```rust

@@ -6,6 +6,38 @@
   window. The Rust builder shortens it on a character boundary, ends it with
   `…`, keeps the text spans that still fit and warns once per run. Editable
   text is never shortened and keeps its checks; JSON documents stay strict.
+- Gradients drawn away from where their batch was recorded keep their colours
+  with them. Moving a batch moved a gradient's box but not its colour line, so
+  `color_picker(..).area(true)` showed a solid red hue strip and a square that
+  never reached black once the picker sat a little way into a window. Both
+  renderers are fixed (`tests/gradient_offset.rs`).
+- Charts for real-world data: `line_plot` leaves a gap where a value is
+  missing (`f32::NAN`) instead of dropping to zero, and adds dashed `.guide`
+  lines, a soft gradient `.area`, `.glow` and fixed `.range`s; `range_chart`
+  shows low-to-high capsules with a middle dot (`ValueRange`); `timeline_chart`
+  shows states in lanes with connectors (`TimelineSpan`). All three take
+  `.key/.selected/.on_select` like the other charts, `.readout(true)` writes
+  the selected point above the plot for touch screens (where tooltips don't
+  show), and `.animate(revision)` draws them in once per revision. Large data
+  stays within a canvas's path and command limits; value axes widen to fit
+  labels with units.
+- Canvas drawing: `VectorPath::arc` and `::sector` (0° at 12 o'clock,
+  clockwise), `::rounded_rectangle`, `::bounds`, `::length` and `::trimmed`
+  for draw-ins; `StrokeStyle` with caps, joins and dashes
+  (`Canvas::stroke_with`); gradient paint over a path's bounds
+  (`Canvas::fill_gradient`, `::stroke_gradient`) and `Canvas::glow_stroke`.
+  Both renderers paint them, and the GPU acceptance test compares them with
+  software. A path that draws nothing (a draw-in's first frame) is skipped
+  instead of failing the document. `DrawPath` gains a `style` field and
+  `CanvasFrames` a `once` field.
+- Motion: `Transition::enter_only()` leaves without fading out over what
+  replaces it, `Transition::once()` plays an entrance only the first time its
+  key appears, and `canvas_frames_once` plays a draw-in once per revision, so
+  returning to a page shows it in place.
+- Catalog: the Charts page shows the line plot, range chart, timeline and the
+  canvas features (with "Draw in again"); Effects & motion shows a card that
+  enters once and leaves at once.
+
 - Make boxed page-navigation ownership explicit during state mapping and add
   regression coverage for owned titles, multiple bar buttons and both Volt
   and native-host activation without mutating sibling state.

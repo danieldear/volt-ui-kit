@@ -40,9 +40,19 @@ pub enum Shape {
     ClipEnd,
     Image([f32; 4], BackgroundImage, f32),
     Path(VectorPath, [f32; 4], Option<f32>),
+    /// A path painted with a gradient and/or stroked with caps, joins and
+    /// dashes (all in physical pixels).
+    StyledPath(VectorPath, PathPaint, Option<crate::graphics::StrokeStyle>),
     /// A gradient-filled rounded rectangle: bounds, corner radii, geometry and
     /// resolved (offset, colour) stops, all in physical pixels.
     Gradient([f32; 4], [f32; 4], GradientGeometry, Vec<(f32, [f32; 4])>),
+}
+/// What a styled path is painted with.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PathPaint {
+    Solid([f32; 4]),
+    /// Geometry over the path's bounds and resolved (offset, colour) stops.
+    Gradient(GradientGeometry, Vec<(f32, [f32; 4])>),
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GradientGeometry {
@@ -174,8 +184,19 @@ fn translated_batch(
             | Shape::Outline(b, _, _, _)
             | Shape::Shadow(b, _, _, _, _, _)
             | Shape::InnerShadow(b, _, _, _, _, _)
-            | Shape::Gradient(b, _, _, _)
             | Shape::Image(b, _, _) => bounds(b),
+            // The colour line moves with the box, or a moved gradient shows
+            // the colours of where it used to be.
+            Shape::Gradient(b, _, geometry, _) => {
+                bounds(b);
+                match geometry {
+                    GradientGeometry::Linear { start, end } => {
+                        point(start);
+                        point(end);
+                    }
+                    GradientGeometry::Radial { centre, .. } => point(centre),
+                }
+            }
             Shape::Triangle(points, _) => points.iter_mut().for_each(point),
             Shape::Line(a, b, _, _) => {
                 point(a);
@@ -183,6 +204,19 @@ fn translated_batch(
             }
             Shape::Path(path, _, _) | Shape::ClipBegin(ClipRegion::Path(path)) => {
                 *path = std::mem::take(path).transformed([1., 0., 0., 1., dx, dy]);
+            }
+            Shape::StyledPath(path, paint, _) => {
+                *path = std::mem::take(path).transformed([1., 0., 0., 1., dx, dy]);
+                match paint {
+                    PathPaint::Gradient(GradientGeometry::Linear { start, end }, _) => {
+                        point(start);
+                        point(end);
+                    }
+                    PathPaint::Gradient(GradientGeometry::Radial { centre, .. }, _) => {
+                        point(centre)
+                    }
+                    PathPaint::Solid(_) => {}
+                }
             }
             Shape::ClipBegin(ClipRegion::Rounded { bounds: b, .. })
             | Shape::ClipBegin(ClipRegion::Circle { bounds: b }) => bounds(b),
@@ -502,6 +536,13 @@ fn shape_extent(s: &Shape) -> Option<[f32; 4]> {
             pad(
                 [b.x(), b.y(), b.width(), b.height()],
                 stroke_extent(w.unwrap_or(0.)),
+            )
+        }
+        Shape::StyledPath(p, _, stroke) => {
+            let b = native_path(p)?.bounds();
+            pad(
+                [b.x(), b.y(), b.width(), b.height()],
+                stroke_extent(stroke.as_ref().map_or(0., |s| s.width)),
             )
         }
         // Three box passes at sigma = blur/2 reach about 1.5 blur; pad more.
@@ -1932,6 +1973,33 @@ impl RasterPainter {
                         }
                         continue;
                     }
+                    Shape::StyledPath(path, paint, stroke) => {
+                        if let (Some(path), Some(paint)) = (native_path(path), styled_paint(paint))
+                        {
+                            match stroke {
+                                Some(style) => {
+                                    if let Some(stroke) = skia_stroke(style) {
+                                        pixmap.stroke_path(
+                                            &path,
+                                            &paint,
+                                            &stroke,
+                                            Transform::identity(),
+                                            Some(mask),
+                                        );
+                                    }
+                                }
+                                None => pixmap.fill_path(
+                                    &path,
+                                    &paint,
+                                    FillRule::EvenOdd,
+                                    Transform::identity(),
+                                    Some(mask),
+                                ),
+                            }
+                            self.shape_draw_calls += 1;
+                        }
+                        continue;
+                    }
                     Shape::LayerBegin(opacity) | Shape::BlendBegin(opacity, _) => {
                         if !opacity.is_finite() || !(0. ..=1.).contains(opacity) {
                             return Err("invalid layer opacity".into());
@@ -2219,7 +2287,8 @@ impl RasterPainter {
                     | Shape::ClipBegin(..)
                     | Shape::ClipEnd
                     | Shape::Image(..)
-                    | Shape::Path(..) => unreachable!("effect commands handled above"),
+                    | Shape::Path(..)
+                    | Shape::StyledPath(..) => unreachable!("effect commands handled above"),
                     Shape::Triangle(points, c) => {
                         let mut p = PathBuilder::new();
                         p.move_to(points[0][0], points[0][1]);
@@ -2655,6 +2724,78 @@ fn system_family(fonts: &FontSystem) -> String {
         "sans-serif".into()
     }
 }
+/// A tiny-skia gradient shader for resolved stops.
+fn gradient_shader(
+    geometry: GradientGeometry,
+    stops: &[(f32, [f32; 4])],
+) -> Option<tiny_skia::Shader<'static>> {
+    let stops: Vec<_> = stops
+        .iter()
+        .filter_map(|(at, c)| {
+            tiny_skia::Color::from_rgba(c[0], c[1], c[2], c[3])
+                .map(|c| tiny_skia::GradientStop::new(*at, c))
+        })
+        .collect();
+    match geometry {
+        GradientGeometry::Linear { start, end } => tiny_skia::LinearGradient::new(
+            tiny_skia::Point::from_xy(start[0], start[1]),
+            tiny_skia::Point::from_xy(end[0], end[1]),
+            stops,
+            tiny_skia::SpreadMode::Pad,
+            Transform::identity(),
+        ),
+        GradientGeometry::Radial { centre, radius } => {
+            let c = tiny_skia::Point::from_xy(centre[0], centre[1]);
+            tiny_skia::RadialGradient::new(
+                c,
+                c,
+                radius,
+                stops,
+                tiny_skia::SpreadMode::Pad,
+                Transform::identity(),
+            )
+        }
+    }
+}
+fn styled_paint(paint: &PathPaint) -> Option<Paint<'static>> {
+    match paint {
+        PathPaint::Solid(color) => Some(shape_paint(*color)),
+        PathPaint::Gradient(geometry, stops) => {
+            gradient_shader(*geometry, stops).map(|shader| Paint {
+                shader,
+                anti_alias: true,
+                ..Paint::default()
+            })
+        }
+    }
+}
+/// tiny-skia's stroke for a styled one; `None` for an invalid dash pattern.
+fn skia_stroke(style: &crate::graphics::StrokeStyle) -> Option<Stroke> {
+    use crate::graphics::{LineCap, LineJoin};
+    if !style.is_valid() {
+        return None;
+    }
+    let dash = if style.dash.is_empty() {
+        None
+    } else {
+        Some(tiny_skia::StrokeDash::new(style.dash.clone(), 0.)?)
+    };
+    Some(Stroke {
+        width: style.width,
+        line_cap: match style.cap {
+            LineCap::Butt => tiny_skia::LineCap::Butt,
+            LineCap::Round => tiny_skia::LineCap::Round,
+            LineCap::Square => tiny_skia::LineCap::Square,
+        },
+        line_join: match style.join {
+            LineJoin::Miter => tiny_skia::LineJoin::Miter,
+            LineJoin::Round => tiny_skia::LineJoin::Round,
+            LineJoin::Bevel => tiny_skia::LineJoin::Bevel,
+        },
+        dash,
+        ..Stroke::default()
+    })
+}
 fn shape_paint(color: [f32; 4]) -> Paint<'static> {
     let mut paint = Paint::default();
     paint.set_color_rgba8(
@@ -3068,6 +3209,23 @@ impl DocumentPainter for RasterPainter {
         stroke: Option<f32>,
     ) {
         out.push(Shape::Path(path.clone(), color, stroke));
+    }
+    fn ui_styled_path(
+        &mut self,
+        out: &mut Vec<Shape>,
+        path: &VectorPath,
+        color: [f32; 4],
+        stroke: Option<&crate::graphics::StrokeStyle>,
+        gradient: Option<crate::declarative::ResolvedGradient<'_>>,
+    ) {
+        let paint = match (gradient, path.bounds()) {
+            (Some((g, stops)), Some(b)) => PathPaint::Gradient(
+                GradientGeometry::for_box(g.kind, [b[0], b[1], b[2].max(1.), b[3].max(1.)]),
+                stops.to_vec(),
+            ),
+            _ => PathPaint::Solid(color),
+        };
+        out.push(Shape::StyledPath(path.clone(), paint, stroke.cloned()));
     }
 
     fn ui_layer_begin(&mut self, out: &mut Vec<Shape>, opacity: f32) {
