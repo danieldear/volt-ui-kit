@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Menu separators are hairlines again. A separator paints its whole box, and
+  the menu gave each one a 9-point box, so every separator showed as a solid
+  bar in the line colour. The line now sits centred in its 9-point row, and
+  keyboard navigation still counts it (`tests/menu_rows.rs`).
+- A separator is drawn in the theme's border (hairline) colour unless you give
+  the separator its own colour. It used to take the text colour of whatever
+  contained it, so a menu opened over a view with light text had white
+  dividers whatever the border colour was.
+- A menu row's label stays on one line and ends in "…" when it doesn't fit.
+  Rows have a fixed height, so a label that wrapped, in a wider interface font
+  or a narrow menu, spilled over the rows below and past the menu's bottom.
 - Display text or a label over 8 KiB no longer fails `build()` and loses the
   window. The Rust builder shortens it on a character boundary, ends it with
   `…`, keeps the text spans that still fit and warns once per run. Editable
