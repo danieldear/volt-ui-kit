@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Display text or a label over 8 KiB no longer fails `build()` and loses the
+  window. The Rust builder shortens it on a character boundary, ends it with
+  `…`, keeps the text spans that still fit and warns once per run. Editable
+  text is never shortened and keeps its checks; JSON documents stay strict.
 - Gradients drawn away from where their batch was recorded keep their colours
   with them. Moving a batch moved a gradient's box but not its colour line, so
   `color_picker(..).area(true)` showed a solid red hue strip and a square that

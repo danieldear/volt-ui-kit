@@ -251,7 +251,7 @@ callbacks, valid colours and sizes, and these limits:
 | --- | --- |
 | Elements per tree | 16,384 (virtual lists do not count unmounted rows) |
 | Nesting depth | 48 |
-| Text per element | 8 KiB |
+| Text per element | 8 KiB; longer display text and labels are shortened with `…` and one warning per run, never rejected. Editable text is never shortened: single-line fields fail over 8 KiB, multiline editors allow 4 MiB |
 | Font size / weight | 8–96 / 100–900 in steps of 100 |
 | Corner radius / border width | 0–256 / 0–16 |
 | Sizes and spacing | 0–16,384 logical pixels |

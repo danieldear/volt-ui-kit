@@ -222,9 +222,8 @@ fn validation_rejects_duplicate_keys_missing_callbacks_limits_and_bad_styles() {
     assert!(Element::<App>::from(text("A").width(f32::NAN))
         .build()
         .is_err());
-    assert!(Element::<App>::from(text("a".repeat(8193)))
-        .build()
-        .is_err());
+    // Display text over 8 KiB is shortened rather than rejected (tests/text_limit.rs).
+    assert!(Element::<App>::from(text("a".repeat(8193))).build().is_ok());
     // Document limits: 16384 nodes, depth 48.
     let nodes: Vec<Element<App>> = (0..16_385).map(|i| text(i.to_string()).into()).collect();
     assert!(Element::from(column(nodes)).build().is_err());
