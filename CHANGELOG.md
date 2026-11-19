@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Pull to refresh: `.on_refresh(f)` on a scroll container runs `f` when the
+  content is pulled down past its top and let go, and `.refreshing(bool)` keeps
+  the host's spinner showing while the work is under way. iOS uses the system's
+  `UIRefreshControl` on the platform scroll view (a new `refresh` platform
+  event); other hosts don't offer the gesture yet, so keep another way to
+  refresh there. Scroll views in the host snapshot report `refresh` and
+  `refreshing`.
+
 - Display text or a label over 8 KiB no longer fails `build()` and loses the
   window. The Rust builder shortens it on a character boundary, ends it with
   `…`, keeps the text spans that still fit and warns once per run. Editable

@@ -892,6 +892,7 @@ impl Document {
                 (&n.on_key, EventKind::Key),
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
+                (&n.ext.on_refresh, EventKind::Activate),
             ] {
                 if let Some(name) = name {
                     handlers

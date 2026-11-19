@@ -220,6 +220,10 @@ pub struct NavigationBar {
 pub(crate) struct NodeExtras {
     /// This node is a navigation stack's bar.
     pub navigation_bar: Option<Box<NavigationBar>>,
+    /// A scroll container's pull-to-refresh handler (`on_refresh`).
+    pub on_refresh: Option<String>,
+    /// Its work is under way: hosts keep their refresh spinner showing.
+    pub refreshing: bool,
     /// Text inside can be selected and copied (inherited; `Some(false)`
     /// opts a subtree out).
     pub selectable: Option<bool>,
