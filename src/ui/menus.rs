@@ -451,6 +451,7 @@ fn menu_card<C: 'static, T: Clone + 'static>(
             .border_width(0.)
             .font_size(12.5)
             .font_weight(400)
+            .truncate()
             .label_align(Align::Start)
             .label_inset(inset)
             .hover_style(|s| s.background(ColorToken::Primary.alpha(14)))
@@ -465,7 +466,13 @@ fn menu_card<C: 'static, T: Clone + 'static>(
         let mut child: Element<C> = match item.kind {
             ItemKind::Separator => {
                 height += 9.;
-                separator().height(9.).into()
+                // A hairline centred in a 9-point row: the separator itself
+                // paints its whole box, so it keeps its one-pixel height.
+                vstack([separator().into()])
+                    .height(9.)
+                    .padding(4., Edge::Vertical)
+                    .align(Align::Stretch)
+                    .into()
             }
             ItemKind::Submenu { key: k, label, .. } => {
                 let is_open = open == Some(k.as_str());
@@ -537,6 +544,9 @@ fn menu_card<C: 'static, T: Clone + 'static>(
                     .border_width(0.)
                     .font_size(12.5)
                     .font_weight(400)
+                    // One line, ending in "…": rows have a fixed height, so a
+                    // label that wrapped would spill over the rows below it.
+                    .truncate()
                     .enabled(enabled)
                     .label_align(Align::Start)
                     .label_inset(label_inset)

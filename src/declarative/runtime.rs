@@ -4931,7 +4931,13 @@ fn resolve_styles(
         node_key(n),
         ResolvedStyle {
             color_specs: [
-                text.color.clone(),
+                // A divider is a line, not text: only its own colour counts,
+                // never the text colour of what contains it.
+                if n.kind == Kind::Separator {
+                    n.style.color.clone()
+                } else {
+                    text.color.clone()
+                },
                 n.style.background.clone(),
                 n.style.border_color.clone(),
                 n.style.accent_color.clone(),

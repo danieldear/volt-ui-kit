@@ -115,11 +115,18 @@ fn menu(root: &Node, scope: &Scope) -> Option<Menu> {
         return None;
     }
     let content = find_node(root, &scope.content)?;
-    // A decorated row is a fixed-height layer whose first child is its button.
+    // A decorated row is a fixed-height layer whose first child is its button;
+    // a separator row may hold its line in a padded column.
     let target = |child: &'_ Node| -> Option<(String, bool, bool)> {
         match child.kind {
             Kind::Button => Some((child.id.clone(), child.enabled, child.checked)),
             Kind::Separator => Some((child.id.clone(), false, false)),
+            // A separator row: a hairline centred in a column of its own.
+            Kind::Column
+                if child.children.len() == 1 && child.children[0].kind == Kind::Separator =>
+            {
+                Some((child.id.clone(), false, false))
+            }
             Kind::ZStack => child
                 .children
                 .first()
