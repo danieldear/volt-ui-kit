@@ -137,6 +137,22 @@ impl<C: 'static> MobileView<C> {
         Ok(o.activated)
     }
     /// Run a navigation bar control (Back or a bar button) the platform drew.
+    /// Pull to refresh: the host saw scroll view `id` pulled past its top and
+    /// let go. Runs its `on_refresh`.
+    pub fn refresh(&mut self, id: &str) -> Result<bool, String> {
+        if self.suspended {
+            return Ok(false);
+        }
+        self.tick();
+        let refreshed = self
+            .runtime
+            .refresh(id, &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if refreshed {
+            self.recompose()?;
+        }
+        Ok(refreshed)
+    }
     pub fn activate_navigation(&mut self, id: &str) -> Result<bool, String> {
         if self.suspended {
             return Ok(false);

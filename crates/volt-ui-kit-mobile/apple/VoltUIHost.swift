@@ -210,6 +210,8 @@ private struct ScrollInfo: Decodable {
     let id: String; let frame: [CGFloat]; let content: [CGFloat]; let offset: [CGFloat]; let axes: [Bool]
     /// The top and bottom insets Rust draws with.
     let insets: [CGFloat]?
+    /// Pull to refresh: the container has `on_refresh`, and its work is under way.
+    let refresh: Bool?; let refreshing: Bool?
 }
 private struct Snapshot: Decodable {
     let nodes: [Node]; let dark: Bool; let frames: UInt64; let backend: String; let animating: Bool?
@@ -559,7 +561,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
                     pendingInsets.append((info.id, top, bottom))
                 }
             }
-            if !s.isTracking && !s.isDragging && !s.isDecelerating {
+            syncRefresh(s, info)
+            // A refresh control holds the content down while it spins; leave it.
+            let spinning = s.refreshControl?.isRefreshing ?? false
+            if !s.isTracking && !s.isDragging && !s.isDecelerating && !spinning {
                 // Where Rust draws the content: at drawnTop - offset.
                 let target = CGPoint(x: info.offset[0], y: info.offset[1] - drawnTop)
                 if abs(s.contentOffset.x - target.x) > 0.5 || abs(s.contentOffset.y - target.y) > 0.5 {
@@ -690,6 +695,28 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         addGestureRecognizer(s.panGestureRecognizer)
         scrollers[id] = s
         return s
+    }
+    /// Pull to refresh: the system's control on a scroll view whose container
+    /// has `on_refresh`. It stays while Rust says the work is under way, and
+    /// closes when it isn't (at once, if `on_refresh` finished immediately).
+    private func syncRefresh(_ s: NativeScroll, _ info: ScrollInfo) {
+        guard info.refresh == true else {
+            if s.refreshControl != nil { s.refreshControl = nil }
+            return
+        }
+        let control: UIRefreshControl
+        if let existing = s.refreshControl {
+            control = existing
+        } else {
+            control = UIRefreshControl()
+            control.addTarget(self, action: #selector(pulledToRefresh(_:)), for: .valueChanged)
+            s.refreshControl = control
+        }
+        if info.refreshing != true, control.isRefreshing { control.endRefreshing() }
+    }
+    @objc private func pulledToRefresh(_ control: UIRefreshControl) {
+        guard let s = control.superview as? NativeScroll else { return }
+        send(["op": "refresh", "id": s.nodeId])
     }
     private func makeScroller(_ id: String) -> NativeScroll {
         let s = NativeScroll()

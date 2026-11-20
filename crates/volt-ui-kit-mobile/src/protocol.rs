@@ -111,6 +111,11 @@ pub enum PlatformEvent {
     Navigation {
         id: String,
     },
+    /// A platform scroll view was pulled past its top and let go: its
+    /// container's `on_refresh` runs.
+    Refresh {
+        id: String,
+    },
     /// `colors` and `reduce_motion` are optional so older hosts keep working;
     /// motion stays reduced until a host with a frame loop sends `false`.
     Appearance {

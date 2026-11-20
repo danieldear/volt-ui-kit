@@ -1668,6 +1668,47 @@ impl Runtime {
         visit(self.document.root(), &mut bars);
         bars
     }
+    /// Whether scroll container `id` refreshes on a pull, and if so whether its
+    /// work is under way (`Some(refreshing)`); `None` without `on_refresh`.
+    pub fn refresh_state(&self, id: &str) -> Option<bool> {
+        fn find<'a>(n: &'a Node, id: &str) -> Option<&'a Node> {
+            if n.id == id {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| find(c, id))
+        }
+        find(self.document.root(), id)
+            .filter(|n| n.ext.on_refresh.is_some())
+            .map(|n| n.ext.refreshing)
+    }
+    /// Run scroll container `id`'s `on_refresh`: the host saw a pull and a
+    /// release. Other IDs do nothing.
+    pub fn refresh<C>(
+        &mut self,
+        id: &str,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        fn find<'a>(n: &'a Node, id: &str) -> Option<&'a Node> {
+            if n.id == id {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| find(c, id))
+        }
+        if !self.scope_allows_id(id) {
+            return Ok(false);
+        }
+        let Some(action) = find(self.document.root(), id)
+            .filter(|n| n.enabled)
+            .and_then(|n| n.ext.on_refresh.clone())
+        else {
+            return Ok(false);
+        };
+        handlers
+            .dispatch(&action, Event::Activate, context)
+            .map_err(|e| DocumentError(e.to_string()))?;
+        Ok(true)
+    }
     /// Run a navigation bar's Back or bar button by ID, even while a host draws
     /// the bar natively and Volt's copy is hidden. Other IDs do nothing.
     pub fn activate_navigation<C>(

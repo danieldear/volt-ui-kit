@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Pull to refresh: `.on_refresh(f)` on a scroll container runs `f` when the
+  content is pulled down past its top and let go, and `.refreshing(bool)` keeps
+  the host's spinner showing while the work is under way. iOS uses the system's
+  `UIRefreshControl` on the platform scroll view (a new `refresh` platform
+  event); other hosts don't offer the gesture yet, so keep another way to
+  refresh there. Scroll views in the host snapshot report `refresh` and
+  `refreshing`.
 - Menu separators are hairlines again. A separator paints its whole box, and
   the menu gave each one a 9-point box, so every separator showed as a solid
   bar in the line colour. The line now sits centred in its 9-point row, and

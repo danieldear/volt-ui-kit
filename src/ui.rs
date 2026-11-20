@@ -545,6 +545,8 @@ pub struct Element<C> {
     focus_within: Option<Change<C>>,
     /// Containers: Escape that nothing else used.
     escape: Option<Click<C>>,
+    /// Scroll containers: pulled past the top and let go.
+    refresh: Option<Click<C>>,
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
@@ -635,6 +637,7 @@ impl<C> Element<C> {
             hover: None,
             focus_within: None,
             escape: None,
+            refresh: None,
             validation_error: None,
             input_activation: None,
             input_key: None,
@@ -754,6 +757,7 @@ impl<C: 'static> Element<C> {
             hover: self.hover.map(|f| lift1(f, a)),
             focus_within: self.focus_within.map(|f| lift1(f, a)),
             escape: self.escape.map(|f| lift0(f, a)),
+            refresh: self.refresh.map(|f| lift0(f, a)),
             validation_error: self.validation_error,
             input_activation: self.input_activation.map(|f| lift2(f, a)),
             input_key: self.input_key.map(|f| lift1(f, a)),
@@ -807,6 +811,7 @@ impl<C: 'static> Element<C> {
                 hover,
                 focus_within,
                 escape,
+                refresh,
                 validation_error,
                 input_activation,
                 input_key,
@@ -895,6 +900,13 @@ impl<C: 'static> Element<C> {
                     .on_activate(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.on_escape = Some(name);
+            }
+            if let Some(f) = refresh {
+                let name = format!("rust-refresh-{}", *count);
+                handlers
+                    .on_activate(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.ext.on_refresh = Some(name);
             }
             if let Some(f) = input_activation {
                 let name = format!("rust-input-{}", *count);
@@ -1775,6 +1787,22 @@ macro_rules! container_modifiers {
             /// `on_drag` on the same container, which still gets its calls.
             pub fn on_pointer(mut self, f: impl FnMut(&mut C, Pointer) + 'static) -> Self {
                 self.0.pointer = Some(Box::new(f));
+                self
+            }
+            /// Pull to refresh, on a scroll container: pulling the content down
+            /// past its top and letting go runs `f` once. On iOS this is the
+            /// system's pull-to-refresh control on the platform scroll view;
+            /// other hosts don't offer the gesture yet, so keep another way to
+            /// refresh there (a button or a key). Pair it with `refreshing`.
+            pub fn on_refresh(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
+                self.0.refresh = Some(Box::new(f));
+                self
+            }
+            /// While `true`, the host keeps its refresh spinner showing (the work
+            /// a pull started is under way); `false` ends it. If `on_refresh`
+            /// finishes at once, leave this `false` and the spinner closes.
+            pub fn refreshing(mut self, value: bool) -> Self {
+                self.0.node.ext.refreshing = value;
                 self
             }
             pub fn on_escape(mut self, f: impl FnMut(&mut C) + 'static) -> Self {

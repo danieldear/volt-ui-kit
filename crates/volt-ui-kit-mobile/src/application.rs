@@ -180,6 +180,9 @@ impl<C: 'static> Application<C> {
             PlatformEvent::Navigation { id } => {
                 self.ui.activate_navigation(&id)?;
             }
+            PlatformEvent::Refresh { id } => {
+                self.ui.refresh(&id)?;
+            }
             PlatformEvent::Appearance {
                 dark,
                 colors,
@@ -263,9 +266,13 @@ impl<C: 'static> Application<C> {
                     (w + b.scroll_max[0] - if axes[0] { il + ir } else { 0. }).max(0.),
                     (h + b.scroll_max[1] - if axes[1] { it + ib } else { 0. }).max(0.),
                 ];
+                // Pull to refresh: present with `on_refresh`, and whether its
+                // work is under way (the host keeps its spinner till then).
+                let refresh = self.ui.runtime().refresh_state(&b.id);
                 Some(
                     json!({"id": b.id, "frame": frame, "content": content, "insets": [it, ib],
-                    "offset": b.scroll_offset, "axes": axes}),
+                    "offset": b.scroll_offset, "axes": axes, "refresh": refresh.is_some(),
+                    "refreshing": refresh.unwrap_or(false)}),
                 )
             })
             .collect::<Vec<_>>();
@@ -316,6 +323,8 @@ mod tests {
         clicks: usize,
         name: String,
         dark: bool,
+        refreshes: usize,
+        loading: bool,
     }
     fn view(s: &State) -> Element<State> {
         vstack![
@@ -344,7 +353,12 @@ mod tests {
             )
             .key("list")
             .flex(1.)
-            .scroll(Scroll::Vertical),
+            .scroll(Scroll::Vertical)
+            .on_refresh(|s: &mut State| {
+                s.refreshes += 1;
+                s.loading = true;
+            })
+            .refreshing(s.loading),
         ]
         .into()
     }
@@ -542,6 +556,47 @@ mod tests {
             .find(|n| n["id"] == "item-29")
             .unwrap();
         assert!(last["visibleBounds"][3].as_f64().unwrap() > 0.);
+    }
+    #[test]
+    fn pulling_a_scroll_view_runs_on_refresh_and_reports_the_spinner() {
+        let mut a = app();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 500.,
+            scale: 3.,
+        })
+        .unwrap();
+        let list = |a: &Application<State>| {
+            a.snapshot()["scrollViews"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["id"] == "list")
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(
+            (list(&a)["refresh"].clone(), list(&a)["refreshing"].clone()),
+            (true.into(), false.into())
+        );
+        let event = PlatformEvent::decode(br#"{"op":"refresh","id":"list"}"#).unwrap();
+        a.handle(event).unwrap();
+        assert_eq!(a.state().refreshes, 1);
+        assert_eq!(
+            list(&a)["refreshing"],
+            true,
+            "the host keeps its spinner while loading"
+        );
+        // An id without on_refresh does nothing.
+        a.handle(PlatformEvent::Refresh { id: "count".into() })
+            .unwrap();
+        assert_eq!(a.state().refreshes, 1);
+        assert!(PlatformEvent::decode(br#"{"op":"refresh"}"#).is_err());
+        // While suspended, a pull is ignored.
+        a.handle(PlatformEvent::Suspend { value: true }).unwrap();
+        a.handle(PlatformEvent::Refresh { id: "list".into() })
+            .unwrap();
+        assert_eq!(a.state().refreshes, 1);
     }
     #[test]
     fn a_native_scroll_view_owns_scrolling_and_can_bounce() {
