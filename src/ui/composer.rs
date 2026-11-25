@@ -103,7 +103,9 @@ impl<C> Composer<C> {
 /// Measurements, in points.
 const BUTTON: f32 = 36.;
 const LINE: f32 = 22.;
-const FIELD_PAD: f32 = 9.;
+/// Single-line field = 44, the height of the buttons beside it, so the text,
+/// Add and Send share one centre line.
+const FIELD_PAD: f32 = 11.;
 /// Roughly how many characters fit on a line of the field, for growing it
 /// before the text wraps. The field also scrolls, so a guess is safe.
 const CHARS_PER_LINE: usize = 34;
