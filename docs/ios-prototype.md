@@ -234,6 +234,11 @@ list_row(&note.title)
     .on_toggle(move |a: &mut App| a.toggle(id))
 ```
 
+A `full_swipe` action runs when the row is swiped well past its buttons. A
+destructive one (`SwipeTone::Danger`) also needs the finger to rest past
+that point for a quarter of a second before letting go; a quick flick only
+opens the row on its buttons, so nothing is deleted by accident.
+
 Touch and hold a row for its menu. Name the swipe actions there too, with
 anything else that applies; `SwipeTone::Danger` shows in red:
 

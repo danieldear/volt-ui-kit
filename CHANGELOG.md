@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rows: a destructive full swipe (`SwipeTone::Danger`) runs only after the
+  finger rests past the line for a quarter of a second; a quick flick opens
+  the row on its buttons instead.
 - Chat: `on_away_from_end` on an end-anchored scroll view says when the
   reader scrolls up from the newest message and when they're back;
   `scroll_to_end(request)` goes back to it. `jump_to_latest` wraps a

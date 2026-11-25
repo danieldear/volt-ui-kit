@@ -1649,8 +1649,27 @@ mod tests {
         })
         .unwrap();
         assert_eq!((a.state().pinned, a.state().open), (1, None));
-        // A long swipe left deletes without stopping at the button.
+        // A quick long flick left can't delete: Delete is destructive, so
+        // the row only opens on its buttons.
         swipe(&mut a, 350., -300.);
+        assert_eq!(
+            (a.state().deleted, a.state().open),
+            (0, Some(SwipeSide::Trailing))
+        );
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!(a.state().open, None);
+        // Resting past the line a moment before letting go deletes.
+        a.handle(PlatformEvent::Begin { x: 350., y }).unwrap();
+        for i in 1..=5 {
+            a.handle(PlatformEvent::Move {
+                x: 350. - 60. * i as f32,
+                y,
+            })
+            .unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        a.handle(PlatformEvent::End { x: 50., y }).unwrap();
         assert_eq!((a.state().deleted, a.state().open), (1, None));
         // A plain tap opens the note.
         a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();

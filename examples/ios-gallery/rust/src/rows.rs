@@ -198,7 +198,7 @@ pub fn page(app: &App) -> Container<App> {
         list_section(
             header,
             rows,
-            "Swipe right to pin, left to flag or delete. A long swipe left deletes at once. Touch and hold a note for its menu.",
+            "Swipe right to pin, left to flag or delete. Swipe far left and pause before letting go to delete at once. Touch and hold a note for its menu.",
         )
         .into(),
     );

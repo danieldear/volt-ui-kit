@@ -70,8 +70,10 @@ impl<C> SwipeAction<C> {
         self
     }
     /// A long swipe runs this action without stopping at the buttons. Only
-    /// the outermost action on a side can have it. Follow a destructive one
-    /// with an undo.
+    /// the outermost action on a side can have it. A destructive one
+    /// (`SwipeTone::Danger`) runs only if the finger rests past the line for
+    /// a moment before letting go; a quick flick opens the row instead.
+    /// Follow it with an undo.
     pub fn full_swipe(mut self) -> Self {
         self.full_swipe = true;
         self
@@ -258,6 +260,43 @@ impl<C> ListRow<C> {
 const ACTION_WIDTH: f32 = 76.;
 /// How far past its buttons a row must be swiped to run its full-swipe action.
 const FULL_SWIPE: f32 = 120.;
+/// How long a destructive full swipe must rest past the line before letting
+/// go runs it; let go sooner and the row just opens on its buttons.
+const FULL_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
+
+thread_local! {
+    /// When each row's destructive full swipe crossed the line, by row key.
+    /// UI-thread only; cleared when the finger comes back or lets go.
+    static ARMED: RefCell<std::collections::BTreeMap<String, std::time::Instant>> =
+        const { RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// Now, where the platform has a clock (not the browser's wasm).
+fn now() -> Option<std::time::Instant> {
+    (!cfg!(target_arch = "wasm32")).then(std::time::Instant::now)
+}
+
+/// Whether a destructive full swipe past the line has rested long enough:
+/// `past` is whether the finger is past it now. Without a clock, always.
+fn rested(key: &str, past: bool, release: bool) -> bool {
+    let Some(now) = now() else {
+        return true;
+    };
+    ARMED.with(|armed| {
+        let mut armed = armed.borrow_mut();
+        let since = if past {
+            *armed.entry(key.to_owned()).or_insert(now)
+        } else {
+            armed.remove(key);
+            now
+        };
+        if release {
+            armed.remove(key);
+        }
+        past && now.duration_since(since) >= FULL_HOLD
+    })
+}
+
 /// How far a row must move to open, or how fast.
 const OPEN_DISTANCE: f32 = 40.;
 const OPEN_SPEED: f32 = 500.;
@@ -568,35 +607,50 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
             if full_trailing {
                 trailing_full = row.trailing_actions[0].press.clone();
             }
+            // A destructive full swipe needs a short rest past the line, so
+            // a hasty flick can't delete.
+            let careful_leading =
+                full_leading && matches!(row.leading_actions[0].tone, SwipeTone::Danger);
+            let careful_trailing =
+                full_trailing && matches!(row.trailing_actions[0].tone, SwipeTone::Danger);
+            let row_key = key.clone();
             let on_open = row.on_open.clone();
             let (has_leading, has_trailing) = (
                 !row.leading_actions.is_empty(),
                 !row.trailing_actions.is_empty(),
             );
             content = content.on_pointer(move |c: &mut C, p: Pointer| {
-                if p.phase != PointerPhase::Release {
+                let release = p.phase == PointerPhase::Release;
+                if !release && p.phase != PointerPhase::Drag {
                     return;
                 }
                 let [dx, dy] = p.offset;
+                let at = rest + dx;
+                let past_trailing = careful_trailing && at <= -(trailing_w + FULL_SWIPE);
+                let past_leading = careful_leading && at >= leading_w + FULL_SWIPE;
+                let rested = rested(&row_key, past_trailing || past_leading, release);
+                if !release {
+                    return;
+                }
                 if dx.abs() < 6. || dy.abs() > dx.abs() {
                     return;
                 }
-                let at = rest + dx;
                 let vx = p.velocity[0];
                 let set = |c: &mut C, side: Option<SwipeSide>| {
                     if let Some(f) = &on_open {
                         (f.borrow_mut())(c, side);
                     }
                 };
-                // A long swipe runs the outermost action.
-                if at <= -(trailing_w + FULL_SWIPE) {
+                // A long swipe runs the outermost action (a destructive one
+                // only after a rest past the line).
+                if at <= -(trailing_w + FULL_SWIPE) && (!careful_trailing || rested) {
                     if let Some(f) = &trailing_full {
                         set(c, None);
                         (f.borrow_mut())(c);
                         return;
                     }
                 }
-                if at >= leading_w + FULL_SWIPE {
+                if at >= leading_w + FULL_SWIPE && (!careful_leading || rested) {
                     if let Some(f) = &leading_full {
                         set(c, None);
                         (f.borrow_mut())(c);
