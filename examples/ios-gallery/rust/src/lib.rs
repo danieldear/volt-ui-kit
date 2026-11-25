@@ -1378,7 +1378,7 @@ mod tests {
         assert_eq!(a.state().rows.notes.len(), 6);
         assert!(!a.state().rows.selecting);
         a.handle(PlatformEvent::Activate {
-            id: "rows-undo".into(),
+            id: "rows-undo-bar-action".into(),
         })
         .unwrap();
         let order: Vec<u32> = a.state().rows.notes.iter().map(|n| n.id).collect();

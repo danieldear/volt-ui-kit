@@ -288,6 +288,24 @@ vstack![
   the dock's search uses it too.
 - The gallery's **Chat** page streams a reply from another thread.
 
+## Undo bar
+
+After something is deleted, do it and offer Undo in a `snackbar` rather
+than asking first. Give it to the page's dock with `notice`, or layer it
+last in a `zstack!`. Closing it after a few seconds is the app's: an
+`Updater` from a timer thread (see the gallery's Swipe and select page).
+
+```rust,ignore
+action_dock(list)
+    .notice(
+        snackbar(format!("Deleted {title}."))
+            .key("undo")
+            .action("Undo", |a: &mut App| a.undo())
+            .open(app.can_undo())
+            .on_close(|a: &mut App| a.forget_undo()),
+    )
+```
+
 ## Search
 
 Use `search_field` for every search. On iOS it is UIKit's own search field;

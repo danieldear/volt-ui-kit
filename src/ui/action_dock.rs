@@ -122,6 +122,7 @@ pub struct ActionDock<C> {
     follows: Option<String>,
     back: Option<(String, Press<C>)>,
     search: Option<DockSearch<C>>,
+    notice: Option<Element<C>>,
 }
 /// A page with its actions in a dock at the bottom:
 ///
@@ -150,6 +151,7 @@ pub fn action_dock<C>(content: impl Into<Element<C>>) -> ActionDock<C> {
         follows: None,
         back: None,
         search: None,
+        notice: None,
     }
 }
 impl<C> ActionDock<C> {
@@ -200,6 +202,15 @@ impl<C> ActionDock<C> {
     /// [`dock_search`].
     pub fn search(mut self, search: DockSearch<C>) -> Self {
         self.search = Some(search);
+        self
+    }
+    /// A message just above the dock, such as "Deleted a note" with Undo.
+    /// It keeps the dock in place while it shows.
+    pub fn notice(mut self, bar: super::Snackbar<C>) -> Self
+    where
+        C: 'static,
+    {
+        self.notice = bar.bar();
         self
     }
     /// A Back button at the dock's leading end, in reach, for deep pages.
@@ -511,7 +522,12 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
             .layout_animation(Animation::spring());
         bar.0.node.access_role = Some(AccessRole::Group);
         // A search in progress keeps the dock up, above the keyboard.
-        if let Some(scroll) = dock.follows.as_ref().filter(|_| !searching) {
+        // A search in progress or a notice keeps the dock up.
+        if let Some(scroll) = dock
+            .follows
+            .as_ref()
+            .filter(|_| !searching && dock.notice.is_none())
+        {
             bar.0.node.ext.hides_with = Some(scroll.clone());
         }
 
@@ -526,7 +542,21 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
             .key(format!("{key}-foot"))
             .height(MARGIN);
         foot.0.node.ext.above_bars = true;
-        let layer = vstack![spacer(), row, foot]
+        let mut stack: Vec<Element<C>> = vec![spacer().into()];
+        if let Some(bar) = dock.notice {
+            let mut bar = bar;
+            bar.node.flex = 1.;
+            stack.push(
+                hstack![bar]
+                    .key(format!("{key}-notice"))
+                    .padding(12., Edge::Horizontal)
+                    .padding(10., Edge::Bottom)
+                    .into(),
+            );
+        }
+        stack.push(row.into());
+        stack.push(foot.into());
+        let layer = vstack(stack)
             .key(format!("{key}-layer"))
             .width_fraction(1.)
             .height_fraction(1.)

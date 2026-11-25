@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Mobile: `snackbar`, a message with one action (Undo) at the foot of the
+  screen. On Android it's Material 3's snackbar; on iOS a floating capsule
+  above the bottom bars. `ActionDock::notice` puts it just above a dock and
+  keeps the dock up while it shows.
+- iOS: the page redraws after a switch between light and dark, instead of
+  keeping the old colours until the next touch.
 - Mobile: `search_field`. With native controls the iOS host lays UIKit's
   own search field over it (magnifier, clear button, Search key); Volt
   draws nothing there (`EditorOptions::search`, snapshot kind `search`,

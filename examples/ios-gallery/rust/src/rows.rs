@@ -34,6 +34,8 @@ pub struct Rows {
     pub menu: Option<u32>,
     /// The first row has nudged to show it swipes; once is enough.
     pub hinted: bool,
+    /// Bumped by each delete; the Undo bar's timer only closes its own.
+    pub undo_round: u64,
 }
 impl Default for Rows {
     fn default() -> Self {
@@ -57,11 +59,13 @@ impl Default for Rows {
             more: false,
             menu: None,
             hinted: false,
+            undo_round: 0,
         }
     }
 }
 impl Rows {
     fn delete(&mut self, ids: &BTreeSet<u32>) {
+        self.undo_round += 1;
         self.deleted.clear();
         let mut i = 0;
         while i < self.notes.len() {
@@ -126,7 +130,7 @@ pub fn page(app: &App) -> Container<App> {
                     swipe_action("Delete", Icon::Trash)
                         .tone(SwipeTone::Danger)
                         .full_swipe()
-                        .on_press(move |a: &mut App| a.rows.delete(&BTreeSet::from([id]))),
+                        .on_press(move |a: &mut App| delete(a, &BTreeSet::from([id]))),
                     swipe_action(if flagged { "Unflag" } else { "Flag" }, Icon::Bell)
                         .tone(SwipeTone::Warning)
                         .on_press(move |a: &mut App| {
@@ -163,7 +167,7 @@ pub fn page(app: &App) -> Container<App> {
                     }),
                     swipe_action("Delete", Icon::Trash)
                         .tone(SwipeTone::Danger)
-                        .on_press(move |a: &mut App| a.rows.delete(&BTreeSet::from([id]))),
+                        .on_press(move |a: &mut App| delete(a, &BTreeSet::from([id]))),
                 ])
                 .menu_open(r.menu == Some(id))
                 .on_menu_open(move |a: &mut App, open| {
@@ -181,31 +185,6 @@ pub fn page(app: &App) -> Container<App> {
         })
         .collect();
     let mut parts: Vec<Element<App>> = Vec::new();
-    if !r.deleted.is_empty() {
-        let what = if r.deleted.len() == 1 {
-            format!("Deleted {}.", r.deleted[0].1.title)
-        } else {
-            format!("Deleted {} notes.", r.deleted.len())
-        };
-        parts.push(
-            hstack![
-                text(what).font_size(15.).flex(1.),
-                button("Undo")
-                    .key("rows-undo")
-                    .variant(ButtonVariant::Ghost)
-                    .color(ColorToken::Primary)
-                    .font_size(17.)
-                    .on_click(|a: &mut App| a.rows.undo()),
-            ]
-            .key("rows-deleted")
-            .padding(16., Edge::Horizontal)
-            .height(48.)
-            .align(Align::Center)
-            .rounded(14.)
-            .background(ColorToken::Base200)
-            .into(),
-        );
-    }
     let header = if r.selecting {
         match r.selected.len() {
             0 => "Choose notes".to_owned(),
@@ -224,11 +203,24 @@ pub fn page(app: &App) -> Container<App> {
         .into(),
     );
     let list = super::page("rows-list", parts);
+    let what = match r.deleted.len() {
+        0 => String::new(),
+        1 => format!("Deleted {}.", r.deleted[0].1.title),
+        n => format!("Deleted {n} notes."),
+    };
+    let notice = || {
+        snackbar(what.clone())
+            .key("rows-undo-bar")
+            .action("Undo", |a: &mut App| a.rows.undo())
+            .open(!r.deleted.is_empty())
+            .on_close(|a: &mut App| a.rows.deleted.clear())
+    };
     let dock = if r.selecting {
         let n = r.selected.len();
         let all = n == r.notes.len() && n > 0;
         action_dock(list)
             .key("rows-dock")
+            .notice(notice())
             .primary(
                 dock_action(
                     if n == 0 {
@@ -242,7 +234,7 @@ pub fn page(app: &App) -> Container<App> {
                 .enabled(n > 0)
                 .on_press(|a: &mut App| {
                     let ids = std::mem::take(&mut a.rows.selected);
-                    a.rows.delete(&ids);
+                    delete(a, &ids);
                     a.rows.selecting = false;
                 }),
             )
@@ -268,6 +260,7 @@ pub fn page(app: &App) -> Container<App> {
     } else {
         action_dock(list)
             .key("rows-dock")
+            .notice(notice())
             .follows("rows-list")
             .primary(dock_action("New note", Icon::Plus).on_press(|_: &mut App| {}))
             .more([dock_action("Select", Icon::Check).on_press(|a: &mut App| {
@@ -278,4 +271,21 @@ pub fn page(app: &App) -> Container<App> {
             .on_more(|a: &mut App, open| a.rows.more = open)
     };
     vstack![dock].key("rows-screen").flex(1.)
+}
+
+/// Delete, then close the Undo bar after five seconds unless another delete
+/// replaced it.
+pub fn delete(a: &mut App, ids: &BTreeSet<u32>) {
+    a.rows.delete(ids);
+    let round = a.rows.undo_round;
+    if let Some(updates) = a.updates.clone() {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            updates.update(move |a: &mut App| {
+                if a.rows.undo_round == round {
+                    a.rows.deleted.clear();
+                }
+            });
+        });
+    }
 }

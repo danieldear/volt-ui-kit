@@ -487,6 +487,8 @@ pub use routing::{
 mod action_dock;
 mod composer;
 pub use composer::{composer, Composer};
+mod snackbar;
+pub use snackbar::{snackbar, Snackbar};
 mod search;
 pub use search::{search_field, SearchField};
 mod prompts;
@@ -2120,6 +2122,7 @@ pub mod prelude {
         selectable_list, selectable_row, SelectableList, SelectableRow, SelectionAction,
         SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
     };
+    pub use super::{snackbar, Snackbar};
     pub use super::{sunburst_chart, SunburstChart};
     pub use super::{tab_destination, tab_view, TabDestination, TabView};
     pub use super::{BottomSheet, SheetDetent};
