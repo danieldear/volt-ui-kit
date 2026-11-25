@@ -289,6 +289,9 @@ mod tests {
     }
     fn node(id: &str, role: AccessRole, parent: Option<usize>) -> AccessNode {
         AccessNode {
+            done_button: false,
+            keeps_keyboard: false,
+            actions: Vec::new(),
             id: id.into(),
             parent,
             role,

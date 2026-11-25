@@ -483,6 +483,53 @@ impl Runtime {
             activated: true,
         })
     }
+    /// The box a long press or right click lands on: `top`, unless it is
+    /// empty space in a layer that lets touches through (the room around a
+    /// floating dock), in which case the box under that layer.
+    fn past_clear_layers(&self, top: usize, x: f32, y: f32) -> usize {
+        let clear = |i: usize| {
+            let b = &self.boxes[i];
+            if super::interactive_box(b)
+                || b.style.background.is_some_and(|c| c[3] > 0.)
+                || find_node(self.document.root(), &b.id).is_some_and(|n| n.on_context.is_some())
+            {
+                return false;
+            }
+            // Inside a pass-through layer, with nothing solid on the way.
+            let mut at = i;
+            loop {
+                let d = self.boxes[at].depth;
+                let Some(parent) = (d > 0)
+                    .then(|| self.boxes[..at].iter().rposition(|p| p.depth + 1 == d))
+                    .flatten()
+                else {
+                    return false;
+                };
+                let p = &self.boxes[parent];
+                if p.effects.scroll_passthrough {
+                    return true;
+                }
+                if p.style.background.is_some_and(|c| c[3] > 0.) {
+                    return false;
+                }
+                at = parent;
+            }
+        };
+        let mut top = top;
+        while clear(top) {
+            let Some(next) = self.boxes[..top].iter().rposition(|b| {
+                !self.portal_hit_passthrough(&b.id)
+                    && !b.effects.scroll_passthrough
+                    && self.scope_allows_id(&b.id)
+                    && self.hit_clip(b, x, y)
+                    && self.hit_rounded(b, x, y)
+            }) else {
+                break;
+            };
+            top = next;
+        }
+        top
+    }
     /// Request a context menu on right-button press without activating the target.
     /// The callback receives logical pixels; opening/closing remains app-owned.
     pub fn context_menu_at<C>(
@@ -496,8 +543,11 @@ impl Runtime {
             return Ok(InputOutcome::default());
         }
         let mut marker = None;
-        if let Some(mut index) = self.boxes.iter().rposition(|b| {
-            !self.portal_hit_passthrough(&b.id)
+        if let Some(mut index) = self
+            .boxes
+            .iter()
+            .rposition(|b| {
+                !self.portal_hit_passthrough(&b.id)
                 // Passive full-window layers (for example a toaster) must
                 // not become the starting ancestry for a right-click below.
                 && (!b.effects.scroll_passthrough
@@ -507,7 +557,9 @@ impl Runtime {
                 && self.scope_allows_id(&b.id)
                 && self.hit_clip(b,x,y)
                 && self.hit_rounded(b,x,y)
-        }) {
+            })
+            .map(|top| self.past_clear_layers(top, x, y))
+        {
             loop {
                 let b = &self.boxes[index];
                 if !self.scope_allows_id(&b.id) {

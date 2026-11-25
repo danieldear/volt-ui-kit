@@ -485,6 +485,8 @@ pub use routing::{
     NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
 };
 mod action_dock;
+mod composer;
+pub use composer::{composer, Composer};
 mod list_row;
 pub use list_row::{
     list_row, list_section, swipe_action, ListRow, SwipeAction, SwipeSide, SwipeTone,
@@ -2033,7 +2035,7 @@ macro_rules! tabs { ($($item:expr),* $(,)?) => { $crate::ui::tabs(vec![$($item),
 pub use crate::{button_bar, tab_bar, tabs, toolbar};
 /// Import component functions, types and layout macros together.
 mod text_motion;
-pub use text_motion::{morphing_text, rolling_number, shimmer_text, typing_text};
+pub use text_motion::{live_text, morphing_text, rolling_number, shimmer_text, typing_text};
 pub mod prelude {
     pub use super::{
         accordion, alert, avatar, avatar_group, bar_chart, bottom_sheet, breadcrumb, carousel,
@@ -2078,6 +2080,7 @@ pub mod prelude {
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
         rating, tag_input, ComboboxState, Hsl, Hsva, TagInputState,
     };
+    pub use super::{composer, Composer};
     pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
     pub use super::{
@@ -2087,7 +2090,7 @@ pub mod prelude {
     pub use super::{
         list_row, list_section, swipe_action, ListRow, SwipeAction, SwipeSide, SwipeTone,
     };
-    pub use super::{morphing_text, rolling_number, shimmer_text, typing_text};
+    pub use super::{live_text, morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
     pub use super::{

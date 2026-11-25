@@ -30,6 +30,10 @@ pub struct Rows {
     /// The last delete, for Undo: the notes and where they were.
     pub deleted: Vec<(usize, Note)>,
     pub more: bool,
+    /// The note whose long-press menu is open.
+    pub menu: Option<u32>,
+    /// The first row has nudged to show it swipes; once is enough.
+    pub hinted: bool,
 }
 impl Default for Rows {
     fn default() -> Self {
@@ -51,6 +55,8 @@ impl Default for Rows {
             flagged: BTreeSet::new(),
             deleted: Vec::new(),
             more: false,
+            menu: None,
+            hinted: false,
         }
     }
 }
@@ -82,7 +88,8 @@ pub fn page(app: &App) -> Container<App> {
     let rows: Vec<Element<App>> = r
         .notes
         .iter()
-        .map(|note| {
+        .enumerate()
+        .map(|(i, note)| {
             let id = note.id;
             let pinned = r.pinned.contains(&id);
             let flagged = r.flagged.contains(&id);
@@ -128,9 +135,40 @@ pub fn page(app: &App) -> Container<App> {
                             }
                         }),
                 ])
+                .swipe_hint(i == 0 && !r.hinted)
                 .swipe_open(r.open.filter(|(o, _)| *o == id).map(|(_, side)| side))
                 .on_swipe_open(move |a: &mut App, side| {
                     a.rows.open = side.map(|s| (id, s));
+                    a.rows.hinted = true;
+                })
+                .hold_actions([
+                    swipe_action(if pinned { "Unpin" } else { "Pin" }, Icon::Star).on_press(
+                        move |a: &mut App| {
+                            if !a.rows.pinned.remove(&id) {
+                                a.rows.pinned.insert(id);
+                            }
+                        },
+                    ),
+                    swipe_action(if flagged { "Unflag" } else { "Flag" }, Icon::Bell).on_press(
+                        move |a: &mut App| {
+                            if !a.rows.flagged.remove(&id) {
+                                a.rows.flagged.insert(id);
+                            }
+                        },
+                    ),
+                    swipe_action("Select", Icon::Check).on_press(move |a: &mut App| {
+                        a.rows.selecting = true;
+                        a.rows.open = None;
+                        a.rows.selected = BTreeSet::from([id]);
+                    }),
+                    swipe_action("Delete", Icon::Trash)
+                        .tone(SwipeTone::Danger)
+                        .on_press(move |a: &mut App| a.rows.delete(&BTreeSet::from([id]))),
+                ])
+                .menu_open(r.menu == Some(id))
+                .on_menu_open(move |a: &mut App, open| {
+                    a.rows.open = None;
+                    a.rows.menu = open.then_some(id);
                 })
                 .selecting(r.selecting)
                 .selected(r.selected.contains(&id))
@@ -181,7 +219,7 @@ pub fn page(app: &App) -> Container<App> {
         list_section(
             header,
             rows,
-            "Swipe right to pin, left to flag or delete. A long swipe left deletes at once.",
+            "Swipe right to pin, left to flag or delete. A long swipe left deletes at once. Touch and hold a note for its menu.",
         )
         .into(),
     );

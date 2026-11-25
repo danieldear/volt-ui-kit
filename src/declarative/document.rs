@@ -268,6 +268,19 @@ pub struct Node {
     #[serde(skip)]
     #[cfg(feature = "rust-ui")]
     pub(crate) access_expanded: Option<bool>,
+    /// Actions a screen reader offers on this node besides activating it.
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_actions: Vec<super::AccessAction>,
+    /// Left out of the accessibility tree with everything inside it.
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_hidden: bool,
+    /// Phones: pressing it while typing leaves the keyboard up (a message
+    /// box's Send).
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) keeps_keyboard: bool,
     #[serde(skip)]
     #[cfg(feature = "rust-ui")]
     pub(crate) access_level: Option<usize>,
@@ -422,6 +435,9 @@ pub(crate) struct EditorOptions {
     pub autofocus: bool,
     /// Multiline only: Tab indents instead of moving focus.
     pub tab_indents: bool,
+    /// Phones: no Done button above the keyboard. Dragging the page's
+    /// content puts the keyboard away instead.
+    pub hide_done: bool,
     /// Keys the application handles instead of the editor.
     #[cfg(feature = "rust-ui")]
     pub keys: Vec<super::runtime::editing::EditKey>,
@@ -606,6 +622,12 @@ impl Node {
             access_selected: None,
             #[cfg(feature = "rust-ui")]
             access_expanded: None,
+            #[cfg(feature = "rust-ui")]
+            access_actions: Vec::new(),
+            #[cfg(feature = "rust-ui")]
+            access_hidden: false,
+            #[cfg(feature = "rust-ui")]
+            keeps_keyboard: false,
             #[cfg(feature = "rust-ui")]
             access_level: None,
             #[cfg(feature = "rust-ui")]

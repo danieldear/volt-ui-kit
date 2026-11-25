@@ -360,6 +360,12 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(crate) access_expanded: Option<bool>,
     #[cfg(feature = "rust-ui")]
+    pub(crate) access_actions: Vec<super::AccessAction>,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_hidden: bool,
+    #[cfg(feature = "rust-ui")]
+    pub(crate) keeps_keyboard: bool,
+    #[cfg(feature = "rust-ui")]
     pub(crate) access_level: Option<usize>,
     #[cfg(feature = "rust-ui")]
     pub(crate) access_position: Option<usize>,
@@ -1947,6 +1953,32 @@ impl Runtime {
                 Some(parent) => i = parent,
                 None => return false,
             }
+        }
+    }
+    /// The colour showing behind `id` and the corner radius (physical) of
+    /// what paints it: its own background, or the nearest mostly opaque
+    /// ancestor's. A host's native text editor matches it to blend in.
+    pub fn backdrop(&self, id: &str) -> Option<([f32; 4], f32)> {
+        let theme = self.input_theme.borrow();
+        let mut i = self.boxes.iter().position(|b| b.id == id)?;
+        loop {
+            let style = &self.boxes[i].style;
+            // Theme colours (`@base-200`) resolve here, as they do to paint.
+            let fill = style.color_specs[1]
+                .as_deref()
+                .and_then(|spec| theme.resolve(spec))
+                .map(|mut c| {
+                    c[3] *= style.background_opacity;
+                    c
+                });
+            if let Some(c) = fill.filter(|c| c[3] > 0.5) {
+                return Some((c, style.radius.unwrap_or(0.)));
+            }
+            let depth = self.boxes[i].depth;
+            if depth == 0 {
+                return None;
+            }
+            i = self.boxes[..i].iter().rposition(|b| b.depth == depth - 1)?;
         }
     }
     /// Bounds (physical) of elements a finger drags sideways, such as rows
@@ -6277,6 +6309,12 @@ fn place(
         #[cfg(feature = "rust-ui")]
         access_expanded: n.access_expanded,
         #[cfg(feature = "rust-ui")]
+        access_actions: n.access_actions.clone(),
+        #[cfg(feature = "rust-ui")]
+        access_hidden: n.access_hidden,
+        #[cfg(feature = "rust-ui")]
+        keeps_keyboard: n.keeps_keyboard,
+        #[cfg(feature = "rust-ui")]
         access_level: n.access_level,
         #[cfg(feature = "rust-ui")]
         access_position: n.access_position,
@@ -6676,6 +6714,9 @@ fn place(
                     options.kind,
                     super::document::OverlayKind::Popup | super::document::OverlayKind::Tooltip
                 ) {
+                    // Inside the layer's padding: on a phone, that keeps a
+                    // menu clear of the tab bar and the keyboard.
+                    let [x, y, w, h] = [start[0], start[1], available[0], available[1]];
                     if let Some(point) = options.position {
                         pos[0] = (point[0] * s).clamp(x, (x + w - size[0]).max(x));
                         let below = point[1] * s;

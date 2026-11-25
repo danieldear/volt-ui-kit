@@ -83,6 +83,8 @@ pub enum Icon {
     Type,
     /// A window split into two panes, for split views.
     Columns,
+    /// A filled rounded square: stop what's running.
+    Stop,
 }
 
 /// Stroked SVG path data and filled path data for each glyph.
@@ -224,6 +226,7 @@ fn paths(icon: Icon) -> (&'static [&'static str], &'static [&'static str]) {
         Refresh => (&["M19.5 12a7.5 7.5 0 1 1-2.2-5.3", "M19.5 4.5v4h-4"], &[]),
         Play => (&[], &["M7.5 5v14l11.5-7z"]),
         Pause => (&[], &["M7 5h3.5v14H7z", "M13.5 5H17v14h-3.5z"]),
+        Stop => (&[], &["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"]),
         Grid => (&["M4 4h7v7H4z", "M13 4h7v7h-7z", "M4 13h7v7H4z", "M13 13h7v7h-7z"], &[]),
         List => (&["M9 6.5h11", "M9 12h11", "M9 17.5h11"], &[
             "M5 5.3a1.2 1.2 0 1 1 0 2.4a1.2 1.2 0 1 1 0-2.4z",
@@ -373,7 +376,7 @@ impl<C> From<IconElement> for Element<C> {
     }
 }
 /// Every glyph, for galleries and tests.
-pub const ALL_ICONS: [Icon; 69] = {
+pub const ALL_ICONS: [Icon; 70] = {
     use Icon::*;
     [
         Search,
@@ -445,6 +448,7 @@ pub const ALL_ICONS: [Icon; 69] = {
         FileText,
         Type,
         Columns,
+        Stop,
     ]
 };
 #[cfg(test)]

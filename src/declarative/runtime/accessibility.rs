@@ -43,6 +43,12 @@ pub struct AccessTableInfo {
 /// earlier node; roots have `None`. Bounds are physical pixels in the window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccessNode {
+    /// A text input that wants a Done button above a phone's keyboard.
+    pub done_button: bool,
+    /// Pressing it while typing leaves a phone's keyboard up.
+    pub keeps_keyboard: bool,
+    /// Actions besides activating it, such as a row's swipe actions.
+    pub actions: Vec<AccessAction>,
     pub id: String,
     pub parent: Option<usize>,
     pub role: AccessRole,
@@ -70,6 +76,14 @@ pub struct AccessNode {
     pub focused: bool,
     pub password: bool,
     pub read_only: bool,
+}
+/// An action a screen reader offers on a node: VoiceOver's actions rotor,
+/// TalkBack's actions menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccessAction {
+    pub label: String,
+    /// The control it activates; `None` opens the node's long-press menu.
+    pub target: Option<String>,
 }
 /// A value a screen reader asks to set.
 #[derive(Clone, Debug, PartialEq)]
@@ -139,9 +153,19 @@ impl Runtime {
         let mut ancestors: Vec<(usize, usize)> = Vec::new();
         let focused = self.focused.as_deref();
         let mut semantic_ids = BTreeMap::new();
+        // Depth of a hidden subtree being skipped.
+        let mut hidden: Option<usize> = None;
         for b in &self.layout_boxes {
             while ancestors.last().is_some_and(|(depth, _)| *depth >= b.depth) {
                 ancestors.pop();
+            }
+            if hidden.is_some_and(|d| b.depth > d) {
+                continue;
+            }
+            hidden = None;
+            if b.access_hidden {
+                hidden = Some(b.depth);
+                continue;
             }
             if b.departing || !self.scope_allows_id(&b.id) {
                 continue;
@@ -194,6 +218,9 @@ impl Runtime {
                 .or_else(|| ancestors.last().map(|(_, i)| *i));
             let index = out.len();
             out.push(AccessNode {
+                done_button: editor.is_some_and(|e| !e.hide_done),
+                keeps_keyboard: b.keeps_keyboard,
+                actions: b.access_actions.clone(),
                 id: b.id.clone(),
                 parent,
                 role,

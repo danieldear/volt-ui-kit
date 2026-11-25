@@ -357,6 +357,8 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
                         .accessible_label(search.placeholder.clone())
                         .placeholder(search.placeholder)
                         .autofocus(true)
+                        // The keyboard's own key and Close finish a search.
+                        .hide_done_button()
                         .on_change(move |c: &mut C, q| (change.borrow_mut())(c, q))
                         .flex(1.)
                         .height(BUTTON)

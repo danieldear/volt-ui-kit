@@ -65,13 +65,24 @@ pub enum PlatformEvent {
         x: f32,
         y: f32,
     },
+    /// The finger rested in place: a long press.
+    Hold {
+        x: f32,
+        y: f32,
+    },
     Cancel {},
     Activate {
+        id: String,
+    },
+    /// A screen reader's "Show menu": open the long-press menu for `id`.
+    Menu {
         id: String,
     },
     Focus {
         id: String,
     },
+    /// Typing ended (Done, or the keyboard was put away): nothing is focused.
+    Blur {},
     Text {
         id: String,
         text: String,
@@ -163,9 +174,10 @@ impl PlatformEvent {
                 height,
                 scale,
             } => [*width, *height, *scale].iter().all(|v| v.is_finite()),
-            Self::Begin { x, y } | Self::Move { x, y } | Self::End { x, y } => {
-                x.is_finite() && y.is_finite()
-            }
+            Self::Begin { x, y }
+            | Self::Move { x, y }
+            | Self::End { x, y }
+            | Self::Hold { x, y } => x.is_finite() && y.is_finite(),
             Self::Scroll { dy, .. } => dy.is_finite() && dy.abs() <= 16_384.,
             Self::Value { value, .. } => value.is_finite(),
             Self::ScrollInsets { top, bottom, .. } => [top, bottom]

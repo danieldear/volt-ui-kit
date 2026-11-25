@@ -601,6 +601,10 @@ impl Runtime {
                 .find(|b| b.id == id && b.enabled && b.editor.is_some() && self.scope_allows_id(id))
         })
     }
+    /// Nothing has keyboard focus: a phone host put its keyboard away.
+    pub fn blur(&mut self) -> bool {
+        self.focused.take().is_some()
+    }
     pub fn editing_focus(&self) -> bool {
         self.editable_box().is_some()
     }

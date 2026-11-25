@@ -147,8 +147,8 @@ These solve problems neither platform solves well.
 ## Build order
 
 1. Tab view, bottom sheet, border fix (done; tab icons still to add).
-2. Action dock, list rows with swipe actions and select mode (done; long-press menu and the swipe hint still to add).
-3. Composer and live text.
+2. Action dock, list rows with swipe actions, Select mode, long-press menu and swipe hint (done; a hold before a destructive full swipe is still to add).
+3. Composer and live text (done).
 4. Alerts and action sheets (native on iOS), undo bar and toasts.
 5. Work card and activity pill.
 6. Search bar, quick picks, freshness line, sheet flow.

@@ -13,6 +13,11 @@ pub fn rolling_number<C>(value: i64) -> Text<C> {
         .no_wrap(true)
         .text_effect(TextEffect::rolling())
 }
+/// Text that streams in, such as a model's reply: give it the whole text so
+/// far each time, and what's new eases in after what was there.
+pub fn live_text<C>(value: impl Into<String>) -> Text<C> {
+    text(value).text_effect(TextEffect::stream())
+}
 pub fn shimmer_text<C>(value: impl Into<String>) -> Text<C> {
     text(value).text_effect(TextEffect::shimmer())
 }

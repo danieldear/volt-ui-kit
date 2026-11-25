@@ -448,7 +448,9 @@ pub use runtime::{
 };
 
 #[cfg(feature = "rust-ui")]
-pub use runtime::accessibility::{AccessNode, AccessRole, AccessTableInfo, AccessValue};
+pub use runtime::accessibility::{
+    AccessAction, AccessNode, AccessRole, AccessTableInfo, AccessValue,
+};
 #[cfg(feature = "rust-ui")]
 pub(crate) use runtime::code_view::CodeViewProps;
 #[cfg(feature = "rust-ui")]

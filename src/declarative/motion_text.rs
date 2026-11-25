@@ -15,6 +15,10 @@ pub(super) struct TextMotion {
 struct Track {
     target: String,
     from: String,
+    /// Streaming: graphemes shown when the latest piece arrived, and how
+    /// long the rest takes to appear.
+    from_count: usize,
+    reveal: Duration,
     effect: TextEffect,
     start: Duration,
     finished: bool,
@@ -34,6 +38,10 @@ impl Motion {
                     .tracks
                     .entry(b.id.clone())
                     .or_insert_with(|| Track {
+                        // Text already there when a stream appears shows at
+                        // once: only what arrives later eases in.
+                        from_count: b.text.graphemes(true).count(),
+                        reveal: Duration::ZERO,
                         target: b.text.clone(),
                         from: if effect.kind == TextEffectKind::Typing {
                             String::new()
@@ -49,7 +57,29 @@ impl Motion {
                             ),
                         visible: b.layout_visible,
                     });
-                if track.target != b.text || track.effect != effect {
+                if effect.kind == TextEffectKind::Stream && track.effect == effect {
+                    if track.target != b.text {
+                        let now = self.now;
+                        let shown = stream_shown(track, now);
+                        let total = b.text.graphemes(true).count();
+                        // A continuation picks up where the reveal was; any
+                        // other change shows the new text at once.
+                        let kept = track
+                            .target
+                            .grapheme_indices(true)
+                            .nth(shown)
+                            .map_or(track.target.as_str(), |(i, _)| &track.target[..i]);
+                        track.from_count = if b.text.starts_with(kept) {
+                            shown.min(total)
+                        } else {
+                            total
+                        };
+                        track.reveal = stream_time(total - track.from_count);
+                        track.target = b.text.clone();
+                        track.start = now;
+                        track.finished = self.reduced || track.from_count == total;
+                    }
+                } else if track.target != b.text || track.effect != effect {
                     track.from = if effect.kind == TextEffectKind::Typing {
                         String::new()
                     } else {
@@ -78,6 +108,8 @@ impl Motion {
                 t.visible
                     && !t.finished
                     && (t.effect.kind == TextEffectKind::Shimmer
+                        || (t.effect.kind == TextEffectKind::Stream
+                            && self.now.saturating_sub(t.start) < t.reveal)
                         || t.effect
                             .animation
                             .wait(self.now.saturating_sub(t.start))
@@ -95,6 +127,8 @@ impl Motion {
             .filter_map(|t| {
                 if t.effect.kind == TextEffectKind::Shimmer {
                     Some(Duration::ZERO)
+                } else if t.effect.kind == TextEffectKind::Stream {
+                    (self.now.saturating_sub(t.start) < t.reveal).then_some(Duration::ZERO)
                 } else {
                     t.effect.animation.wait(self.now.saturating_sub(t.start))
                 }
@@ -128,6 +162,12 @@ impl Motion {
                 .progress(elapsed.as_secs_f32() * 1000.)
                 .clamp(0., 1.);
             match t.effect.kind {
+                TextEffectKind::Stream => {
+                    let n = stream_shown(t, self.now);
+                    if let Some((end, _)) = b.text.grapheme_indices(true).nth(n) {
+                        b.text.truncate(end);
+                    }
+                }
                 TextEffectKind::Typing => {
                     let graphemes = b.text.grapheme_indices(true).collect::<Vec<_>>();
                     let n = (graphemes.len() as f32 * progress).floor() as usize;
@@ -156,4 +196,19 @@ impl Motion {
             }
         }
     }
+}
+
+/// Graphemes of a stream showing at `now`.
+fn stream_shown(t: &Track, now: Duration) -> usize {
+    let total = t.target.graphemes(true).count();
+    if t.finished || t.reveal.is_zero() {
+        return total;
+    }
+    let p = (now.saturating_sub(t.start).as_secs_f32() / t.reveal.as_secs_f32()).clamp(0., 1.);
+    t.from_count + ((total - t.from_count) as f32 * p).round() as usize
+}
+/// How long `n` new graphemes take to appear: a steady pace for a trickle,
+/// faster for a burst so the reveal never falls far behind.
+fn stream_time(n: usize) -> Duration {
+    Duration::from_millis((n as u64 * 16).clamp(90, 650))
 }

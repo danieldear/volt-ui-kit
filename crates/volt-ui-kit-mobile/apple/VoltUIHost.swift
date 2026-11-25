@@ -312,9 +312,20 @@ private struct Node: Decodable {
     let checked: Bool?
     /// A slider's value, minimum, maximum and step.
     let numeric: [CGFloat]?
+    /// Actions besides activating it (a row's swipe actions, its menu).
+    let actions: [NodeAction]?
+    /// A text input wants the Done bar above the keyboard.
+    let doneBar: Bool?
+    /// Pressing it while typing leaves the keyboard up.
+    let keepsKeyboard: Bool?
+    /// The colour behind a field and the corner radius of what paints it.
+    let backdrop: Backdrop?
     var visibleRect: CGRect { visibleBounds.count == 4 && visibleBounds[2] > 0 && visibleBounds[3] > 0 ? CGRect(x:visibleBounds[0],y:visibleBounds[1],width:visibleBounds[2],height:visibleBounds[3]) : .null }
     var rect: CGRect { bounds.count == 4 ? CGRect(x: bounds[0], y: bounds[1], width: bounds[2], height: bounds[3]) : .zero }
 }
+private struct Backdrop: Decodable { let color: [CGFloat]; let radius: CGFloat }
+/// `target` is the control the action presses; none opens the node's menu.
+private struct NodeAction: Decodable { let label: String; let target: String? }
 fileprivate struct NavButton: Decodable, Equatable { let id: String; let label: String }
 fileprivate struct TabItemInfo: Decodable, Equatable {
     let id: String; let label: String; let symbol: String?; let icon: String; let badge: String?
@@ -342,12 +353,22 @@ private struct Snapshot: Decodable {
     let scrollViews: [ScrollInfo]?; let navigation: NavInfo?; let tabs: TabsInfo?
     /// A dialog or sheet is open: it covers the bars.
     let modal: Bool?
+    /// Long presses that opened a menu, counted.
+    let holds: UInt64?
     /// The field Rust focused for typing, such as a search field that opens
     /// with the keyboard up.
     let editing: String?
     /// Areas a finger drags sideways (rows with swipe actions), in points.
     let sideways: [[CGFloat]]?
     let background: [CGFloat]; let fieldBackground: [CGFloat]; let foreground: [CGFloat]; let accent: [CGFloat]
+}
+/// `top` laid over `bottom`, fully opaque.
+private func opaque(_ top: UIColor, over bottom: UIColor) -> UIColor {
+    var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+    var (r2, g2, b2, a2): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+    top.getRed(&r, green: &g, blue: &b, alpha: &a)
+    bottom.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+    return UIColor(red: r * a + r2 * (1 - a), green: g * a + g2 * (1 - a), blue: b * a + b2 * (1 - a), alpha: 1)
 }
 private func color(_ rgba:[CGFloat])->UIColor {
     guard rgba.count == 4 else {return .systemBackground}
@@ -427,6 +448,16 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var editingMultiline = false
     /// The native editor in use.
     private var editor: UIView { editingMultiline ? area : field }
+    /// The Done bars above the keyboard, which a chat's message box leaves out.
+    private let fieldBar = UIToolbar()
+    private let areaBar = UIToolbar()
+    /// The page colour, for laying a translucent field colour over.
+    private var pageBackground: UIColor = .systemBackground
+    /// `done()` is running: resigning the editor mustn't call it again.
+    private var ending = false
+    /// The field being typed in has no Done bar: dragging a list puts the
+    /// keyboard away instead.
+    private var dragDismisses = false
     /// How far the keyboard covers the canvas, in points.
     private var keyboardOverlap: CGFloat = 0
     /// A sheet or dialog Volt draws is open.
@@ -439,6 +470,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var activeTouch: UITouch?
     private var touchStart = CGPoint.zero
     private var dragged = false
+    /// Fires when the finger rests: a long press opens a menu in Rust.
+    private var holdWork: DispatchWorkItem?
+    /// Rust's count of long presses that opened a menu; each one buzzes.
+    private var holds: UInt64 = 0
     private var touchButtonId: String?
     private var lastSize = CGSize.zero
     private var lastScale: CGFloat = 0
@@ -489,15 +524,13 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         field.autocorrectionType = .no
         field.returnKeyType = .done
         field.addTarget(self, action: #selector(edited), for: .editingChanged)
-        let toolbar = UIToolbar()
-        toolbar.sizeToFit()
-        toolbar.items = [UIBarButtonItem(systemItem: .flexibleSpace), UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
-        field.inputAccessoryView = toolbar
+        fieldBar.sizeToFit()
+        fieldBar.items = [UIBarButtonItem(systemItem: .flexibleSpace), UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
+        field.inputAccessoryView = fieldBar
         area.delegate = self
         area.font = .systemFont(ofSize: 17)
         area.textContainerInset = UIEdgeInsets(top: 10, left: 7, bottom: 10, right: 7)
         area.autocorrectionType = .no
-        let areaBar = UIToolbar()
         areaBar.sizeToFit()
         areaBar.items = [UIBarButtonItem(systemItem: .flexibleSpace), UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
         area.inputAccessoryView = areaBar
@@ -520,7 +553,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     }
     private func applyKeyboardInset() {
         guard let s = contentScroll else { return }
-        let extra = max(0, keyboardOverlap - s.safeAreaInsets.bottom)
+        // Only what the keyboard covers: a transcript above a message box
+        // that rides the keyboard (Rust already moved it) needs nothing.
+        let covered = keyboardOverlap > 0 ? max(0, s.frame.maxY - (bounds.maxY - keyboardOverlap)) : 0
+        let extra = max(0, covered - s.safeAreaInsets.bottom)
         if s.contentInset.bottom != extra { s.contentInset.bottom = extra }
         revealEditor()
     }
@@ -663,6 +699,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard let ptr = volt_snapshot(handle), let data = String(cString: ptr).data(using: .utf8),
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { showError("Invalid Rust UI snapshot"); return }
         nodes = snapshot.nodes
+        if let count = snapshot.holds, count != holds {
+            if count > holds { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+            holds = count
+        }
         root?.sync(snapshot.tabs, before: before, accent: color(snapshot.accent), modal: snapshot.modal ?? false)
         modalOpen = snapshot.modal ?? false
         sideways = (snapshot.sideways ?? []).compactMap { r in
@@ -691,6 +731,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             }
         }
         navigation?.cover(modalOpen)
+        pageBackground = color(snapshot.background)
         navigation?.sync(snapshot.navigation, before: before, background: color(snapshot.background),
                          accent: color(snapshot.accent))
         displayLink?.isPaused = !(snapshot.animating ?? false) || suspended
@@ -718,6 +759,13 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             if !node.enabled { proxy.accessibilityTraits.insert(.notEnabled) }
             if node.kind == "button" || node.kind == "field" {
                 proxy.activate = { [weak self] in self?.activate(node) ?? false }
+            }
+            proxy.accessibilityCustomActions = (node.actions ?? []).map { action in
+                UIAccessibilityCustomAction(name: action.label) { [weak self] _ in
+                    guard let self else { return false }
+                    if let target = action.target { return self.send(["op": "activate", "id": target]) }
+                    return self.send(["op": "menu", "id": node.id])
+                }
             }
             elements.append(proxy)
         }
@@ -982,6 +1030,9 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             return inner.frame.contains(p) && inner.axes[axis]
         }
     }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        if dragDismisses, editingId != nil, keyboardOverlap > 0 { done() }
+    }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         navigation?.holdContentBackGesture(false)
     }
@@ -1015,6 +1066,12 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         if editingId != node.id { done() }
         editingId = node.id
         editingMultiline = node.multiline ?? false
+        // A message box has no Done bar: dragging the conversation puts the
+        // keyboard away, as in Messages.
+        let bar = node.doneBar ?? true
+        field.inputAccessoryView = bar ? fieldBar : nil
+        area.inputAccessoryView = bar ? areaBar : nil
+        dragDismisses = !bar
         send(["op":"focus", "id":node.id])
         if editingMultiline {
             area.text = node.value ?? ""
@@ -1038,25 +1095,44 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard let id = editingId else { return }
         guard let node = nodes.first(where: { $0.id == id }) else { editingId = nil; editor.resignFirstResponder(); editor.removeFromSuperview(); return }
         editor.frame = node.rect.insetBy(dx:2,dy:2)
-        editor.layer.cornerRadius = 10
+        // Blend in with what's behind the field: a message box's pill, a
+        // dock's search capsule.
+        if let b = node.backdrop {
+            // Opaque, over the page: Volt's own drawing of the text must not
+            // show through a glassy pill.
+            editor.backgroundColor = opaque(color(b.color), over: pageBackground)
+            editor.layer.cornerRadius = min(max(0, b.radius - 2), editor.frame.height / 2)
+        } else {
+            editor.backgroundColor = editingMultiline ? area.backgroundColor : field.backgroundColor
+            editor.layer.cornerRadius = 10
+        }
         editor.clipsToBounds = true
     }
     @objc private func edited() {
         guard field.markedTextRange == nil, let id = editingId else { return }
         send(["op":"text", "id":id, "text":field.text ?? ""])
     }
+    /// The keyboard went away some other way (dragged down with the page):
+    /// commit the text, as Done does.
+    func textViewDidEndEditing(_ textView: UITextView) { if editingId != nil { done() } }
+    func textFieldDidEndEditing(_ textField: UITextField) { if editingId != nil { done() } }
     func textViewDidChange(_ textView: UITextView) {
         guard textView.markedTextRange == nil, let id = editingId else { return }
         send(["op":"text", "id":id, "text":textView.text ?? ""])
     }
     @objc private func done() {
-        guard let id = editingId else { return }
+        guard let id = editingId, !ending else { return }
+        ending = true
+        defer { ending = false }
         // Resigning commits an active IME composition before notifying Rust.
         editor.resignFirstResponder()
         let committed = editingMultiline ? area.text ?? "" : field.text ?? ""
         let closing = editor
         editingId = nil
         send(["op":"text", "id":id, "text":committed])
+        // Rust lets go of the field too, so nothing reopens the keyboard
+        // until someone taps a field again.
+        send(["op":"blur"])
         closing.removeFromSuperview()
         refreshIfMounted()
     }
@@ -1080,14 +1156,31 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             navigation?.holdContentBackGesture(true)
         }
         send(["op":"begin", "x":touchStart.x,"y":touchStart.y])
+        holdWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.hold(t) }
+        holdWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+    }
+    /// The finger stayed put: ask Rust for the menu under it. If one opens,
+    /// this touch is over; lifting the finger presses nothing.
+    private func hold(_ t: UITouch) {
+        holdWork = nil
+        guard activeTouch === t, !dragged, !suspended, editingId == nil else { return }
+        let before = holds
+        send(["op":"hold", "x":touchStart.x, "y":touchStart.y])
+        guard holds != before else { return }
+        activeTouch = nil
+        navigation?.holdContentBackGesture(false)
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let t = activeTouch, touches.contains(t) else { return }
         let p = t.location(in:self)
         dragged = dragged || hypot(p.x-touchStart.x,p.y-touchStart.y) >= 8
+        if dragged { holdWork?.cancel(); holdWork = nil }
         send(["op":"move", "x":p.x,"y":p.y])
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        holdWork?.cancel(); holdWork = nil
         guard let t = activeTouch, touches.contains(t) else { return }
         let p = t.location(in:self)
         dragged = dragged || hypot(p.x-touchStart.x,p.y-touchStart.y) >= 8
@@ -1100,6 +1193,19 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             // pointer capture. Treat commit + this same-control tap atomically;
             // never require a second tap on Cancel/Save while editing.
             send(["op":"cancel"])
+            if button.keepsKeyboard ?? false, let id = editingId {
+                // Send in a message box: commit, press, and keep typing in
+                // the same field, now holding whatever Rust left there.
+                let text = editingMultiline ? area.text ?? "" : field.text ?? ""
+                send(["op":"text", "id":id, "text":text])
+                send(["op":"activate", "id":button.id])
+                guard nodes.contains(where: { $0.id == id }) else { done(); return }
+                send(["op":"focus", "id":id])
+                let value = nodes.first(where: { $0.id == id })?.value ?? ""
+                if editingMultiline { area.text = value } else { field.text = value }
+                positionEditor()
+                return
+            }
             done()
             send(["op":"activate", "id":button.id])
             return
@@ -1109,6 +1215,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         if let target { beginEditing(target) }
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        holdWork?.cancel(); holdWork = nil
         activeTouch = nil; send(["op":"cancel"])
         // A carousel that took the touch releases the hold when it stops dragging.
         if !scrollers.values.contains(where: { $0.isTracking }) { navigation?.holdContentBackGesture(false) }

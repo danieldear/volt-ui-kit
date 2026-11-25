@@ -5,6 +5,7 @@
 use volt_ui_kit_mobile::ui_kit::ui::{prelude::*, Button, Container};
 use volt_ui_kit_mobile::{Application, HostContext, Updater};
 
+mod chat;
 mod rows;
 mod shop;
 
@@ -23,6 +24,7 @@ pub enum Route {
     Sheets,
     Dock,
     Rows,
+    Chat,
     Shop,
     Product(u8),
     Cart,
@@ -52,6 +54,7 @@ impl Route {
             Route::Sheets => "Sheets".into(),
             Route::Dock => "Action dock".into(),
             Route::Rows => "Swipe and select".into(),
+            Route::Chat => "Chat".into(),
             Route::Shop => "Pantry".into(),
             Route::Product(id) => shop::product(id).name.into(),
             Route::Cart => "Cart".into(),
@@ -127,6 +130,7 @@ pub struct App {
     pub dock_searching: bool,
     /// The Swipe and select page.
     pub rows: rows::Rows,
+    pub chat: chat::Chat,
 }
 impl Default for App {
     fn default() -> Self {
@@ -146,6 +150,7 @@ impl Default for App {
             dock_query: String::new(),
             dock_searching: false,
             rows: rows::Rows::default(),
+            chat: chat::Chat::default(),
             history: NavigationHistory::new(Route::Home),
             editing: false,
             taps: 0,
@@ -289,6 +294,7 @@ fn home(_: &App) -> Container<App> {
                     link_row("Sheets", "", "to-sheets", Route::Sheets),
                     link_row("Action dock", "", "to-dock", Route::Dock),
                     link_row("Swipe and select", "", "to-rows", Route::Rows),
+                    link_row("Chat", "", "to-chat", Route::Chat),
                 ],
                 "UIKit draws these: the bar, back swipe, keyboard.",
             ),
@@ -944,6 +950,7 @@ fn pages(app: &App) -> Element<App> {
             Route::Sheets => sheets(app),
             Route::Dock => dock(app),
             Route::Rows => rows::page(app),
+            Route::Chat => chat::page(app),
             Route::Shop => shop::home(app).large_title(true).bar_button(
                 format!("Cart · {}", shop::cart_count(app)),
                 |a: &mut App| {
@@ -984,6 +991,7 @@ fn start_page() -> Option<Route> {
         "sheets" => Route::Sheets,
         "dock" => Route::Dock,
         "rows" => Route::Rows,
+        "chat" => Route::Chat,
         "shop" => Route::Shop,
         "product" => Route::Product(4),
         "cart" => Route::Cart,
@@ -1367,6 +1375,75 @@ mod tests {
         .unwrap();
         let order: Vec<u32> = a.state().rows.notes.iter().map(|n| n.id).collect();
         assert_eq!(order, (0..8).collect::<Vec<_>>(), "back where they were");
+    }
+    #[test]
+    fn the_chat_sends_streams_and_stops() {
+        let mut a = app();
+        a.handle(PlatformEvent::Activate {
+            id: "to-chat".into(),
+        })
+        .unwrap();
+        assert_eq!(*a.state().history.current(), Route::Chat);
+        // Nothing to send yet: Send is off.
+        a.handle(PlatformEvent::Activate {
+            id: "chat-composer-send".into(),
+        })
+        .unwrap();
+        assert!(a.state().chat.messages.is_empty());
+        a.handle(PlatformEvent::Text {
+            id: "chat-composer-field".into(),
+            text: "How should a composer behave?".into(),
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Activate {
+            id: "chat-composer-send".into(),
+        })
+        .unwrap();
+        let chat = &a.state().chat;
+        assert_eq!(chat.messages.len(), 2);
+        assert!(chat.messages[0].mine && chat.draft.is_empty());
+        assert!(chat.replying, "Send became Stop");
+        a.handle(PlatformEvent::Activate {
+            id: "chat-composer-stop".into(),
+        })
+        .unwrap();
+        assert!(!a.state().chat.replying);
+    }
+    #[test]
+    fn holding_a_note_opens_its_menu() {
+        let mut a = app();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Activate {
+            id: "to-rows".into(),
+        })
+        .unwrap();
+        let b = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "note-1")
+            .unwrap()
+            .bounds
+            .bounds()
+            .map(|v| v / 3.);
+        let (x, y) = (b[0] + b[2] / 2., b[1] + b[3] / 2.);
+        a.handle(PlatformEvent::Begin { x, y }).unwrap();
+        a.handle(PlatformEvent::Hold { x, y }).unwrap();
+        a.handle(PlatformEvent::End { x, y }).unwrap();
+        assert_eq!(a.state().rows.menu, Some(1));
+        a.handle(PlatformEvent::Activate {
+            id: "note-1-menu-2".into(),
+        })
+        .unwrap();
+        assert!(a.state().rows.selecting);
+        assert_eq!(a.state().rows.selected.len(), 1);
+        assert_eq!(a.state().rows.menu, None);
     }
     #[test]
     fn the_action_dock_page_runs_its_actions() {

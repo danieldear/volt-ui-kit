@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- Mobile: `composer` for chats. A message box that grows as you type, with
+  Send (lit only when there's text), Stop while a reply comes in, and an
+  optional Add button; it rides the keyboard. `live_text` and
+  `TextEffect::stream()` show text that arrives in pieces: what's new eases
+  in after what was there. New `Icon::Stop`.
+- Phones: `TextInput::hide_done_button` leaves out the Done bar above the
+  keyboard; dragging a list puts the keyboard away instead. Controls the
+  composer marks `keeps_keyboard` run without closing the keyboard. The host
+  sends a new `blur` event when typing ends, so nothing reopens the keyboard.
+- Native editors match what's behind a field: snapshots give each field's
+  `backdrop` colour and corner radius (`Runtime::backdrop`), which fixes the
+  darker box inside the dock's search pill. The page's scroll view only gets
+  room for the part of the keyboard that covers it.
+- Mobile: a long press opens a row's menu. `list_row(..).hold_actions([..])`
+  with `menu_open` and `on_menu_open` shows a card of named actions under
+  the row, or above it near the bottom. Hosts send a new `hold` event when a
+  finger rests 0.45 s; `MobileView::hold` opens any context menu under it
+  (desktop `context_menu`s too) and ends the touch. Snapshots count `holds`,
+  and the iOS host plays a haptic for each.
+- `list_row(..).swipe_hint(true)` nudges a row aside once, showing its swipe
+  actions are there.
+- Screen readers get a row's swipe actions and its menu as named actions
+  (VoiceOver's actions rotor): `AccessNode::actions` lists `AccessAction`s,
+  the iOS host makes them custom actions, and the new `menu` event opens a
+  node's long-press menu. Swipe buttons behind a closed row are left out of
+  the accessibility tree.
+- Popups placed by an anchor stay inside their layer's padding; on a phone a
+  menu keeps clear of the tab bar and keyboard. Long presses and right
+  clicks see through the empty part of a pass-through layer, such as the
+  space around a floating dock.
 - Mobile: `list_row` and `list_section` for phone lists: a title with
   optional subtitle, leading icon or avatar, trailing value and chevron, on
   one rounded surface with inset hairlines. `swipe_action`s on either side

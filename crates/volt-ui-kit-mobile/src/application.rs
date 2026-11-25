@@ -30,6 +30,9 @@ pub struct Application<C: 'static> {
     scale: f32,
     back: Option<BackNavigation<C>>,
     inbox: Arc<Inbox<C>>,
+    /// Long presses that opened a menu: the host plays a haptic each time
+    /// this goes up.
+    holds: u64,
 }
 fn fallback_theme(mode: ThemeMode) -> UiTheme {
     UiTheme::from_palette(if mode == ThemeMode::Dark {
@@ -84,6 +87,7 @@ impl<C: 'static> Application<C> {
         inbox: Arc<Inbox<C>>,
     ) -> Result<Self, String> {
         Ok(Self {
+            holds: 0,
             inbox,
             ui: MobileView::new_with_font(state, view, host.font_family)?,
             mode: ThemeMode::Light,
@@ -193,7 +197,18 @@ impl<C: 'static> Application<C> {
             PlatformEvent::Begin { x, y } => self.ui.touch_begin([x, y])?,
             PlatformEvent::Move { x, y } => self.ui.touch_move([x, y])?,
             PlatformEvent::End { x, y } => self.ui.touch_end([x, y])?,
+            PlatformEvent::Hold { x, y } => {
+                if self.ui.hold([x, y])? {
+                    self.holds += 1;
+                }
+            }
             PlatformEvent::Cancel {} => self.ui.cancel_touch(),
+            PlatformEvent::Blur {} => self.ui.blur()?,
+            PlatformEvent::Menu { id } => {
+                if self.ui.show_menu(&id)? {
+                    self.holds += 1;
+                }
+            }
             PlatformEvent::Activate { id } => {
                 self.ui.activate(&id)?;
             }
@@ -307,7 +322,8 @@ impl<C: 'static> Application<C> {
             let multiline=n.role==AccessRole::MultilineTextInput;
             let kind=match n.role {AccessRole::TextInput|AccessRole::MultilineTextInput=>"field",AccessRole::ScrollView=>"scroll",AccessRole::Switch=>"switch",AccessRole::Slider=>"slider",AccessRole::Button=>"button",_ if n.clickable=>"button",_=>"label"};
             json!({"id":n.id,"label":n.label,"value":n.value,"enabled":n.enabled,"kind":kind,"checked":n.checked,"numeric":n.numeric,"multiline":multiline,
-                "password":n.password,"readOnly":n.read_only || n.password,"bounds":n.bounds.map(|v|v/self.scale),"visibleBounds":visible.map(|v|v/self.scale)})
+                "password":n.password,"readOnly":n.read_only || n.password,"bounds":n.bounds.map(|v|v/self.scale),"visibleBounds":visible.map(|v|v/self.scale),
+                "doneBar":n.done_button,"keepsKeyboard":n.keeps_keyboard,"backdrop":(kind=="field").then(|| self.ui.runtime().backdrop(&n.id)).flatten().map(|(c,r)| json!({"color":c,"radius":r/self.scale})),"actions":n.actions.iter().map(|a| json!({"label":a.label,"target":a.target})).collect::<Vec<_>>()})
         }).collect::<Vec<_>>();
         // Scroll views for a platform scroll view to drive: the visible frame,
         // the content size and offset, in points.
@@ -366,7 +382,7 @@ impl<C: 'static> Application<C> {
             .into_iter()
             .map(|r| r.map(|v| v / self.scale))
             .collect();
-        json!({"navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "sideways": sideways, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
+        json!({"holds": self.holds, "navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "sideways": sideways, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
             "fieldBackground":theme.palette.base[1],"foreground":theme.palette.content,"accent":theme.palette.primary})
     }
 }
@@ -1634,6 +1650,199 @@ mod tests {
         assert_eq!(a.state().open, None);
         assert!(a.snapshot()["sideways"].as_array().unwrap().is_empty());
         assert_eq!(a.state().pressed, 1);
+    }
+    #[test]
+    fn a_composer_tells_the_host_how_to_type_in_it() {
+        #[derive(Default)]
+        struct Chat {
+            draft: String,
+            sent: usize,
+        }
+        fn page(s: &Chat) -> Element<Chat> {
+            vstack![
+                spacer(),
+                composer(s.draft.clone())
+                    .key("c")
+                    .on_change(|s: &mut Chat, t| s.draft = t)
+                    .on_send(|s: &mut Chat| {
+                        s.sent += 1;
+                        s.draft.clear();
+                    }),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Chat::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 2.,
+        })
+        .unwrap();
+        let node = |a: &Application<Chat>, id: &str| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"] == id)
+                .cloned()
+                .unwrap()
+        };
+        // No Done bar; the editor matches the pill behind the field.
+        let field = node(&a, "c-field");
+        assert_eq!(field["doneBar"], false);
+        assert_eq!(field["backdrop"]["radius"], 22.);
+        // Send keeps the keyboard up, and is off until there's text.
+        let send = node(&a, "c-send");
+        assert_eq!(
+            (send["keepsKeyboard"].as_bool(), send["enabled"].as_bool()),
+            (Some(true), Some(false))
+        );
+        a.handle(PlatformEvent::Focus {
+            id: "c-field".into(),
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Text {
+            id: "c-field".into(),
+            text: "Hello".into(),
+        })
+        .unwrap();
+        assert_eq!(a.snapshot()["editing"], "c-field");
+        a.handle(PlatformEvent::Activate {
+            id: "c-send".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().sent, a.state().draft.as_str()), (1, ""));
+        // The keyboard went away: Rust lets go of the field.
+        a.handle(PlatformEvent::Focus {
+            id: "c-field".into(),
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Blur {}).unwrap();
+        assert!(a.snapshot()["editing"].is_null());
+    }
+    #[test]
+    fn a_long_press_opens_the_row_menu_and_runs_its_action() {
+        #[derive(Default)]
+        struct List {
+            menu: bool,
+            deleted: usize,
+            pressed: usize,
+            flagged: usize,
+            open: Option<SwipeSide>,
+        }
+        fn page(s: &List) -> Element<List> {
+            vstack![list_section(
+                "Notes",
+                [list_row("Groceries")
+                    .key("row")
+                    .on_press(|s: &mut List| s.pressed += 1)
+                    .trailing_actions([
+                        swipe_action("Flag", Icon::Bell).on_press(|s: &mut List| s.flagged += 1)
+                    ])
+                    .swipe_open(s.open)
+                    .on_swipe_open(|s: &mut List, side| s.open = side)
+                    .hold_actions([swipe_action("Delete", Icon::Trash)
+                        .tone(SwipeTone::Danger)
+                        .on_press(|s: &mut List| s.deleted += 1)])
+                    .menu_open(s.menu)
+                    .on_menu_open(|s: &mut List, open| s.menu = open)
+                    .into()],
+                "",
+            )]
+            .padding(16., Edge::All)
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            List::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let row = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "row")
+            .unwrap()
+            .bounds
+            .bounds();
+        let y = row[1] + row[3] / 2.;
+        // A hold with no menu under it does nothing and keeps the touch.
+        a.handle(PlatformEvent::Begin { x: 100., y: 700. }).unwrap();
+        a.handle(PlatformEvent::Hold { x: 100., y: 700. }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y: 700. }).unwrap();
+        assert_eq!(a.snapshot()["holds"], 0);
+        // On the row it opens the menu, and lifting the finger doesn't press it.
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::Hold { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert!(a.state().menu);
+        assert_eq!(
+            (a.state().pressed, a.snapshot()["holds"].as_u64()),
+            (0, Some(1))
+        );
+        // The menu sits under the row, and its action closes it first.
+        let item = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "row-menu-0")
+            .unwrap()
+            .bounds
+            .bounds();
+        assert!(item[1] >= row[1] + row[3]);
+        a.handle(PlatformEvent::Activate {
+            id: "row-menu-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().menu, a.state().deleted), (false, 1));
+        // Away from the menu, a tap closes it without pressing the row.
+        a.update(|s| s.menu = true);
+        a.handle(PlatformEvent::Begin { x: 200., y: 700. }).unwrap();
+        a.handle(PlatformEvent::End { x: 200., y: 700. }).unwrap();
+        assert_eq!((a.state().menu, a.state().pressed), (false, 0));
+        // A screen reader gets the same actions by name, and doesn't see the
+        // buttons behind the closed row.
+        let snapshot = a.snapshot();
+        let nodes = snapshot["nodes"].as_array().unwrap();
+        let row = nodes.iter().find(|n| n["id"] == "row-content").unwrap();
+        let names: Vec<_> = row["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Flag", "Show menu"]);
+        assert!(!nodes.iter().any(|n| n["id"] == "row-action-trailing-0"));
+        a.handle(PlatformEvent::Activate {
+            id: "row-action-trailing-0".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().flagged, 1);
+        a.handle(PlatformEvent::Menu {
+            id: "row-content".into(),
+        })
+        .unwrap();
+        assert!(a.state().menu);
     }
     #[test]
     fn a_sheet_follows_a_drag_then_closes_steps_or_stays() {

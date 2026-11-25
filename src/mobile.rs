@@ -402,6 +402,46 @@ impl<C: 'static> MobileView<C> {
         self.runtime.pointer_leave();
         Ok(())
     }
+    /// The finger rested without moving: open the long-press menu under it,
+    /// if there is one (a [`context_menu`](crate::ui::context_menu) or a
+    /// row's hold actions). The touch ends here; true when a menu opened, so
+    /// the host can play its haptic.
+    pub fn hold(&mut self, point: [f32; 2]) -> Result<bool, String> {
+        self.tick();
+        if self.suspended || self.touch.as_ref().is_none_or(|t| t.scrolling) {
+            return Ok(false);
+        }
+        let p = self.point(point).ok_or("invalid touch")?;
+        let outcome = self
+            .runtime
+            .context_menu_at(p[0], p[1], &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if !outcome.activated {
+            return Ok(false);
+        }
+        self.touch = None;
+        self.runtime.cancel_drag();
+        self.runtime.pointer_leave();
+        self.recompose()?;
+        Ok(true)
+    }
+    /// Open the long-press menu for `id` without a touch: a screen reader's
+    /// "Show menu". True when one opened.
+    pub fn show_menu(&mut self, id: &str) -> Result<bool, String> {
+        if self.suspended {
+            return Ok(false);
+        }
+        self.cancel_touch();
+        self.runtime.accessibility_focus(id);
+        let outcome = self
+            .runtime
+            .context_menu_focused(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if outcome.activated {
+            self.recompose()?;
+        }
+        Ok(outcome.activated)
+    }
     pub fn cancel_touch(&mut self) {
         self.touch = None;
         self.runtime.cancel_drag();
@@ -450,6 +490,14 @@ impl<C: 'static> MobileView<C> {
         self.runtime.accessibility_nodes()
     }
     /// Focus a mounted editable field before the platform shows its keyboard.
+    /// The host's keyboard went away: the field that had it loses focus, so
+    /// nothing asks for the keyboard again until someone taps a field.
+    pub fn blur(&mut self) -> Result<(), String> {
+        if self.runtime.blur() {
+            self.layout()?;
+        }
+        Ok(())
+    }
     pub fn focus_text(&mut self, id: &str) -> Result<bool, String> {
         if self.suspended
             || !self.runtime.accessibility_nodes().iter().any(|n| {

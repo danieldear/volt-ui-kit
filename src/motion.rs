@@ -559,6 +559,7 @@ pub(crate) enum TextEffectKind {
     Morph,
     Rolling,
     Shimmer,
+    Stream,
 }
 impl TextEffect {
     fn new(kind: TextEffectKind) -> Self {
@@ -579,6 +580,12 @@ impl TextEffect {
     }
     pub fn rolling() -> Self {
         Self::new(TextEffectKind::Rolling)
+    }
+    /// Text that arrives in pieces, as a model's reply does: what's added
+    /// eases in from where the reveal had got to, at a reading pace that
+    /// speeds up to keep up. Replacing the text shows it at once.
+    pub fn stream() -> Self {
+        Self::new(TextEffectKind::Stream)
     }
     pub fn shimmer() -> Self {
         Self {

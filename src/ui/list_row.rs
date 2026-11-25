@@ -7,13 +7,18 @@
 //! else. Here a row's swipe actions are only shortcuts: put the same actions
 //! in Select mode and the page's dock, and follow a destructive one with an
 //! undo rather than a confirmation.
+//!
+//! A long press opens the row's menu: the swipe actions and any others, in
+//! words, which is where people look when they don't know about swiping.
 use super::*;
+use crate::declarative::document::OverlayKind;
 use crate::declarative::AccessRole;
 use crate::motion::{DragMotion, Transform2D};
 use std::{cell::RefCell, rc::Rc};
 
 type Press<C> = Rc<RefCell<dyn FnMut(&mut C)>>;
 type Open<C> = Rc<RefCell<dyn FnMut(&mut C, Option<SwipeSide>)>>;
+type MenuOpen<C> = Rc<RefCell<dyn FnMut(&mut C, bool)>>;
 
 /// Which side of a row is swiped open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +95,10 @@ pub struct ListRow<C> {
     selecting: bool,
     selected: bool,
     on_toggle: Option<Press<C>>,
+    hold_actions: Vec<SwipeAction<C>>,
+    hint: bool,
+    menu_open: bool,
+    on_menu: Option<MenuOpen<C>>,
 }
 /// A list row. Put rows in a [`list_section`].
 ///
@@ -127,6 +136,10 @@ pub fn list_row<C>(title: impl Into<String>) -> ListRow<C> {
         selecting: false,
         selected: false,
         on_toggle: None,
+        hold_actions: Vec::new(),
+        hint: false,
+        menu_open: false,
+        on_menu: None,
     }
 }
 impl<C> ListRow<C> {
@@ -201,6 +214,29 @@ impl<C> ListRow<C> {
         self.on_toggle = Some(Rc::new(RefCell::new(f)));
         self
     }
+    /// The menu a long press opens, top to bottom. Repeat the swipe actions
+    /// here in words; a `Danger` action shows in red. Up to eight.
+    pub fn hold_actions(mut self, actions: impl IntoIterator<Item = SwipeAction<C>>) -> Self {
+        self.hold_actions = actions.into_iter().take(8).collect();
+        self
+    }
+    /// Nudge the row once to show its swipe actions are there: it slides
+    /// aside far enough to show the first action's colour, then back. Set
+    /// it on one row, the first time someone sees a list, and not again.
+    pub fn swipe_hint(mut self, value: bool) -> Self {
+        self.hint = value;
+        self
+    }
+    /// Whether the long-press menu is open (app state).
+    pub fn menu_open(mut self, open: bool) -> Self {
+        self.menu_open = open;
+        self
+    }
+    /// The menu opened or closed. Required with hold actions.
+    pub fn on_menu_open(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+        self.on_menu = Some(Rc::new(RefCell::new(f)));
+        self
+    }
 }
 
 /// Row and action measurements, in points.
@@ -210,6 +246,8 @@ const FULL_SWIPE: f32 = 120.;
 /// How far a row must move to open, or how fast.
 const OPEN_DISTANCE: f32 = 40.;
 const OPEN_SPEED: f32 = 500.;
+/// How far the swipe hint slides a row.
+const HINT: f32 = 52.;
 
 fn invalid<C>(message: &str) -> Element<C> {
     let mut e = Element::new(Kind::Column);
@@ -300,6 +338,11 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
         if row.selecting && row.on_toggle.is_none() {
             return invalid("list_row in Select mode requires on_toggle");
         }
+        if !row.hold_actions.is_empty() && row.on_menu.is_none() {
+            return invalid("list_row with hold actions requires on_menu_open");
+        }
+        let holds = !row.hold_actions.is_empty() && !row.selecting;
+        let menu_open = holds && row.menu_open;
         let has_subtitle = row.subtitle.is_some();
         let height = if has_subtitle { 64. } else { 52. };
 
@@ -383,7 +426,11 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
             .padding(16., Edge::Horizontal)
             .gap(12., Axis::Horizontal)
             .align(Align::Center)
-            .background(ColorToken::Base200)
+            .background(if menu_open {
+                ColorToken::Base300
+            } else {
+                ColorToken::Base200
+            })
             .accessible_label(label)
             .transform(Transform2D::new().translate(rest, 0.))
             .animation(Animation::spring());
@@ -392,6 +439,28 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
             content.0.node.checked = row.selected;
         } else if row.press.is_some() {
             content.0.node.access_role = Some(AccessRole::Button);
+        }
+        // Screen readers can't swipe or hold: offer the same actions by name.
+        if !row.selecting {
+            let mut actions = Vec::new();
+            for (side, list) in [
+                ("leading", &row.leading_actions),
+                ("trailing", &row.trailing_actions),
+            ] {
+                for (i, a) in list.iter().enumerate() {
+                    actions.push(crate::declarative::AccessAction {
+                        label: a.label.clone(),
+                        target: Some(format!("{key}-action-{side}-{i}")),
+                    });
+                }
+            }
+            if holds {
+                actions.push(crate::declarative::AccessAction {
+                    label: "Show menu".into(),
+                    target: None,
+                });
+            }
+            content.0.node.access_actions = actions;
         }
         let (press, toggle, close) = (row.press, row.on_toggle, row.on_open.clone());
         let selecting = row.selecting;
@@ -412,6 +481,25 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
                 }
             });
 
+        if row.hint && swipes && !row.selecting && open.is_none() {
+            // Toward the trailing actions when there are any: those are the
+            // ones people miss.
+            let dx = if row.trailing_actions.is_empty() {
+                HINT
+            } else {
+                -HINT
+            };
+            content = content.timeline(
+                // A beat to let a pushed page settle first.
+                crate::motion::Timeline::new(1800)
+                    .keyframe(0., crate::motion::MotionPose::new())
+                    .keyframe(0.4, crate::motion::MotionPose::new())
+                    .keyframe(0.58, crate::motion::MotionPose::new().translate(dx, 0.))
+                    .keyframe(0.7, crate::motion::MotionPose::new().translate(dx, 0.))
+                    .keyframe(1., crate::motion::MotionPose::new())
+                    .easing(crate::declarative::effects::Easing::EaseInOut),
+            );
+        }
         let mut leading_full: Option<Press<C>> = None;
         let mut trailing_full: Option<Press<C>> = None;
         if swipes && !row.selecting {
@@ -520,22 +608,113 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
             let mut under: Vec<Element<C>> = lead;
             under.push(spacer().into());
             under.extend(trail);
-            layers.push(
-                hstack(under)
-                    .key(format!("{key}-actions"))
-                    .width_fraction(1.)
-                    .height(height)
-                    .into(),
-            );
+            let mut under = hstack(under)
+                .key(format!("{key}-actions"))
+                .width_fraction(1.)
+                .height(height);
+            // Behind a closed row the buttons are out of sight; screen
+            // readers reach them through the row's actions instead.
+            under.0.node.access_hidden = open.is_none();
+            layers.push(under.into());
         }
         layers.push(content.into());
-        zstack(layers)
-            .key(key)
+        let row_el: Element<C> = zstack(layers)
+            .key(key.clone())
             .width_fraction(1.)
             .height(height)
             .clip_contents(true)
-            .into()
+            .into();
+        if !holds {
+            return row_el;
+        }
+        // A long press on the row asks the app to open its menu.
+        let on_menu = row.on_menu.unwrap();
+        let open_menu = on_menu.clone();
+        let mut wrap: Element<C> = zstack(Vec::<Element<C>>::new())
+            .key(format!("{key}-hold"))
+            .width_fraction(1.)
+            .into();
+        wrap.callback = Some(Callback::Context(Box::new(move |c: &mut C, _| {
+            (open_menu.borrow_mut())(c, true)
+        })));
+        wrap.children.push(row_el);
+        if menu_open {
+            wrap.children
+                .push(hold_menu(&key, row.hold_actions, on_menu));
+        }
+        wrap
     }
+}
+
+/// Menu measurements, in points.
+const MENU_WIDTH: f32 = 250.;
+const MENU_ROW: f32 = 44.;
+
+/// The card a long press opens, under the row (or over it near the bottom).
+fn hold_menu<C: 'static>(
+    key: &str,
+    actions: Vec<SwipeAction<C>>,
+    on_menu: MenuOpen<C>,
+) -> Element<C> {
+    let mut rows: Vec<Element<C>> = Vec::new();
+    for (i, a) in actions.into_iter().enumerate() {
+        if i > 0 {
+            rows.push(divider().height(1. / 3.).color(ColorToken::Border).into());
+        }
+        let ink = if a.tone == SwipeTone::Danger {
+            ColorToken::Error
+        } else {
+            ColorToken::BaseContent
+        };
+        let (press, close) = (a.press, on_menu.clone());
+        let mut item = hstack![
+            text(a.label.clone()).font_size(17.).color(ink).flex(1.),
+            icon(a.icon).size(18.).stroke(2.).color(ink),
+        ]
+        .key(format!("{key}-menu-{i}"))
+        .width_fraction(1.)
+        .height(MENU_ROW)
+        .padding(16., Edge::Horizontal)
+        .align(Align::Center)
+        .accessible_label(a.label)
+        .pressed_style(|s| s.background(ColorToken::BaseContent.alpha(18)))
+        // The menu closes before the action runs, as it does on iOS.
+        .on_click_with(move |c: &mut C, _| {
+            (close.borrow_mut())(c, false);
+            if let Some(f) = &press {
+                (f.borrow_mut())(c);
+            }
+        });
+        item.0.node.access_role = Some(AccessRole::Button);
+        rows.push(item.into());
+    }
+    let card = vstack(rows)
+        .key(format!("{key}-menu"))
+        .width(MENU_WIDTH)
+        .align(Align::Stretch)
+        .rounded(14.)
+        .clip_contents(true)
+        .background("@base-100|@base-300")
+        .border_color(ColorToken::Border)
+        .border_width(1. / 3.)
+        .shadow(
+            crate::declarative::effects::Shadow::new()
+                .color("#00000033|#00000080")
+                .blur(32.)
+                .offset(0., 12.),
+        );
+    let close = on_menu;
+    let mut root = super::dialogs::overlay_scope(
+        card.into(),
+        format!("{key}-menu-layer"),
+        OverlayKind::Popup,
+        Box::new(move |c: &mut C| (close.borrow_mut())(c, false)),
+    );
+    root.node.overlay.as_mut().unwrap().anchor = Some(key.to_owned());
+    // Clear of the tab bar and keyboard: near the bottom it opens upward.
+    root.node.ext.above_bars = true;
+    root.node.effects.transition = Some(super::dialogs::popup_motion());
+    root
 }
 
 /// Rows on one rounded surface with hairlines between them, an optional

@@ -234,10 +234,59 @@ list_row(&note.title)
     .on_toggle(move |a: &mut App| a.toggle(id))
 ```
 
+Touch and hold a row for its menu. Name the swipe actions there too, with
+anything else that applies; `SwipeTone::Danger` shows in red:
+
+```rust,ignore
+    .hold_actions([
+        swipe_action("Pin", Icon::Star).on_press(move |a: &mut App| a.pin(id)),
+        swipe_action("Delete", Icon::Trash)
+            .tone(SwipeTone::Danger)
+            .on_press(move |a: &mut App| a.delete_with_undo(id)),
+    ])
+    .menu_open(app.menu == Some(id))
+    .on_menu_open(move |a: &mut App, open| a.menu = open.then_some(id))
+```
+
+- `swipe_hint(true)` on the first row, the first time someone sees the
+  list, nudges it aside once to show it swipes. Turn it off after.
+- VoiceOver lists each swipe action and Show menu in the row's actions
+  rotor; nothing on a row needs a gesture.
 - Keep one row open: opening another, tapping, or acting closes it.
 - In Select mode the header says how many are selected and the dock shows
   what applies to them; Done ends it.
 - The gallery's **Swipe and select** page shows it all.
+
+## Chat: composer and live text
+
+`composer` is a chat's message box: put it last on the page, under the
+transcript. The field grows as you type (up to `max_lines`), Send lights up
+only when there's something to send, and Stop takes its place while a reply
+comes in. It rides the keyboard, and there's no Done bar: Send leaves the
+keyboard up for the next message, and dragging the transcript puts it away.
+
+```rust,ignore
+vstack![
+    vstack(messages)
+        .flex(1.)
+        .scroll(Scroll::Vertical)
+        .anchor_end(true),
+    composer(&app.draft)
+        .key("chat-composer")
+        .on_change(|a: &mut App, text| a.draft = text)
+        .on_send(|a: &mut App| a.send())
+        .busy(app.replying)
+        .on_stop(|a: &mut App| a.stop()),
+]
+```
+
+- `live_text(&reply)` shows a reply that grows: give it the whole text so
+  far each time, and what's new eases in after what was there.
+- `anchor_end(true)` keeps the transcript at the newest message unless you
+  scroll up to read.
+- For other fields, `hide_done_button()` drops the Done bar the same way;
+  the dock's search uses it too.
+- The gallery's **Chat** page streams a reply from another thread.
 
 ## Work off the UI thread
 
