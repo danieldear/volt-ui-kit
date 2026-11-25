@@ -13,6 +13,8 @@ pub struct Flows {
     pub name: String,
     pub agent: Option<usize>,
     pub created: Vec<String>,
+    pub model: usize,
+    pub cellular: bool,
 }
 impl Default for Flows {
     fn default() -> Self {
@@ -27,6 +29,8 @@ impl Default for Flows {
             name: String::new(),
             agent: None,
             created: Vec::new(),
+            model: 0,
+            cellular: true,
         }
     }
 }
@@ -73,6 +77,30 @@ pub fn page(app: &App) -> Container<App> {
                 .color(ColorToken::Muted),
         ]
         .gap(8., Axis::Vertical)
+        .into(),
+        list_section(
+            "Model",
+            ["Claude Opus", "GPT-5", "Gemini Pro"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    list_row(name)
+                        .key(format!("flows-model-{i}"))
+                        .checked(f.model == i)
+                        .on_press(move |a: &mut App| a.flows.model = i)
+                        .into()
+                })
+                .chain([list_row("Sync over mobile data")
+                    .key("flows-cellular")
+                    .trailing(
+                        toggle("", f.cellular)
+                            .key("flows-cellular-switch")
+                            .accessible_label("Sync over mobile data")
+                            .on_change(|a: &mut App, v| a.flows.cellular = v),
+                    )
+                    .into()]),
+            "One choice gets a checkmark, as in Settings.",
+        )
         .into(),
         primary("New project")
             .key("flows-new")

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `list_row(..).trailing(el)` puts a control (a switch) at a row's end;
+  `.checked(bool)` shows the trailing checkmark iOS settings lists use for
+  one choice among several.
 - `TextInput::input_kind(InputKind::..)`: Name, Email, Url, Number, Decimal,
   Phone, Password, OneTimeCode, Secret. The iOS host picks the keyboard,
   autofill (a texted code is offered above the keyboard), capitalisation

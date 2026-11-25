@@ -96,6 +96,8 @@ pub struct ListRow<C> {
     selected: bool,
     on_toggle: Option<Press<C>>,
     hold_actions: Vec<SwipeAction<C>>,
+    trailing: Option<Element<C>>,
+    checked: Option<bool>,
     hint: bool,
     menu_open: bool,
     on_menu: Option<MenuOpen<C>>,
@@ -137,6 +139,8 @@ pub fn list_row<C>(title: impl Into<String>) -> ListRow<C> {
         selected: false,
         on_toggle: None,
         hold_actions: Vec::new(),
+        trailing: None,
+        checked: None,
         hint: false,
         menu_open: false,
         on_menu: None,
@@ -167,6 +171,17 @@ impl<C> ListRow<C> {
     /// A short value at the trailing edge: a count, a time, a setting.
     pub fn value(mut self, text: impl Into<String>) -> Self {
         self.value = Some(text.into());
+        self
+    }
+    /// A control at the trailing edge: a switch, a stepper, a badge.
+    pub fn trailing(mut self, element: impl Into<Element<C>>) -> Self {
+        self.trailing = Some(element.into());
+        self
+    }
+    /// One choice in a list of options: a checkmark at the trailing edge
+    /// when chosen, as iOS settings lists show it (not a radio button).
+    pub fn checked(mut self, value: bool) -> Self {
+        self.checked = Some(value);
         self
     }
     /// A chevron: the row opens a page.
@@ -391,6 +406,25 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
                     .into(),
             );
         }
+        if let Some(t) = row.trailing {
+            parts.push(t);
+        }
+        if let Some(on) = row.checked {
+            // Always the space, so the labels don't shift when it moves.
+            let mark: Element<C> = if on {
+                icon(Icon::Check)
+                    .size(18.)
+                    .stroke(2.5)
+                    .color(ColorToken::Primary)
+                    .into()
+            } else {
+                vstack(Vec::<Element<C>>::new())
+                    .width(18.)
+                    .height(18.)
+                    .into()
+            };
+            parts.push(mark);
+        }
         if row.chevron && !row.selecting {
             parts.push(
                 icon(Icon::ChevronRight)
@@ -437,6 +471,9 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
         if row.selecting {
             content.0.node.access_role = Some(AccessRole::CheckBox);
             content.0.node.checked = row.selected;
+        } else if let Some(on) = row.checked {
+            content.0.node.access_role = Some(AccessRole::RadioButton);
+            content.0.node.checked = on;
         } else if row.press.is_some() {
             content.0.node.access_role = Some(AccessRole::Button);
         }
