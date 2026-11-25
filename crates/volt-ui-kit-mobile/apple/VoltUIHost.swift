@@ -614,6 +614,14 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         ]
         send(["op": "appearance", "dark": t.userInterfaceStyle == .dark, "colors": colors,
               "reduce_motion": UIAccessibility.isReduceMotionEnabled])
+        // UIKit cross-fades the screen while the appearance changes and keeps
+        // the old Metal frame through it: draw again once it settles.
+        for delay in [0.05, 0.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, !self.suspended else { return }
+                self.send(["op": "draw"])
+            }
+        }
     }
     /// One display-link frame; the link runs only while Rust reports motion.
     fileprivate func frame() {
