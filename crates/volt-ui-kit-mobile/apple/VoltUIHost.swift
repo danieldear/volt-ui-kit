@@ -661,7 +661,14 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0, window != nil, !failed else { return }
+        // The Simulator's Metal can't run Volt's GPU renderer, so it draws on
+        // the CPU: at 2x it keeps up with scrolling (a phone draws on the GPU
+        // at its full 3x).
+        #if targetEnvironment(simulator)
+        let scale = min(window?.screen.scale ?? 1, 2)
+        #else
         let scale = window?.screen.scale ?? 1
+        #endif
         contentScaleFactor = scale
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: (bounds.width * scale).rounded(), height: (bounds.height * scale).rounded())

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Smoother motion where Volt draws on the CPU (the iOS Simulator and Android
+  emulators, whose GPUs can't run the Vello renderer). Each frame repaints
+  and uploads only the region that changed, so a swiping row costs about
+  7 ms a frame instead of 47. The iOS Simulator draws at 2x, so a full-screen
+  scroll costs about 9 ms instead of 20. Phones keep drawing on the GPU at
+  full resolution.
 - Mobile: `snackbar(..).close_after(seconds)` closes the bar by itself and
   pauses while a finger is on the screen and while the app is in the
   background; with VoiceOver or TalkBack on it stays until dismissed. A new
