@@ -210,6 +210,35 @@ action_dock(notes_list.key("notes"))
   keyboard, and Close puts the actions back.
 - The gallery's **Action dock** page shows it.
 
+## Lists, swipe actions and Select mode
+
+`list_row` is a phone list row; put rows in a `list_section`. Swipe actions
+are shortcuts, never the only way to an action: offer the same actions in
+Select mode and the dock, and follow a delete with Undo.
+
+```rust,ignore
+list_row(&note.title)
+    .key(format!("note-{id}"))
+    .subtitle(&note.preview)
+    .value(&note.age)
+    .chevron(true)
+    .on_press(move |a: &mut App| a.open(id))
+    .trailing_actions([swipe_action("Delete", Icon::Trash)
+        .tone(SwipeTone::Danger)
+        .full_swipe()
+        .on_press(move |a: &mut App| a.delete_with_undo(id))])
+    .swipe_open(app.open_row(id))
+    .on_swipe_open(move |a: &mut App, side| a.set_open_row(id, side))
+    .selecting(app.selecting)
+    .selected(app.selected.contains(&id))
+    .on_toggle(move |a: &mut App| a.toggle(id))
+```
+
+- Keep one row open: opening another, tapping, or acting closes it.
+- In Select mode the header says how many are selected and the dock shows
+  what applies to them; Done ends it.
+- The gallery's **Swipe and select** page shows it all.
+
 ## Work off the UI thread
 
 Network requests, file sync and timers run on threads of your own. They send

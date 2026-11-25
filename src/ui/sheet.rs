@@ -253,7 +253,8 @@ impl<C: 'static> From<BottomSheet<C>> for Element<C> {
                         .accessible_label("Close")
                         .variant(ButtonVariant::Ghost)
                         .rounded(Rounding::Full)
-                        .background(ColorToken::Base300)
+                        // A step off the sheet's own surface in either mode.
+                        .background("@base-300|@base-200")
                         .width(30.)
                         .height(30.)
                         .on_click(move |c: &mut C| (close.borrow_mut())(c)),

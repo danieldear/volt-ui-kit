@@ -539,6 +539,11 @@ impl DragMotion {
     pub(crate) fn valid(self) -> bool {
         self.inertia.release([0.; 2], [0.; 2]).is_ok()
     }
+    /// It can move sideways: a platform's own sideways gestures (iOS's
+    /// swipe back) should leave touches on it alone.
+    pub(crate) fn moves_sideways(self) -> bool {
+        self.inertia.min[0] < self.inertia.max[0]
+    }
 }
 
 /// Decorative text presentation. Semantic/copy text always remains the full value.

@@ -359,7 +359,14 @@ impl<C: 'static> Application<C> {
         // The field that wants the keyboard: hosts open it when this changes.
         let runtime = self.ui.runtime();
         let editing = runtime.focused().filter(|_| runtime.editing_focus());
-        json!({"navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
+        // Where a finger drags sideways (rows with swipe actions): the host
+        // keeps its own sideways gestures, such as swipe back, off them.
+        let sideways: Vec<[f32; 4]> = runtime
+            .sideways_drags()
+            .into_iter()
+            .map(|r| r.map(|v| v / self.scale))
+            .collect();
+        json!({"navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "sideways": sideways, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
             "fieldBackground":theme.palette.base[1],"foreground":theme.palette.content,"accent":theme.palette.primary})
     }
 }
@@ -1507,7 +1514,126 @@ mod tests {
             a.handle(PlatformEvent::Move { x: 200., y: *y }).unwrap();
         }
         a.handle(PlatformEvent::End { x: 200., y: 350. }).unwrap();
-        assert_eq!(a.state().height, 0, "a 190-point drag on the header steps down");
+        assert_eq!(
+            a.state().height,
+            0,
+            "a 190-point drag on the header steps down"
+        );
+    }
+    #[test]
+    fn rows_swipe_open_run_actions_and_select() {
+        #[derive(Default)]
+        struct List {
+            open: Option<SwipeSide>,
+            pinned: usize,
+            deleted: usize,
+            pressed: usize,
+            selecting: bool,
+            selected: bool,
+        }
+        fn page(s: &List) -> Element<List> {
+            vstack![list_section(
+                "Notes",
+                [list_row("Groceries")
+                    .key("row")
+                    .subtitle("Oat milk")
+                    .on_press(|s: &mut List| s.pressed += 1)
+                    .leading_actions([
+                        swipe_action("Pin", Icon::Star).on_press(|s: &mut List| s.pinned += 1)
+                    ])
+                    .trailing_actions([swipe_action("Delete", Icon::Trash)
+                        .tone(SwipeTone::Danger)
+                        .full_swipe()
+                        .on_press(|s: &mut List| s.deleted += 1)])
+                    .swipe_open(s.open)
+                    .on_swipe_open(|s: &mut List, side| s.open = side)
+                    .selecting(s.selecting)
+                    .selected(s.selected)
+                    .on_toggle(|s: &mut List| s.selected = !s.selected)
+                    .into()],
+                "",
+            )]
+            .padding(16., Edge::All)
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            List::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let row = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "row")
+            .unwrap()
+            .bounds
+            .bounds();
+        let y = row[1] + row[3] / 2.;
+        let swipe = |a: &mut Application<List>, from: f32, dx: f32| {
+            a.handle(PlatformEvent::Begin { x: from, y }).unwrap();
+            for i in 1..=5 {
+                a.handle(PlatformEvent::Move {
+                    x: from + dx * i as f32 / 5.,
+                    y,
+                })
+                .unwrap();
+            }
+            a.handle(PlatformEvent::End { x: from + dx, y }).unwrap();
+        };
+        // The row is a sideways drag: hosts keep swipe back off it.
+        let sideways = a.snapshot()["sideways"].as_array().unwrap().len();
+        assert_eq!(sideways, 1);
+        // A short swipe left springs back; a longer one opens the trailing actions.
+        swipe(&mut a, 300., -20.);
+        assert_eq!(a.state().open, None);
+        swipe(&mut a, 300., -70.);
+        assert_eq!(a.state().open, Some(SwipeSide::Trailing));
+        // A tap on the open row closes it rather than opening the note.
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!((a.state().open, a.state().pressed), (None, 0));
+        // Swipe right opens Pin; its button runs it and closes the row.
+        swipe(&mut a, 60., 90.);
+        assert_eq!(a.state().open, Some(SwipeSide::Leading));
+        a.handle(PlatformEvent::Activate {
+            id: "row-action-leading-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().pinned, a.state().open), (1, None));
+        // A long swipe left deletes without stopping at the button.
+        swipe(&mut a, 350., -300.);
+        assert_eq!((a.state().deleted, a.state().open), (1, None));
+        // A plain tap opens the note.
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!(a.state().pressed, 1);
+        // Select mode: taps toggle, swipes do nothing, no sideways area.
+        a.update(|s| s.selecting = true);
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert!(a.state().selected);
+        swipe(&mut a, 300., -90.);
+        assert_eq!(a.state().open, None);
+        assert!(a.snapshot()["sideways"].as_array().unwrap().is_empty());
+        assert_eq!(a.state().pressed, 1);
     }
     #[test]
     fn a_sheet_follows_a_drag_then_closes_steps_or_stays() {

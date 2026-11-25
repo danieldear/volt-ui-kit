@@ -485,6 +485,10 @@ pub use routing::{
     NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
 };
 mod action_dock;
+mod list_row;
+pub use list_row::{
+    list_row, list_section, swipe_action, ListRow, SwipeAction, SwipeSide, SwipeTone,
+};
 mod popovers;
 mod progress;
 mod sheet;
@@ -2079,6 +2083,9 @@ pub mod prelude {
     pub use super::{
         link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
         NavigationHistory, NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
+    };
+    pub use super::{
+        list_row, list_section, swipe_action, ListRow, SwipeAction, SwipeSide, SwipeTone,
     };
     pub use super::{morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};

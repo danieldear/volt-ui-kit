@@ -1,0 +1,243 @@
+//! The Swipe and select page: list rows with swipe actions, Select mode,
+//! and an undo after every delete.
+use super::*;
+use std::collections::BTreeSet;
+
+pub struct Note {
+    pub id: u32,
+    pub title: &'static str,
+    pub preview: &'static str,
+    pub age: &'static str,
+}
+const NOTES: [(&str, &str, &str); 8] = [
+    ("Groceries", "Oat milk, lemons, rice", "9:41"),
+    ("Release plan", "Cut the branch on Thursday", "Yesterday"),
+    ("Books", "The Dispossessed, Piranesi", "Mon"),
+    ("Trip", "Train at 7:10 from platform 4", "Sun"),
+    ("Ideas", "A dock that rides the keyboard", "Sat"),
+    ("Gifts", "Something for Sam", "Fri"),
+    ("Recipes", "Dal with lots of ginger", "Thu"),
+    ("Running", "5 km in 27 minutes", "Wed"),
+];
+
+pub struct Rows {
+    pub notes: Vec<Note>,
+    pub open: Option<(u32, SwipeSide)>,
+    pub selecting: bool,
+    pub selected: BTreeSet<u32>,
+    pub pinned: BTreeSet<u32>,
+    pub flagged: BTreeSet<u32>,
+    /// The last delete, for Undo: the notes and where they were.
+    pub deleted: Vec<(usize, Note)>,
+    pub more: bool,
+}
+impl Default for Rows {
+    fn default() -> Self {
+        Self {
+            notes: NOTES
+                .iter()
+                .enumerate()
+                .map(|(i, (title, preview, age))| Note {
+                    id: i as u32,
+                    title,
+                    preview,
+                    age,
+                })
+                .collect(),
+            open: None,
+            selecting: false,
+            selected: BTreeSet::new(),
+            pinned: BTreeSet::new(),
+            flagged: BTreeSet::new(),
+            deleted: Vec::new(),
+            more: false,
+        }
+    }
+}
+impl Rows {
+    fn delete(&mut self, ids: &BTreeSet<u32>) {
+        self.deleted.clear();
+        let mut i = 0;
+        while i < self.notes.len() {
+            if ids.contains(&self.notes[i].id) {
+                let note = self.notes.remove(i);
+                self.deleted.push((i + self.deleted.len(), note));
+            } else {
+                i += 1;
+            }
+        }
+        self.open = None;
+        self.selected.clear();
+    }
+    fn undo(&mut self) {
+        for (at, note) in std::mem::take(&mut self.deleted) {
+            let at = at.min(self.notes.len());
+            self.notes.insert(at, note);
+        }
+    }
+}
+
+pub fn page(app: &App) -> Container<App> {
+    let r = &app.rows;
+    let rows: Vec<Element<App>> = r
+        .notes
+        .iter()
+        .map(|note| {
+            let id = note.id;
+            let pinned = r.pinned.contains(&id);
+            let flagged = r.flagged.contains(&id);
+            let title = if flagged {
+                format!("{} (flagged)", note.title)
+            } else {
+                note.title.to_owned()
+            };
+            list_row(title)
+                .key(format!("note-{id}"))
+                .subtitle(note.preview)
+                .value(note.age)
+                .icon(
+                    if pinned { Icon::Star } else { Icon::File },
+                    if pinned {
+                        ColorToken::Warning
+                    } else {
+                        ColorToken::Info
+                    },
+                )
+                .chevron(true)
+                .on_press(|_: &mut App| {})
+                .leading_actions([
+                    swipe_action(if pinned { "Unpin" } else { "Pin" }, Icon::Star)
+                        .tone(SwipeTone::Accent)
+                        .full_swipe()
+                        .on_press(move |a: &mut App| {
+                            if !a.rows.pinned.remove(&id) {
+                                a.rows.pinned.insert(id);
+                            }
+                        }),
+                ])
+                .trailing_actions([
+                    swipe_action("Delete", Icon::Trash)
+                        .tone(SwipeTone::Danger)
+                        .full_swipe()
+                        .on_press(move |a: &mut App| a.rows.delete(&BTreeSet::from([id]))),
+                    swipe_action(if flagged { "Unflag" } else { "Flag" }, Icon::Bell)
+                        .tone(SwipeTone::Warning)
+                        .on_press(move |a: &mut App| {
+                            if !a.rows.flagged.remove(&id) {
+                                a.rows.flagged.insert(id);
+                            }
+                        }),
+                ])
+                .swipe_open(r.open.filter(|(o, _)| *o == id).map(|(_, side)| side))
+                .on_swipe_open(move |a: &mut App, side| {
+                    a.rows.open = side.map(|s| (id, s));
+                })
+                .selecting(r.selecting)
+                .selected(r.selected.contains(&id))
+                .on_toggle(move |a: &mut App| {
+                    if !a.rows.selected.remove(&id) {
+                        a.rows.selected.insert(id);
+                    }
+                })
+                .into()
+        })
+        .collect();
+    let mut parts: Vec<Element<App>> = Vec::new();
+    if !r.deleted.is_empty() {
+        let what = if r.deleted.len() == 1 {
+            format!("Deleted {}.", r.deleted[0].1.title)
+        } else {
+            format!("Deleted {} notes.", r.deleted.len())
+        };
+        parts.push(
+            hstack![
+                text(what).font_size(15.).flex(1.),
+                button("Undo")
+                    .key("rows-undo")
+                    .variant(ButtonVariant::Ghost)
+                    .color(ColorToken::Primary)
+                    .font_size(17.)
+                    .on_click(|a: &mut App| a.rows.undo()),
+            ]
+            .key("rows-deleted")
+            .padding(16., Edge::Horizontal)
+            .height(48.)
+            .align(Align::Center)
+            .rounded(14.)
+            .background(ColorToken::Base200)
+            .into(),
+        );
+    }
+    let header = if r.selecting {
+        match r.selected.len() {
+            0 => "Choose notes".to_owned(),
+            1 => "1 selected".to_owned(),
+            n => format!("{n} selected"),
+        }
+    } else {
+        format!("{} notes", r.notes.len())
+    };
+    parts.push(
+        list_section(
+            header,
+            rows,
+            "Swipe right to pin, left to flag or delete. A long swipe left deletes at once.",
+        )
+        .into(),
+    );
+    let list = super::page("rows-list", parts);
+    let dock = if r.selecting {
+        let n = r.selected.len();
+        let all = n == r.notes.len() && n > 0;
+        action_dock(list)
+            .key("rows-dock")
+            .primary(
+                dock_action(
+                    if n == 0 {
+                        "Delete".to_owned()
+                    } else {
+                        format!("Delete {n}")
+                    },
+                    Icon::Trash,
+                )
+                .danger()
+                .enabled(n > 0)
+                .on_press(|a: &mut App| {
+                    let ids = std::mem::take(&mut a.rows.selected);
+                    a.rows.delete(&ids);
+                    a.rows.selecting = false;
+                }),
+            )
+            .secondary(
+                dock_action("Done", Icon::Close)
+                    .show_label()
+                    .on_press(|a: &mut App| {
+                        a.rows.selecting = false;
+                        a.rows.selected.clear();
+                    }),
+            )
+            .secondary(
+                dock_action(if all { "Deselect all" } else { "Select all" }, Icon::Check)
+                    .show_label()
+                    .on_press(move |a: &mut App| {
+                        if all {
+                            a.rows.selected.clear();
+                        } else {
+                            a.rows.selected = a.rows.notes.iter().map(|n| n.id).collect();
+                        }
+                    }),
+            )
+    } else {
+        action_dock(list)
+            .key("rows-dock")
+            .follows("rows-list")
+            .primary(dock_action("New note", Icon::Plus).on_press(|_: &mut App| {}))
+            .more([dock_action("Select", Icon::Check).on_press(|a: &mut App| {
+                a.rows.selecting = true;
+                a.rows.open = None;
+            })])
+            .more_open(r.more)
+            .on_more(|a: &mut App, open| a.rows.more = open)
+    };
+    vstack![dock].key("rows-screen").flex(1.)
+}

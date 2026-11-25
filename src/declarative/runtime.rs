@@ -522,7 +522,12 @@ struct DragCapture {
     origin: [f32; 2],
     inverse: crate::motion::Affine2D,
     end: Option<String>,
+    /// The grip is also tappable (a list row with swipe actions): a press
+    /// that doesn't move is a tap, and moving past the slop cancels it.
+    tap: bool,
 }
+/// Logical points a tappable grip moves before the press stops being a tap.
+const TAP_SLOP: f32 = 6.;
 /// Shared document layout and event state; owns no window or background tasks.
 /// How many unmounted scroll views keep their position for a return.
 const MAX_PARKED_SCROLL: usize = 64;
@@ -1944,6 +1949,16 @@ impl Runtime {
             }
         }
     }
+    /// Bounds (physical) of elements a finger drags sideways, such as rows
+    /// with swipe actions: a host pauses its own sideways gestures there.
+    pub fn sideways_drags(&self) -> Vec<[f32; 4]> {
+        self.boxes
+            .iter()
+            .filter(|b| b.layout_visible && b.enabled)
+            .filter(|b| b.effects.drag_motion.is_some_and(|m| m.moves_sideways()))
+            .map(|b| b.clip.bounds())
+            .collect()
+    }
     /// How far a dragged element (`drag_motion`) sits from its place right
     /// now, in points: zero once it has settled.
     pub fn drag_offset(&self, id: &str) -> [f32; 2] {
@@ -2424,6 +2439,10 @@ impl Runtime {
                     activated: false,
                 });
             }
+            if capture.tap && offset[0].hypot(offset[1]) >= TAP_SLOP && self.capture.is_some() {
+                // It moved: a drag now, not a tap.
+                self.capture = None;
+            }
             self.motion.get_mut().gesture_move(&capture.id, offset);
             if let Some(action) = &capture.action {
                 handlers
@@ -2495,9 +2514,19 @@ impl Runtime {
             return Ok(outcome);
         }
         // A drag grip: the topmost container under the press that reports
-        // drags, unless a control inside it takes the press.
-        if self.hit(x, y).is_none() {
+        // drags, unless a control inside it takes the press. A grip that is
+        // itself the control (a swipeable row) both drags and taps.
+        let hit = self.hit(x, y);
+        let tappable = hit.as_ref().is_some_and(|id| {
+            self.boxes
+                .iter()
+                .any(|b| &b.id == id && b.effects.drag_motion.is_some())
+        });
+        if hit.is_none() || tappable {
             let grip = self.boxes.iter().enumerate().rev().find_map(|(index, b)| {
+                if tappable && Some(&b.id) != hit.as_ref() {
+                    return None;
+                }
                 ((b.on_drag.is_some() || b.on_pointer.is_some() || b.effects.drag_motion.is_some())
                     && b.enabled
                     && self.scope_allows_id(&b.id)
@@ -2516,6 +2545,7 @@ impl Runtime {
                     origin: [x, y],
                     inverse: self.world_transform(b).inverse().unwrap_or_default(),
                     end: b.on_drag_end.clone(),
+                    tap: tappable,
                 };
                 let activated = b.on_drag_start.is_some()
                     || b.on_drag_from.is_some()
@@ -2563,6 +2593,16 @@ impl Runtime {
                             context,
                         )
                         .map_err(|e| DocumentError(e.to_string()))?;
+                }
+                if tappable {
+                    // Also an ordinary press, released as a click unless the
+                    // finger moves away first.
+                    self.pointer_down(x, y);
+                    self.drag_capture = Some(capture);
+                    return Ok(InputOutcome {
+                        changed: true,
+                        activated,
+                    });
                 }
                 // The surface owns the pointer now; it is not hovered.
                 self.hover_surface = None;
@@ -2917,10 +2957,13 @@ impl Runtime {
                         activated: true,
                     });
                 }
-                return Ok(InputOutcome {
-                    changed: true,
-                    activated: released,
-                });
+                // A tappable grip that didn't move: go on to release the click.
+                if !(capture.tap && self.capture.as_deref() == Some(capture.id.as_str())) {
+                    return Ok(InputOutcome {
+                        changed: true,
+                        activated: released,
+                    });
+                }
             }
             if let Some(outcome) = self.overlay_pointer_up(x, y, handlers, context)? {
                 return Ok(outcome);

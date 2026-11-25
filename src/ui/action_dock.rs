@@ -20,6 +20,7 @@ pub struct DockAction<C> {
     press: Option<Press<C>>,
     enabled: bool,
     danger: bool,
+    show_label: bool,
 }
 /// An action: a label that says what happens, and an icon for it.
 pub fn dock_action<C>(label: impl Into<String>, icon: Icon) -> DockAction<C> {
@@ -29,6 +30,7 @@ pub fn dock_action<C>(label: impl Into<String>, icon: Icon) -> DockAction<C> {
         press: None,
         enabled: true,
         danger: false,
+        show_label: false,
     }
 }
 impl<C> DockAction<C> {
@@ -39,6 +41,12 @@ impl<C> DockAction<C> {
     /// Show it but don't run it. Say on the page why it can't run yet.
     pub fn enabled(mut self, value: bool) -> Self {
         self.enabled = value;
+        self
+    }
+    /// Show the label next to the icon even beside a main action: for words
+    /// an icon can't say, such as Done or Select all.
+    pub fn show_label(mut self) -> Self {
+        self.show_label = true;
         self
     }
     /// It destroys something: shown in the failed colour. Follow it with an
@@ -412,26 +420,36 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
             } else {
                 ColorToken::BaseContent
             };
-            if labelled {
+            if labelled || a.show_label {
+                // Beside a main action, a shown label stands alone and takes
+                // only its own width; without one, the actions share the dock.
+                let mut words: Vec<Element<C>> = Vec::new();
+                if labelled {
+                    words.push(icon(a.icon).size(20.).stroke(2.).color(colour).into());
+                }
+                words.push(
+                    text(a.label.clone())
+                        .font_size(15.)
+                        .font_weight(600)
+                        .color(colour)
+                        .into(),
+                );
+                let pill = pressable(
+                    format!("{key}-action-{i}"),
+                    &a.label,
+                    words,
+                    a.press,
+                    a.enabled,
+                );
+                let pill = if labelled {
+                    pill.flex(1.)
+                } else {
+                    pill.padding(16., Edge::Horizontal)
+                };
                 parts.push(
-                    pressable(
-                        format!("{key}-action-{i}"),
-                        &a.label,
-                        vec![
-                            icon(a.icon).size(20.).stroke(2.).color(colour).into(),
-                            text(a.label.clone())
-                                .font_size(15.)
-                                .font_weight(600)
-                                .color(colour)
-                                .into(),
-                        ],
-                        a.press,
-                        a.enabled,
-                    )
-                    .flex(1.)
-                    .background(ColorToken::Base300)
-                    .background_opacity(0.6)
-                    .into(),
+                    pill.background(ColorToken::Base300)
+                        .background_opacity(0.6)
+                        .into(),
                 );
             } else {
                 parts.push(round(

@@ -5,6 +5,7 @@
 use volt_ui_kit_mobile::ui_kit::ui::{prelude::*, Button, Container};
 use volt_ui_kit_mobile::{Application, HostContext, Updater};
 
+mod rows;
 mod shop;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,6 +22,7 @@ pub enum Route {
     Background,
     Sheets,
     Dock,
+    Rows,
     Shop,
     Product(u8),
     Cart,
@@ -49,6 +51,7 @@ impl Route {
             Route::Background => "Background work".into(),
             Route::Sheets => "Sheets".into(),
             Route::Dock => "Action dock".into(),
+            Route::Rows => "Swipe and select".into(),
             Route::Shop => "Pantry".into(),
             Route::Product(id) => shop::product(id).name.into(),
             Route::Cart => "Cart".into(),
@@ -122,6 +125,8 @@ pub struct App {
     pub dock_said: String,
     pub dock_query: String,
     pub dock_searching: bool,
+    /// The Swipe and select page.
+    pub rows: rows::Rows,
 }
 impl Default for App {
     fn default() -> Self {
@@ -140,6 +145,7 @@ impl Default for App {
             dock_said: String::new(),
             dock_query: String::new(),
             dock_searching: false,
+            rows: rows::Rows::default(),
             history: NavigationHistory::new(Route::Home),
             editing: false,
             taps: 0,
@@ -282,6 +288,7 @@ fn home(_: &App) -> Container<App> {
                     link_row("Text input", "", "to-text", Route::TextInput),
                     link_row("Sheets", "", "to-sheets", Route::Sheets),
                     link_row("Action dock", "", "to-dock", Route::Dock),
+                    link_row("Swipe and select", "", "to-rows", Route::Rows),
                 ],
                 "UIKit draws these: the bar, back swipe, keyboard.",
             ),
@@ -936,6 +943,7 @@ fn pages(app: &App) -> Element<App> {
             Route::Background => background(app),
             Route::Sheets => sheets(app),
             Route::Dock => dock(app),
+            Route::Rows => rows::page(app),
             Route::Shop => shop::home(app).large_title(true).bar_button(
                 format!("Cart · {}", shop::cart_count(app)),
                 |a: &mut App| {
@@ -975,6 +983,7 @@ fn start_page() -> Option<Route> {
         "background" => Route::Background,
         "sheets" => Route::Sheets,
         "dock" => Route::Dock,
+        "rows" => Route::Rows,
         "shop" => Route::Shop,
         "product" => Route::Product(4),
         "cart" => Route::Cart,
@@ -1327,6 +1336,37 @@ mod tests {
         .unwrap();
         assert_eq!(*a.state().history.current(), Route::Home);
         assert_eq!(a.snapshot()["tabs"]["items"][1]["symbol"], "bag.fill");
+    }
+    #[test]
+    fn select_mode_deletes_the_selection_and_undo_brings_it_back() {
+        let mut a = app();
+        a.handle(PlatformEvent::Activate {
+            id: "to-rows".into(),
+        })
+        .unwrap();
+        assert_eq!(*a.state().history.current(), Route::Rows);
+        for id in [
+            "rows-dock-more",
+            "rows-dock-more-0",
+            "note-1-content",
+            "note-3-content",
+        ] {
+            a.handle(PlatformEvent::Activate { id: id.into() }).unwrap();
+        }
+        assert!(a.state().rows.selecting);
+        assert_eq!(a.state().rows.selected.len(), 2);
+        a.handle(PlatformEvent::Activate {
+            id: "rows-dock-primary".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().rows.notes.len(), 6);
+        assert!(!a.state().rows.selecting);
+        a.handle(PlatformEvent::Activate {
+            id: "rows-undo".into(),
+        })
+        .unwrap();
+        let order: Vec<u32> = a.state().rows.notes.iter().map(|n| n.id).collect();
+        assert_eq!(order, (0..8).collect::<Vec<_>>(), "back where they were");
     }
     #[test]
     fn the_action_dock_page_runs_its_actions() {

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Mobile: `list_row` and `list_section` for phone lists: a title with
+  optional subtitle, leading icon or avatar, trailing value and chevron, on
+  one rounded surface with inset hairlines. `swipe_action`s on either side
+  open with a swipe (one row open at a time, app-controlled with
+  `swipe_open`); a long swipe runs a side's outermost `full_swipe` action.
+  `selecting`, `selected` and `on_toggle` give Select mode with checkmark
+  circles. Snapshots report `sideways` areas, where the iOS host keeps its
+  swipe-back gesture off so rows can swipe right.
+- An element with both a tap handler and `drag_motion` now does both: a
+  press that doesn't move is a tap; moving past 6 points makes it a drag.
+- `DockAction::show_label` shows a dock action's label beside the main
+  action, for words an icon can't say (Done, Select all).
 - Mobile: `action_dock` and `dock_action` put a page's actions in a dock
   above the tab bar: one main action, up to two round ones, and More for
   the rest in a sheet. With `follows(scroll_key)` it slides away while that

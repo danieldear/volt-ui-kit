@@ -345,6 +345,8 @@ private struct Snapshot: Decodable {
     /// The field Rust focused for typing, such as a search field that opens
     /// with the keyboard up.
     let editing: String?
+    /// Areas a finger drags sideways (rows with swipe actions), in points.
+    let sideways: [[CGFloat]]?
     let background: [CGFloat]; let fieldBackground: [CGFloat]; let foreground: [CGFloat]; let accent: [CGFloat]
 }
 private func color(_ rgba:[CGFloat])->UIColor {
@@ -429,6 +431,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var keyboardOverlap: CGFloat = 0
     /// A sheet or dialog Volt draws is open.
     private var modalOpen = false
+    private var sideways: [CGRect] = []
     private var lastEditing: String?
     private var retryCount = 0
     private var suspended = false
@@ -662,6 +665,9 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         nodes = snapshot.nodes
         root?.sync(snapshot.tabs, before: before, accent: color(snapshot.accent), modal: snapshot.modal ?? false)
         modalOpen = snapshot.modal ?? false
+        sideways = (snapshot.sideways ?? []).compactMap { r in
+            r.count == 4 ? CGRect(x: r[0], y: r[1], width: r[2], height: r[3]) : nil
+        }
         // The field being typed in is gone (a dock's search closed): put the
         // keyboard away rather than type into nothing.
         if let id = editingId, !nodes.contains(where: { $0.id == id }) {
@@ -1067,8 +1073,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard !suspended, activeTouch == nil, let t = touches.first else { return }
         activeTouch = t; touchStart = t.location(in:self); dragged = false
         touchButtonId = nodes.last(where: { $0.kind == "button" && $0.enabled && $0.visibleRect.contains(touchStart) })?.id
-        // A sideways carousel under the finger scrolls instead of going back.
-        if scrollers.values.contains(where: { $0.axes[0] && !$0.axes[1] && $0.frame.contains(touchStart) }) {
+        // A sideways carousel or a swipeable row under the finger moves
+        // instead of going back.
+        if scrollers.values.contains(where: { $0.axes[0] && !$0.axes[1] && $0.frame.contains(touchStart) })
+            || sideways.contains(where: { $0.contains(touchStart) }) {
             navigation?.holdContentBackGesture(true)
         }
         send(["op":"begin", "x":touchStart.x,"y":touchStart.y])
