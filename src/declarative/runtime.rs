@@ -401,6 +401,39 @@ pub struct LayoutBox {
     /// Paint-only extras: cursor, translation, border sides/style, gradient.
     pub(crate) ext: BoxExtras,
 }
+/// Which way a followed scroll view has been moving: things that hide with
+/// it slide away after a short run toward its end, and return after a
+/// shorter run back, or at either end.
+#[derive(Clone, Copy, Debug, Default)]
+struct ScrollTrend {
+    /// Where the current run began, and its direction (+1 toward the end).
+    turn: f32,
+    direction: f32,
+    hidden: bool,
+}
+impl ScrollTrend {
+    const HIDE_AFTER: f32 = 24.;
+    const SHOW_AFTER: f32 = 12.;
+    const EDGE: f32 = 8.;
+    /// Returns true when hidden changed.
+    fn note(&mut self, before: f32, after: f32, max: f32) -> bool {
+        let was = self.hidden;
+        let direction = (after - before).signum();
+        if direction != 0. && direction != self.direction {
+            self.direction = direction;
+            self.turn = before;
+        }
+        let run = (after - self.turn).abs();
+        if after <= Self::EDGE || after >= max - Self::EDGE {
+            self.hidden = false;
+        } else if self.direction > 0. && run >= Self::HIDE_AFTER {
+            self.hidden = true;
+        } else if self.direction < 0. && run >= Self::SHOW_AFTER {
+            self.hidden = false;
+        }
+        was != self.hidden
+    }
+}
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BoxExtras {
     pub cursor: Option<super::extras::Cursor>,
@@ -411,6 +444,8 @@ pub(crate) struct BoxExtras {
     /// Ambient pulse opacity for this frame (multiplies the visual opacity).
     pub pulse: Option<f32>,
     pub label_inset: Option<f32>,
+    /// See `NodeExtras::hides_with`.
+    pub hides_with: Option<String>,
     /// This box is its parent's mask; `masked`: this box has a mask child.
     pub mask: Option<MaskMode>,
     pub masked: bool,
@@ -566,6 +601,9 @@ pub struct Runtime {
     /// token/pair specifications, not their active theme's resolved colours.
     input_theme: RefCell<UiTheme>,
     scroll_offsets: BTreeMap<String, [f32; 2]>,
+    /// Scroll views something hides with (`hides_with`), and which way each
+    /// last moved.
+    scroll_trends: BTreeMap<String, ScrollTrend>,
     /// Scroll offsets and host insets of scroll views no longer mounted,
     /// restored if the same key returns (Back to a page).
     parked_scroll: BTreeMap<String, ParkedScroll>,
@@ -681,6 +719,7 @@ impl Runtime {
             transform_index: transforms::TransformIndex::default(),
             input_theme: RefCell::new(UiTheme::light()),
             scroll_offsets: BTreeMap::new(),
+            scroll_trends: BTreeMap::new(),
             parked_scroll: BTreeMap::new(),
             host_scroll: HostScroll::default(),
             native_controls: false,
@@ -1323,6 +1362,7 @@ impl Runtime {
             }
             b.ext.links = links;
         }
+        self.hide_followers(&mut boxes, area.bounds()[3]);
         self.has_transforms = boxes.iter().any(|b| {
             b.effects.has_geometry()
                 || b.effects.text_effect.is_some()
@@ -1668,6 +1708,22 @@ impl Runtime {
         visit(self.document.root(), &mut bars);
         bars
     }
+    /// Tab view bars in the current page tree, outermost first, with the
+    /// node ID of each. A host that draws its own tab bar (iOS) reads these
+    /// and runs a tab with `activate_navigation(item.id)`.
+    pub fn tab_bars(&self) -> Vec<(String, super::TabBar)> {
+        fn visit(n: &Node, out: &mut Vec<(String, super::TabBar)>) {
+            if let Some(bar) = &n.ext.tab_bar {
+                out.push((n.id.clone(), (**bar).clone()));
+            }
+            for child in &n.children {
+                visit(child, out);
+            }
+        }
+        let mut bars = Vec::new();
+        visit(self.document.root(), &mut bars);
+        bars
+    }
     /// Whether scroll container `id` refreshes on a pull, and if so whether its
     /// work is under way (`Some(refreshing)`); `None` without `on_refresh`.
     pub fn refresh_state(&self, id: &str) -> Option<bool> {
@@ -1718,7 +1774,7 @@ impl Runtime {
         context: &mut C,
     ) -> Result<bool, DocumentError> {
         fn control<'a>(n: &'a Node, in_bar: bool, id: &str) -> Option<&'a Node> {
-            let in_bar = in_bar || n.ext.navigation_bar.is_some();
+            let in_bar = in_bar || n.ext.navigation_bar.is_some() || n.ext.tab_bar.is_some();
             if in_bar && n.id == id {
                 return Some(n);
             }
@@ -1727,10 +1783,28 @@ impl Runtime {
         if !self.scope_allows_id(id) {
             return Ok(false);
         }
-        let Some(action) = control(self.document.root(), false, id)
-            .filter(|n| n.enabled)
-            .and_then(|n| n.on_activate.clone())
-        else {
+        let Some(node) = control(self.document.root(), false, id).filter(|n| n.enabled) else {
+            return Ok(false);
+        };
+        // A tab is a rich container that takes the click itself.
+        #[cfg(feature = "rust-ui")]
+        if node.on_activate.is_none() {
+            if let Some(action) = node.on_activate_input.clone() {
+                handlers
+                    .dispatch_activation(
+                        &action,
+                        PointerActivation {
+                            modifiers: InputModifiers::default(),
+                            source: InputSource::Keyboard,
+                        },
+                        1,
+                        context,
+                    )
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                return Ok(true);
+            }
+        }
+        let Some(action) = node.on_activate.clone() else {
             return Ok(false);
         };
         handlers
@@ -1829,10 +1903,67 @@ impl Runtime {
         } else {
             self.host_scroll.overscroll.insert(id.to_owned(), over);
         }
-        if over != over_before || !self.shift_scrolled(id, before, offset) {
+        let turned = self.note_scroll(id, before[1], offset[1]);
+        if turned || over != over_before || !self.shift_scrolled(id, before, offset) {
             self.invalidate_layout();
         }
         true
+    }
+    /// Track scroll view `id`'s direction for things that hide with it.
+    /// Returns true when they should slide in or out.
+    fn note_scroll(&mut self, id: &str, before: f32, after: f32) -> bool {
+        let Some(trend) = self.scroll_trends.get_mut(id) else {
+            return false;
+        };
+        let max = self
+            .layout_boxes
+            .iter()
+            .find(|b| b.id == id)
+            .map_or(f32::MAX, |b| b.scroll_max[1]);
+        trend.note(before, after, max)
+    }
+    /// Whether things following scroll view `id` are slid away.
+    pub fn scroll_hidden(&self, id: &str) -> bool {
+        self.scroll_trends.get(id).is_some_and(|t| t.hidden)
+    }
+    /// Slide boxes that hide with a scroll view below `bottom` (physical)
+    /// while it hides them. They keep their place in the tree, so a layout
+    /// animation carries them out and back, and screen readers still reach
+    /// them. Keyboard focus inside one keeps it in view.
+    fn hide_followers(&mut self, boxes: &mut [LayoutBox], bottom: f32) {
+        let followed: std::collections::BTreeSet<&str> = boxes
+            .iter()
+            .filter_map(|b| b.ext.hides_with.as_deref())
+            .collect();
+        self.scroll_trends
+            .retain(|id, _| followed.contains(id.as_str()));
+        for id in followed {
+            self.scroll_trends.entry(id.to_owned()).or_default();
+        }
+        let focus = self.focused.clone().filter(|_| self.keyboard.is_some());
+        for i in 0..boxes.len() {
+            let Some(id) = boxes[i].ext.hides_with.as_deref() else {
+                continue;
+            };
+            if !self.scroll_trends.get(id).is_some_and(|t| t.hidden) {
+                continue;
+            }
+            let depth = boxes[i].depth;
+            let end = boxes[i + 1..]
+                .iter()
+                .position(|b| b.depth <= depth)
+                .map_or(boxes.len(), |n| i + 1 + n);
+            if focus
+                .as_ref()
+                .is_some_and(|f| boxes[i..end].iter().any(|b| &b.id == f))
+            {
+                continue;
+            }
+            let d = [0., (bottom - boxes[i].bounds.bounds()[1]).max(0.)];
+            if d[1] > 0. && translate_box(&mut boxes[i], d) {
+                translate_descendants(&mut boxes[..end], i, d);
+            }
+        }
     }
     /// What the keys scroll at a point (physical pixels), in logical pixels:
     /// a line, and a page (the innermost scroll view's height less a line).
@@ -1912,11 +2043,16 @@ impl Runtime {
             index = parent;
         }
         if changed {
+            let mut turned = false;
+            for (id, before, after) in &moved {
+                turned |= self.note_scroll(id, before[1], after[1]);
+            }
             // Scrolling moves boxes but never resizes them: shift the
             // scrolled subtrees in place instead of a full layout pass.
-            if !moved
-                .iter()
-                .all(|(id, before, after)| self.shift_scrolled(id, *before, *after))
+            if turned
+                || !moved
+                    .iter()
+                    .all(|(id, before, after)| self.shift_scrolled(id, *before, *after))
             {
                 self.invalidate_layout();
             }
@@ -2717,7 +2853,7 @@ impl Runtime {
         #[cfg(feature = "rust-ui")]
         {
             if let Some(capture) = self.drag_capture.take() {
-                self.motion.get_mut().gesture_end(&capture.id);
+                let velocity = self.motion.get_mut().gesture_end(&capture.id);
                 let surface = self
                     .boxes
                     .iter()
@@ -2729,6 +2865,7 @@ impl Runtime {
                         let at = [(px - bx) / self.scale, (py - by) / self.scale];
                         let mut event =
                             Pointer::new(PointerPhase::Release, at, self.pointer_modifiers);
+                        event.velocity = velocity;
                         event.offset = [
                             (capture.inverse.point([x, y])[0]
                                 - capture.inverse.point(capture.origin)[0])
@@ -3980,6 +4117,7 @@ impl Runtime {
                             p,
                             &mut shapes,
                             r,
+                            radius,
                             width,
                             border,
                             b.ext.border_sides.unwrap_or(super::extras::Sides::ALL),
@@ -4593,6 +4731,7 @@ fn paint_overrides<P: Painter>(
                 p,
                 out,
                 r,
+                radius,
                 width,
                 color,
                 ext.border_sides.unwrap_or(super::extras::Sides::ALL),
@@ -4605,10 +4744,12 @@ fn paint_overrides<P: Painter>(
 }
 /// Straight border edges: only the chosen sides, solid, dashed or dotted.
 /// Corners are square, as with Tailwind's single-side borders.
+#[allow(clippy::too_many_arguments)]
 fn paint_border_edges<P: Painter>(
     p: &P,
     out: &mut Vec<P::Shape>,
     [x, y, w, h]: [f32; 4],
+    radius: RadiusSpec,
     width: f32,
     color: [f32; 4],
     sides: super::extras::Sides,
@@ -4619,16 +4760,66 @@ fn paint_border_edges<P: Painter>(
         return;
     }
     let inset = width * 0.5;
+    // Solid borders follow rounded corners: each chosen side stops where its
+    // corners start to curve, and every corner that touches a chosen side is
+    // drawn as an arc, so a top border on a sheet with rounded top corners
+    // traces the sheet's outline instead of cutting straight across it.
+    // Patterned borders keep square ends, so dashes stay even.
+    let limit = (w.min(h) * 0.5).max(0.);
+    let [tl, tr, br, bl] = match (style, radius) {
+        (BorderStyle::Solid, RadiusSpec::Uniform(r)) => [r; 4],
+        (BorderStyle::Solid, RadiusSpec::Corners(r)) => r,
+        _ => [0.; 4],
+    }
+    .map(|r| {
+        if r.is_finite() {
+            r.clamp(0., limit)
+        } else {
+            0.
+        }
+    });
+    for (radius, centre, start, touches) in [
+        (tl, [x + tl, y + tl], 180_f32, Sides::TOP | Sides::LEFT),
+        (tr, [x + w - tr, y + tr], 270., Sides::TOP | Sides::RIGHT),
+        (
+            br,
+            [x + w - br, y + h - br],
+            0.,
+            Sides::BOTTOM | Sides::RIGHT,
+        ),
+        (bl, [x + bl, y + h - bl], 90., Sides::BOTTOM | Sides::LEFT),
+    ] {
+        if radius <= inset || sides.0 & touches.0 == 0 {
+            continue;
+        }
+        let r = radius - inset;
+        let point = |i: u32| {
+            let a = (start + i as f32 * 90. / 12.).to_radians();
+            [centre[0] + r * a.cos(), centre[1] + r * a.sin()]
+        };
+        for i in 0..12 {
+            p.card_line(out, point(i), point(i + 1), width, color);
+        }
+    }
+    let [tl, tr, br, bl] = [tl, tr, br, bl].map(|r| if r > inset { r } else { 0. });
     let (dash, gap) = match style {
         BorderStyle::Solid => (f32::INFINITY, 0.),
         BorderStyle::Dashed => (width * 4., width * 3.),
         BorderStyle::Dotted => (width, width * 1.5),
     };
     for (side, a, b) in [
-        (Sides::TOP, [x, y + inset], [x + w, y + inset]),
-        (Sides::BOTTOM, [x, y + h - inset], [x + w, y + h - inset]),
-        (Sides::LEFT, [x + inset, y], [x + inset, y + h]),
-        (Sides::RIGHT, [x + w - inset, y], [x + w - inset, y + h]),
+        (Sides::TOP, [x + tl, y + inset], [x + w - tr, y + inset]),
+        (
+            Sides::BOTTOM,
+            [x + bl, y + h - inset],
+            [x + w - br, y + h - inset],
+        ),
+        (Sides::LEFT, [x + inset, y + tl], [x + inset, y + h - bl]),
+        (
+            Sides::RIGHT,
+            [x + w - inset, y + tr],
+            [x + w - inset, y + h - br],
+        ),
     ] {
         if !sides.contains(side) {
             continue;
@@ -6055,6 +6246,7 @@ fn place(
             gradient: n.ext.gradient.clone(),
             pulse: None,
             label_inset: n.ext.label_inset,
+            hides_with: n.ext.hides_with.clone(),
             mask: n.ext.mask,
             masked: n.children.iter().any(|c| c.ext.mask.is_some()),
             reveal_handle: n.ext.reveal_handle,

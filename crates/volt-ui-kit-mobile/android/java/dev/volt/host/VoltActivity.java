@@ -70,7 +70,7 @@ public final class VoltActivity extends Activity implements SurfaceHolder.Callba
         canvas.getHolder().addCallback(this);
         canvas.setOnTouchListener((view,event)->touch(event));
         try {
-            if(nativeVersion()!=1)throw new IllegalStateException("Rust/Android host ABI mismatch");
+            if(nativeVersion()!=2)throw new IllegalStateException("Rust/Android host ABI mismatch");
             byte[] font=Files.readAllBytes(Paths.get("/system/fonts/Roboto-Regular.ttf"));
             host=nativeCreate(font);if(host==0)throw new IllegalStateException(nativeError());
         } catch(Exception e){error(e.toString());}

@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- Mobile: `action_dock` and `dock_action` put a page's actions in a dock
+  above the tab bar: one main action, up to two round ones, and More for
+  the rest in a sheet. With `follows(scroll_key)` it slides away while that
+  scroll view scrolls toward its end and returns when it scrolls back or
+  reaches either end; the scroll view gets room at its end for it. The iOS
+  host reports its bottom bars and keyboard with a new `bars` event so the
+  dock sits just above them. `Runtime::scroll_hidden` says whether a
+  scroll view's followers are slid away.
+- A duplicate or invalid id error now names the id.
+- Mobile: `tab_view` and `tab_destination` for an app's top-level sections.
+  The iOS host shows UIKit's tab bar (Liquid Glass on iOS 26, SF Symbols,
+  badges) with a navigation stack per tab; elsewhere Volt draws Material 3's
+  flexible navigation bar, with a pill that slides to the chosen tab.
+  Snapshots report `tabs`; tabs run with `activate_navigation`.
+- `bottom_sheet` is redesigned: resting heights (`SheetDetent`), a grabber,
+  drag to resize or close, Cancel and Done placed as on iOS,
+  `on_dismiss_attempt` for unsaved work, only the top corners rounded, no
+  border, at most 640 points wide. It returns `BottomSheet` instead of
+  `Drawer`; `size` and `corner_radius` still work.
+- Mobile: touches drag elements with `drag_motion`, `on_drag` or
+  `on_pointer` instead of always scrolling. `DragMotion::spring_back` springs
+  a dragged element home on release, and `Pointer::velocity` gives the
+  release speed.
+- Mobile: the host reports the screen's safe area (`safe_area` event);
+  overlays stay inside it. Snapshots report `modal` and scroll views behind a
+  modal as `inert`; the iOS host hides its tab bar, fades its navigation bar
+  and turns off scrolling behind sheets and dialogs.
+- Single-side borders on rounded boxes follow the corners instead of cutting
+  straight across them.
+- Mobile: background work can update the page. `Updater<C>`, from
+  `Application::new_with_updater` or `Application::updater()`, sends changes
+  to app state from any thread; they run in order on the UI thread and the
+  page is drawn again. iOS hosts are woken on the main queue through the new
+  `volt_set_wake` entry point and answer with an `updates` platform event. The
+  host ABI is now version 2: rebuild against matching host sources. The iPhone
+  gallery has a **Background work** page.
 - Pull to refresh: `.on_refresh(f)` on a scroll container runs `f` when the
   content is pulled down past its top and let go, and `.refreshing(bool)` keeps
   the host's spinner showing while the work is under way. iOS uses the system's

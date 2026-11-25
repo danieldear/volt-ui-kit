@@ -484,10 +484,16 @@ pub use routing::{
     link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError, NavigationHistory,
     NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
 };
+mod action_dock;
 mod popovers;
 mod progress;
+mod sheet;
 mod speed_dial;
+mod tab_view;
+pub use action_dock::{action_dock, dock_action, ActionDock, DockAction};
+pub use sheet::{bottom_sheet, BottomSheet, SheetDetent};
 pub use speed_dial::{speed_dial, SpeedDial};
+pub use tab_view::{tab_destination, tab_view, TabDestination, TabView};
 mod split;
 mod split_view;
 pub mod tokens;
@@ -604,11 +610,51 @@ impl<C> Element<C> {
     /// controls still run through `Runtime::activate_navigation`.
     #[cfg(feature = "mobile")]
     pub(crate) fn hide_navigation_bars(&mut self) {
-        if self.node.ext.navigation_bar.is_some() {
+        if self.node.ext.navigation_bar.is_some() || self.node.ext.tab_bar.is_some() {
             self.node.ext.visible = Some(false.into());
         }
         for child in &mut self.children {
             child.hide_navigation_bars();
+        }
+    }
+    /// Keep overlays (sheets, dialogs, menus) inside the screen's safe area,
+    /// [top, right, bottom, left] in logical points, when the page itself
+    /// runs under the status bar and home indicator.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn inset_overlays(&mut self, [top, right, bottom, left]: [f32; 4]) {
+        if self.node.overlay.is_some() {
+            let n = &mut self.node;
+            let base = n.padding;
+            let vertical = n.padding_vertical.unwrap_or(base);
+            let horizontal = n.padding_horizontal.unwrap_or(base);
+            n.padding_top = Some(n.padding_top.unwrap_or(vertical) + top);
+            // A bottom sheet meets the bottom edge; dialogs and menus don't.
+            if n.flow != Some(Flow::Bottom) {
+                n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + bottom);
+            }
+            n.padding_left = Some(n.padding_left.unwrap_or(horizontal) + left);
+            n.padding_right = Some(n.padding_right.unwrap_or(horizontal) + right);
+        }
+        for child in &mut self.children {
+            child.inset_overlays([top, right, bottom, left]);
+        }
+    }
+    /// Give nodes that sit above the host's bottom bars that much more
+    /// height (a spacer) or bottom padding.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn inset_above_bars(&mut self, bottom: f32) {
+        if self.node.ext.above_bars {
+            // A fixed-height spacer grows; anything else gains padding.
+            let n = &mut self.node;
+            if let Some(h) = n.height.as_mut() {
+                *h += bottom;
+            } else {
+                let vertical = n.padding_vertical.unwrap_or(n.padding);
+                n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + bottom);
+            }
+        }
+        for child in &mut self.children {
+            child.inset_above_bars(bottom);
         }
     }
     #[cfg(feature = "mobile")]
@@ -1976,6 +2022,7 @@ pub mod prelude {
         steps, timeline, toaster, CommandPaletteState, DrawerSide, Presence, Severity,
         TimelineItem, Toast, ToastPosition,
     };
+    pub use super::{action_dock, dock_action, ActionDock, DockAction};
     pub use super::{
         area_chart, candlestick_chart, donut_chart, line_plot, range_chart, stacked_bar_chart,
         timeline_chart, Candle, ValueRange,
@@ -2025,6 +2072,8 @@ pub mod prelude {
         SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
     };
     pub use super::{sunburst_chart, SunburstChart};
+    pub use super::{tab_destination, tab_view, TabDestination, TabView};
+    pub use super::{BottomSheet, SheetDetent};
     pub use super::{
         InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
         PointerPhase, PressedKey,
@@ -2043,13 +2092,6 @@ pub fn fab<C>(symbol: impl Into<String>) -> Button<C> {
         .rounded(Rounding::Full)
         .font_size(24.)
         .variant(ButtonVariant::Primary)
-}
-/// A bottom-attached modal drawer. Dismissal, focus trapping and Escape are shared.
-pub fn bottom_sheet<C>(content: impl Into<Element<C>>) -> Drawer<C> {
-    drawer(content)
-        .side(DrawerSide::Bottom)
-        .size(320.)
-        .corner_radius(20.)
 }
 
 /// Alpha union: paint mask coverage together in an isolated group.

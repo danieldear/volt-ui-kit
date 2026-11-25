@@ -27,6 +27,30 @@ type Factory = Box<dyn Fn(HostContext) -> Result<Box<dyn HostedApplication>, Str
 extern "C" {
     fn volt_app_register() -> bool;
     fn pthread_main_np() -> i32;
+    // libdispatch; dispatch_get_main_queue() is a macro for this symbol.
+    static _dispatch_main_q: c_void;
+    fn dispatch_async_f(
+        queue: *const c_void,
+        context: *mut c_void,
+        work: extern "C" fn(*mut c_void),
+    );
+}
+/// The host's wake function, called on the main thread with the view's ID.
+type WakeCallback = extern "C" fn(u64);
+/// Move one wake onto the main queue. The context is a Box, freed by `run`.
+struct MainWake {
+    callback: WakeCallback,
+    id: u64,
+}
+extern "C" fn run_wake(context: *mut c_void) {
+    // SAFETY: `context` is the Box leaked by `wake_on_main`, run exactly once.
+    let wake = unsafe { Box::from_raw(context as *mut MainWake) };
+    let _ = catch_unwind(AssertUnwindSafe(|| (wake.callback)(wake.id)));
+}
+fn wake_on_main(callback: WakeCallback, id: u64) {
+    let context = Box::into_raw(Box::new(MainWake { callback, id })) as *mut c_void;
+    // SAFETY: the main queue is static; run_wake takes ownership of context.
+    unsafe { dispatch_async_f(std::ptr::addr_of!(_dispatch_main_q), context, run_wake) };
 }
 fn main_thread() -> Result<(), String> {
     // SAFETY: pthread_main_np takes no pointers and is supplied by libSystem.
@@ -142,6 +166,24 @@ pub extern "C" fn volt_destroy(id: u64) {
             r.borrow_mut().hosts.remove(&id);
         });
         Ok(())
+    })
+}
+/// Install the host's wake for view `id`, or remove it with `None`. When an
+/// `Updater` sends a change from any thread, `callback(id)` runs later on the
+/// main queue; the host then sends `{"op":"updates"}`. A view destroyed
+/// before then is simply unknown to the host's lookup.
+#[no_mangle]
+pub extern "C" fn volt_set_wake(id: u64, callback: Option<WakeCallback>) -> bool {
+    guard(|| {
+        main_thread()?;
+        HOSTS.with(|r| {
+            let r = r.borrow();
+            let host = r.hosts.get(&id).ok_or("Unknown iOS view")?;
+            host.ui.set_wake(callback.map(|callback| {
+                std::sync::Arc::new(move || wake_on_main(callback, id)) as crate::updates::Wake
+            }));
+            Ok(true)
+        })
     })
 }
 #[no_mangle]

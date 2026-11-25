@@ -1216,7 +1216,9 @@ fn check_node(
         return Err(error(path, "node count or depth limit exceeded"));
     }
     if !valid_name(&n.id) || !ids.insert(n.id.clone()) {
-        return Err(error(path, "invalid or duplicate id"));
+        // Name the id: a path alone is hard to map back to the view code.
+        let id: String = n.id.chars().take(64).collect();
+        return Err(error(path, &format!("invalid or duplicate id {id:?}")));
     }
     for (name, value, positive) in [
         ("width", n.width, false),

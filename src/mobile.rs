@@ -35,6 +35,10 @@ pub struct MobileView<C: 'static> {
     clock: std::time::Instant,
     /// The host draws navigation bars; Volt's copies are hidden.
     native_navigation: bool,
+    /// Safe area insets the host reported, for overlays.
+    safe_area: [f32; 4],
+    /// Points the host's bottom bars cover: tab bar, home indicator, keyboard.
+    bars_bottom: f32,
 }
 impl<C: 'static> MobileView<C> {
     pub fn new(context: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
@@ -75,6 +79,8 @@ impl<C: 'static> MobileView<C> {
             host_font,
             clock: std::time::Instant::now(),
             native_navigation: false,
+            safe_area: [0.; 4],
+            bars_bottom: 0.,
         };
         // Hosts without a frame loop keep motion reduced so nothing stops halfway.
         value.runtime.set_reduced_motion(true);
@@ -106,6 +112,34 @@ impl<C: 'static> MobileView<C> {
     pub fn set_native_navigation(&mut self, native: bool) -> Result<(), String> {
         if self.native_navigation != native {
             self.native_navigation = native;
+            self.recompose()?;
+        }
+        Ok(())
+    }
+    /// The screen's safe area, [top, right, bottom, left] in logical points,
+    /// when the view runs under the status bar and home indicator. Sheets,
+    /// dialogs and menus stay inside it.
+    /// How far the host's own bars (tab bar, home indicator, keyboard) reach
+    /// up from the bottom, in points. An action dock sits just above them.
+    pub fn set_bars(&mut self, bottom: f32) -> Result<(), String> {
+        if !bottom.is_finite() || !(0. ..=2048.).contains(&bottom) {
+            return Err("bottom bars must be 0 to 2048 points".into());
+        }
+        if self.bars_bottom != bottom {
+            self.bars_bottom = bottom;
+            self.recompose()?;
+        }
+        Ok(())
+    }
+    pub fn set_safe_area(&mut self, insets: [f32; 4]) -> Result<(), String> {
+        if !insets
+            .iter()
+            .all(|v| v.is_finite() && (0. ..=512.).contains(v))
+        {
+            return Err("safe area insets must be 0 to 512 points".into());
+        }
+        if self.safe_area != insets {
+            self.safe_area = insets;
             self.recompose()?;
         }
         Ok(())
@@ -244,6 +278,12 @@ impl<C: 'static> MobileView<C> {
         if self.native_navigation {
             element.hide_navigation_bars();
         }
+        if self.safe_area != [0.; 4] {
+            element.inset_overlays(self.safe_area);
+        }
+        if self.bars_bottom > 0. {
+            element.inset_above_bars(self.bars_bottom);
+        }
         let element = if let Some(family) = &self.host_font {
             element.host_font(family)
         } else {
@@ -291,6 +331,20 @@ impl<C: 'static> MobileView<C> {
         let Some(t) = self.touch.as_mut() else {
             return Ok(());
         };
+        // A press on something draggable (a sheet, a row's swipe, a drawn
+        // slider) drags it; anywhere else, moving past the slop scrolls.
+        if self.runtime.pointer_dragging() {
+            t.last = point;
+            let p = point.map(|v| v * self.viewport.scale);
+            let outcome = self
+                .runtime
+                .pointer_move_outcome(p[0], p[1], &mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            if outcome.activated {
+                self.recompose()?;
+            }
+            return Ok(());
+        }
         if !t.scrolling && (point[0] - t.start[0]).hypot(point[1] - t.start[1]) >= 8. {
             t.scrolling = true;
             self.runtime.cancel_input();
@@ -323,7 +377,7 @@ impl<C: 'static> MobileView<C> {
         let Some(t) = self.touch.take() else {
             return Ok(());
         };
-        if !t.scrolling && !self.suspended {
+        if (!t.scrolling || self.runtime.pointer_dragging()) && !self.suspended {
             let p = self.point(point).ok_or("invalid touch")?;
             self.runtime.pointer_move(p[0], p[1]);
             let outcome = self

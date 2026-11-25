@@ -11,7 +11,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
-        window.rootViewController = VoltNavigationController()
+        window.rootViewController = VoltRootController()
         // Debugging aid: VOLT_ANIMATION_SPEED=0.1 plays UIKit animations ten
         // times slower, to inspect transitions frame by frame.
         if let speed = ProcessInfo.processInfo.environment["VOLT_ANIMATION_SPEED"].flatMap(Float.init), speed > 0 {
@@ -20,8 +20,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.makeKeyAndVisible()
         self.window = window
     }
-    func sceneWillResignActive(_ scene: UIScene) { (window?.rootViewController as? VoltNavigationController)?.canvas.suspend(true) }
-    func sceneDidBecomeActive(_ scene: UIScene) { (window?.rootViewController as? VoltNavigationController)?.canvas.suspend(false) }
+    func sceneWillResignActive(_ scene: UIScene) { (window?.rootViewController as? VoltRootController)?.canvas.suspend(true) }
+    func sceneDidBecomeActive(_ scene: UIScene) { (window?.rootViewController as? VoltRootController)?.canvas.suspend(false) }
 }
 /// One page of a Volt navigation stack. The top page holds the live canvas;
 /// pages below keep a snapshot of how they looked, for back swipes.
@@ -65,8 +65,100 @@ final class VoltPageController: UIViewController {
 }
 /// UIKit's navigation controller around Volt's pages: the real bar, back
 /// button, swipe-back and push animations. Rust's history decides the pages.
-final class VoltNavigationController: UINavigationController, UINavigationControllerDelegate {
+/// The app's root. When Rust describes a tab view, UIKit's own tab bar (Liquid
+/// Glass on iOS 26) switches between sections, each with its own navigation
+/// stack, and the one Volt canvas moves to the section on screen. Without a
+/// tab view there's a single stack and no bar. Rust decides the selection:
+/// a tap asks Rust, and the bar follows what Rust then reports.
+final class VoltRootController: UITabBarController, UITabBarControllerDelegate {
     let canvas = VoltCanvas()
+    private var stacks: [VoltNavigationController] = []
+    private var tabIds: [String] = []
+    private var covered = false
+    init() {
+        super.init(nibName: nil, bundle: nil)
+        delegate = self
+        let first = VoltNavigationController(canvas: canvas)
+        stacks = [first]
+        setViewControllers(stacks, animated: false)
+        canvas.navigation = first
+        canvas.root = self
+        first.adopt(nil)
+        showTabBar(false)
+    }
+    required init?(coder: NSCoder) { fatalError("Use programmatic host") }
+    private func showTabBar(_ shown: Bool) {
+        if #available(iOS 18.0, *) {
+            if isTabBarHidden == shown { setTabBarHidden(!shown, animated: false) }
+        } else if tabBar.isHidden == shown {
+            tabBar.isHidden = !shown
+        }
+    }
+
+    /// Match UIKit's tabs to Rust's. `before` is how the canvas looked
+    /// before the event, kept by the section that is leaving.
+    fileprivate func sync(_ tabs: TabsInfo?, before: UIView?, accent: UIColor, modal: Bool) {
+        guard let tabs, !tabs.items.isEmpty else { showTabBar(false); return }
+        // A modal sheet or dialog covers the tab bar, as on iOS.
+        if modal != covered {
+            covered = modal
+            if #available(iOS 18.0, *) { setTabBarHidden(modal, animated: true) } else { tabBar.isHidden = modal }
+        }
+        if modal { return }
+        if tabBar.tintColor != accent { tabBar.tintColor = accent }
+        tabIds = tabs.items.map(\.id)
+        while stacks.count < tabs.items.count { stacks.append(VoltNavigationController(canvas: canvas)) }
+        for (stack, item) in zip(stacks, tabs.items) {
+            let bar = stack.tabBarItem!
+            if bar.title != item.label { bar.title = item.label }
+            let name = item.symbol ?? systemSymbol(item.icon)
+            if bar.accessibilityIdentifier != item.id || stack.symbol != name {
+                bar.image = UIImage(systemName: name) ?? UIImage(systemName: "circle.fill")
+                bar.accessibilityIdentifier = item.id
+                stack.symbol = name
+            }
+            if bar.badgeValue != item.badge { bar.badgeValue = item.badge }
+        }
+        let target = stacks[min(tabs.selected, stacks.count - 1)]
+        if canvas.navigation !== target {
+            canvas.navigation?.leave(before ?? canvas.snapshotView(afterScreenUpdates: false))
+            canvas.navigation = target
+            target.adopt(nil)
+        }
+        if stacks.count > tabs.items.count { stacks.removeLast(stacks.count - tabs.items.count) }
+        if viewControllers?.count != stacks.count || !zip(viewControllers ?? [], stacks).allSatisfy({ $0 === $1 }) {
+            setViewControllers(stacks, animated: false)
+        }
+        if selectedViewController !== target { selectedViewController = target }
+        showTabBar(true)
+    }
+    /// A tap on a tab: Rust selects it (or reselects the open one) and the
+    /// bar follows on the next snapshot.
+    func tabBarController(_ controller: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        if let i = stacks.firstIndex(where: { $0 === viewController }), i < tabIds.count {
+            canvas.navigate(tabIds[i])
+        }
+        return false
+    }
+}
+/// SF Symbols for Volt's icons, for tabs that don't name their own.
+private func systemSymbol(_ icon: String) -> String {
+    [
+        "Home": "house.fill", "Settings": "gearshape.fill", "User": "person.fill",
+        "Users": "person.2.fill", "Bell": "bell.fill", "Mail": "envelope.fill",
+        "Calendar": "calendar", "Clock": "clock.fill", "Star": "star.fill", "StarFilled": "star.fill",
+        "Heart": "heart.fill", "Bookmark": "bookmark.fill", "Inbox": "tray.fill",
+        "Folder": "folder.fill", "Search": "magnifyingglass", "Grid": "square.grid.2x2.fill",
+        "List": "list.bullet", "Globe": "globe", "Bolt": "bolt.fill", "Image": "photo.fill",
+        "File": "doc.fill", "FileText": "doc.text.fill", "Send": "paperplane.fill",
+        "Check": "checkmark.circle.fill", "Command": "command", "Play": "play.fill",
+        "Lock": "lock.fill", "Palette": "paintpalette.fill", "Sliders": "slider.horizontal.3",
+    ][icon] ?? "circle.fill"
+}
+final class VoltNavigationController: UINavigationController, UINavigationControllerDelegate {
+    unowned let canvas: VoltCanvas
+    /// The symbol on this section's tab.
+    fileprivate var symbol: String?
     /// The depth Rust last reported.
     private var depth = 0
     /// The stack's Back control; the same ID on every page.
@@ -85,14 +177,21 @@ final class VoltNavigationController: UINavigationController, UINavigationContro
         pages.last?.setContentScrollView(scroll, for: .top)
         pages.last?.setContentScrollView(scroll, for: .bottom)
     }
-    init() {
+    init(canvas: VoltCanvas) {
+        self.canvas = canvas
         let root = VoltPageController(depth: 0)
         super.init(rootViewController: root)
         delegate = self
         navigationBar.prefersLargeTitles = true
         setNavigationBarHidden(true, animated: false)
-        canvas.navigation = self
-        root.attach(canvas, fullBleed: fullBleed)
+    }
+    /// The canvas arrives: this section is on screen.
+    fileprivate func adopt(_: UIView?) {
+        pages.last?.attach(canvas, fullBleed: fullBleed)
+    }
+    /// The canvas leaves for another section; keep how this one looked.
+    fileprivate func leave(_ image: UIView?) {
+        pages.last?.keep(image, frame: canvas.frame)
     }
     required init?(coder: NSCoder) { fatalError("Use programmatic host") }
     private var pages: [VoltPageController] { viewControllers.compactMap { $0 as? VoltPageController } }
@@ -149,6 +248,19 @@ final class VoltNavigationController: UINavigationController, UINavigationContro
             })
         }
     }
+    private var covered = false
+    /// A modal is open over the page: the bar's controls dim and stop
+    /// taking taps until it closes.
+    fileprivate func cover(_ modal: Bool) {
+        guard modal != covered else { return }
+        covered = modal
+        navigationBar.isUserInteractionEnabled = !modal
+        navigationBar.tintAdjustmentMode = modal ? .dimmed : .automatic
+        // A modal covers the bar: it fades out rather than float above the
+        // scrim, and comes back when the modal closes.
+        UIView.animate(withDuration: 0.25) { self.navigationBar.alpha = modal ? 0 : 1 }
+        setBackGestures(!modal && (pages.last?.bar?.back != nil))
+    }
     private var backEnabled = true
     private var held = false
     private var heldContent = false
@@ -175,7 +287,7 @@ final class VoltNavigationController: UINavigationController, UINavigationContro
     }
     /// UIKit went back (back button or swipe): bring the canvas and Rust along.
     func navigationController(_ navigationController: UINavigationController, didShow viewController: UIViewController, animated: Bool) {
-        guard let shown = viewController as? VoltPageController, shown.depth < depth else { return }
+        guard canvas.navigation === self, let shown = viewController as? VoltPageController, shown.depth < depth else { return }
         shown.attach(canvas, fullBleed: fullBleed)
         let steps = depth - shown.depth
         depth = shown.depth
@@ -201,6 +313,11 @@ private struct Node: Decodable {
     var rect: CGRect { bounds.count == 4 ? CGRect(x: bounds[0], y: bounds[1], width: bounds[2], height: bounds[3]) : .zero }
 }
 fileprivate struct NavButton: Decodable, Equatable { let id: String; let label: String }
+fileprivate struct TabItemInfo: Decodable, Equatable {
+    let id: String; let label: String; let symbol: String?; let icon: String; let badge: String?
+}
+/// The outermost tab view Rust describes.
+fileprivate struct TabsInfo: Decodable, Equatable { let id: String; let selected: Int; let items: [TabItemInfo] }
 /// The outermost navigation bar Rust describes.
 fileprivate struct NavInfo: Decodable, Equatable {
     let id: String; let title: String; let largeTitle: Bool; let depth: Int
@@ -212,10 +329,14 @@ private struct ScrollInfo: Decodable {
     let insets: [CGFloat]?
     /// Pull to refresh: the container has `on_refresh`, and its work is under way.
     let refresh: Bool?; let refreshing: Bool?
+    /// Behind an open modal: it takes no touches.
+    let inert: Bool?
 }
 private struct Snapshot: Decodable {
     let nodes: [Node]; let dark: Bool; let frames: UInt64; let backend: String; let animating: Bool?
-    let scrollViews: [ScrollInfo]?; let navigation: NavInfo?
+    let scrollViews: [ScrollInfo]?; let navigation: NavInfo?; let tabs: TabsInfo?
+    /// A dialog or sheet is open: it covers the bars.
+    let modal: Bool?
     let background: [CGFloat]; let fieldBackground: [CGFloat]; let foreground: [CGFloat]; let accent: [CGFloat]
 }
 private func color(_ rgba:[CGFloat])->UIColor {
@@ -247,6 +368,13 @@ private final class NativeScroll: UIScrollView {
     }
 }
 /// Holds the canvas weakly so the display link never keeps it alive.
+/// Canvases by Rust view ID, for wakes that arrive after a view is gone.
+@MainActor private var wakeTargets: [UInt64: WeakCanvas] = [:]
+private struct WeakCanvas { weak var canvas: VoltCanvas? }
+/// Rust calls this on the main queue when an Updater sent state changes.
+private let wakeCanvas: volt_wake_fn = { handle in
+    MainActor.assumeIsolated { wakeTargets[handle]?.canvas?.applyUpdates() }
+}
 private final class FrameTarget: NSObject {
     weak var canvas: VoltCanvas?
     init(_ canvas: VoltCanvas) { self.canvas = canvas; super.init() }
@@ -290,6 +418,8 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var displayLink: CADisplayLink?
     /// The navigation controller that shows this canvas's pages.
     weak var navigation: VoltNavigationController?
+    /// The root, for the tab bar.
+    weak var root: VoltRootController?
     private var scrollers: [String: NativeScroll] = [:]
     /// Scroll views of pages left behind, kept (with their offsets) so a page
     /// coming back gets the same one and UIKit's large title stays right.
@@ -355,6 +485,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         let frame = convert(end, from: screen.coordinateSpace)
         keyboardOverlap = note.name == UIResponder.keyboardWillHideNotification ? 0 : max(0, bounds.maxY - frame.minY)
         applyKeyboardInset()
+        sendBars()
     }
     private func applyKeyboardInset() {
         guard let s = contentScroll else { return }
@@ -377,7 +508,17 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         s.setContentOffset(CGPoint(x: s.contentOffset.x, y: y), animated: true)
     }
     required init?(coder: NSCoder) { fatalError("Use programmatic host") }
-    deinit { displayLink?.invalidate(); if handle != 0 { volt_destroy(handle) } }
+    deinit {
+        displayLink?.invalidate()
+        if handle != 0 {
+            let id = handle
+            MainActor.assumeIsolated { wakeTargets[id] = nil }
+            _ = volt_set_wake(id, nil)
+            volt_destroy(id)
+        }
+    }
+    /// State changes from other threads are waiting: apply them and draw.
+    fileprivate func applyUpdates() { send(["op": "updates"]) }
     /// The system appearance, its colours and the Reduce Motion setting.
     @objc private func sendAppearance() {
         let t = traitCollection
@@ -417,6 +558,8 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             volt_create(Unmanaged.passUnretained(metalLayer).toOpaque(), bytes.bindMemory(to: UInt8.self).baseAddress!, data.count)
         }
         if handle == 0 { showError(String(cString: volt_error())); return }
+        wakeTargets[handle] = WeakCanvas(canvas: self)
+        _ = volt_set_wake(handle, wakeCanvas)
         send(["op": "host", "native_scrolling": true, "native_navigation": navigation != nil,
               "native_controls": true])
         sendAppearance()
@@ -434,7 +577,28 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             send(["op": "resize", "width": bounds.width, "height": bounds.height, "scale": scale])
         }
         positionEditor()
+        sendSafeArea()
+        sendBars()
     }
+    private var lastSafeArea: UIEdgeInsets?
+    /// The window's safe area: the canvas runs under the bars, but sheets and
+    /// dialogs Volt draws stay clear of the status bar and home indicator.
+    private func sendSafeArea() {
+        guard handle != 0, let insets = window?.safeAreaInsets, insets != lastSafeArea else { return }
+        lastSafeArea = insets
+        send(["op": "safe_area", "top": insets.top, "right": insets.right, "bottom": insets.bottom, "left": insets.left])
+    }
+    private var lastBars: CGFloat?
+    /// What covers the canvas from below: the tab bar and home indicator
+    /// (the canvas's own safe area), or the keyboard when that is taller.
+    /// Volt's action dock sits just above it.
+    private func sendBars() {
+        let bottom = max(safeAreaInsets.bottom, keyboardOverlap)
+        guard handle != 0, bottom != lastBars else { return }
+        lastBars = bottom
+        send(["op": "bars", "bottom": bottom])
+    }
+    override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
     override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
     override func tintColorDidChange() { super.tintColorDidChange(); if handle != 0 { sendAppearance() } }
     func suspend(_ value: Bool) {
@@ -466,6 +630,8 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard let ptr = volt_snapshot(handle), let data = String(cString: ptr).data(using: .utf8),
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { showError("Invalid Rust UI snapshot"); return }
         nodes = snapshot.nodes
+        root?.sync(snapshot.tabs, before: before, accent: color(snapshot.accent), modal: snapshot.modal ?? false)
+        navigation?.cover(snapshot.modal ?? false)
         navigation?.sync(snapshot.navigation, before: before, background: color(snapshot.background),
                          accent: color(snapshot.accent))
         displayLink?.isPaused = !(snapshot.animating ?? false) || suspended
@@ -537,6 +703,9 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             seen.insert(info.id)
             let s = scrollers[info.id] ?? unpark(info.id) ?? makeScroller(info.id)
             s.axes = info.axes
+            // Behind a modal its pan (which the canvas carries) stays off.
+            let live = !(info.inert ?? false)
+            if s.panGestureRecognizer.isEnabled != live { s.panGestureRecognizer.isEnabled = live }
             let behavior: UIScrollView.ContentInsetAdjustmentBehavior = info.id == mainId ? .always : .never
             if s.contentInsetAdjustmentBehavior != behavior { s.contentInsetAdjustmentBehavior = behavior }
             let frame = CGRect(x: info.frame[0], y: info.frame[1], width: info.frame[2], height: info.frame[3])

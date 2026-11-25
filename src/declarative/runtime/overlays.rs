@@ -375,6 +375,14 @@ impl Runtime {
         changed
     }
     /// Hosts suppress transient help while the operating-system window is inactive.
+    /// A modal overlay (a dialog or sheet) is open. A host that draws its
+    /// own bars (iOS) hides or dims them, as a modal covers them.
+    pub fn modal_open(&self) -> bool {
+        self.overlays
+            .scopes
+            .iter()
+            .any(|s| s.options.kind == OverlayKind::Modal)
+    }
     pub fn set_tooltips_active(&mut self, active: bool) -> bool {
         self.overlays.tooltips_inactive = !active;
         if !active {
@@ -561,6 +569,11 @@ impl Runtime {
             changed: true,
             activated: true,
         })
+    }
+    /// Whether `id` takes input now: false behind an open modal or popup. A
+    /// host with its own scroll views turns those behind it off.
+    pub fn accepts_input(&self, id: &str) -> bool {
+        self.scope_allows_id(id)
     }
     pub(super) fn scope_allows_id(&self, id: &str) -> bool {
         !self.transform_index.inert(id)

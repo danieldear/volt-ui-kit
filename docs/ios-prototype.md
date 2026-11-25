@@ -144,6 +144,102 @@ volt_ui_kit_mobile::export_ios_app!(application);
   same scroll position.
 - On desktop, the web and Android, the same code draws the bar with Volt.
 
+## Tabs
+
+`tab_view` gives an app its top-level sections. On iOS the host shows the
+system tab bar (Liquid Glass on iOS 26) with SF Symbols and badges, and each
+tab keeps its own navigation stack; elsewhere Volt draws Material's flexible
+navigation bar.
+
+```rust,ignore
+tab_view(app.section, [
+    tab_destination(Section::Inbox, "Inbox", Icon::Inbox).symbol("tray.fill").badge("3"),
+    tab_destination(Section::Done, "Done", Icon::Check).symbol("checkmark.circle.fill"),
+], navigation_stack(&app.history, |page| pages(app, page)))
+.key("sections")
+.on_select(open_section)   // swap in that section's history
+.on_reselect(|a: &mut App, s| a.history.reset(s.root()))
+```
+
+- Labels are required, and three to five tabs read best. A tab with nothing
+  in it stays; its page says why.
+- Choosing the open tab again calls `on_reselect`: go back to the section's
+  first page, as both platforms do.
+- The gallery has three sections: Components, Shop (with the cart count as a
+  badge) and Work.
+
+## Sheets
+
+`bottom_sheet` rests at the heights you give it (`SheetDetent::Medium`,
+`Large`, or `Points`), with a grabber when there's more than one. Drag the
+grabber or header to change height or swipe down to close; tap the grabber
+to step through the heights. `cancel` and `done` put Cancel at the leading
+edge and Done at the trailing edge; `on_dismiss_attempt` lets an app ask
+before a swipe throws work away. While a sheet or dialog is open, the iOS
+host hides the tab bar and fades the navigation bar, and the page behind
+takes no touches. The gallery's **Sheets** page shows all of it.
+
+## Action dock
+
+`action_dock` puts a page's actions at the bottom of the screen, where a
+thumb reaches, instead of in the top bar: one main action, up to two round
+ones, and More for the rest in a sheet. It floats just above the tab bar,
+home indicator or keyboard (the iOS host reports them with a `bars` event),
+moves away while the list it `follows` scrolls down, and comes back as soon
+as it scrolls up or reaches either end. That list gets room at its end so
+its last row clears the dock.
+
+```rust,ignore
+action_dock(notes_list.key("notes"))
+    .key("notes-dock")
+    .follows("notes")
+    .primary(dock_action("New note", Icon::Plus).on_press(|a: &mut App| a.add()))
+    .secondary(dock_action("Search", Icon::Search).on_press(|a: &mut App| a.search()))
+    .more([dock_action("Delete all", Icon::Trash).danger().on_press(|a: &mut App| a.clear())])
+    .more_open(app.more)
+    .on_more(|a: &mut App, open| a.more = open)
+```
+
+- Labels say what happens; the round actions show only their icon, so their
+  label is what VoiceOver reads.
+- Keep the top bar for the title and Back. `back(label, f)` adds a Back at
+  the dock's leading end for deep pages.
+- The gallery's **Action dock** page shows it.
+
+## Work off the UI thread
+
+Network requests, file sync and timers run on threads of your own. They send
+their results back with an `Updater`: each change runs on the UI thread, in
+the order sent, and the page is drawn again. Nothing touches your state from
+another thread.
+
+```rust,ignore
+use volt_ui_kit_mobile::{Application, HostContext, Updater};
+
+pub struct App { updates: Updater<App>, reply: Option<String> }
+
+fn ask(a: &mut App) {
+    let updates = a.updates.clone();
+    std::thread::spawn(move || {
+        let reply = fetch_reply();
+        updates.update(move |a: &mut App| a.reply = Some(reply));
+    });
+}
+pub fn application(host: HostContext) -> Result<Application<App>, String> {
+    Application::new_with_updater(host, |updates| App { updates, reply: None }, view)
+}
+```
+
+- `Application::new_with_updater` hands the state its `Updater` to keep;
+  `Application::updater()` returns another at any time. Clone it freely.
+- Changes sent close together share one wake and one draw.
+- `update` returns false, and drops the change, once the app has closed: a
+  long-running worker can stop then.
+- On iOS the host is woken on the main queue. The Android prototype applies
+  waiting changes with its next event.
+- The gallery's **Background work** page shows it: results arrive from a
+  worker thread one by one.
+
 ## Colours, type and motion
 
 - **Colours.** Without a theme, pages use iOS's own colours for the current

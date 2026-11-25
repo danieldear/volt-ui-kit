@@ -1,6 +1,6 @@
 use serde::Deserialize;
 /// Version checked by the native host before any pointer-bearing call.
-pub const HOST_ABI_VERSION: u32 = 1;
+pub const HOST_ABI_VERSION: u32 = 2;
 
 /// Colours the platform resolved for the current appearance and contrast
 /// setting, as sRGB RGBA from 0 to 1. On iOS these are UIKit's grouped
@@ -129,6 +129,21 @@ pub enum PlatformEvent {
         value: bool,
     },
     Draw {},
+    /// The screen's safe area in points, when the view runs under the
+    /// status bar and home indicator: overlays stay inside it.
+    SafeArea {
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+    },
+    /// How far the host's own bottom bars reach up the view, in points: the
+    /// tab bar and home indicator, or the keyboard when it is taller.
+    Bars {
+        bottom: f32,
+    },
+    /// Changes sent through an `Updater` are waiting: apply them and draw.
+    Updates {},
     Back {},
 }
 impl PlatformEvent {

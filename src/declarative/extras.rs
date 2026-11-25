@@ -215,11 +215,40 @@ pub struct NavigationBar {
     pub buttons: Vec<(String, String)>,
 }
 
+/// A tab view's bar, for a host that draws its own (iOS's tab bar).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabBar {
+    pub items: Vec<TabBarItem>,
+    /// Index of the selected item.
+    pub selected: usize,
+}
+/// One destination in a [`TabBar`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabBarItem {
+    /// The control the host activates when the tab is chosen.
+    pub id: String,
+    pub label: String,
+    /// The platform's own symbol name (an SF Symbol on iOS), if given.
+    pub symbol: Option<String>,
+    /// The Volt icon's name, for a host to map when there's no symbol.
+    pub icon: String,
+    /// Text for a badge; an empty string is a dot.
+    pub badge: Option<String>,
+}
+
 /// Rust-only extensions carried by every node. Defaults change nothing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct NodeExtras {
     /// This node is a navigation stack's bar.
     pub navigation_bar: Option<Box<NavigationBar>>,
+    /// This node is a tab view's bar.
+    pub tab_bar: Option<Box<TabBar>>,
+    /// Slides off the bottom while scroll view `id` scrolls toward its end,
+    /// and back when it scrolls toward its start (an action dock).
+    pub hides_with: Option<String>,
+    /// Takes the host's bottom bars (tab bar, home indicator, keyboard) as
+    /// extra bottom padding, so it sits just above them.
+    pub above_bars: bool,
     /// A scroll container's pull-to-refresh handler (`on_refresh`).
     pub on_refresh: Option<String>,
     /// Its work is under way: hosts keep their refresh spinner showing.

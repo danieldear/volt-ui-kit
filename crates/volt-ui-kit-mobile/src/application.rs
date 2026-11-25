@@ -1,5 +1,10 @@
-use crate::{protocol::SystemColors, PlatformEvent};
+use crate::{
+    protocol::SystemColors,
+    updates::{Inbox, Updater},
+    PlatformEvent,
+};
 use serde_json::{json, Value};
+use std::sync::Arc;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use volt_ui_kit::rendering::{PresentStatus, SurfaceRenderer};
 use volt_ui_kit::{mobile::MobileView, ui::Element, Palette, ThemeMode, UiTheme};
@@ -24,6 +29,7 @@ pub struct Application<C: 'static> {
     allow_software: bool,
     scale: f32,
     back: Option<BackNavigation<C>>,
+    inbox: Arc<Inbox<C>>,
 }
 fn fallback_theme(mode: ThemeMode) -> UiTheme {
     UiTheme::from_palette(if mode == ThemeMode::Dark {
@@ -58,7 +64,27 @@ pub fn system_palette(c: &SystemColors, mode: ThemeMode) -> Palette {
 }
 impl<C: 'static> Application<C> {
     pub fn new(host: HostContext, state: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
+        Self::with_inbox(host, state, view, Inbox::new())
+    }
+    /// Like [`Application::new`], for state that does work off the UI thread:
+    /// `state` receives the app's [`Updater`] to keep and hand to that work.
+    pub fn new_with_updater(
+        host: HostContext,
+        state: impl FnOnce(Updater<C>) -> C,
+        view: fn(&C) -> Element<C>,
+    ) -> Result<Self, String> {
+        let inbox = Inbox::new();
+        let state = state(inbox.updater());
+        Self::with_inbox(host, state, view, inbox)
+    }
+    fn with_inbox(
+        host: HostContext,
+        state: C,
+        view: fn(&C) -> Element<C>,
+        inbox: Arc<Inbox<C>>,
+    ) -> Result<Self, String> {
         Ok(Self {
+            inbox,
             ui: MobileView::new_with_font(state, view, host.font_family)?,
             mode: ThemeMode::Light,
             theme: None,
@@ -116,6 +142,35 @@ impl<C: 'static> Application<C> {
         self.back = Some((can_go_back, action));
         self
     }
+    /// Sends state changes from other threads; see [`Updater`].
+    pub fn updater(&self) -> Updater<C> {
+        self.inbox.updater()
+    }
+    /// Whether changes from an [`Updater`] are waiting for the next event.
+    pub fn has_updates(&self) -> bool {
+        self.inbox.has_changes()
+    }
+    /// The host's way to be woken, from any thread, when changes arrive.
+    #[cfg_attr(not(any(target_os = "ios", target_os = "android")), allow(dead_code))]
+    pub(crate) fn set_wake(&self, wake: Option<crate::updates::Wake>) {
+        self.inbox.set_wake(wake);
+    }
+    /// Run queued changes in order, then lay the page out again once.
+    fn apply_updates(&mut self) -> Result<(), String> {
+        let changes = self.inbox.take();
+        if changes.is_empty() {
+            return Ok(());
+        }
+        self.ui.update(|state| {
+            for change in changes {
+                change(state);
+            }
+        })
+    }
+    /// Change the app's state from the UI thread and lay the page out again.
+    pub fn update(&mut self, change: impl FnOnce(&mut C)) {
+        let _ = self.ui.update(change);
+    }
     pub fn state(&self) -> &C {
         self.ui.context()
     }
@@ -123,6 +178,9 @@ impl<C: 'static> Application<C> {
         &self.ui
     }
     pub fn handle(&mut self, event: PlatformEvent) -> Result<(), String> {
+        // Changes from other threads land before the event, so a tap acts on
+        // the page as it now reads.
+        self.apply_updates()?;
         match event {
             PlatformEvent::Resize {
                 width,
@@ -215,7 +273,16 @@ impl<C: 'static> Application<C> {
                     }
                 }
             }
-            PlatformEvent::Draw {} => {}
+            PlatformEvent::SafeArea {
+                top,
+                right,
+                bottom,
+                left,
+            } => {
+                self.ui.set_safe_area([top, right, bottom, left])?;
+            }
+            PlatformEvent::Bars { bottom } => self.ui.set_bars(bottom)?,
+            PlatformEvent::Draw {} | PlatformEvent::Updates {} => {}
         }
         Ok(())
     }
@@ -272,7 +339,7 @@ impl<C: 'static> Application<C> {
                 Some(
                     json!({"id": b.id, "frame": frame, "content": content, "insets": [it, ib],
                     "offset": b.scroll_offset, "axes": axes, "refresh": refresh.is_some(),
-                    "refreshing": refresh.unwrap_or(false)}),
+                    "refreshing": refresh.unwrap_or(false), "inert": !self.ui.runtime().accepts_input(&b.id)}),
                 )
             })
             .collect::<Vec<_>>();
@@ -281,13 +348,25 @@ impl<C: 'static> Application<C> {
             json!({"id": id, "title": bar.title, "largeTitle": bar.large_title, "depth": bar.depth,
                 "back": bar.back, "buttons": bar.buttons.iter().map(|(id, label)| json!({"id": id, "label": label})).collect::<Vec<_>>()})
         });
+        // The outermost tab view, for a host that draws its own tab bar.
+        let tabs = self.ui.runtime().tab_bars().into_iter().next().map(|(id, bar)| {
+            json!({"id": id, "selected": bar.selected, "items": bar.items.iter().map(|item| json!({
+                "id": item.id, "label": item.label, "symbol": item.symbol, "icon": item.icon, "badge": item.badge,
+            })).collect::<Vec<_>>()})
+        });
         let theme = self.current_theme();
-        json!({"navigation": navigation, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
+        json!({"navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
             "fieldBackground":theme.palette.base[1],"foreground":theme.palette.content,"accent":theme.palette.primary})
+    }
+}
+impl<C: 'static> Drop for Application<C> {
+    fn drop(&mut self) {
+        self.inbox.close();
     }
 }
 #[cfg(any(target_os = "ios", target_os = "android"))]
 pub(crate) trait HostedApplication {
+    fn set_wake(&self, wake: Option<crate::updates::Wake>);
     fn handle(&mut self, event: PlatformEvent) -> Result<(), String>;
     fn draw(&mut self, renderer: &mut SurfaceRenderer) -> Result<PresentStatus, String>;
     fn snapshot(&self) -> Value;
@@ -296,6 +375,9 @@ pub(crate) trait HostedApplication {
 }
 #[cfg(any(target_os = "ios", target_os = "android"))]
 impl<C: 'static> HostedApplication for Application<C> {
+    fn set_wake(&self, wake: Option<crate::updates::Wake>) {
+        Application::set_wake(self, wake)
+    }
     fn handle(&mut self, e: PlatformEvent) -> Result<(), String> {
         self.handle(e)
     }
@@ -829,5 +911,414 @@ mod tests {
         a.handle(PlatformEvent::Back {}).unwrap();
         assert_eq!(a.state().clicks, 0);
         assert_eq!(a.snapshot()["canGoBack"], false);
+    }
+    #[test]
+    fn changes_from_other_threads_apply_in_order_before_the_next_event() {
+        let mut a = app();
+        let updates = a.updater();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..3 {
+                assert!(updates.update(|s: &mut State| s.clicks += 10));
+            }
+            updates.update(|s: &mut State| s.name = format!("after {}", s.clicks));
+        });
+        worker.join().unwrap();
+        assert!(a.has_updates());
+        assert_eq!(a.state().clicks, 0, "nothing runs off the UI thread");
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert!(!a.has_updates());
+        assert_eq!(a.state().clicks, 30);
+        assert_eq!(a.state().name, "after 30");
+        // The page was laid out again with the new state.
+        assert!(a.snapshot()["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["label"] == "Count 30"));
+        // A tap acts on the page as it now reads.
+        a.updater().update(|s: &mut State| s.clicks = 100);
+        a.handle(PlatformEvent::Activate { id: "count".into() })
+            .unwrap();
+        assert_eq!(a.state().clicks, 101);
+    }
+    #[test]
+    fn one_wake_per_batch_and_a_late_wake_still_delivers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut a = app();
+        let updates = a.updater();
+        updates.update(|s: &mut State| s.clicks += 1);
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        // Changes queued before the host was ready wake it when it installs.
+        a.set_wake(Some(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        })));
+        assert_eq!(wakes.load(Ordering::SeqCst), 1);
+        updates.update(|s: &mut State| s.clicks += 1);
+        updates.update(|s: &mut State| s.clicks += 1);
+        assert_eq!(
+            wakes.load(Ordering::SeqCst),
+            1,
+            "joins the outstanding wake"
+        );
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert_eq!(a.state().clicks, 3);
+        updates.update(|s: &mut State| s.clicks += 1);
+        assert_eq!(wakes.load(Ordering::SeqCst), 2, "a new batch wakes again");
+    }
+    #[test]
+    fn state_can_keep_its_updater_and_changes_stop_after_close() {
+        struct Live {
+            updates: Updater<Live>,
+            text: String,
+        }
+        fn page(s: &Live) -> Element<Live> {
+            text(&s.text).key("text").into()
+        }
+        let mut a = Application::new_with_updater(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            |updates| Live {
+                updates,
+                text: "waiting".into(),
+            },
+            page,
+        )
+        .unwrap();
+        let updates = a.state().updates.clone();
+        std::thread::spawn(move || updates.update(|s: &mut Live| s.text = "loaded".into()))
+            .join()
+            .unwrap();
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert_eq!(a.state().text, "loaded");
+        let kept = a.updater();
+        assert!(kept.is_open());
+        drop(a);
+        assert!(!kept.is_open());
+        assert!(!kept.update(|s: &mut Live| s.text = "lost".into()));
+    }
+    #[test]
+    fn the_updates_event_is_part_of_the_wire_protocol() {
+        assert!(matches!(
+            PlatformEvent::decode(br#"{"op":"updates"}"#).unwrap(),
+            PlatformEvent::Updates {}
+        ));
+        assert!(PlatformEvent::decode(br#"{"op":"updates","extra":1}"#).is_err());
+    }
+    #[test]
+    fn a_tab_view_is_described_for_a_native_tab_bar_and_runs_its_tabs() {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Section {
+            Inbox,
+            Done,
+        }
+        struct Tabs {
+            tab: Section,
+            again: usize,
+        }
+        fn page(s: &Tabs) -> Element<Tabs> {
+            tab_view(
+                s.tab,
+                [
+                    tab_destination(Section::Inbox, "Inbox", Icon::Inbox)
+                        .symbol("tray.fill")
+                        .badge("3"),
+                    tab_destination(Section::Done, "Done", Icon::Check).dot(),
+                ],
+                text(if s.tab == Section::Inbox {
+                    "Inbox page"
+                } else {
+                    "Done page"
+                })
+                .key("body"),
+            )
+            .key("tabs")
+            .on_select(|s: &mut Tabs, t| s.tab = t)
+            .on_reselect(|s: &mut Tabs, _| s.again += 1)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Tabs {
+                tab: Section::Inbox,
+                again: 0,
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 3.,
+        })
+        .unwrap();
+        let tabs = &a.snapshot()["tabs"];
+        assert_eq!(tabs["selected"], 0);
+        assert_eq!(tabs["items"][0]["symbol"], "tray.fill");
+        assert_eq!(tabs["items"][0]["badge"], "3");
+        assert_eq!(tabs["items"][1]["badge"], "");
+        assert_eq!(tabs["items"][1]["label"], "Done");
+        // Drawn by Volt until the host says it draws its own bar.
+        let drawn = |a: &Application<Tabs>| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["id"] == "tabs-tab-1")
+        };
+        assert!(drawn(&a));
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        assert!(!drawn(&a), "the native tab bar replaces Volt's");
+        a.handle(PlatformEvent::Navigation {
+            id: "tabs-tab-1".into(),
+        })
+        .unwrap();
+        assert!(a.state().tab == Section::Done);
+        assert_eq!(a.snapshot()["tabs"]["selected"], 1);
+        a.handle(PlatformEvent::Navigation {
+            id: "tabs-tab-1".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            a.state().again,
+            1,
+            "choosing the open tab again reselects it"
+        );
+    }
+    #[test]
+    fn the_action_dock_moves_away_while_scrolling_down_and_runs_its_actions() {
+        #[derive(Default)]
+        struct Dock {
+            added: usize,
+            more: bool,
+            sorted: usize,
+        }
+        fn page(s: &Dock) -> Element<Dock> {
+            let rows: Vec<Element<Dock>> = (0..40)
+                .map(|i| {
+                    text(format!("Row {i}"))
+                        .key(format!("row-{i}"))
+                        .height(44.)
+                        .into()
+                })
+                .collect();
+            action_dock(vstack(rows).key("list").flex(1.).scroll(Scroll::Auto))
+                .key("dock")
+                .follows("list")
+                .primary(dock_action("Add", Icon::Plus).on_press(|s: &mut Dock| s.added += 1))
+                .more([dock_action("Sort", Icon::Calendar).on_press(|s: &mut Dock| s.sorted += 1)])
+                .more_open(s.more)
+                .on_more(|s: &mut Dock, open| s.more = open)
+                .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Dock::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let top = |a: &Application<Dock>, id: &str| {
+            a.mobile_view()
+                .runtime()
+                .boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .map(|b| b.bounds.bounds()[1])
+                .unwrap()
+        };
+        let to = |a: &mut Application<Dock>, y: f32| {
+            a.handle(PlatformEvent::ScrollTo {
+                id: "list".into(),
+                x: 0.,
+                y,
+            })
+            .unwrap();
+        };
+        // 60-point bar, 12 points above the bottom.
+        let shown = top(&a, "dock-bar");
+        assert!((shown - (800. - 12. - 60.)).abs() < 0.5, "{shown}");
+        // The list keeps room at its end so its last row clears the dock.
+        let max = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "list")
+            .unwrap()
+            .scroll_max[1];
+        assert!((max - (40. * 44. - 800. + 84.)).abs() < 0.5, "{max}");
+        // A small move down does nothing; a longer run slides it away.
+        to(&mut a, 10.);
+        to(&mut a, 20.);
+        assert_eq!(top(&a, "dock-bar"), shown);
+        to(&mut a, 60.);
+        to(&mut a, 200.);
+        assert!(a.mobile_view().runtime().scroll_hidden("list"));
+        assert!(top(&a, "dock-bar") >= 800., "slid below the screen");
+        // Scrolling back up a little brings it back.
+        to(&mut a, 185.);
+        assert!(!a.mobile_view().runtime().scroll_hidden("list"));
+        assert_eq!(top(&a, "dock-bar"), shown);
+        // Hidden again, then the end of the list shows it.
+        to(&mut a, 400.);
+        assert!(a.mobile_view().runtime().scroll_hidden("list"));
+        to(&mut a, max);
+        assert!(!a.mobile_view().runtime().scroll_hidden("list"));
+        // The host's tab bar and home indicator lift it.
+        a.handle(PlatformEvent::Bars { bottom: 83. }).unwrap();
+        assert!((top(&a, "dock-bar") - (shown - 83.)).abs() < 0.5);
+        // The main action runs on a tap.
+        let y = top(&a, "dock-primary") + 10.;
+        a.handle(PlatformEvent::Begin { x: 195., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 195., y }).unwrap();
+        assert_eq!(a.state().added, 1);
+        // More lists the rest in a sheet; choosing one closes it, then runs it.
+        let y = top(&a, "dock-more") + 10.;
+        a.handle(PlatformEvent::Begin { x: 360., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 360., y }).unwrap();
+        assert!(a.state().more);
+        let y = top(&a, "dock-more-0") + 10.;
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!((a.state().more, a.state().sorted), (false, 1));
+    }
+    #[test]
+    fn a_sheet_follows_a_drag_then_closes_steps_or_stays() {
+        #[derive(Default)]
+        struct Sheet {
+            open: bool,
+            height: usize,
+            closed: usize,
+            asked: usize,
+            guard: bool,
+        }
+        fn page(s: &Sheet) -> Element<Sheet> {
+            let sheet = bottom_sheet(text("Body").key("body"))
+                .key("sheet")
+                .title("New idea")
+                .detents([SheetDetent::Medium, SheetDetent::Large])
+                .detent(s.height)
+                .on_detent(|s: &mut Sheet, i| s.height = i)
+                .open(s.open)
+                .on_dismiss(|s: &mut Sheet| {
+                    s.open = false;
+                    s.closed += 1
+                });
+            let sheet = if s.guard {
+                sheet.on_dismiss_attempt(|s: &mut Sheet| s.asked += 1)
+            } else {
+                sheet
+            };
+            zstack![text("Page").key("page"), sheet].flex(1.).into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Sheet {
+                open: true,
+                ..Sheet::default()
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let drag = |a: &mut Application<Sheet>, dy: f32| {
+            for e in [
+                // The header of a sheet at medium height (its top is at 428).
+                PlatformEvent::Begin { x: 195., y: 470. },
+                PlatformEvent::Move {
+                    x: 195.,
+                    y: 470. + dy / 2.,
+                },
+                PlatformEvent::Move {
+                    x: 195.,
+                    y: 470. + dy,
+                },
+                PlatformEvent::End {
+                    x: 195.,
+                    y: 470. + dy,
+                },
+            ] {
+                a.handle(e).unwrap();
+            }
+        };
+        // A short drag springs back and changes nothing.
+        drag(&mut a, 30.);
+        assert!(a.state().open && a.state().height == 0);
+        // Up a long way: the larger height.
+        drag(&mut a, -160.);
+        assert_eq!(a.state().height, 1);
+        // Down from the larger height: back to medium, still open.
+        a.handle(PlatformEvent::Begin { x: 195., y: 90. }).unwrap();
+        a.handle(PlatformEvent::Move { x: 195., y: 290. }).unwrap();
+        a.handle(PlatformEvent::End { x: 195., y: 290. }).unwrap();
+        assert_eq!(a.state().height, 0);
+        assert!(a.state().open);
+        // Down from the smallest height closes it, unless that loses work.
+        a.update(|s| s.guard = true);
+        drag(&mut a, 200.);
+        assert_eq!((a.state().asked, a.state().closed), (1, 0));
+        assert!(a.state().open, "the app decides after asking");
+        a.update(|s| s.guard = false);
+        drag(&mut a, 200.);
+        assert_eq!(a.state().closed, 1);
+        assert!(!a.state().open);
+        // A phone-sized swipe up from the grabber, in many small moves, with
+        // the iOS host's scrolling and bars.
+        a.update(|s| s.open = true);
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 402.,
+            height: 874.,
+            scale: 3.,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Begin { x: 201., y: 485. }).unwrap();
+        for i in 1..=12 {
+            let y = 485. - 235. * i as f32 / 12.;
+            a.handle(PlatformEvent::Move { x: 201., y }).unwrap();
+        }
+        a.handle(PlatformEvent::End { x: 201., y: 250. }).unwrap();
+        assert!(a.state().open, "a swipe up never closes the sheet");
+        assert_eq!(a.state().height, 1, "a swipe up makes it taller");
+        a.update(|s| s.height = 0);
+        // The grabber steps through the heights for people who can't drag.
+        a.update(|s| s.open = true);
+        a.handle(PlatformEvent::Begin { x: 201., y: 475. }).unwrap();
+        a.handle(PlatformEvent::End { x: 201., y: 475. }).unwrap();
+        assert_eq!(a.state().height, 1, "a tap on the grabber");
     }
 }

@@ -423,8 +423,8 @@ pub(crate) mod document;
 pub(crate) mod effects;
 pub(crate) mod extras;
 pub use extras::{
-    BorderStyle, Cursor, Gradient, GridColumns, Justify, NavigationBar, Sides, SplitHandle,
-    TextAlign,
+    BorderStyle, Cursor, Gradient, GridColumns, Justify, NavigationBar, Sides, SplitHandle, TabBar,
+    TabBarItem, TextAlign,
 };
 mod responsive;
 pub use effects::{

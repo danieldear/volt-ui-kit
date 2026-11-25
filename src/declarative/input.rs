@@ -147,6 +147,9 @@ pub struct Pointer {
     pub modifiers: InputModifiers,
     /// Press: 1, 2 or 3 for a single, double or triple click.
     pub clicks: u8,
+    /// Release of a drag on an element with `drag_motion`: how fast it was
+    /// moving, in logical points per second.
+    pub velocity: [f32; 2],
 }
 impl Pointer {
     pub(crate) fn new(phase: PointerPhase, at: [f32; 2], modifiers: InputModifiers) -> Self {
@@ -158,6 +161,7 @@ impl Pointer {
             zoom: 0.,
             modifiers,
             clicks: 0,
+            velocity: [0.; 2],
         }
     }
 }
