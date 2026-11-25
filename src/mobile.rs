@@ -41,6 +41,8 @@ pub struct MobileView<C: 'static> {
     bars_bottom: f32,
     /// Points the keyboard covers, on its own.
     keyboard: f32,
+    /// Reporting scroll ends: the recompose it causes doesn't report again.
+    reporting_ends: bool,
 }
 impl<C: 'static> MobileView<C> {
     pub fn new(context: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
@@ -78,6 +80,7 @@ impl<C: 'static> MobileView<C> {
             viewport,
             touch: None,
             suspended: false,
+            reporting_ends: false,
             host_font,
             clock: std::time::Instant::now(),
             native_navigation: false,
@@ -278,8 +281,22 @@ impl<C: 'static> MobileView<C> {
     fn layout(&mut self) -> Result<(), String> {
         self.runtime
             .layout(self.viewport, &Bindings::default(), &mut self.painter)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // A transcript the reader scrolled away from (or back to) tells the
+        // app, which shows or hides its "Jump to latest".
+        if !self.reporting_ends {
+            let ran = self
+                .runtime
+                .dispatch_scroll_ends(&mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            if ran {
+                self.reporting_ends = true;
+                let done = self.recompose();
+                self.reporting_ends = false;
+                done?;
+            }
+        }
+        Ok(())
     }
     fn recompose(&mut self) -> Result<(), String> {
         let mut element = (self.view)(&self.context);

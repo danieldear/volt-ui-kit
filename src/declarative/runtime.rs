@@ -636,6 +636,10 @@ pub struct Runtime {
     reuse: Reuse,
     /// Last applied `scroll_to` request per scroll view.
     scroll_requests: BTreeMap<String, u32>,
+    /// Last applied `scroll_to_end` request per end-anchored scroll view.
+    end_requests: BTreeMap<String, u32>,
+    /// End-anchored views last reported away from their end.
+    ends_away: BTreeSet<String>,
     #[cfg(feature = "rust-ui")]
     editors: RefCell<BTreeMap<String, editing::EditorState>>,
     #[cfg(feature = "rust-ui")]
@@ -739,6 +743,8 @@ impl Runtime {
             styles_cache: None,
             reuse: Reuse::default(),
             scroll_requests: BTreeMap::new(),
+            end_requests: BTreeMap::new(),
+            ends_away: BTreeSet::new(),
             #[cfg(feature = "rust-ui")]
             editors: RefCell::new(BTreeMap::new()),
             #[cfg(feature = "rust-ui")]
@@ -1679,27 +1685,86 @@ impl Runtime {
     /// in the previous layout, or are new, stay at the end as content grows.
     /// Scrolling away releases the anchor until the reader returns to the end.
     fn follow_scroll_ends(&mut self) -> BTreeSet<String> {
-        fn anchored(n: &Node, out: &mut BTreeSet<String>) {
+        fn anchored(n: &Node, out: &mut BTreeMap<String, u32>) {
             if n.surface.anchor_end && n.surface.scroll.is_some_and(|m| m.axes()[1]) {
-                out.insert(n.id.clone());
+                out.insert(n.id.clone(), n.ext.scroll_end_request);
             }
             for child in &n.children {
                 anchored(child, out);
             }
         }
-        let mut ids = BTreeSet::new();
-        anchored(self.document.root(), &mut ids);
-        for id in &ids {
-            let offset = self.scroll_offsets.get(id).copied();
-            let pinned = match (offset, self.scroll_ends.get(id)) {
-                (Some(offset), Some(end)) => offset[1] >= end - 1.,
-                _ => true,
-            };
+        let mut requests = BTreeMap::new();
+        anchored(self.document.root(), &mut requests);
+        self.end_requests.retain(|id, _| requests.contains_key(id));
+        let ids: BTreeSet<String> = requests.keys().cloned().collect();
+        for (id, request) in requests {
+            // A changed request (not a first 0) goes back to the end.
+            let previous = self.end_requests.insert(id.clone(), request);
+            let asked = previous.map_or(request != 0, |p| p != request);
+            let offset = self.scroll_offsets.get(&id).copied();
+            let pinned = asked
+                || match (offset, self.scroll_ends.get(&id)) {
+                    (Some(offset), Some(end)) => offset[1] >= end - 1.,
+                    _ => true,
+                };
             if pinned {
-                self.scroll_offsets.entry(id.clone()).or_insert([0.; 2])[1] = f32::MAX;
+                self.scroll_offsets.entry(id).or_insert([0.; 2])[1] = f32::MAX;
             }
         }
         ids
+    }
+    /// Called by hosts after anything that may have scrolled: tells each
+    /// end-anchored scroll view's `on_away_from_end` when the reader left
+    /// its end (true) or came back (false). Returns whether any handler ran.
+    pub fn dispatch_scroll_ends<C>(
+        &mut self,
+        handlers: &mut Handlers<'_, C>,
+        context: &mut C,
+    ) -> Result<bool, DocumentError> {
+        fn watched(n: &Node, out: &mut BTreeMap<String, String>) {
+            if let (true, Some(name)) = (n.surface.anchor_end, &n.ext.on_end_away) {
+                out.insert(n.id.clone(), name.clone());
+            }
+            for child in &n.children {
+                watched(child, out);
+            }
+        }
+        let mut names = BTreeMap::new();
+        watched(self.document.root(), &mut names);
+        if names.is_empty() && self.ends_away.is_empty() {
+            return Ok(false);
+        }
+        let mut away = BTreeSet::new();
+        for id in names.keys() {
+            let Some(b) = self.boxes.iter().find(|b| &b.id == id) else {
+                continue;
+            };
+            let offset = self
+                .scroll_offsets
+                .get(id)
+                .map_or(b.scroll_offset[1], |o| o[1]);
+            // More than a line from the end: a bounce or a rounding isn't away.
+            if offset < b.scroll_max[1] - 24. {
+                away.insert(id.clone());
+            }
+        }
+        let mut events = Vec::new();
+        for id in away.difference(&self.ends_away) {
+            events.push((names[id].clone(), true));
+        }
+        for id in self.ends_away.difference(&away) {
+            if let Some(name) = names.get(id) {
+                events.push((name.clone(), false));
+            }
+        }
+        self.ends_away = away;
+        let any = !events.is_empty();
+        for (name, value) in events {
+            handlers
+                .dispatch(&name, Event::ToggleChanged(value), context)
+                .map_err(|e| DocumentError(e.to_string()))?;
+        }
+        Ok(any)
     }
     /// Logical scroll offsets survive keyed recomposition and clamp on layout.
     pub fn scroll_offset(&self, id: &str) -> [f32; 2] {

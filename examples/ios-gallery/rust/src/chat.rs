@@ -18,6 +18,10 @@ pub struct Chat {
     pub replying: bool,
     /// Set to stop the reply being written.
     pub stop: Option<Arc<AtomicBool>>,
+    /// The reader scrolled up, away from the latest.
+    pub away: bool,
+    /// Bumped to go back to the latest.
+    pub jumps: u32,
 }
 
 const REPLY: &str = "Here's a start. Keep the composer at the foot of the page, \
@@ -141,9 +145,15 @@ pub fn page(app: &App) -> Container<App> {
     .padding(16., Edge::Horizontal)
     .flex(1.)
     .scroll(Scroll::Vertical)
-    .anchor_end(true);
+    .anchor_end(true)
+    .on_away_from_end(|a: &mut App, away| a.chat.away = away)
+    .scroll_to_end(c.jumps);
     vstack![
-        transcript,
+        jump_to_latest(transcript, "chat-jump", c.away, |a: &mut App| a
+            .chat
+            .jumps +=
+            1)
+        .flex(1.),
         composer(c.draft.clone())
             .key("chat-composer")
             .placeholder("Message")

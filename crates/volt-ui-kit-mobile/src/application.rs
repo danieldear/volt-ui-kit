@@ -2135,4 +2135,121 @@ mod tests {
         a.handle(PlatformEvent::End { x: 201., y: 475. }).unwrap();
         assert_eq!(a.state().height, 1, "a tap on the grabber");
     }
+
+    #[test]
+    fn a_transcript_says_when_the_reader_leaves_the_end_and_jumps_back() {
+        #[derive(Default)]
+        struct Chat {
+            away: bool,
+            jumps: u32,
+        }
+        fn page(s: &Chat) -> Element<Chat> {
+            let rows: Vec<Element<Chat>> = (0..40)
+                .map(|i| {
+                    text(format!("Message {i}"))
+                        .key(format!("m-{i}"))
+                        .height(44.)
+                        .into()
+                })
+                .collect();
+            let transcript = vstack(rows)
+                .key("transcript")
+                .scroll(Scroll::Vertical)
+                .anchor_end(true)
+                .on_away_from_end(|s: &mut Chat, away| s.away = away)
+                .scroll_to_end(s.jumps);
+            vstack![
+                jump_to_latest(transcript, "jump", s.away, |s: &mut Chat| s.jumps += 1).flex(1.),
+                text("Composer").key("composer").height(60.),
+            ]
+            .key("page")
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Chat::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 600.,
+            scale: 1.,
+        })
+        .unwrap();
+        let offset =
+            |a: &Application<Chat>| a.mobile_view().runtime().scroll_offset("transcript")[1];
+        let has_jump = |a: &Application<Chat>| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["id"] == "jump")
+        };
+        // It opens at the latest, with no button.
+        let end = offset(&a);
+        assert!(end > 1000.);
+        assert!(!a.mobile_view().context().away && !has_jump(&a));
+        // Scrolled up: the app hears it and shows the button.
+        a.handle(PlatformEvent::ScrollTo {
+            id: "transcript".into(),
+            x: 0.,
+            y: 200.,
+        })
+        .unwrap();
+        assert!(a.mobile_view().context().away && has_jump(&a));
+        // The button floats: what's under the transcript keeps its height.
+        let composer = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "composer")
+            .map(|b| b.bounds.bounds()[3])
+            .unwrap();
+        assert_eq!(composer, 60.);
+        // A small drift near the end isn't away.
+        a.handle(PlatformEvent::ScrollTo {
+            id: "transcript".into(),
+            x: 0.,
+            y: end - 10.,
+        })
+        .unwrap();
+        assert!(!a.mobile_view().context().away);
+        a.handle(PlatformEvent::ScrollTo {
+            id: "transcript".into(),
+            x: 0.,
+            y: 0.,
+        })
+        .unwrap();
+        assert!(has_jump(&a));
+        // The button goes back to the end, and hides.
+        a.handle(PlatformEvent::Activate { id: "jump".into() })
+            .unwrap();
+        assert_eq!(a.mobile_view().context().jumps, 1);
+        assert!((offset(&a) - end).abs() < 1.);
+        assert!(!a.mobile_view().context().away && !has_jump(&a));
+        // Where Volt scrolls (Android), a drag does the same.
+        a.handle(PlatformEvent::Host {
+            native_scrolling: false,
+            native_navigation: false,
+            native_controls: false,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Begin { x: 200., y: 100. }).unwrap();
+        a.handle(PlatformEvent::Move { x: 200., y: 300. }).unwrap();
+        a.handle(PlatformEvent::Move { x: 200., y: 500. }).unwrap();
+        a.handle(PlatformEvent::End { x: 200., y: 500. }).unwrap();
+        assert!(offset(&a) < end - 100., "dragged up: {}", offset(&a));
+        assert!(a.mobile_view().context().away && has_jump(&a));
+    }
 }

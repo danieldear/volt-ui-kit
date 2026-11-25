@@ -492,6 +492,8 @@ pub use flows::{
     ago, flow_step, freshness_line, quick_picks, sheet_flow, FlowStep, FreshnessLine, QuickPicks,
     SheetFlow,
 };
+mod jump;
+pub use jump::jump_to_latest;
 mod work;
 pub use work::{activity_pill, work_card, ActivityPill, WorkCard, WorkState};
 mod snackbar;
@@ -572,6 +574,8 @@ pub struct Element<C> {
     escape: Option<Click<C>>,
     /// Scroll containers: pulled past the top and let go.
     refresh: Option<Click<C>>,
+    /// End-anchored scroll containers: left (true) or back at (false) the end.
+    end_away: Option<Change<C>>,
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
@@ -769,6 +773,7 @@ impl<C> Element<C> {
             focus_within: None,
             escape: None,
             refresh: None,
+            end_away: None,
             validation_error: None,
             input_activation: None,
             input_key: None,
@@ -889,6 +894,7 @@ impl<C: 'static> Element<C> {
             focus_within: self.focus_within.map(|f| lift1(f, a)),
             escape: self.escape.map(|f| lift0(f, a)),
             refresh: self.refresh.map(|f| lift0(f, a)),
+            end_away: self.end_away.map(|f| lift1(f, a)),
             validation_error: self.validation_error,
             input_activation: self.input_activation.map(|f| lift2(f, a)),
             input_key: self.input_key.map(|f| lift1(f, a)),
@@ -943,6 +949,7 @@ impl<C: 'static> Element<C> {
                 focus_within,
                 escape,
                 refresh,
+                end_away,
                 validation_error,
                 input_activation,
                 input_key,
@@ -1038,6 +1045,13 @@ impl<C: 'static> Element<C> {
                     .on_activate(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.ext.on_refresh = Some(name);
+            }
+            if let Some(f) = end_away {
+                let name = format!("rust-end-away-{}", *count);
+                handlers
+                    .on_toggle_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.ext.on_end_away = Some(name);
             }
             if let Some(f) = input_activation {
                 let name = format!("rust-input-{}", *count);
@@ -2008,6 +2022,19 @@ macro_rules! container_modifiers {
                 self.0.node.surface.anchor_end = value;
                 self
             }
+            /// With `anchor_end`: called with true when the reader scrolls up
+            /// away from the end, and false when they're back at it. Show a
+            /// "Jump to latest" button while it's true.
+            pub fn on_away_from_end(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+                self.0.end_away = Some(Box::new(f));
+                self
+            }
+            /// With `anchor_end`: go back to the end, and follow it again,
+            /// whenever `request` changes (an initial 0 does nothing).
+            pub fn scroll_to_end(mut self, request: u32) -> Self {
+                self.0.node.ext.scroll_end_request = request;
+                self
+            }
             /// Hide/show position indicators without changing overflow or input.
             pub fn scrollbars(mut self, policy: Scrollbars) -> Self {
                 self.0.node.surface.scrollbars = policy;
@@ -2133,6 +2160,7 @@ pub use crate::{button_bar, tab_bar, tabs, toolbar};
 mod text_motion;
 pub use text_motion::{live_text, morphing_text, rolling_number, shimmer_text, typing_text};
 pub mod prelude {
+    pub use super::jump_to_latest;
     pub use super::{
         accordion, alert, avatar, avatar_group, bar_chart, bottom_sheet, breadcrumb, carousel,
         collapsible, command, command_palette, drawer, empty_state, fab, gauge, hover_card,

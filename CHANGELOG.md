@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Chat: `on_away_from_end` on an end-anchored scroll view says when the
+  reader scrolls up from the newest message and when they're back;
+  `scroll_to_end(request)` goes back to it. `jump_to_latest` wraps a
+  transcript with the round button that does it, shown only while the
+  reader is away (Material's small floating action button on Android).
 - Android host parity with iOS: edge to edge with the system bars and
   keyboard sent as insets; a frame loop while animating; a wake from
   background threads (`VoltActivity.wake`), so timers redraw without a touch;

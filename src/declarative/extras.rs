@@ -284,6 +284,12 @@ pub(crate) struct NodeExtras {
     pub on_refresh: Option<String>,
     /// Its work is under way: hosts keep their refresh spinner showing.
     pub refreshing: bool,
+    /// An end-anchored scroll view's handler (`on_away_from_end`): true when
+    /// the reader scrolls away from the end, false back at it.
+    pub on_end_away: Option<String>,
+    /// A change brings an end-anchored scroll view back to its end
+    /// (`scroll_to_end`); a first 0 does nothing.
+    pub scroll_end_request: u32,
     /// Text inside can be selected and copied (inherited; `Some(false)`
     /// opts a subtree out).
     pub selectable: Option<bool>,

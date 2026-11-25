@@ -284,6 +284,12 @@ vstack![
   far each time, and what's new eases in after what was there.
 - `anchor_end(true)` keeps the transcript at the newest message unless you
   scroll up to read.
+- Jump to latest: `on_away_from_end` tells the app when the reader scrolls
+  up from the end and when they're back, and `jump_to_latest(transcript,
+  ..)` wraps the transcript with a round button at its foot while they're
+  away (Material's small floating action button on Android). Pressing it
+  bumps the transcript's `scroll_to_end` request, which goes back to the
+  newest message and follows it again.
 - For other fields, `hide_done_button()` drops the Done bar the same way;
   the dock's search uses it too.
 - The gallery's **Chat** page streams a reply from another thread.
