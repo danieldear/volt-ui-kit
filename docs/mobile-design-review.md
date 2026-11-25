@@ -151,7 +151,7 @@ These solve problems neither platform solves well.
 3. Composer and live text (done).
 4. Alerts and action sheets (done: native on iOS, Material 3 elsewhere), undo bar (done; toasts are the same bar without an action).
 5. Work card and activity pill (done).
-6. Search bar, quick picks, freshness line, sheet flow.
+6. Search bar, quick picks, freshness line, sheet flow (done).
 7. Field, picker and button fixes from the tables above.
 8. Android host parity for everything native on iOS.
 

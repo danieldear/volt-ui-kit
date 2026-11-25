@@ -487,6 +487,11 @@ pub use routing::{
 mod action_dock;
 mod composer;
 pub use composer::{composer, Composer};
+mod flows;
+pub use flows::{
+    ago, flow_step, freshness_line, quick_picks, sheet_flow, FlowStep, FreshnessLine, QuickPicks,
+    SheetFlow,
+};
 mod work;
 pub use work::{activity_pill, work_card, ActivityPill, WorkCard, WorkState};
 mod snackbar;
@@ -2108,6 +2113,10 @@ pub mod prelude {
         rating, tag_input, ComboboxState, Hsl, Hsva, TagInputState,
     };
     pub use super::{composer, Composer};
+    pub use super::{
+        flow_step, freshness_line, quick_picks, sheet_flow, FlowStep, FreshnessLine, QuickPicks,
+        SheetFlow,
+    };
     pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
     pub use super::{

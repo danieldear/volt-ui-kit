@@ -7,6 +7,7 @@ use volt_ui_kit_mobile::{Application, HostContext, Updater};
 
 mod alerts;
 mod chat;
+mod flows;
 mod rows;
 mod shop;
 
@@ -27,6 +28,7 @@ pub enum Route {
     Rows,
     Chat,
     Alerts,
+    Flows,
     Shop,
     Product(u8),
     Cart,
@@ -58,6 +60,7 @@ impl Route {
             Route::Rows => "Swipe and select".into(),
             Route::Chat => "Chat".into(),
             Route::Alerts => "Alerts".into(),
+            Route::Flows => "Flows".into(),
             Route::Shop => "Pantry".into(),
             Route::Product(id) => shop::product(id).name.into(),
             Route::Cart => "Cart".into(),
@@ -138,6 +141,7 @@ pub struct App {
     pub rows: rows::Rows,
     pub chat: chat::Chat,
     pub alerts: alerts::Alerts,
+    pub flows: flows::Flows,
 }
 impl Default for App {
     fn default() -> Self {
@@ -161,6 +165,7 @@ impl Default for App {
             rows: rows::Rows::default(),
             chat: chat::Chat::default(),
             alerts: alerts::Alerts::default(),
+            flows: flows::Flows::default(),
             history: NavigationHistory::new(Route::Home),
             editing: false,
             taps: 0,
@@ -306,6 +311,7 @@ fn home(_: &App) -> Container<App> {
                     link_row("Swipe and select", "", "to-rows", Route::Rows),
                     link_row("Chat", "", "to-chat", Route::Chat),
                     link_row("Alerts", "", "to-alerts", Route::Alerts),
+                    link_row("Flows", "", "to-flows", Route::Flows),
                 ],
                 "UIKit draws these: the bar, back swipe, keyboard.",
             ),
@@ -989,6 +995,7 @@ fn pages(app: &App) -> Element<App> {
             Route::Rows => rows::page(app),
             Route::Chat => chat::page(app),
             Route::Alerts => alerts::page(app),
+            Route::Flows => flows::page(app),
             Route::Shop => shop::home(app).large_title(true).bar_button(
                 format!("Cart · {}", shop::cart_count(app)),
                 |a: &mut App| {
@@ -1031,6 +1038,7 @@ fn start_page() -> Option<Route> {
         "rows" => Route::Rows,
         "chat" => Route::Chat,
         "alerts" => Route::Alerts,
+        "flows" => Route::Flows,
         "shop" => Route::Shop,
         "product" => Route::Product(4),
         "cart" => Route::Cart,
@@ -1186,8 +1194,9 @@ mod tests {
                 .cloned()
         };
         assert_eq!(home(&a).unwrap()["offset"][1], 120.);
+        // A row in view, as a tapped row is: returning reveals it.
         a.handle(PlatformEvent::Activate {
-            id: "to-lists".into(),
+            id: "to-text".into(),
         })
         .unwrap();
         assert!(home(&a).is_none());
@@ -1421,6 +1430,41 @@ mod tests {
         .unwrap();
         let order: Vec<u32> = a.state().rows.notes.iter().map(|n| n.id).collect();
         assert_eq!(order, (0..8).collect::<Vec<_>>(), "back where they were");
+    }
+    #[test]
+    fn a_project_is_made_in_three_steps() {
+        let mut a = app();
+        for id in ["to-flows", "flows-due-1", "flows-new"] {
+            a.handle(PlatformEvent::Activate { id: id.into() }).unwrap();
+        }
+        assert_eq!(a.state().flows.due, Some(1));
+        assert!(a.state().flows.creating);
+        // Next waits for a name.
+        a.handle(PlatformEvent::Activate {
+            id: "flows-sheet-done".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().flows.step, 0);
+        a.handle(PlatformEvent::Text {
+            id: "flows-name".into(),
+            text: "Parser".into(),
+        })
+        .unwrap();
+        for id in ["flows-sheet-done", "flows-agent-0", "flows-sheet-done"] {
+            a.handle(PlatformEvent::Activate { id: id.into() }).unwrap();
+        }
+        assert_eq!(a.state().flows.step, 2);
+        // Back, then forward again, then Create.
+        a.handle(PlatformEvent::Activate {
+            id: "flows-sheet-cancel".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().flows.step, 1);
+        for id in ["flows-sheet-done", "flows-sheet-done"] {
+            a.handle(PlatformEvent::Activate { id: id.into() }).unwrap();
+        }
+        assert_eq!(a.state().flows.created, ["Parser"]);
+        assert!(!a.state().flows.creating);
     }
     #[test]
     fn the_alerts_page_asks_and_answers() {

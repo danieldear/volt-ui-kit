@@ -601,6 +601,10 @@ impl Runtime {
                 .find(|b| b.id == id && b.enabled && b.editor.is_some() && self.scope_allows_id(id))
         })
     }
+    /// Focus stays, but its ring hides: it came from a touch, not a keyboard.
+    pub fn hide_focus_ring(&mut self) {
+        self.focus_visible = false;
+    }
     /// Nothing has keyboard focus: a phone host put its keyboard away.
     pub fn blur(&mut self) -> bool {
         self.focused.take().is_some()

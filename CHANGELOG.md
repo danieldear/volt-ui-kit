@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Mobile: `sheet_flow` with `flow_step`, a task in steps inside one sheet:
+  Cancel or Back, Next or the finishing word, step dots, and a height per
+  step. `quick_picks`, chips for the likely answers in front of a full
+  picker (Material's filter chip on Android). `freshness_line`, "Updated 2
+  min ago", amber when stale, "Offline" said plainly, tap to refresh; `ago`
+  formats ages.
+- Phones: a tap no longer leaves a keyboard focus ring on the control
+  (`Runtime::hide_focus_ring`).
 - Mobile: `work_card` shows a job as working (with progress), waiting for
   you, failed or done: colour, icon and words agree, with the one action
   that applies. `activity_pill` floats above the bottom bars while

@@ -288,6 +288,18 @@ vstack![
   the dock's search uses it too.
 - The gallery's **Chat** page streams a reply from another thread.
 
+## Flows, quick picks and freshness
+
+- `sheet_flow` runs a task in steps inside one sheet. The first step has
+  Cancel, later ones Back; the last step's button says what it does
+  ("Create"). Each `flow_step` sets the sheet's height and whether it's
+  ready to go on.
+- `quick_picks` puts the likely answers first ("Today", "Tomorrow") with the
+  full picker behind a last chip.
+- `freshness_line` says how fresh the page is under its title; it turns
+  amber when stale and says "Offline" plainly. A tap refreshes.
+- The gallery's **Flows** page shows all three.
+
 ## Work cards and the activity pill
 
 `work_card` is one job. Its `WorkState` sets colour, icon and words

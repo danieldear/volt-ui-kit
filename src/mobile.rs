@@ -484,6 +484,8 @@ impl<C: 'static> MobileView<C> {
             .runtime
             .accessibility_activate(id, &mut self.handlers, &mut self.context)
             .map_err(|e| e.to_string())?;
+        // A tap shows no keyboard focus ring on a phone.
+        self.runtime.hide_focus_ring();
         if o.activated {
             self.recompose()?;
         }
