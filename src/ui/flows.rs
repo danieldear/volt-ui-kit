@@ -255,7 +255,7 @@ fn chip<C: 'static>(key: String, label: String, on: bool, press: Press<C>) -> El
         "#00000000".to_owned()
     } else {
         // A tint of the text colour shows on any surface, sheets included.
-        ColorToken::BaseContent.alpha(22).into()
+        ColorToken::BaseContent.alpha(22)
     })
     .accessible_label(label)
     .pressed_style(|s| s.opacity(0.75))
