@@ -641,6 +641,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         contentScaleFactor = scale
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: (bounds.width * scale).rounded(), height: (bounds.height * scale).rounded())
+        updateTopFade()
         initialize()
         if lastSize != bounds.size || lastScale != scale {
             lastSize = bounds.size; lastScale = scale
@@ -737,6 +738,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
                          accent: color(snapshot.accent))
         displayLink?.isPaused = !(snapshot.animating ?? false) || suspended
         syncScrollViews(snapshot.scrollViews ?? [])
+        updateTopFade()
         var elements: [Any] = []
         // Scroll is handled by the container's accessibilityScroll override.
         // A full-viewport leaf proxy here would occlude its real editable child
@@ -872,6 +874,42 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         }
     }
     private weak var contentScroll: NativeScroll?
+    /// Content scrolled under the status and navigation bars fades into the
+    /// page, as it does in UIKit lists. UIKit's own edge effect can't fade
+    /// Volt's drawing (the scroll views it watches are empty stand-ins), so
+    /// the host lays this gradient over the canvas.
+    private let topFade: UIView = {
+        let v = UIView()
+        v.isUserInteractionEnabled = false
+        v.layer.addSublayer(CAGradientLayer())
+        return v
+    }()
+    private func updateTopFade() {
+        // Only where a main scroll view runs under the bars, and not while a
+        // sheet or alert covers the page.
+        guard let s = contentScroll, !modalOpen, s.adjustedContentInset.top > 1 else {
+            topFade.isHidden = true
+            return
+        }
+        // Only the status bar and the compact navigation bar: a large title
+        // stays clear. It shows as content scrolls under, not at rest.
+        let bars = (window?.safeAreaInsets.top ?? safeAreaInsets.top) + 54
+        let height = bars + 16
+        let scrolled = s.contentOffset.y + s.adjustedContentInset.top
+        if topFade.superview !== self { addSubview(topFade) }
+        // Under the native text editor, above the drawing.
+        if editingId != nil { insertSubview(topFade, belowSubview: editor) } else { bringSubviewToFront(topFade) }
+        topFade.isHidden = scrolled <= 0.5
+        topFade.alpha = min(1, max(0, scrolled / 24))
+        topFade.frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
+        guard let g = topFade.layer.sublayers?.first as? CAGradientLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        g.frame = topFade.bounds
+        g.colors = [pageBackground.withAlphaComponent(0.9), pageBackground.withAlphaComponent(0.6), pageBackground.withAlphaComponent(0)].map(\.cgColor)
+        g.locations = [0, NSNumber(value: Double((bars - 20) / height)), 1]
+        CATransaction.commit()
+    }
     /// Insets to give Rust once the current update finishes.
     private var pendingInsets: [(String, CGFloat, CGFloat)] = []
     /// Nested updates in progress; bounded so no feedback can recurse.
