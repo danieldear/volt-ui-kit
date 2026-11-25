@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Mobile: `work_card` shows a job as working (with progress), waiting for
+  you, failed or done: colour, icon and words agree, with the one action
+  that applies. `activity_pill` floats above the bottom bars while
+  background work runs; `ActionDock::activity` puts it above a dock.
 - Mobile: `snackbar`, a message with one action (Undo) at the foot of the
   screen. On Android it's Material 3's snackbar; on iOS a floating capsule
   above the bottom bars. `ActionDock::notice` puts it just above a dock and

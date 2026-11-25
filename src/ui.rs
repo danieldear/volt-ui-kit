@@ -487,6 +487,8 @@ pub use routing::{
 mod action_dock;
 mod composer;
 pub use composer::{composer, Composer};
+mod work;
+pub use work::{activity_pill, work_card, ActivityPill, WorkCard, WorkState};
 mod snackbar;
 pub use snackbar::{snackbar, Snackbar};
 mod search;
@@ -2069,6 +2071,7 @@ pub mod prelude {
     };
     pub use super::{action_dock, dock_action, dock_search, ActionDock, DockAction, DockSearch};
     pub use super::{action_sheet, alert_dialog, prompt_action, Prompt, PromptAction};
+    pub use super::{activity_pill, work_card, ActivityPill, WorkCard, WorkState};
     pub use super::{
         area_chart, candlestick_chart, donut_chart, line_plot, range_chart, stacked_bar_chart,
         timeline_chart, Candle, ValueRange,

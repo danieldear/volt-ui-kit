@@ -120,6 +120,9 @@ pub struct App {
     /// Background work: steps received, and whether it is still running.
     pub received: Vec<String>,
     pub working: bool,
+    /// The Work page's sample jobs.
+    pub approved: bool,
+    pub retried: bool,
     /// The Sheets page: open, at which height, and whether closing loses work.
     pub sheet: bool,
     pub sheet_height: usize,
@@ -144,6 +147,8 @@ impl Default for App {
             updates: None,
             received: Vec::new(),
             working: false,
+            approved: false,
+            retried: false,
             sheet: false,
             sheet_height: 0,
             unsaved: false,
@@ -703,56 +708,82 @@ fn start_work(a: &mut App) {
     });
 }
 fn background(app: &App) -> Container<App> {
-    let status: Element<App> = if app.working {
-        hstack![spinner(), text("Working on another thread").font_size(17.)]
-            .key("work-status")
-            .gap(10., Axis::Horizontal)
-            .align(Align::Center)
+    let done = app.received.len();
+    let mut cards: Vec<Element<App>> = Vec::new();
+    // The worker thread's job, as people would see it.
+    if app.working || done > 0 {
+        let card = work_card("Import notes").key("work-import");
+        cards.push(if app.working {
+            card.state(WorkState::Working(Some(done as f32 / 5.)))
+                .detail(format!("{done} of 5 notes imported"))
+                .into()
+        } else {
+            card.state(WorkState::Done)
+                .detail("5 notes imported")
+                .action("Open", |_: &mut App| {})
+                .into()
+        });
+    }
+    cards.push(if app.approved {
+        work_card("Sync with Mac")
+            .key("work-sync")
+            .state(WorkState::Done)
+            .detail("Queued on the Mac")
             .into()
     } else {
-        text(if app.received.is_empty() {
-            "Nothing yet"
+        work_card("Sync with Mac")
+            .key("work-sync")
+            .state(WorkState::Waiting)
+            .detail("Allow this phone to queue work on the Mac")
+            .action("Allow", |a: &mut App| a.approved = true)
+            .into()
+    });
+    cards.push(if app.retried {
+        work_card("Summarise meeting")
+            .key("work-summary")
+            .state(WorkState::Working(None))
+            .detail("Asking the model again")
+            .into()
+    } else {
+        work_card("Summarise meeting")
+            .key("work-summary")
+            .state(WorkState::Failed)
+            .detail("The model didn't answer. Check the key, then try again.")
+            .action("Try again", |a: &mut App| a.retried = true)
+            .into()
+    });
+    let parts = vec![
+        primary(if app.working {
+            "Importing"
         } else {
-            "Done"
+            "Import notes"
         })
-        .key("work-status")
-        .font_size(17.)
-        .into()
-    };
-    let rows = app
-        .received
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            hstack![text(r).font_size(17.)]
-                .key(format!("result-{i}"))
-                .height(44.)
-                .padding(16., Edge::Horizontal)
-                .align(Align::Center)
-                .into()
-        })
-        .collect::<Vec<_>>();
-    let mut parts = vec![
-        status,
-        primary(if app.working { "Working" } else { "Start work" })
-            .key("start-work")
-            .enabled(!app.working)
-            .on_click(start_work)
+        .key("start-work")
+        .enabled(!app.working)
+        .on_click(start_work)
+        .into(),
+        vstack(cards)
+            .key("work-cards")
+            .gap(12., Axis::Vertical)
             .into(),
+        checklist(&[
+            "The import counts up without touching the screen.",
+            "Each state has its own colour, icon and words.",
+            "The pill shows only while the import runs.",
+        ]),
     ];
-    if !rows.is_empty() {
-        parts.push(section(
-            "Results",
-            rows,
-            "Each one arrived from the worker thread.",
-        ));
+    let mut screen: Vec<Element<App>> = vec![page("background-page", parts)
+        .width_fraction(1.)
+        .height_fraction(1.)
+        .into()];
+    if app.working {
+        screen.push(
+            activity_pill(format!("Importing {done} of 5"))
+                .key("work-pill")
+                .into(),
+        );
     }
-    parts.push(checklist(&[
-        "Results appear one by one without touching the screen.",
-        "Scrolling stays smooth while work runs.",
-        "Going back mid-way and returning shows the finished list.",
-    ]));
-    page("background-page", parts)
+    zstack(screen).key("background-screen").flex(1.)
 }
 
 /// Open another section where you left it.
@@ -1320,7 +1351,14 @@ mod tests {
         assert_eq!(a.state().received.len(), 5);
         assert!(!a.state().working);
         let nodes = a.snapshot()["nodes"].to_string();
-        assert!(nodes.contains("Result 5 of 5") && nodes.contains("Done"));
+        assert!(nodes.contains("Import notes, Done") && nodes.contains("5 notes imported"));
+        // The pill goes when the work does; the waiting job takes its answer.
+        assert!(!nodes.contains("work-pill"));
+        a.handle(PlatformEvent::Activate {
+            id: "work-sync-action".into(),
+        })
+        .unwrap();
+        assert!(a.state().approved);
     }
     #[test]
     fn each_section_keeps_its_pages() {

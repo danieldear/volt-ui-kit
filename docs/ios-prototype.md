@@ -288,6 +288,15 @@ vstack![
   the dock's search uses it too.
 - The gallery's **Chat** page streams a reply from another thread.
 
+## Work cards and the activity pill
+
+`work_card` is one job. Its `WorkState` sets colour, icon and words
+together: Working (with progress if known), Waiting ("Needs you"), Failed,
+Done. Give it the one action that applies now: Allow, Try again, Open.
+While work runs in the background, `activity_pill` floats above the bottom
+bars ("Importing 3 of 5"); show it only while something runs. The gallery's
+Work tab shows all four states.
+
 ## Undo bar
 
 After something is deleted, do it and offer Undo in a `snackbar` rather

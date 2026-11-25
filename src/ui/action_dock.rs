@@ -123,6 +123,7 @@ pub struct ActionDock<C> {
     back: Option<(String, Press<C>)>,
     search: Option<DockSearch<C>>,
     notice: Option<Element<C>>,
+    activity: Option<Element<C>>,
 }
 /// A page with its actions in a dock at the bottom:
 ///
@@ -152,6 +153,7 @@ pub fn action_dock<C>(content: impl Into<Element<C>>) -> ActionDock<C> {
         back: None,
         search: None,
         notice: None,
+        activity: None,
     }
 }
 impl<C> ActionDock<C> {
@@ -211,6 +213,14 @@ impl<C> ActionDock<C> {
         C: 'static,
     {
         self.notice = bar.bar();
+        self
+    }
+    /// Background work in a pill just above the dock.
+    pub fn activity(mut self, pill: super::ActivityPill<C>) -> Self
+    where
+        C: 'static,
+    {
+        self.activity = pill.pill();
         self
     }
     /// A Back button at the dock's leading end, in reach, for deep pages.
@@ -543,6 +553,15 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
             .height(MARGIN);
         foot.0.node.ext.above_bars = true;
         let mut stack: Vec<Element<C>> = vec![spacer().into()];
+        if let Some(pill) = dock.activity {
+            stack.push(
+                hstack![pill]
+                    .key(format!("{key}-activity"))
+                    .justify(Justify::Center)
+                    .padding(10., Edge::Bottom)
+                    .into(),
+            );
+        }
         if let Some(bar) = dock.notice {
             let mut bar = bar;
             bar.node.flex = 1.;
