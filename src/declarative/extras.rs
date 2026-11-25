@@ -287,6 +287,10 @@ pub(crate) struct NodeExtras {
     /// An end-anchored scroll view's handler (`on_away_from_end`): true when
     /// the reader scrolls away from the end, false back at it.
     pub on_end_away: Option<String>,
+    /// A message that closes itself after this many milliseconds on screen
+    /// (`snackbar(..).close_after`), by running its `{id}-close` control,
+    /// with a stamp of what it says: a new message restarts the time.
+    pub close_after_ms: Option<(u32, u64)>,
     /// A change brings an end-anchored scroll view back to its end
     /// (`scroll_to_end`); a first 0 does nothing.
     pub scroll_end_request: u32,

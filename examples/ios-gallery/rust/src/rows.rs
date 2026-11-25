@@ -34,8 +34,6 @@ pub struct Rows {
     pub menu: Option<u32>,
     /// The first row has nudged to show it swipes; once is enough.
     pub hinted: bool,
-    /// Bumped by each delete; the Undo bar's timer only closes its own.
-    pub undo_round: u64,
 }
 impl Default for Rows {
     fn default() -> Self {
@@ -59,13 +57,11 @@ impl Default for Rows {
             more: false,
             menu: None,
             hinted: false,
-            undo_round: 0,
         }
     }
 }
 impl Rows {
     fn delete(&mut self, ids: &BTreeSet<u32>) {
-        self.undo_round += 1;
         self.deleted.clear();
         let mut i = 0;
         while i < self.notes.len() {
@@ -213,6 +209,8 @@ pub fn page(app: &App) -> Container<App> {
             .key("rows-undo-bar")
             .action("Undo", |a: &mut App| a.rows.undo())
             .open(!r.deleted.is_empty())
+            // Longer than a plain message: it has an action to reach.
+            .close_after(6.)
             .on_close(|a: &mut App| a.rows.deleted.clear())
     };
     let dock = if r.selecting {
@@ -273,19 +271,7 @@ pub fn page(app: &App) -> Container<App> {
     vstack![dock].key("rows-screen").flex(1.)
 }
 
-/// Delete, then close the Undo bar after five seconds unless another delete
-/// replaced it.
+/// Delete; the Undo bar closes itself (see `close_after`).
 pub fn delete(a: &mut App, ids: &BTreeSet<u32>) {
     a.rows.delete(ids);
-    let round = a.rows.undo_round;
-    if let Some(updates) = a.updates.clone() {
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            updates.update(move |a: &mut App| {
-                if a.rows.undo_round == round {
-                    a.rows.deleted.clear();
-                }
-            });
-        });
-    }
 }

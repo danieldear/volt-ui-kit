@@ -43,6 +43,13 @@ pub struct MobileView<C: 'static> {
     keyboard: f32,
     /// Reporting scroll ends: the recompose it causes doesn't report again.
     reporting_ends: bool,
+    /// How long each self-closing message has been on screen, unpaused.
+    /// With the stamp of the message being timed.
+    shown: std::collections::BTreeMap<String, (u64, std::time::Duration)>,
+    /// The clock when message timers last advanced.
+    timers_at: std::time::Duration,
+    /// A screen reader is on: timed messages stay until dismissed.
+    screen_reader: bool,
 }
 impl<C: 'static> MobileView<C> {
     pub fn new(context: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
@@ -81,6 +88,9 @@ impl<C: 'static> MobileView<C> {
             touch: None,
             suspended: false,
             reporting_ends: false,
+            shown: Default::default(),
+            timers_at: std::time::Duration::ZERO,
+            screen_reader: false,
             host_font,
             clock: std::time::Instant::now(),
             native_navigation: false,
@@ -277,6 +287,71 @@ impl<C: 'static> MobileView<C> {
             }
         }
         Ok(())
+    }
+    /// VoiceOver or TalkBack is on: self-closing messages wait to be
+    /// dismissed, since nobody can say when the reader has finished them.
+    pub fn set_screen_reader(&mut self, on: bool) {
+        self.screen_reader = on;
+    }
+    /// Self-closing messages don't count time while a finger is on the
+    /// screen, the app is in the background or a screen reader is on.
+    fn timers_paused(&self) -> bool {
+        self.touch.is_some() || self.suspended || self.screen_reader
+    }
+    /// Advance self-closing messages by the time since the last call (paused
+    /// time doesn't count; call this before an event changes whether it's
+    /// paused) and close the ones that are due. Returns whether any closed.
+    pub fn run_timers(&mut self) -> Result<bool, String> {
+        let now = self.clock.elapsed();
+        let step = now.saturating_sub(self.timers_at);
+        self.timers_at = now;
+        let paused = self.timers_paused();
+        let live = self.runtime.close_timers();
+        self.shown
+            .retain(|id, _| live.iter().any(|(l, _, _)| l == id));
+        let mut due = Vec::new();
+        for (id, ms, stamp) in live {
+            // New ones, and new messages under the same key, start now.
+            let seen = self.shown.get(&id).is_some_and(|(s, _)| *s == stamp);
+            let (s, t) = self
+                .shown
+                .entry(id.clone())
+                .or_insert((stamp, std::time::Duration::ZERO));
+            if !seen {
+                *s = stamp;
+                *t = std::time::Duration::ZERO;
+            } else if !paused {
+                *t += step;
+            }
+            if *t >= std::time::Duration::from_millis(ms.into()) {
+                due.push(id);
+            }
+        }
+        let mut closed = false;
+        for id in due {
+            self.shown.remove(&id);
+            closed |= self.activate(&format!("{id}-close"))?;
+        }
+        Ok(closed)
+    }
+    /// How long until the next self-closing message is due, if one is
+    /// counting down: the host wakes then and calls `run_timers`.
+    pub fn next_timer(&self) -> Option<std::time::Duration> {
+        if self.timers_paused() {
+            return None;
+        }
+        self.runtime
+            .close_timers()
+            .into_iter()
+            .map(|(id, ms, stamp)| {
+                let shown = self
+                    .shown
+                    .get(&id)
+                    .filter(|(s, _)| *s == stamp)
+                    .map_or(std::time::Duration::ZERO, |(_, t)| *t);
+                std::time::Duration::from_millis(ms.into()).saturating_sub(shown)
+            })
+            .min()
     }
     fn layout(&mut self) -> Result<(), String> {
         self.runtime

@@ -1713,6 +1713,23 @@ impl Runtime {
         }
         ids
     }
+    /// Messages showing now that close themselves: each one's ID, how long
+    /// it stays on screen in milliseconds, and a stamp that changes with what
+    /// it says. Hosts time them, pausing as they see fit, restart one whose
+    /// stamp changed, and then activate `{id}-close`.
+    pub fn close_timers(&self) -> Vec<(String, u32, u64)> {
+        fn visit(n: &Node, out: &mut Vec<(String, u32, u64)>) {
+            if let Some((ms, stamp)) = n.ext.close_after_ms {
+                out.push((n.id.clone(), ms, stamp));
+            }
+            for child in &n.children {
+                visit(child, out);
+            }
+        }
+        let mut out = Vec::new();
+        visit(self.document.root(), &mut out);
+        out
+    }
     /// Called by hosts after anything that may have scrolled: tells each
     /// end-anchored scroll view's `on_away_from_end` when the reader left
     /// its end (true) or came back (false). Returns whether any handler ran.

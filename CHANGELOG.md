@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Mobile: `snackbar(..).close_after(seconds)` closes the bar by itself and
+  pauses while a finger is on the screen and while the app is in the
+  background; with VoiceOver or TalkBack on it stays until dismissed. A new
+  message restarts the time. Hosts send `screen_reader` when it changes.
 - Rows: a destructive full swipe (`SwipeTone::Danger`) runs only after the
   finger rests past the line for a quarter of a second; a quick flick opens
   the row on its buttons instead.

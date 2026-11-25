@@ -33,6 +33,8 @@ pub struct Application<C: 'static> {
     /// Long presses that opened a menu: the host plays a haptic each time
     /// this goes up.
     holds: u64,
+    /// When a sleeping thread will wake the host for a message timer.
+    timer_due: Option<std::time::Instant>,
 }
 fn fallback_theme(mode: ThemeMode) -> UiTheme {
     UiTheme::from_palette(if mode == ThemeMode::Dark {
@@ -88,6 +90,7 @@ impl<C: 'static> Application<C> {
     ) -> Result<Self, String> {
         Ok(Self {
             holds: 0,
+            timer_due: None,
             inbox,
             ui: MobileView::new_with_font(state, view, host.font_family)?,
             mode: ThemeMode::Light,
@@ -185,6 +188,37 @@ impl<C: 'static> Application<C> {
         // Changes from other threads land before the event, so a tap acts on
         // the page as it now reads.
         self.apply_updates()?;
+        // Time up to now counts (or not) by the state before the event.
+        self.ui.run_timers()?;
+        self.handle_event(event)?;
+        self.ui.run_timers()?;
+        self.schedule_timer();
+        Ok(())
+    }
+    /// Wake the host when the next self-closing message is due: a thread
+    /// sleeps until then and sends an empty change, whose `Updates` event
+    /// runs the timers. One sleeper per deadline.
+    fn schedule_timer(&mut self) {
+        let Some(wait) = self.ui.next_timer() else {
+            return;
+        };
+        let due = std::time::Instant::now() + wait;
+        if self
+            .timer_due
+            .is_some_and(|at| at <= due && at > std::time::Instant::now())
+        {
+            return;
+        }
+        self.timer_due = Some(due);
+        let updates = self.updater();
+        // A few milliseconds late, so the message is surely due on waking.
+        let wait = wait + std::time::Duration::from_millis(5);
+        std::thread::spawn(move || {
+            std::thread::sleep(wait);
+            updates.update(|_| {});
+        });
+    }
+    fn handle_event(&mut self, event: PlatformEvent) -> Result<(), String> {
         match event {
             PlatformEvent::Resize {
                 width,
@@ -284,6 +318,7 @@ impl<C: 'static> Application<C> {
                 self.suspended = value;
                 self.ui.set_suspended(value);
             }
+            PlatformEvent::ScreenReader { on } => self.ui.set_screen_reader(on),
             PlatformEvent::Back {} => {
                 if let Some((can, action)) = self.back {
                     if !self.suspended && can(self.ui.context()) {
@@ -2270,5 +2305,84 @@ mod tests {
         a.handle(PlatformEvent::End { x: 200., y: 500. }).unwrap();
         assert!(offset(&a) < end - 100., "dragged up: {}", offset(&a));
         assert!(a.mobile_view().context().away && has_jump(&a));
+    }
+
+    #[test]
+    fn a_snackbar_closes_on_time_but_waits_for_fingers_and_screen_readers() {
+        #[derive(Default)]
+        struct Page {
+            shown: bool,
+        }
+        fn page(s: &Page) -> Element<Page> {
+            zstack![
+                vstack![button("Delete")
+                    .key("delete")
+                    .on_click(|s: &mut Page| s.shown = true)]
+                .key("content")
+                .width_fraction(1.)
+                .height_fraction(1.),
+                snackbar("Deleted a note.")
+                    .key("undo")
+                    .open(s.shown)
+                    .close_after(0.3)
+                    .on_close(|s: &mut Page| s.shown = false),
+            ]
+            .key("page")
+            .width_fraction(1.)
+            .height_fraction(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Page::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 700.,
+            scale: 1.,
+        })
+        .unwrap();
+        let wait = |ms: u64| std::thread::sleep(std::time::Duration::from_millis(ms));
+        let show = |a: &mut Application<Page>| {
+            a.handle(PlatformEvent::Activate {
+                id: "delete".into(),
+            })
+            .unwrap();
+            assert!(a.state().shown);
+        };
+        // It closes by itself; the host is woken when it's due.
+        show(&mut a);
+        wait(400);
+        assert!(a.has_updates(), "a timer thread woke the host");
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert!(!a.state().shown);
+        // A finger on the screen stops the time.
+        show(&mut a);
+        a.handle(PlatformEvent::Begin { x: 200., y: 300. }).unwrap();
+        wait(400);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(a.state().shown, "still showing under the finger");
+        a.handle(PlatformEvent::Cancel {}).unwrap();
+        wait(150);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(a.state().shown, "the paused time didn't count");
+        wait(250);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(!a.state().shown);
+        // With a screen reader on, it stays until dismissed.
+        a.handle(PlatformEvent::ScreenReader { on: true }).unwrap();
+        show(&mut a);
+        wait(400);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(a.state().shown);
+        a.handle(PlatformEvent::Activate {
+            id: "undo-close".into(),
+        })
+        .unwrap();
+        assert!(!a.state().shown);
     }
 }

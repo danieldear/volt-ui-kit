@@ -324,8 +324,11 @@ Work tab shows all four states.
 
 After something is deleted, do it and offer Undo in a `snackbar` rather
 than asking first. Give it to the page's dock with `notice`, or layer it
-last in a `zstack!`. Closing it after a few seconds is the app's: an
-`Updater` from a timer thread (see the gallery's Swipe and select page).
+last in a `zstack!`. `close_after(seconds)` closes it by itself, counting
+only time it can be read: the clock stops while a finger is on the screen
+and while the app is in the background, and with VoiceOver or TalkBack on
+it stays until dismissed. A new message under the same key starts the time
+again.
 
 ```rust,ignore
 action_dock(list)
@@ -334,6 +337,7 @@ action_dock(list)
             .key("undo")
             .action("Undo", |a: &mut App| a.undo())
             .open(app.can_undo())
+            .close_after(6.)
             .on_close(|a: &mut App| a.forget_undo()),
     )
 ```

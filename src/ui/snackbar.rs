@@ -17,6 +17,7 @@ pub struct Snackbar<C> {
     action: Option<(String, Press<C>)>,
     open: bool,
     close: Option<Press<C>>,
+    close_after: Option<f32>,
 }
 
 /// A message with an optional action, such as "Deleted 3 notes" and Undo.
@@ -38,6 +39,7 @@ pub fn snackbar<C>(message: impl Into<String>) -> Snackbar<C> {
         action: None,
         open: false,
         close: None,
+        close_after: None,
     }
 }
 impl<C> Snackbar<C> {
@@ -53,6 +55,14 @@ impl<C> Snackbar<C> {
     }
     pub fn open(mut self, open: bool) -> Self {
         self.open = open;
+        self
+    }
+    /// Close it after `seconds` on screen (4 to 10 is usual; longer with an
+    /// action). On phones the time stops while a finger is on the screen
+    /// and while the app is in the background, and with a screen reader on
+    /// it stays until dismissed. Without this, closing is the app's.
+    pub fn close_after(mut self, seconds: f32) -> Self {
+        self.close_after = Some(seconds);
         self
     }
     /// Required: close it (app state). Its action closes it too.
@@ -127,7 +137,7 @@ impl<C: 'static> Snackbar<C> {
         .on_click_with(move |c: &mut C, _| (shut.borrow_mut())(c));
         x.0.node.access_role = Some(AccessRole::Button);
         row.push(x.into());
-        let card = hstack(row)
+        let mut card = hstack(row)
             .key(key)
             .gap(4., Axis::Horizontal)
             .align(Align::Center)
@@ -142,6 +152,13 @@ impl<C: 'static> Snackbar<C> {
                     .blur(20.)
                     .offset(0., 6.),
             );
+        if let Some(s) = self.close_after.filter(|s| s.is_finite() && *s > 0.) {
+            use std::hash::{Hash, Hasher};
+            let mut stamp = std::collections::hash_map::DefaultHasher::new();
+            self.message.hash(&mut stamp);
+            card.0.node.ext.close_after_ms =
+                Some(((s * 1000.).min(u32::MAX as f32) as u32, stamp.finish()));
+        }
         let mut card: Element<C> = card.into();
         // It rises in from below and fades as it goes.
         card.node.effects.transition = Some(Transition::slide(0., 24.).duration_ms(260));

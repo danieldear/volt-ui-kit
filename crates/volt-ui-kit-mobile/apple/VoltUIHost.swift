@@ -516,6 +516,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             self.sendAppearance()
         }
         NotificationCenter.default.addObserver(self, selector: #selector(sendAppearance), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sendScreenReader), name: UIAccessibility.voiceOverStatusDidChangeNotification, object: nil)
         let link = CADisplayLink(target: FrameTarget(self), selector: #selector(FrameTarget.frame))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         link.isPaused = true
@@ -600,6 +601,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     /// State changes from other threads are waiting: apply them and draw.
     fileprivate func applyUpdates() { send(["op": "updates"]) }
     /// The system appearance, its colours and the Reduce Motion setting.
+    /// VoiceOver on or off: messages that close themselves wait for it.
+    @objc private func sendScreenReader() {
+        send(["op": "screen_reader", "on": UIAccessibility.isVoiceOverRunning])
+    }
     @objc private func sendAppearance() {
         let t = traitCollection
         let colors: [String: [CGFloat]] = [
@@ -616,6 +621,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         ]
         send(["op": "appearance", "dark": t.userInterfaceStyle == .dark, "colors": colors,
               "reduce_motion": UIAccessibility.isReduceMotionEnabled])
+        sendScreenReader()
         // UIKit cross-fades the screen while the appearance changes and keeps
         // the old Metal frame through it: draw again once it settles.
         for delay in [0.05, 0.4] {

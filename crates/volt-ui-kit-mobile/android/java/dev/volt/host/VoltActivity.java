@@ -125,7 +125,14 @@ public final class VoltActivity extends Activity implements SurfaceHolder.Callba
     private void sendAppearance(){
         float animation=android.provider.Settings.Global.getFloat(getContentResolver(),android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f);
         send("appearance","dark",dark(),"reduce_motion",animation==0f);
+        // TalkBack on or off: messages that close themselves wait for it.
+        AccessibilityManager access=(AccessibilityManager)getSystemService(ACCESSIBILITY_SERVICE);
+        if(access!=null){
+            if(!watchingReader){watchingReader=true;access.addTouchExplorationStateChangeListener(on->send("screen_reader","on",on));}
+            send("screen_reader","on",access.isTouchExplorationEnabled());
+        }
     }
+    private boolean watchingReader;
     private boolean dark(){return (getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;}
     @Override public void surfaceCreated(SurfaceHolder holder){
         if(host==0||failed)return;

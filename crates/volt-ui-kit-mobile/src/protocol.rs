@@ -143,6 +143,10 @@ pub enum PlatformEvent {
     Suspend {
         value: bool,
     },
+    /// VoiceOver or TalkBack turned on or off: timed messages wait for it.
+    ScreenReader {
+        on: bool,
+    },
     Draw {},
     /// The screen's safe area in points, when the view runs under the
     /// status bar and home indicator: overlays stay inside it.
