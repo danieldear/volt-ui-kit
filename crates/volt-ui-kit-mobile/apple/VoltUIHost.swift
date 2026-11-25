@@ -470,6 +470,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var activeTouch: UITouch?
     private var touchStart = CGPoint.zero
     private var dragged = false
+    private var touchFieldId: String?
     /// Fires when the finger rests: a long press opens a menu in Rust.
     private var holdWork: DispatchWorkItem?
     /// Rust's count of long presses that opened a menu; each one buzzes.
@@ -1149,6 +1150,9 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard !suspended, activeTouch == nil, let t = touches.first else { return }
         activeTouch = t; touchStart = t.location(in:self); dragged = false
         touchButtonId = nodes.last(where: { $0.kind == "button" && $0.enabled && $0.visibleRect.contains(touchStart) })?.id
+        // The field under the finger now: pressing it can open the keyboard
+        // and move the field (a message box rides up) before the finger lifts.
+        touchFieldId = nodes.last(where: { $0.kind == "field" && $0.enabled && !$0.readOnly && $0.visibleRect.contains(touchStart) })?.id
         // A sideways carousel or a swipeable row under the finger moves
         // instead of going back.
         if scrollers.values.contains(where: { $0.axes[0] && !$0.axes[1] && $0.frame.contains(touchStart) })
@@ -1184,7 +1188,9 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard let t = activeTouch, touches.contains(t) else { return }
         let p = t.location(in:self)
         dragged = dragged || hypot(p.x-touchStart.x,p.y-touchStart.y) >= 8
-        let target = !dragged ? nodes.last(where: { $0.kind == "field" && $0.enabled && !$0.readOnly && $0.visibleRect.contains(p) }) : nil
+        let target = dragged ? nil
+            : touchFieldId.flatMap { id in nodes.first(where: { $0.id == id }) }
+                ?? nodes.last(where: { $0.kind == "field" && $0.enabled && !$0.readOnly && $0.visibleRect.contains(p) })
         activeTouch = nil
         navigation?.holdContentBackGesture(false)
         if editingId != nil, !dragged,
