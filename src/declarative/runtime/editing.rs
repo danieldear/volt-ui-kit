@@ -1463,7 +1463,11 @@ fn inner_geometry(b: &LayoutBox, scale: f32) -> [f32; 4] {
     };
     let [lead, trail] = b.editor.as_ref().map_or([0.; 2], |e| e.inset);
     let left = if pad_left > 0. { pad_left } else { 10. * scale };
-    let right = if pad_right > 0. { pad_right } else { 10. * scale };
+    let right = if pad_right > 0. {
+        pad_right
+    } else {
+        10. * scale
+    };
     [
         x + left + lead * scale,
         y + top,

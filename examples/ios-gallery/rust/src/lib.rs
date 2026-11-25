@@ -5,6 +5,7 @@
 use volt_ui_kit_mobile::ui_kit::ui::{prelude::*, Button, Container};
 use volt_ui_kit_mobile::{Application, HostContext, Updater};
 
+mod alerts;
 mod chat;
 mod rows;
 mod shop;
@@ -25,6 +26,7 @@ pub enum Route {
     Dock,
     Rows,
     Chat,
+    Alerts,
     Shop,
     Product(u8),
     Cart,
@@ -55,6 +57,7 @@ impl Route {
             Route::Dock => "Action dock".into(),
             Route::Rows => "Swipe and select".into(),
             Route::Chat => "Chat".into(),
+            Route::Alerts => "Alerts".into(),
             Route::Shop => "Pantry".into(),
             Route::Product(id) => shop::product(id).name.into(),
             Route::Cart => "Cart".into(),
@@ -131,6 +134,7 @@ pub struct App {
     /// The Swipe and select page.
     pub rows: rows::Rows,
     pub chat: chat::Chat,
+    pub alerts: alerts::Alerts,
 }
 impl Default for App {
     fn default() -> Self {
@@ -151,6 +155,7 @@ impl Default for App {
             dock_searching: false,
             rows: rows::Rows::default(),
             chat: chat::Chat::default(),
+            alerts: alerts::Alerts::default(),
             history: NavigationHistory::new(Route::Home),
             editing: false,
             taps: 0,
@@ -295,6 +300,7 @@ fn home(_: &App) -> Container<App> {
                     link_row("Action dock", "", "to-dock", Route::Dock),
                     link_row("Swipe and select", "", "to-rows", Route::Rows),
                     link_row("Chat", "", "to-chat", Route::Chat),
+                    link_row("Alerts", "", "to-alerts", Route::Alerts),
                 ],
                 "UIKit draws these: the bar, back swipe, keyboard.",
             ),
@@ -951,6 +957,7 @@ fn pages(app: &App) -> Element<App> {
             Route::Dock => dock(app),
             Route::Rows => rows::page(app),
             Route::Chat => chat::page(app),
+            Route::Alerts => alerts::page(app),
             Route::Shop => shop::home(app).large_title(true).bar_button(
                 format!("Cart · {}", shop::cart_count(app)),
                 |a: &mut App| {
@@ -992,6 +999,7 @@ fn start_page() -> Option<Route> {
         "dock" => Route::Dock,
         "rows" => Route::Rows,
         "chat" => Route::Chat,
+        "alerts" => Route::Alerts,
         "shop" => Route::Shop,
         "product" => Route::Product(4),
         "cart" => Route::Cart,
@@ -1375,6 +1383,32 @@ mod tests {
         .unwrap();
         let order: Vec<u32> = a.state().rows.notes.iter().map(|n| n.id).collect();
         assert_eq!(order, (0..8).collect::<Vec<_>>(), "back where they were");
+    }
+    #[test]
+    fn the_alerts_page_asks_and_answers() {
+        let mut a = app();
+        for id in ["to-alerts", "alerts-share-content"] {
+            a.handle(PlatformEvent::Activate { id: id.into() }).unwrap();
+        }
+        assert!(a.state().alerts.share);
+        a.handle(PlatformEvent::Activate {
+            id: "alerts-share-sheet-action-0".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            (a.state().alerts.share, a.state().alerts.said.as_str()),
+            (false, "Link copied.")
+        );
+        a.handle(PlatformEvent::Activate {
+            id: "alerts-sign-out-content".into(),
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Activate {
+            id: "alerts-sign-out-alert-cancel".into(),
+        })
+        .unwrap();
+        assert!(!a.state().alerts.sign_out);
+        assert_eq!(a.state().alerts.said, "Link copied.");
     }
     #[test]
     fn the_chat_sends_streams_and_stops() {

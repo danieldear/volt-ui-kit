@@ -288,6 +288,27 @@ vstack![
   the dock's search uses it too.
 - The gallery's **Chat** page streams a reply from another thread.
 
+## Alerts and action sheets
+
+Ask only when an action can't be undone or costs something; otherwise do it
+and offer Undo. `alert_dialog` asks one question with at most two answers
+and Cancel; `action_sheet` offers choices. On iOS they are UIKit's own; on
+Android Volt draws Material 3's.
+
+```rust,ignore
+alert_dialog("Sign out of Volt?")
+    .key("sign-out")
+    .message("Drafts that haven't synced will be lost.")
+    .action(prompt_action("Sign out").destructive().on_press(|a: &mut App| a.sign_out()))
+    .cancel("Cancel")
+    .open(app.asking)
+    .on_close(|a: &mut App| a.asking = false)
+```
+
+- Name answers by what they do ("Sign out"), never "OK".
+- An action sheet always has Cancel; tapping outside it cancels too.
+- The gallery's **Alerts** page shows both.
+
 ## Work off the UI thread
 
 Network requests, file sync and timers run on threads of your own. They send

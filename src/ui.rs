@@ -487,6 +487,8 @@ pub use routing::{
 mod action_dock;
 mod composer;
 pub use composer::{composer, Composer};
+mod prompts;
+pub use prompts::{action_sheet, alert_dialog, prompt_action, Prompt, PromptAction};
 mod list_row;
 pub use list_row::{
     list_row, list_section, swipe_action, ListRow, SwipeAction, SwipeSide, SwipeTone,
@@ -617,6 +619,12 @@ impl<C> Element<C> {
     #[cfg(feature = "mobile")]
     pub(crate) fn hide_navigation_bars(&mut self) {
         if self.node.ext.navigation_bar.is_some() || self.node.ext.tab_bar.is_some() {
+            self.node.ext.visible = Some(false.into());
+        }
+        // The host shows its own alert: Volt's copy draws nothing and takes
+        // no input, but its buttons stay for the host to run.
+        if self.node.ext.prompt.is_some() {
+            self.node.overlay = None;
             self.node.ext.visible = Some(false.into());
         }
         for child in &mut self.children {
@@ -2045,6 +2053,7 @@ pub mod prelude {
         TimelineItem, Toast, ToastPosition,
     };
     pub use super::{action_dock, dock_action, dock_search, ActionDock, DockAction, DockSearch};
+    pub use super::{action_sheet, alert_dialog, prompt_action, Prompt, PromptAction};
     pub use super::{
         area_chart, candlestick_chart, donut_chart, line_plot, range_chart, stacked_bar_chart,
         timeline_chart, Candle, ValueRange,

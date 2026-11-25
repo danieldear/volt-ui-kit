@@ -1736,6 +1736,22 @@ impl Runtime {
         visit(self.document.root(), &mut bars);
         bars
     }
+    /// Alerts and action sheets open in the current page tree, with the node
+    /// ID of each. A host that shows its own (iOS) reads these and runs a
+    /// button with `activate_navigation(button.id)`.
+    pub fn prompts(&self) -> Vec<(String, super::Prompt)> {
+        fn visit(n: &Node, out: &mut Vec<(String, super::Prompt)>) {
+            if let Some(p) = &n.ext.prompt {
+                out.push((n.id.clone(), (**p).clone()));
+            }
+            for child in &n.children {
+                visit(child, out);
+            }
+        }
+        let mut found = Vec::new();
+        visit(self.document.root(), &mut found);
+        found
+    }
     /// Whether scroll container `id` refreshes on a pull, and if so whether its
     /// work is under way (`Some(refreshing)`); `None` without `on_refresh`.
     pub fn refresh_state(&self, id: &str) -> Option<bool> {
@@ -1786,7 +1802,10 @@ impl Runtime {
         context: &mut C,
     ) -> Result<bool, DocumentError> {
         fn control<'a>(n: &'a Node, in_bar: bool, id: &str) -> Option<&'a Node> {
-            let in_bar = in_bar || n.ext.navigation_bar.is_some() || n.ext.tab_bar.is_some();
+            let in_bar = in_bar
+                || n.ext.navigation_bar.is_some()
+                || n.ext.tab_bar.is_some()
+                || n.ext.prompt.is_some();
             if in_bar && n.id == id {
                 return Some(n);
             }

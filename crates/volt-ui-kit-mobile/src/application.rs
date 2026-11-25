@@ -371,6 +371,18 @@ impl<C: 'static> Application<C> {
                 "id": item.id, "label": item.label, "symbol": item.symbol, "icon": item.icon, "badge": item.badge,
             })).collect::<Vec<_>>()})
         });
+        // The open alert or action sheet, for a host that shows its own.
+        let prompt = self
+            .ui
+            .runtime()
+            .prompts()
+            .into_iter()
+            .next()
+            .map(|(id, p)| {
+                json!({"id": id, "sheet": p.sheet, "title": p.title, "message": p.message,
+                "actions": p.actions.iter().map(|a| json!({"id": a.id, "label": a.label,
+                    "destructive": a.destructive, "cancel": a.cancel})).collect::<Vec<_>>()})
+            });
         let theme = self.current_theme();
         // The field that wants the keyboard: hosts open it when this changes.
         let runtime = self.ui.runtime();
@@ -382,7 +394,7 @@ impl<C: 'static> Application<C> {
             .into_iter()
             .map(|r| r.map(|v| v / self.scale))
             .collect();
-        json!({"holds": self.holds, "navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "sideways": sideways, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
+        json!({"holds": self.holds, "prompt": prompt, "navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "sideways": sideways, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
             "fieldBackground":theme.palette.base[1],"foreground":theme.palette.content,"accent":theme.palette.primary})
     }
 }
@@ -1650,6 +1662,96 @@ mod tests {
         assert_eq!(a.state().open, None);
         assert!(a.snapshot()["sideways"].as_array().unwrap().is_empty());
         assert_eq!(a.state().pressed, 1);
+    }
+    #[test]
+    fn alerts_and_action_sheets_reach_the_host_and_run_their_answers() {
+        #[derive(Default)]
+        struct Ask {
+            alert: bool,
+            sheet: bool,
+            deleted: usize,
+            shared: usize,
+        }
+        fn page(s: &Ask) -> Element<Ask> {
+            zstack![
+                text("Page").key("page"),
+                alert_dialog("Delete 3 notes?")
+                    .key("alert")
+                    .message("They can't be brought back.")
+                    .action(
+                        prompt_action("Delete")
+                            .destructive()
+                            .on_press(|s: &mut Ask| s.deleted += 1)
+                    )
+                    .cancel("Cancel")
+                    .open(s.alert)
+                    .on_close(|s: &mut Ask| s.alert = false),
+                action_sheet("")
+                    .key("sheet")
+                    .action(prompt_action("Share").on_press(|s: &mut Ask| s.shared += 1))
+                    .open(s.sheet)
+                    .on_close(|s: &mut Ask| s.sheet = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Ask::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 2.,
+        })
+        .unwrap();
+        assert!(a.snapshot()["prompt"].is_null());
+        // Volt draws it: its buttons work like any other.
+        a.update(|s| s.alert = true);
+        let prompt = a.snapshot()["prompt"].clone();
+        assert_eq!(prompt["sheet"], false);
+        assert_eq!(prompt["title"], "Delete 3 notes?");
+        let actions = prompt["actions"].as_array().unwrap();
+        assert_eq!(
+            (
+                actions[0]["destructive"].as_bool(),
+                actions[1]["cancel"].as_bool()
+            ),
+            (Some(true), Some(true))
+        );
+        a.handle(PlatformEvent::Activate {
+            id: "alert-action-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().alert, a.state().deleted), (false, 1));
+        // On iOS the host shows UIKit's and runs the answer by its ID.
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.update(|s| s.sheet = true);
+        let prompt = a.snapshot()["prompt"].clone();
+        assert_eq!(prompt["sheet"], true);
+        // A sheet always has a Cancel.
+        assert_eq!(prompt["actions"][1]["label"], "Cancel");
+        a.handle(PlatformEvent::Navigation {
+            id: "sheet-action-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().sheet, a.state().shared), (false, 1));
+        a.update(|s| s.alert = true);
+        a.handle(PlatformEvent::Navigation {
+            id: "alert-cancel".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().alert, a.state().deleted), (false, 1));
+        assert!(a.snapshot()["prompt"].is_null());
     }
     #[test]
     fn a_composer_tells_the_host_how_to_type_in_it() {

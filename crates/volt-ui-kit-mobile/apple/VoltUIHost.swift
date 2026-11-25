@@ -323,6 +323,10 @@ private struct Node: Decodable {
     var visibleRect: CGRect { visibleBounds.count == 4 && visibleBounds[2] > 0 && visibleBounds[3] > 0 ? CGRect(x:visibleBounds[0],y:visibleBounds[1],width:visibleBounds[2],height:visibleBounds[3]) : .null }
     var rect: CGRect { bounds.count == 4 ? CGRect(x: bounds[0], y: bounds[1], width: bounds[2], height: bounds[3]) : .zero }
 }
+private struct PromptInfo: Decodable {
+    struct Action: Decodable { let id: String; let label: String; let destructive: Bool; let cancel: Bool }
+    let id: String; let sheet: Bool; let title: String; let message: String; let actions: [Action]
+}
 private struct Backdrop: Decodable { let color: [CGFloat]; let radius: CGFloat }
 /// `target` is the control the action presses; none opens the node's menu.
 private struct NodeAction: Decodable { let label: String; let target: String? }
@@ -358,6 +362,8 @@ private struct Snapshot: Decodable {
     /// The field Rust focused for typing, such as a search field that opens
     /// with the keyboard up.
     let editing: String?
+    /// An alert or action sheet to show with UIKit's own.
+    let prompt: PromptInfo?
     /// Areas a finger drags sideways (rows with swipe actions), in points.
     let sideways: [[CGFloat]]?
     let background: [CGFloat]; let fieldBackground: [CGFloat]; let foreground: [CGFloat]; let accent: [CGFloat]
@@ -732,6 +738,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
                 }
             }
         }
+        syncPrompt(snapshot.prompt)
         navigation?.cover(modalOpen)
         pageBackground = color(snapshot.background)
         navigation?.sync(snapshot.navigation, before: before, background: color(snapshot.background),
@@ -874,6 +881,38 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         }
     }
     private weak var contentScroll: NativeScroll?
+    /// The alert or action sheet UIKit is showing for Rust, by its ID.
+    private var shownPrompt: (id: String, controller: UIAlertController)?
+    /// Show Rust's alert or action sheet with UIKit's own, and put it away
+    /// when Rust closes it. Every button runs Rust's, which closes it there.
+    private func syncPrompt(_ prompt: PromptInfo?) {
+        if let shown = shownPrompt, shown.id != prompt?.id {
+            if shown.controller.presentingViewController != nil { shown.controller.dismiss(animated: true) }
+            shownPrompt = nil
+        }
+        guard let prompt, shownPrompt == nil, !suspended else { return }
+        var top = window?.rootViewController
+        while let next = top?.presentedViewController { top = next }
+        guard let host = top else { return }
+        let alert = UIAlertController(title: prompt.title.isEmpty ? nil : prompt.title,
+                                      message: prompt.message.isEmpty ? nil : prompt.message,
+                                      preferredStyle: prompt.sheet ? .actionSheet : .alert)
+        for action in prompt.actions {
+            let style: UIAlertAction.Style = action.cancel ? .cancel : action.destructive ? .destructive : .default
+            alert.addAction(UIAlertAction(title: action.label, style: style) { [weak self] _ in
+                guard let self else { return }
+                self.shownPrompt = nil
+                self.send(["op": "navigation", "id": action.id])
+            })
+        }
+        // An action sheet grows from what opened it: where the finger was.
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = self
+            popover.sourceRect = CGRect(x: touchStart.x, y: touchStart.y, width: 1, height: 1)
+        }
+        shownPrompt = (prompt.id, alert)
+        host.present(alert, animated: true)
+    }
     /// Content scrolled under the status and navigation bars fades into the
     /// page, as it does in UIKit lists. UIKit's own edge effect can't fade
     /// Volt's drawing (the scroll views it watches are empty stand-ins), so

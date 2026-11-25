@@ -236,6 +236,29 @@ pub struct TabBarItem {
     pub badge: Option<String>,
 }
 
+/// An alert or action sheet, for a host that shows its own (iOS's
+/// `UIAlertController`). IDs name the buttons Volt draws otherwise;
+/// `Runtime::activate_navigation` runs them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prompt {
+    /// An action sheet rises from the bottom; an alert sits in the middle.
+    pub sheet: bool,
+    pub title: String,
+    pub message: String,
+    pub actions: Vec<PromptButton>,
+}
+/// One button of a [`Prompt`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PromptButton {
+    pub id: String,
+    pub label: String,
+    /// Removes or loses something: shown in red.
+    pub destructive: bool,
+    /// Closes without doing anything: the bold button, or the separate one
+    /// at the bottom of a sheet.
+    pub cancel: bool,
+}
+
 /// Rust-only extensions carried by every node. Defaults change nothing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct NodeExtras {
@@ -243,6 +266,8 @@ pub(crate) struct NodeExtras {
     pub navigation_bar: Option<Box<NavigationBar>>,
     /// This node is a tab view's bar.
     pub tab_bar: Option<Box<TabBar>>,
+    /// This node is an alert or action sheet.
+    pub prompt: Option<Box<Prompt>>,
     /// Slides off the bottom while scroll view `id` scrolls toward its end,
     /// and back when it scrolls toward its start (an action dock).
     pub hides_with: Option<String>,

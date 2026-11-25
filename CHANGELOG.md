@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Mobile: `alert_dialog` and `action_sheet` with `prompt_action`, for a
+  question that needs an answer now. On iOS the host shows UIKit's own
+  alert and action sheet (`Runtime::prompts`, a `prompt` in the snapshot;
+  the buttons run through the `navigation` event), and the sheet grows from
+  where it was opened. Elsewhere Volt draws Material 3's dialog and modal
+  bottom sheet.
 - Mobile: `composer` for chats. A message box that grows as you type, with
   Send (lit only when there's text), Stop while a reply comes in, and an
   optional Add button; it rides the keyboard. `live_text` and
