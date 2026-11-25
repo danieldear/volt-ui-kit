@@ -438,8 +438,8 @@ mod motion_text;
 mod motion_timeline;
 mod runtime;
 pub use document::{
-    Align, Bindings, Document, DocumentError, EditorHighlights, Flow, Kind, Node, Rounding, Scroll,
-    Scrollbars, Tone, Value,
+    Align, Bindings, Document, DocumentError, EditorHighlights, Flow, InputKind, Kind, Node,
+    Rounding, Scroll, Scrollbars, Tone, Value,
 };
 pub use responsive::{responsive, Breakpoint, Direction, Responsive};
 pub use runtime::{

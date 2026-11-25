@@ -440,6 +440,8 @@ pub(crate) struct EditorOptions {
     pub hide_done: bool,
     /// A search field: a host may draw its own (iOS's search field).
     pub search: bool,
+    /// What's typed, so a phone shows the right keyboard and suggestions.
+    pub kind: InputKind,
     /// Keys the application handles instead of the editor.
     #[cfg(feature = "rust-ui")]
     pub keys: Vec<super::runtime::editing::EditKey>,
@@ -450,6 +452,46 @@ pub(crate) struct EditorOptions {
     pub scroll_to: Option<(usize, u32)>,
     /// Text colours by byte range, e.g. syntax highlighting.
     pub highlights: Option<std::sync::Arc<EditorHighlights>>,
+}
+/// What a field holds: a phone picks its keyboard, autofill and
+/// capitalisation from it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputKind {
+    /// Words and sentences.
+    #[default]
+    Text,
+    /// A name: each word capitalised, names suggested.
+    Name,
+    Email,
+    Url,
+    /// Digits only.
+    Number,
+    /// Numbers with a decimal point.
+    Decimal,
+    Phone,
+    /// A new or saved password: the password manager offers one.
+    Password,
+    /// A code sent by text message: offered above the keyboard.
+    OneTimeCode,
+    /// An API key or other secret that isn't a password: no suggestions.
+    Secret,
+}
+impl InputKind {
+    /// The name hosts read.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InputKind::Text => "text",
+            InputKind::Name => "name",
+            InputKind::Email => "email",
+            InputKind::Url => "url",
+            InputKind::Number => "number",
+            InputKind::Decimal => "decimal",
+            InputKind::Phone => "phone",
+            InputKind::Password => "password",
+            InputKind::OneTimeCode => "one_time_code",
+            InputKind::Secret => "secret",
+        }
+    }
 }
 /// Coloured byte ranges for an editor: sorted, non-overlapping ranges that
 /// each name a colour in `palette` (theme tokens or hex).

@@ -318,6 +318,8 @@ private struct Node: Decodable {
     let doneBar: Bool?
     /// What an empty field says.
     let placeholder: String?
+    /// What a field holds (email, url, one_time_code...), for its keyboard.
+    let inputKind: String?
     /// Pressing it while typing leaves the keyboard up.
     let keepsKeyboard: Bool?
     /// The colour behind a field and the corner radius of what paints it.
@@ -1200,9 +1202,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             area.autocapitalizationType = .sentences
         } else {
             field.text = node.value ?? ""
-            field.isSecureTextEntry = node.password
-            field.autocapitalizationType = .none
-            field.keyboardType = .default
+            applyInputKind(node.inputKind ?? "text", password: node.password)
         }
         editor.accessibilityIdentifier = "editor-\(node.id)"
         editor.accessibilityLabel = node.label
@@ -1212,6 +1212,35 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         refresh()
         // Already open: the keyboard sends no new frame for the next field.
         revealEditor()
+    }
+    /// The keyboard, autofill and capitalisation for what the field holds.
+    private func applyInputKind(_ kind: String, password: Bool) {
+        var keyboard: UIKeyboardType = .default
+        var content: UITextContentType? = nil
+        var caps: UITextAutocapitalizationType = .sentences
+        var secure = password
+        var suggest = true
+        switch kind {
+        case "name": caps = .words; content = .name
+        case "email": keyboard = .emailAddress; caps = .none; content = .emailAddress; suggest = false
+        case "url": keyboard = .URL; caps = .none; content = .URL; suggest = false
+        case "number": keyboard = .numberPad; caps = .none
+        case "decimal": keyboard = .decimalPad; caps = .none
+        case "phone": keyboard = .phonePad; caps = .none; content = .telephoneNumber
+        case "password": secure = true; caps = .none; content = .password; suggest = false
+        case "one_time_code": keyboard = .numberPad; caps = .none; content = .oneTimeCode; suggest = false
+        case "secret": secure = true; caps = .none; suggest = false
+        default: break
+        }
+        if password { caps = .none; suggest = false; content = content ?? .password }
+        field.keyboardType = keyboard
+        field.textContentType = content
+        field.autocapitalizationType = caps
+        field.isSecureTextEntry = secure
+        field.autocorrectionType = suggest ? .default : .no
+        field.spellCheckingType = suggest ? .default : .no
+        // Clearing in one tap, as iOS fields do; not for secrets.
+        field.clearButtonMode = secure ? .never : .whileEditing
     }
     private func positionEditor() {
         guard let id = editingId else { return }

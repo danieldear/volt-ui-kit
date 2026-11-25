@@ -327,6 +327,14 @@ action_dock(list)
     )
 ```
 
+## Fields and busy buttons
+
+Say what a field holds with `input_kind` and the phone does the rest: the
+email keyboard, a texted one-time code above the keyboard, the password
+manager for passwords, no suggestions for secrets such as API keys.
+`button(..).busy(true)` shows a spinner in place of the label while the
+work it started runs.
+
 ## Search
 
 Use `search_field` for every search. On iOS it is UIKit's own search field;

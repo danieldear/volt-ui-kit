@@ -1564,6 +1564,39 @@ impl<C> Button<C> {
         self.0.node.enabled = value;
         self
     }
+    /// While work it started runs: a spinner in place of the label, the
+    /// button's size unchanged, and no second press. Call it last.
+    pub fn busy(mut self, busy: bool) -> Container<C> {
+        let key = self.0.node.id.clone();
+        let (width, height) = (self.0.node.width, self.0.node.height);
+        let flex = self.0.node.flex;
+        let ink: ColorToken = if self.0.node.primary {
+            ColorToken::PrimaryContent
+        } else {
+            ColorToken::Primary
+        };
+        if busy {
+            // The label keeps its room but isn't drawn.
+            self.0.node.style.color = Some("#00000000".into());
+            self.0.node.enabled = false;
+        }
+        let mut layers: Vec<Element<C>> = vec![self.0];
+        if busy {
+            layers.push(spinner().accent_color(ink).into());
+        }
+        let mut c = zstack(layers).flow(Flow::Center).align(Align::Stretch);
+        if !key.is_empty() {
+            c = c.key(format!("{key}-busy"));
+        }
+        if let Some(w) = width {
+            c = c.width(w);
+        }
+        if let Some(h) = height {
+            c = c.height(h);
+        }
+        c.0.node.flex = flex;
+        c
+    }
     /// Apply a themed emphasis preset (see [`ButtonVariant`]).
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         let style = &mut self.0.node.style;
@@ -2142,6 +2175,7 @@ pub mod prelude {
         InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
         PointerPhase, PressedKey,
     };
+    pub use crate::declarative::InputKind;
     pub use crate::motion::{
         Affine2D, DragGesture, DragMotion, Inertia, InertiaPlayer, MotionPose, TextEffect,
         Timeline, TimelinePlayback, TimelinePlayer, Transform2D,

@@ -107,6 +107,8 @@ pub struct App {
     pub period: Period,
     pub agree: bool,
     pub name: String,
+    /// The Keyboards fields: email, website, one-time code.
+    pub kinds: [String; 3],
     pub notes: String,
     pub message: String,
     /// The sample shop: product ID to quantity.
@@ -175,6 +177,7 @@ impl Default for App {
             period: Period::Week,
             agree: false,
             name: String::new(),
+            kinds: Default::default(),
             notes: String::new(),
             message: String::new(),
             cart: Default::default(),
@@ -561,6 +564,7 @@ fn text_input(app: &App) -> Container<App> {
                     .key("name")
                     .accessible_label("Name")
                     .placeholder("Name")
+                    .input_kind(InputKind::Name)
                     .font_size(17.)
                     .height(44.)
                     .on_change(|a: &mut App, v| a.name = v)
@@ -573,6 +577,29 @@ fn text_input(app: &App) -> Container<App> {
                 } else {
                     ""
                 },
+            ),
+            section(
+                "Keyboards",
+                ["Email", "Website", "Code from a text"]
+                    .into_iter()
+                    .zip([InputKind::Email, InputKind::Url, InputKind::OneTimeCode])
+                    .enumerate()
+                    .map(|(i, (label, kind))| {
+                        hstack![text_field(app.kinds[i].clone())
+                            .key(format!("kind-{i}"))
+                            .accessible_label(label)
+                            .placeholder(label)
+                            .input_kind(kind)
+                            .font_size(17.)
+                            .height(44.)
+                            .on_change(move |a: &mut App, v| a.kinds[i] = v)
+                            .flex(1.)]
+                        .padding(16., Edge::Horizontal)
+                        .padding(4., Edge::Vertical)
+                        .into()
+                    })
+                    .collect(),
+                "Each field brings its own keyboard; the code is offered above it.",
             ),
             section(
                 "Text area",
@@ -759,15 +786,11 @@ fn background(app: &App) -> Container<App> {
             .into()
     });
     let parts = vec![
-        primary(if app.working {
-            "Importing"
-        } else {
-            "Import notes"
-        })
-        .key("start-work")
-        .enabled(!app.working)
-        .on_click(start_work)
-        .into(),
+        primary("Import notes")
+            .key("start-work")
+            .on_click(start_work)
+            .busy(app.working)
+            .into(),
         vstack(cards)
             .key("work-cards")
             .gap(12., Axis::Vertical)

@@ -177,6 +177,12 @@ impl<C> TextInput<C> {
         });
         self
     }
+    /// What the field holds, so a phone shows the right keyboard, autofill
+    /// and capitalisation: email, a URL, a one-time code, a password.
+    pub fn input_kind(mut self, kind: crate::declarative::InputKind) -> Self {
+        self.0.node.editor.as_mut().unwrap().kind = kind;
+        self
+    }
     pub fn password(mut self, value: bool) -> Self {
         self.0.node.editor.as_mut().unwrap().password = value;
         self

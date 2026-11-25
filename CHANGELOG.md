@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `TextInput::input_kind(InputKind::..)`: Name, Email, Url, Number, Decimal,
+  Phone, Password, OneTimeCode, Secret. The iOS host picks the keyboard,
+  autofill (a texted code is offered above the keyboard), capitalisation
+  and suggestions from it, and fields get a clear button while typing.
+- `Button::busy(bool)`: a spinner in place of the label at the same size,
+  and no second press.
 - Mobile: `sheet_flow` with `flow_step`, a task in steps inside one sheet:
   Cancel or Back, Next or the finishing word, step dots, and a height per
   step. `quick_picks`, chips for the likely answers in front of a full

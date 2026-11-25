@@ -292,6 +292,7 @@ mod tests {
             done_button: false,
             keeps_keyboard: false,
             search: false,
+            input_kind: None,
             actions: Vec::new(),
             id: id.into(),
             parent,

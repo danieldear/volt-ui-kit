@@ -49,6 +49,8 @@ pub struct AccessNode {
     pub keeps_keyboard: bool,
     /// A search field, which a host may draw itself.
     pub search: bool,
+    /// What a text input holds, for a phone's keyboard.
+    pub input_kind: Option<&'static str>,
     /// Actions besides activating it, such as a row's swipe actions.
     pub actions: Vec<AccessAction>,
     pub id: String,
@@ -223,6 +225,7 @@ impl Runtime {
                 done_button: editor.is_some_and(|e| !e.hide_done),
                 keeps_keyboard: b.keeps_keyboard,
                 search: editor.is_some_and(|e| e.search),
+                input_kind: editor.map(|e| e.kind.as_str()),
                 actions: b.access_actions.clone(),
                 id: b.id.clone(),
                 parent,
