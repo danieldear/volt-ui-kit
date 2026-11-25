@@ -1449,16 +1449,25 @@ fn nearest(e: &EditorState, p: [f32; 2], height: f32) -> (usize, bool) {
 fn inner_geometry(b: &LayoutBox, scale: f32) -> [f32; 4] {
     let [x, y, w, h] = b.bounds.bounds();
     let line = editor_line_height(&b.text_style);
+    // Padding the field was given wins over the built-in insets, so text
+    // sits where a host's native editor puts it (a message box's pill).
+    let [pad_top, pad_right, _, pad_left] = b.style.layout.padding;
     let top = if b.editor.as_ref().is_some_and(|e| e.multiline) {
-        7. * scale
+        if pad_top > 0. {
+            pad_top
+        } else {
+            7. * scale
+        }
     } else {
         ((h - line) * 0.5).max(7. * scale).min((h * 0.5).max(0.))
     };
     let [lead, trail] = b.editor.as_ref().map_or([0.; 2], |e| e.inset);
+    let left = if pad_left > 0. { pad_left } else { 10. * scale };
+    let right = if pad_right > 0. { pad_right } else { 10. * scale };
     [
-        x + (10. + lead) * scale,
+        x + left + lead * scale,
         y + top,
-        (w - (20. + lead + trail) * scale).max(0.),
+        (w - left - right - (lead + trail) * scale).max(0.),
         (h - 2. * top).max(0.),
     ]
 }
