@@ -281,7 +281,7 @@ impl<C: 'static> Application<C> {
             } => {
                 self.ui.set_safe_area([top, right, bottom, left])?;
             }
-            PlatformEvent::Bars { bottom } => self.ui.set_bars(bottom)?,
+            PlatformEvent::Bars { bottom, keyboard } => self.ui.set_bars(bottom, keyboard)?,
             PlatformEvent::Draw {} | PlatformEvent::Updates {} => {}
         }
         Ok(())
@@ -339,7 +339,8 @@ impl<C: 'static> Application<C> {
                 Some(
                     json!({"id": b.id, "frame": frame, "content": content, "insets": [it, ib],
                     "offset": b.scroll_offset, "axes": axes, "refresh": refresh.is_some(),
-                    "refreshing": refresh.unwrap_or(false), "inert": !self.ui.runtime().accepts_input(&b.id)}),
+                    "refreshing": refresh.unwrap_or(false), "inert": !self.ui.runtime().accepts_input(&b.id),
+                    "inDraggable": self.ui.runtime().in_draggable(&b.id)}),
                 )
             })
             .collect::<Vec<_>>();
@@ -355,7 +356,10 @@ impl<C: 'static> Application<C> {
             })).collect::<Vec<_>>()})
         });
         let theme = self.current_theme();
-        json!({"navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
+        // The field that wants the keyboard: hosts open it when this changes.
+        let runtime = self.ui.runtime();
+        let editing = runtime.focused().filter(|_| runtime.editing_focus());
+        json!({"navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
             "fieldBackground":theme.palette.base[1],"foreground":theme.palette.content,"accent":theme.palette.primary})
     }
 }
@@ -1187,7 +1191,11 @@ mod tests {
         to(&mut a, max);
         assert!(!a.mobile_view().runtime().scroll_hidden("list"));
         // The host's tab bar and home indicator lift it.
-        a.handle(PlatformEvent::Bars { bottom: 83. }).unwrap();
+        a.handle(PlatformEvent::Bars {
+            bottom: 83.,
+            keyboard: 0.,
+        })
+        .unwrap();
         assert!((top(&a, "dock-bar") - (shown - 83.)).abs() < 0.5);
         // The main action runs on a tap.
         let y = top(&a, "dock-primary") + 10.;
@@ -1203,6 +1211,303 @@ mod tests {
         a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
         a.handle(PlatformEvent::End { x: 100., y }).unwrap();
         assert_eq!((a.state().more, a.state().sorted), (false, 1));
+    }
+    #[test]
+    fn sheets_and_dock_search_rise_above_the_keyboard() {
+        #[derive(Default)]
+        struct Page {
+            sheet: bool,
+            name: String,
+            searching: bool,
+            query: String,
+        }
+        fn page(s: &Page) -> Element<Page> {
+            let rows: Vec<Element<Page>> = (0..30)
+                .map(|i| {
+                    text(format!("Row {i}"))
+                        .key(format!("row-{i}"))
+                        .height(44.)
+                        .into()
+                })
+                .collect();
+            zstack![
+                action_dock(vstack(rows).key("list").flex(1.).scroll(Scroll::Auto))
+                    .key("dock")
+                    .follows("list")
+                    .search(
+                        dock_search(&s.query, s.searching)
+                            .on_change(|s: &mut Page, q| s.query = q)
+                            .on_open(|s: &mut Page, open| s.searching = open),
+                    ),
+                bottom_sheet(
+                    text_field(&s.name)
+                        .key("name")
+                        .on_change(|s: &mut Page, v| s.name = v),
+                )
+                .key("sheet")
+                .title("New list")
+                .open(s.sheet)
+                .on_dismiss(|s: &mut Page| s.sheet = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Page::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 402.,
+            height: 874.,
+            scale: 1.,
+        })
+        .unwrap();
+        let bounds = |a: &Application<Page>, id: &str| {
+            a.mobile_view()
+                .runtime()
+                .boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .map(|b| b.bounds.bounds())
+        };
+        let keyboard = |a: &mut Application<Page>, height: f32| {
+            a.handle(PlatformEvent::Bars {
+                bottom: height.max(34.),
+                keyboard: height,
+            })
+            .unwrap();
+        };
+        // Search: the Search button turns the dock into a field that asks
+        // for the keyboard, and the dock rides on top of it.
+        assert!(bounds(&a, "dock-search-field").is_none());
+        a.handle(PlatformEvent::Activate {
+            id: "dock-search-open".into(),
+        })
+        .unwrap();
+        assert!(a.state().searching);
+        assert_eq!(a.snapshot()["editing"], "dock-search-field");
+        keyboard(&mut a, 336.);
+        let field = bounds(&a, "dock-search-field").unwrap();
+        assert!(field[1] + field[3] <= 874. - 336., "{field:?}");
+        assert!(!a.mobile_view().runtime().scroll_hidden("list"));
+        a.handle(PlatformEvent::Text {
+            id: "dock-search-field".into(),
+            text: "Row 2".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().query, "Row 2");
+        a.handle(PlatformEvent::Activate {
+            id: "dock-search-close".into(),
+        })
+        .unwrap();
+        assert!(!a.state().searching);
+        assert!(bounds(&a, "dock-primary").is_none() && bounds(&a, "dock-search-open").is_some());
+        // A sheet's field stays above the keyboard.
+        keyboard(&mut a, 0.);
+        a.update(|s| s.sheet = true);
+        let resting = bounds(&a, "name").unwrap();
+        keyboard(&mut a, 336.);
+        let lifted = bounds(&a, "name").unwrap();
+        assert!(
+            lifted[1] + lifted[3] <= 874. - 336.,
+            "{resting:?} {lifted:?}"
+        );
+        keyboard(&mut a, 0.);
+        assert_eq!(bounds(&a, "name").unwrap(), resting);
+    }
+    #[test]
+    fn a_dropped_sheet_settles_where_it_belongs() {
+        #[derive(Default)]
+        struct Sheet {
+            open: bool,
+            height: usize,
+        }
+        fn page(s: &Sheet) -> Element<Sheet> {
+            zstack![
+                text("Page").key("page"),
+                bottom_sheet(text("Body").key("body"))
+                    .key("sheet")
+                    .title("New idea")
+                    .detents([SheetDetent::Medium, SheetDetent::Large])
+                    .detent(s.height)
+                    .on_detent(|s: &mut Sheet, i| s.height = i)
+                    .open(s.open)
+                    .on_dismiss(|s: &mut Sheet| s.open = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Sheet {
+                open: true,
+                height: 1,
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let top = |a: &Application<Sheet>| {
+            a.mobile_view()
+                .runtime()
+                .boxes()
+                .iter()
+                .find(|b| b.id == "sheet-content")
+                .unwrap()
+                .bounds
+                .bounds()[1]
+        };
+        let settle = |a: &mut Application<Sheet>| {
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+                a.handle(PlatformEvent::Draw {}).unwrap();
+            }
+        };
+        let drag = |a: &mut Application<Sheet>, from: f32, dy: f32| {
+            a.handle(PlatformEvent::Begin { x: 195., y: from }).unwrap();
+            for i in 1..=6 {
+                a.handle(PlatformEvent::Move {
+                    x: 195.,
+                    y: from + dy * i as f32 / 6.,
+                })
+                .unwrap();
+            }
+            a.handle(PlatformEvent::End {
+                x: 195.,
+                y: from + dy,
+            })
+            .unwrap();
+        };
+        settle(&mut a);
+        let large = top(&a);
+        // A short drag down springs back to full height.
+        drag(&mut a, large + 30., 50.);
+        assert_eq!(a.state().height, 1);
+        settle(&mut a);
+        assert_eq!(
+            a.mobile_view().runtime().drag_offset("sheet-content"),
+            [0., 0.]
+        );
+        assert_eq!(top(&a), large);
+        // A long one steps to half height, and nothing is left over.
+        drag(&mut a, large + 30., 190.);
+        assert_eq!(a.state().height, 0);
+        settle(&mut a);
+        assert_eq!(
+            a.mobile_view().runtime().drag_offset("sheet-content"),
+            [0., 0.]
+        );
+        assert!(top(&a) > large + 100.);
+        // The platform taking the touch mid-drag (a scroll view's pan): the
+        // sheet goes back to its place rather than staying under the finger.
+        let resting = top(&a);
+        a.handle(PlatformEvent::Begin {
+            x: 195.,
+            y: resting + 30.,
+        })
+        .unwrap();
+        for i in 1..=4 {
+            a.handle(PlatformEvent::Move {
+                x: 195.,
+                y: resting + 30. + 15. * i as f32,
+            })
+            .unwrap();
+        }
+        assert!(a.mobile_view().runtime().drag_offset("sheet-content")[1] > 0.);
+        a.handle(PlatformEvent::Cancel {}).unwrap();
+        settle(&mut a);
+        assert_eq!(
+            a.mobile_view().runtime().drag_offset("sheet-content"),
+            [0., 0.]
+        );
+        assert!(a.state().open);
+    }
+    #[test]
+    fn a_drag_from_a_full_height_sheets_header_steps_it_down() {
+        #[derive(Default)]
+        struct Sheet {
+            open: bool,
+            height: usize,
+            name: String,
+        }
+        fn page(s: &Sheet) -> Element<Sheet> {
+            zstack![
+                text("Page").key("page"),
+                bottom_sheet(vstack![
+                    text("Name"),
+                    text_field(&s.name)
+                        .key("name")
+                        .on_change(|s: &mut Sheet, v| s.name = v)
+                ])
+                .key("sheet")
+                .title("New list")
+                .detents([SheetDetent::Medium, SheetDetent::Large])
+                .detent(s.height)
+                .on_detent(|s: &mut Sheet, i| s.height = i)
+                .cancel("Cancel", |s: &mut Sheet| s.open = false)
+                .done("Create", |s: &mut Sheet| s.open = false)
+                .open(s.open)
+                .on_dismiss(|s: &mut Sheet| s.open = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Sheet {
+                open: true,
+                height: 1,
+                ..Default::default()
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 402.,
+            height: 874.,
+            scale: 3.,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::SafeArea {
+            top: 62.,
+            right: 0.,
+            bottom: 34.,
+            left: 0.,
+        })
+        .unwrap();
+        let ys = [160f32, 210., 270., 330., 350.];
+        a.handle(PlatformEvent::Begin { x: 200., y: ys[0] })
+            .unwrap();
+        for y in &ys[1..] {
+            a.handle(PlatformEvent::Move { x: 200., y: *y }).unwrap();
+        }
+        a.handle(PlatformEvent::End { x: 200., y: 350. }).unwrap();
+        assert_eq!(a.state().height, 0, "a 190-point drag on the header steps down");
     }
     #[test]
     fn a_sheet_follows_a_drag_then_closes_steps_or_stays() {

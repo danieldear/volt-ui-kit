@@ -120,6 +120,8 @@ pub struct App {
     pub notes_count: usize,
     pub dock_more: bool,
     pub dock_said: String,
+    pub dock_query: String,
+    pub dock_searching: bool,
 }
 impl Default for App {
     fn default() -> Self {
@@ -136,6 +138,8 @@ impl Default for App {
             notes_count: 24,
             dock_more: false,
             dock_said: String::new(),
+            dock_query: String::new(),
+            dock_searching: false,
             history: NavigationHistory::new(Route::Home),
             editing: false,
             taps: 0,
@@ -748,7 +752,9 @@ fn open_section(a: &mut App, section: Section) {
     a.section = section;
 }
 fn dock(app: &App) -> Container<App> {
+    let query = app.dock_query.trim().to_lowercase();
     let rows: Vec<Element<App>> = (1..=app.notes_count)
+        .filter(|i| query.is_empty() || format!("note {i}").contains(&query))
         .map(|i| {
             row(
                 &format!("Note {i}"),
@@ -772,7 +778,15 @@ fn dock(app: &App) -> Container<App> {
                 .font_size(15.)
                 .color(ColorToken::Muted)
                 .into(),
-            section(&format!("{} notes", app.notes_count), rows, ""),
+            section(
+                &if query.is_empty() {
+                    format!("{} notes", app.notes_count)
+                } else {
+                    format!("Notes matching \"{}\"", app.dock_query.trim())
+                },
+                rows,
+                "",
+            ),
         ],
     );
     vstack![action_dock(list)
@@ -782,9 +796,16 @@ fn dock(app: &App) -> Container<App> {
             a.notes_count += 1;
             a.dock_said = format!("Added note {}.", a.notes_count);
         }))
-        .secondary(
-            dock_action("Search", Icon::Search)
-                .on_press(|a: &mut App| { a.dock_said = "Search would open here.".into() })
+        .search(
+            dock_search(&app.dock_query, app.dock_searching)
+                .placeholder("Search notes")
+                .on_change(|a: &mut App, q| a.dock_query = q)
+                .on_open(|a: &mut App, open| {
+                    a.dock_searching = open;
+                    if !open {
+                        a.dock_query.clear();
+                    }
+                }),
         )
         .more([
             dock_action("Select", Icon::Check)

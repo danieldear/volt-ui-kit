@@ -108,6 +108,22 @@ impl Motion {
             }
         }
     }
+    /// A layout change that starts while a dragged element springs home
+    /// takes over from where it was let go: a sheet dropped between heights
+    /// moves on from the finger instead of jumping back first.
+    pub fn hand_off_gestures(&mut self, scale: f32) {
+        let now = self.now;
+        for (id, s) in self.gestures.states.iter_mut() {
+            if s.home.is_none() || s.position == [0.; 2] {
+                continue;
+            }
+            let offset = s.position.map(|v| v * scale);
+            if self.geometry.carry(&format!("id:{id}"), offset, now) {
+                s.position = [0.; 2];
+                s.home = None;
+            }
+        }
+    }
     pub fn gestures_active(&self) -> bool {
         self.gestures
             .states

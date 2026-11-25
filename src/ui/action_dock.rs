@@ -50,6 +50,58 @@ impl<C> DockAction<C> {
 }
 
 type Toggle<C> = Rc<RefCell<dyn FnMut(&mut C, bool)>>;
+type Edit<C> = Rc<RefCell<dyn FnMut(&mut C, String)>>;
+
+/// Search in an [`action_dock`]: see [`dock_search`].
+pub struct DockSearch<C> {
+    query: String,
+    open: bool,
+    placeholder: String,
+    on_change: Option<Edit<C>>,
+    on_open: Option<Toggle<C>>,
+}
+/// Search from the dock. Its Search button turns the dock into a search
+/// field with the keyboard up, the dock riding on top of it, in reach of the
+/// thumbs that type. Close puts the actions back.
+///
+/// ```rust,ignore
+/// .search(
+///     dock_search(&app.query, app.searching)
+///         .placeholder("Search notes")
+///         .on_change(|a: &mut App, q| a.query = q)
+///         .on_open(|a: &mut App, open| {
+///             a.searching = open;
+///             if !open { a.query.clear() }
+///         }),
+/// )
+/// ```
+pub fn dock_search<C>(query: impl Into<String>, open: bool) -> DockSearch<C> {
+    DockSearch {
+        query: query.into(),
+        open,
+        placeholder: "Search".into(),
+        on_change: None,
+        on_open: None,
+    }
+}
+impl<C> DockSearch<C> {
+    /// What to search, such as "Search notes".
+    pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+        self.placeholder = text.into();
+        self
+    }
+    /// The query changed.
+    pub fn on_change(mut self, f: impl FnMut(&mut C, String) + 'static) -> Self {
+        self.on_change = Some(Rc::new(RefCell::new(f)));
+        self
+    }
+    /// Search opened (true) or closed (false). Clear the query on close.
+    pub fn on_open(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+        self.on_open = Some(Rc::new(RefCell::new(f)));
+        self
+    }
+}
+
 /// See [`action_dock`].
 pub struct ActionDock<C> {
     key: Option<String>,
@@ -61,6 +113,7 @@ pub struct ActionDock<C> {
     on_more: Option<Toggle<C>>,
     follows: Option<String>,
     back: Option<(String, Press<C>)>,
+    search: Option<DockSearch<C>>,
 }
 /// A page with its actions in a dock at the bottom:
 ///
@@ -88,6 +141,7 @@ pub fn action_dock<C>(content: impl Into<Element<C>>) -> ActionDock<C> {
         on_more: None,
         follows: None,
         back: None,
+        search: None,
     }
 }
 impl<C> ActionDock<C> {
@@ -132,6 +186,12 @@ impl<C> ActionDock<C> {
     /// the first vertical scroll view in `content` gets the room.
     pub fn follows(mut self, scroll_key: impl Into<String>) -> Self {
         self.follows = Some(scroll_key.into());
+        self
+    }
+    /// A Search button that turns the dock into a search field. See
+    /// [`dock_search`].
+    pub fn search(mut self, search: DockSearch<C>) -> Self {
+        self.search = Some(search);
         self
     }
     /// A Back button at the dock's leading end, in reach, for deep pages.
@@ -246,7 +306,11 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
         let Some(key) = dock.key.filter(|k| !k.is_empty()) else {
             return invalid("action_dock requires a key");
         };
-        if dock.primary.is_none() && dock.secondary.is_empty() && dock.more.is_empty() {
+        if dock.primary.is_none()
+            && dock.secondary.is_empty()
+            && dock.more.is_empty()
+            && dock.search.is_none()
+        {
             return invalid("action_dock requires at least one action");
         }
         if !dock.more.is_empty() && dock.on_more.is_none() {
@@ -259,8 +323,65 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
             &format!("{key}-room"),
         );
 
+        if let Some(search) = &dock.search {
+            if search.on_open.is_none() || search.on_change.is_none() {
+                return invalid("dock_search requires on_open and on_change");
+            }
+        }
+        let searching = dock.search.as_ref().is_some_and(|s| s.open);
         let mut parts: Vec<Element<C>> = Vec::new();
-        if let Some((label, f)) = dock.back {
+        let (search_field, search_button) = match dock.search {
+            Some(s) if s.open => (Some(s), None),
+            other => (None, other),
+        };
+        if let Some(search) = search_field {
+            let (open, change) = (search.on_open.unwrap(), search.on_change.unwrap());
+            let close: Press<C> =
+                Rc::new(RefCell::new(move |c: &mut C| (open.borrow_mut())(c, false)));
+            parts.push(
+                hstack![
+                    icon(Icon::Search)
+                        .size(18.)
+                        .stroke(2.)
+                        .color(ColorToken::Muted),
+                    text_field(search.query)
+                        .key(format!("{key}-search-field"))
+                        .accessible_label(search.placeholder.clone())
+                        .placeholder(search.placeholder)
+                        .autofocus(true)
+                        .on_change(move |c: &mut C, q| (change.borrow_mut())(c, q))
+                        .flex(1.)
+                        .height(BUTTON)
+                        .background("#00000000")
+                        .border_width(0.),
+                ]
+                .key(format!("{key}-search"))
+                .flex(1.)
+                .height(BUTTON)
+                .padding(16., Edge::Left)
+                .gap(6., Axis::Horizontal)
+                .align(Align::Center)
+                .rounded(BUTTON / 2.)
+                .background(ColorToken::Base300)
+                .background_opacity(0.6)
+                .into(),
+            );
+            parts.push(round(
+                format!("{key}-search-close"),
+                "Close search",
+                Icon::Close,
+                ColorToken::BaseContent,
+                Some(close),
+                true,
+            ));
+        }
+        let (primary, secondary, more_actions) = if searching {
+            (None, Vec::new(), Vec::new())
+        } else {
+            (dock.primary, dock.secondary, dock.more)
+        };
+        let back = if searching { None } else { dock.back };
+        if let Some((label, f)) = back {
             parts.push(round(
                 format!("{key}-back"),
                 &label,
@@ -270,9 +391,22 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
                 true,
             ));
         }
+        if let Some(search) = search_button {
+            let open = search.on_open.unwrap();
+            let press: Press<C> =
+                Rc::new(RefCell::new(move |c: &mut C| (open.borrow_mut())(c, true)));
+            parts.push(round(
+                format!("{key}-search-open"),
+                "Search",
+                Icon::Search,
+                ColorToken::BaseContent,
+                Some(press),
+                true,
+            ));
+        }
         // With no main action the others share the dock with their labels.
-        let labelled = dock.primary.is_none();
-        for (i, a) in dock.secondary.into_iter().enumerate() {
+        let labelled = primary.is_none();
+        for (i, a) in secondary.into_iter().enumerate() {
             let colour = if a.danger {
                 ColorToken::Error
             } else {
@@ -310,7 +444,7 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
                 ));
             }
         }
-        if let Some(a) = dock.primary {
+        if let Some(a) = primary {
             let (fill, ink) = if a.danger {
                 (ColorToken::Error, ColorToken::ErrorContent)
             } else {
@@ -337,7 +471,7 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
                 .into(),
             );
         }
-        let more = !dock.more.is_empty();
+        let more = !more_actions.is_empty();
         let toggle = dock.on_more.clone();
         if more {
             let open = toggle.clone();
@@ -373,7 +507,8 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
             .shadow(Shadow::new().color("#0000001F").blur(10.).offset(0., 2.))
             .layout_animation(Animation::spring());
         bar.0.node.access_role = Some(AccessRole::Group);
-        if let Some(scroll) = &dock.follows {
+        // A search in progress keeps the dock up, above the keyboard.
+        if let Some(scroll) = dock.follows.as_ref().filter(|_| !searching) {
             bar.0.node.ext.hides_with = Some(scroll.clone());
         }
 
@@ -405,7 +540,7 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
         if more {
             let close = toggle.clone();
             let mut rows: Vec<Element<C>> = Vec::new();
-            for (i, a) in dock.more.into_iter().enumerate() {
+            for (i, a) in more_actions.into_iter().enumerate() {
                 let colour = if a.danger {
                     ColorToken::Error
                 } else {

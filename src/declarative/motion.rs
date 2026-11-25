@@ -397,11 +397,39 @@ impl Motion {
                         let end = (i + 1..old.len())
                             .find(|&j| old[j].depth <= b.depth)
                             .unwrap_or(old.len());
+                        // Something dragged (a sheet swiped away) leaves from
+                        // where it was let go, with everything inside it.
+                        let scale = self.scale.max(0.25);
+                        let mut carried: Vec<[f32; 2]> = Vec::new();
+                        let mut shifts = Vec::with_capacity(end - i);
+                        for o in &old[i..end] {
+                            carried.truncate(o.depth.saturating_sub(b.depth));
+                            let above = carried.last().copied().unwrap_or([0.; 2]);
+                            let own = self.gesture_offset(&o.id);
+                            let total = [above[0] + own[0] * scale, above[1] + own[1] * scale];
+                            carried.push(total);
+                            shifts.push(total);
+                        }
                         let boxes = old[i..end]
                             .iter()
-                            .filter(|b| !next.contains(&b.id))
-                            .map(|b| {
+                            .zip(shifts)
+                            .filter(|(b, _)| !next.contains(&b.id))
+                            .map(|(b, shift)| {
                                 let mut box_ = b.clone();
+                                if shift != [0.; 2] {
+                                    let [x, y, w, h] = box_.bounds.bounds();
+                                    if let Some(r) =
+                                        crate::geometry::Rect::new(x + shift[0], y + shift[1], w, h)
+                                    {
+                                        box_.bounds = r;
+                                    }
+                                    let [x, y, w, h] = box_.clip.bounds();
+                                    if let Some(r) =
+                                        crate::geometry::Rect::new(x + shift[0], y + shift[1], w, h)
+                                    {
+                                        box_.clip = r;
+                                    }
+                                }
                                 box_.departing = true;
                                 box_.detached_state =
                                     self.tracks.get(&b.id).map(|t| super::ButtonState {

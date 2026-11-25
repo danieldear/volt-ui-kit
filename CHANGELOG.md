@@ -11,6 +11,21 @@
   dock sits just above them. `Runtime::scroll_hidden` says whether a
   scroll view's followers are slid away.
 - A duplicate or invalid id error now names the id.
+- Mobile: `dock_search` gives an action dock a Search button that turns the
+  dock into a search field with the keyboard up, riding on top of it; Close
+  puts the actions back. Snapshots report the field Rust focused for typing
+  (`editing`), and the iOS host opens the keyboard for it.
+- Bottom sheets: the page behind no longer jumps when one opens (the iOS
+  host fades its tab bar instead of hiding it); a sheet dropped between
+  heights moves on from where it was let go, and one swiped away leaves from
+  there; a drag the platform takes over springs back instead of staying
+  under the finger; on a dark theme a sheet uses the raised surface; with
+  the keyboard up a sheet goes to full height and keeps its fields above
+  the keyboard (`bars` now carries `keyboard`).
+- iOS host: a drag that starts on a sheet's header stays the sheet's when
+  it crosses into the sheet's list, and at the top of that list pulling
+  down moves the sheet (snapshots mark such scroll views `inDraggable`).
+  Switches draw whole at iOS 26's width, rounded ends included.
 - Mobile: `tab_view` and `tab_destination` for an app's top-level sections.
   The iOS host shows UIKit's tab bar (Liquid Glass on iOS 26, SF Symbols,
   badges) with a navigation stack per tab; elsewhere Volt draws Material 3's

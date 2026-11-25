@@ -249,6 +249,9 @@ pub(crate) struct NodeExtras {
     /// Takes the host's bottom bars (tab bar, home indicator, keyboard) as
     /// extra bottom padding, so it sits just above them.
     pub above_bars: bool,
+    /// A bottom sheet's card: with the keyboard up it takes the full height,
+    /// its surface running behind the keyboard and its content above it.
+    pub keyboard_room: bool,
     /// A scroll container's pull-to-refresh handler (`on_refresh`).
     pub on_refresh: Option<String>,
     /// Its work is under way: hosts keep their refresh spinner showing.

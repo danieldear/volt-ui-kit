@@ -39,6 +39,8 @@ pub struct MobileView<C: 'static> {
     safe_area: [f32; 4],
     /// Points the host's bottom bars cover: tab bar, home indicator, keyboard.
     bars_bottom: f32,
+    /// Points the keyboard covers, on its own.
+    keyboard: f32,
 }
 impl<C: 'static> MobileView<C> {
     pub fn new(context: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
@@ -81,6 +83,7 @@ impl<C: 'static> MobileView<C> {
             native_navigation: false,
             safe_area: [0.; 4],
             bars_bottom: 0.,
+            keyboard: 0.,
         };
         // Hosts without a frame loop keep motion reduced so nothing stops halfway.
         value.runtime.set_reduced_motion(true);
@@ -121,12 +124,17 @@ impl<C: 'static> MobileView<C> {
     /// dialogs and menus stay inside it.
     /// How far the host's own bars (tab bar, home indicator, keyboard) reach
     /// up from the bottom, in points. An action dock sits just above them.
-    pub fn set_bars(&mut self, bottom: f32) -> Result<(), String> {
-        if !bottom.is_finite() || !(0. ..=2048.).contains(&bottom) {
+    /// `keyboard` is the keyboard's part alone: sheets rise above it.
+    pub fn set_bars(&mut self, bottom: f32, keyboard: f32) -> Result<(), String> {
+        if ![bottom, keyboard]
+            .iter()
+            .all(|v| v.is_finite() && (0. ..=2048.).contains(v))
+        {
             return Err("bottom bars must be 0 to 2048 points".into());
         }
-        if self.bars_bottom != bottom {
+        if self.bars_bottom != bottom || self.keyboard != keyboard {
             self.bars_bottom = bottom;
+            self.keyboard = keyboard;
             self.recompose()?;
         }
         Ok(())
@@ -284,6 +292,9 @@ impl<C: 'static> MobileView<C> {
         if self.bars_bottom > 0. {
             element.inset_above_bars(self.bars_bottom);
         }
+        if self.keyboard > 0. {
+            element.lift_sheets(self.keyboard);
+        }
         let element = if let Some(family) = &self.host_font {
             element.host_font(family)
         } else {
@@ -393,6 +404,7 @@ impl<C: 'static> MobileView<C> {
     }
     pub fn cancel_touch(&mut self) {
         self.touch = None;
+        self.runtime.cancel_drag();
         self.runtime.cancel_input();
         self.runtime.pointer_leave();
     }

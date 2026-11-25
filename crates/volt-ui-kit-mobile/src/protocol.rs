@@ -141,6 +141,9 @@ pub enum PlatformEvent {
     /// tab bar and home indicator, or the keyboard when it is taller.
     Bars {
         bottom: f32,
+        /// The keyboard alone: sheets rise above it.
+        #[serde(default)]
+        keyboard: f32,
     },
     /// Changes sent through an `Updater` are waiting: apply them and draw.
     Updates {},

@@ -102,7 +102,10 @@ final class VoltRootController: UITabBarController, UITabBarControllerDelegate {
         // A modal sheet or dialog covers the tab bar, as on iOS.
         if modal != covered {
             covered = modal
-            if #available(iOS 18.0, *) { setTabBarHidden(modal, animated: true) } else { tabBar.isHidden = modal }
+            // Fade it rather than hide it: hiding the tab bar changes the
+            // page's layout, and the page behind a sheet must not move.
+            tabBar.isUserInteractionEnabled = !modal
+            UIView.animate(withDuration: 0.25) { self.tabBar.alpha = modal ? 0 : 1 }
         }
         if modal { return }
         if tabBar.tintColor != accent { tabBar.tintColor = accent }
@@ -331,12 +334,17 @@ private struct ScrollInfo: Decodable {
     let refresh: Bool?; let refreshing: Bool?
     /// Behind an open modal: it takes no touches.
     let inert: Bool?
+    /// Inside something that drags, such as a sheet.
+    let inDraggable: Bool?
 }
 private struct Snapshot: Decodable {
     let nodes: [Node]; let dark: Bool; let frames: UInt64; let backend: String; let animating: Bool?
     let scrollViews: [ScrollInfo]?; let navigation: NavInfo?; let tabs: TabsInfo?
     /// A dialog or sheet is open: it covers the bars.
     let modal: Bool?
+    /// The field Rust focused for typing, such as a search field that opens
+    /// with the keyboard up.
+    let editing: String?
     let background: [CGFloat]; let fieldBackground: [CGFloat]; let foreground: [CGFloat]; let accent: [CGFloat]
 }
 private func color(_ rgba:[CGFloat])->UIColor {
@@ -361,10 +369,25 @@ private final class NativeScroll: UIScrollView {
     /// UIKit computed its own; UIKit's reports are the truth afterwards.
     var predicted = false
     weak var canvas: VoltCanvas?
+    /// Inside a sheet: a downward drag from its top moves the sheet.
+    var inDraggable = false
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         guard super.gestureRecognizerShouldBegin(g) else { return false }
         guard g === panGestureRecognizer, let canvas else { return true }
-        return canvas.shouldScroll(self, at: g.location(in: canvas), velocity: panGestureRecognizer.velocity(in: canvas))
+        // Where the finger went down: by the time a pan is recognised it has
+        // moved, and a drag that began on a sheet's header must stay the
+        // sheet's even once it crosses into the sheet's list.
+        let now = g.location(in: canvas), moved = panGestureRecognizer.translation(in: canvas)
+        let start = CGPoint(x: now.x - moved.x, y: now.y - moved.y)
+        let velocity = panGestureRecognizer.velocity(in: canvas)
+        if inDraggable, velocity.y > abs(velocity.x) {
+            // As in iOS sheets: at the top of the list (or with nothing to
+            // scroll), pulling down moves the sheet, not the list.
+            let top = -adjustedContentInset.top
+            let scrolls = contentSize.height > bounds.height - adjustedContentInset.top - adjustedContentInset.bottom + 0.5
+            if !scrolls || contentOffset.y <= top + 0.5 { return false }
+        }
+        return canvas.shouldScroll(self, at: start, velocity: velocity)
     }
 }
 /// Holds the canvas weakly so the display link never keeps it alive.
@@ -404,6 +427,9 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var editor: UIView { editingMultiline ? area : field }
     /// How far the keyboard covers the canvas, in points.
     private var keyboardOverlap: CGFloat = 0
+    /// A sheet or dialog Volt draws is open.
+    private var modalOpen = false
+    private var lastEditing: String?
     private var retryCount = 0
     private var suspended = false
     private var failed = false
@@ -484,8 +510,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
               let screen = window?.screen else { return }
         let frame = convert(end, from: screen.coordinateSpace)
         keyboardOverlap = note.name == UIResponder.keyboardWillHideNotification ? 0 : max(0, bounds.maxY - frame.minY)
-        applyKeyboardInset()
+        // Rust first: a field that rides on the keyboard (a dock's search, a
+        // sheet) moves above it, and then needs no scrolling into view.
         sendBars()
+        applyKeyboardInset()
     }
     private func applyKeyboardInset() {
         guard let s = contentScroll else { return }
@@ -495,7 +523,9 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     }
     /// Scroll the page so the field being edited sits above the keyboard.
     private func revealEditor() {
-        guard let id = editingId, keyboardOverlap > 0, let s = contentScroll,
+        // A field in a sheet: the sheet rises above the keyboard itself, and
+        // the page behind it stays where it is.
+        guard !modalOpen, let id = editingId, keyboardOverlap > 0, let s = contentScroll,
               let node = nodes.first(where: { $0.id == id }) else { return }
         let top = s.frame.minY + s.adjustedContentInset.top + 8
         let bottom = bounds.height - keyboardOverlap - 16
@@ -588,15 +618,15 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         lastSafeArea = insets
         send(["op": "safe_area", "top": insets.top, "right": insets.right, "bottom": insets.bottom, "left": insets.left])
     }
-    private var lastBars: CGFloat?
+    private var lastBars: [CGFloat]?
     /// What covers the canvas from below: the tab bar and home indicator
     /// (the canvas's own safe area), or the keyboard when that is taller.
     /// Volt's action dock sits just above it.
     private func sendBars() {
         let bottom = max(safeAreaInsets.bottom, keyboardOverlap)
-        guard handle != 0, bottom != lastBars else { return }
-        lastBars = bottom
-        send(["op": "bars", "bottom": bottom])
+        guard handle != 0, [bottom, keyboardOverlap] != lastBars else { return }
+        lastBars = [bottom, keyboardOverlap]
+        send(["op": "bars", "bottom": bottom, "keyboard": keyboardOverlap])
     }
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
     override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
@@ -631,7 +661,30 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { showError("Invalid Rust UI snapshot"); return }
         nodes = snapshot.nodes
         root?.sync(snapshot.tabs, before: before, accent: color(snapshot.accent), modal: snapshot.modal ?? false)
-        navigation?.cover(snapshot.modal ?? false)
+        modalOpen = snapshot.modal ?? false
+        // The field being typed in is gone (a dock's search closed): put the
+        // keyboard away rather than type into nothing.
+        if let id = editingId, !nodes.contains(where: { $0.id == id }) {
+            editingId = nil
+            editor.resignFirstResponder()
+            editor.removeFromSuperview()
+        }
+        // Rust asked for a field to be typed in: open the keyboard once, when
+        // the request changes, so dismissing the keyboard sticks.
+        if snapshot.editing != lastEditing {
+            lastEditing = snapshot.editing
+            if let want = snapshot.editing, want != editingId {
+                // Next turn, if Rust still wants it and the field is still
+                // there: a tap that closes search also commits its text.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.lastEditing == want, self.editingId != want,
+                          let node = self.nodes.first(where: { $0.id == want && $0.kind == "field" && !$0.readOnly })
+                    else { return }
+                    self.beginEditing(node)
+                }
+            }
+        }
+        navigation?.cover(modalOpen)
         navigation?.sync(snapshot.navigation, before: before, background: color(snapshot.background),
                          accent: color(snapshot.accent))
         displayLink?.isPaused = !(snapshot.animating ?? false) || suspended
@@ -705,6 +758,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             s.axes = info.axes
             // Behind a modal its pan (which the canvas carries) stays off.
             let live = !(info.inert ?? false)
+            s.inDraggable = info.inDraggable ?? false
             if s.panGestureRecognizer.isEnabled != live { s.panGestureRecognizer.isEnabled = live }
             let behavior: UIScrollView.ContentInsetAdjustmentBehavior = info.id == mainId ? .always : .never
             if s.contentInsetAdjustmentBehavior != behavior { s.contentInsetAdjustmentBehavior = behavior }
@@ -804,20 +858,29 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             let visible = node.visibleRect
             entry.holder.isHidden = visible.isNull
             guard !visible.isNull else { continue }
-            entry.holder.frame = visible
             entry.control.isEnabled = node.enabled
             entry.control.accessibilityIdentifier = node.id
             entry.control.accessibilityLabel = node.label
-            let rect = node.rect.offsetBy(dx: -visible.minX, dy: -visible.minY)
             if let toggle = entry.control as? UISwitch {
-                let size = toggle.intrinsicContentSize
-                // Without a visible label the switch fills its box from the
+                // The size UIKit draws it at: iOS 26's switch is wider than
+                // older ones and than its intrinsic size says.
+                toggle.sizeToFit()
+                let size = toggle.bounds.size
+                // Without a visible label the switch sits at its box's
                 // trailing edge, as in an iOS row.
-                let x = rect.width < size.width + 8 ? rect.maxX - size.width : rect.minX + 2
-                toggle.frame = CGRect(x: x, y: rect.midY - size.height / 2, width: size.width, height: size.height)
+                let box = node.rect
+                let x = box.width < size.width + 8 ? box.maxX - size.width : box.minX + 2
+                let frame = CGRect(x: x, y: box.midY - size.height / 2, width: size.width, height: size.height)
+                // A switch a little wider than its box still draws whole,
+                // rounded ends and all; only a scroll view's edge cuts it.
+                let holder = visible == box ? box.union(frame) : visible
+                entry.holder.frame = holder
+                toggle.frame = frame.offsetBy(dx: -holder.minX, dy: -holder.minY)
                 let on = node.checked ?? false
                 if toggle.isOn != on { toggle.setOn(on, animated: true) }
             } else if let slider = entry.control as? UISlider, let n = node.numeric, n.count == 4 {
+                entry.holder.frame = visible
+                let rect = node.rect.offsetBy(dx: -visible.minX, dy: -visible.minY)
                 let height = max(slider.intrinsicContentSize.height, 34)
                 slider.frame = CGRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
                 slider.minimumValue = Float(n[1])

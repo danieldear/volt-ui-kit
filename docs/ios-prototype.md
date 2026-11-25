@@ -176,8 +176,9 @@ grabber or header to change height or swipe down to close; tap the grabber
 to step through the heights. `cancel` and `done` put Cancel at the leading
 edge and Done at the trailing edge; `on_dismiss_attempt` lets an app ask
 before a swipe throws work away. While a sheet or dialog is open, the iOS
-host hides the tab bar and fades the navigation bar, and the page behind
-takes no touches. The gallery's **Sheets** page shows all of it.
+host fades its tab bar and navigation bar, and the page behind
+takes no touches. With the keyboard up a sheet goes to full height and keeps
+its fields above the keyboard. The gallery's **Sheets** page shows all of it.
 
 ## Action dock
 
@@ -204,6 +205,9 @@ action_dock(notes_list.key("notes"))
   label is what VoiceOver reads.
 - Keep the top bar for the title and Back. `back(label, f)` adds a Back at
   the dock's leading end for deep pages.
+- `search(dock_search(query, open))` adds a Search button that turns the
+  dock into a search field with the keyboard up; the dock rides on the
+  keyboard, and Close puts the actions back.
 - The gallery's **Action dock** page shows it.
 
 ## Work off the UI thread

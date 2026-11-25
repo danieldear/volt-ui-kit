@@ -318,9 +318,11 @@ impl<C: 'static> From<BottomSheet<C>> for Element<C> {
             .width_fraction(1.)
             .max_width(MAX_WIDTH)
             .padding(4., Edge::Top)
-            // The grouped background, as iOS's form sheets use: fields, rows
-            // and cards on the surface colour stand out on it.
-            .background(ColorToken::Base100)
+            // Light: the base surface, which fields and rows stand out on.
+            // Dark: a raised surface, so the sheet stands out from the page
+            // behind it (pure black on black reads as a hole), with fields
+            // still a step darker inside it.
+            .background("@base-100|@base-300")
             .rounded_on(RADIUS, Corners::Top)
             .shadow(tokens::shadow::xl())
             .layout_animation(Animation::spring())
@@ -357,7 +359,8 @@ impl<C: 'static> From<BottomSheet<C>> for Element<C> {
                     }
                 }
             });
-        let card = sized(card, s.detents[current]);
+        let mut card = sized(card, s.detents[current]);
+        card.0.node.ext.keyboard_room = true;
         let card = with_motion(
             card,
             s.motion,

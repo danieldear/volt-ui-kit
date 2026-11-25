@@ -490,7 +490,7 @@ mod progress;
 mod sheet;
 mod speed_dial;
 mod tab_view;
-pub use action_dock::{action_dock, dock_action, ActionDock, DockAction};
+pub use action_dock::{action_dock, dock_action, dock_search, ActionDock, DockAction, DockSearch};
 pub use sheet::{bottom_sheet, BottomSheet, SheetDetent};
 pub use speed_dial::{speed_dial, SpeedDial};
 pub use tab_view::{tab_destination, tab_view, TabDestination, TabView};
@@ -655,6 +655,22 @@ impl<C> Element<C> {
         }
         for child in &mut self.children {
             child.inset_above_bars(bottom);
+        }
+    }
+    /// Bottom sheets make room for the keyboard: as on iOS, a sheet goes to
+    /// its full height while you type, and keeps its content above the
+    /// keyboard with its surface running on behind it.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn lift_sheets(&mut self, keyboard: f32) {
+        if self.node.ext.keyboard_room {
+            let n = &mut self.node;
+            n.height = None;
+            n.ext.fraction[1] = Some(1.);
+            let vertical = n.padding_vertical.unwrap_or(n.padding);
+            n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + keyboard);
+        }
+        for child in &mut self.children {
+            child.lift_sheets(keyboard);
         }
     }
     #[cfg(feature = "mobile")]
@@ -2022,7 +2038,7 @@ pub mod prelude {
         steps, timeline, toaster, CommandPaletteState, DrawerSide, Presence, Severity,
         TimelineItem, Toast, ToastPosition,
     };
-    pub use super::{action_dock, dock_action, ActionDock, DockAction};
+    pub use super::{action_dock, dock_action, dock_search, ActionDock, DockAction, DockSearch};
     pub use super::{
         area_chart, candlestick_chart, donut_chart, line_plot, range_chart, stacked_bar_chart,
         timeline_chart, Candle, ValueRange,

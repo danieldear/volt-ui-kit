@@ -1392,6 +1392,7 @@ impl Runtime {
         motion
             .geometry
             .reconcile(&self.boxes, motion.now, self.scale, motion.reduced);
+        motion.hand_off_gestures(self.scale);
         motion.reconcile(&self.boxes);
         #[cfg(feature = "rust-ui")]
         self.refresh_motion_visibility();
@@ -1921,6 +1922,32 @@ impl Runtime {
             .find(|b| b.id == id)
             .map_or(f32::MAX, |b| b.scroll_max[1]);
         trend.note(before, after, max)
+    }
+    /// Element `id` sits inside one that drags (`drag_motion`), such as a
+    /// sheet: a platform scroll view there lets a downward drag that starts
+    /// at its top move the sheet instead of bouncing.
+    pub fn in_draggable(&self, id: &str) -> bool {
+        let Some(mut i) = self.boxes.iter().position(|b| b.id == id) else {
+            return false;
+        };
+        loop {
+            if self.boxes[i].effects.drag_motion.is_some() {
+                return true;
+            }
+            let depth = self.boxes[i].depth;
+            if depth == 0 {
+                return false;
+            }
+            match self.boxes[..i].iter().rposition(|b| b.depth == depth - 1) {
+                Some(parent) => i = parent,
+                None => return false,
+            }
+        }
+    }
+    /// How far a dragged element (`drag_motion`) sits from its place right
+    /// now, in points: zero once it has settled.
+    pub fn drag_offset(&self, id: &str) -> [f32; 2] {
+        self.motion.borrow().gesture_offset(id)
     }
     /// Whether things following scroll view `id` are slid away.
     pub fn scroll_hidden(&self, id: &str) -> bool {
@@ -3182,6 +3209,15 @@ impl Runtime {
             changed: pressed.is_some(),
             activated,
         })
+    }
+    /// The platform took the touch (a scroll view's pan, a system gesture):
+    /// a dragged element goes home as a release would, without running its
+    /// release handler, so nothing is left where the finger was.
+    pub fn cancel_drag(&mut self) {
+        #[cfg(feature = "rust-ui")]
+        if let Some(capture) = self.drag_capture.take() {
+            self.motion.get_mut().gesture_end(&capture.id);
+        }
     }
     pub fn cancel_input(&mut self) -> bool {
         #[cfg(feature = "rust-ui")]
