@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Android host parity with iOS: edge to edge with the system bars and
+  keyboard sent as insets; a frame loop while animating; a wake from
+  background threads (`VoltActivity.wake`), so timers redraw without a touch;
+  hold for a row's menu with a haptic; multi-line composers that keep the
+  keyboard on Send; keyboards and autofill by `input_kind`; field backdrops;
+  TalkBack custom actions; reduced motion from the animator scale.
+- Android: Volt-drawn tab bars and docks sit above the gesture handle, and the
+  navigation bar is Material 3's top app bar (a Back icon button, a
+  left-aligned title) where iOS keeps its centred title.
+- `examples/android-gallery`: the iOS gallery's pages as an Android APK on the
+  same shared host.
 - `list_row(..).trailing(el)` puts a control (a switch) at a row's end;
   `.checked(bool)` shows the trailing checkmark iOS settings lists use for
   one choice among several.

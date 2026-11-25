@@ -122,6 +122,14 @@ pub fn create<C: 'static>(
         let app = factory(HostContext {
             font_family: family,
         })?;
+        // A change from a worker thread wakes the main Looper through
+        // VoltActivity.wake: the class is found here, on the main thread,
+        // because other threads can't see the app's classes by name.
+        let vm = env.get_java_vm().map_err(|e| e.to_string())?;
+        let class = env
+            .find_class("dev/volt/host/VoltActivity")
+            .map_err(|e| e.to_string())?;
+        let class = env.new_global_ref(class).map_err(|e| e.to_string())?;
         HOSTS.with(|r| {
             let mut r = r.borrow_mut();
             if r.hosts.len() >= 16 {
@@ -129,14 +137,28 @@ pub fn create<C: 'static>(
             }
             r.next = r.next.checked_add(1).ok_or("host IDs exhausted")?;
             let id = r.next;
-            r.hosts.insert(
-                id,
-                Host {
-                    surface: None,
-                    app: Box::new(app),
-                    frames: 0,
-                },
-            );
+            let host = Host {
+                surface: None,
+                app: Box::new(app),
+                frames: 0,
+            };
+            host.app.set_wake(Some(std::sync::Arc::new(move || {
+                let Ok(mut env) = vm.attach_current_thread_permanently() else {
+                    return;
+                };
+                let class = jni::objects::JClass::from(
+                    // SAFETY: a global reference to the VoltActivity class,
+                    // alive for this closure.
+                    unsafe { JObject::from_raw(class.as_obj().as_raw()) },
+                );
+                if env
+                    .call_static_method(&class, "wake", "(J)V", &[id.into()])
+                    .is_err()
+                {
+                    let _ = env.exception_clear();
+                }
+            })));
+            r.hosts.insert(id, host);
             Ok(id)
         })
     }) {

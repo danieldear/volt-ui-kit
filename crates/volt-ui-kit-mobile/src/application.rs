@@ -326,7 +326,7 @@ impl<C: 'static> Application<C> {
             let kind=match n.role {AccessRole::TextInput if n.search && self.ui.runtime().native_controls()=>"search",AccessRole::TextInput|AccessRole::MultilineTextInput=>"field",AccessRole::ScrollView=>"scroll",AccessRole::Switch=>"switch",AccessRole::Slider=>"slider",AccessRole::Button=>"button",_ if n.clickable=>"button",_=>"label"};
             json!({"id":n.id,"label":n.label,"value":n.value,"enabled":n.enabled,"kind":kind,"checked":n.checked,"numeric":n.numeric,"multiline":multiline,
                 "password":n.password,"readOnly":n.read_only || n.password,"bounds":n.bounds.map(|v|v/self.scale),"visibleBounds":visible.map(|v|v/self.scale),
-                "doneBar":n.done_button,"inputKind":n.input_kind,"placeholder":n.placeholder,"keepsKeyboard":n.keeps_keyboard,"backdrop":(kind=="field").then(|| self.ui.runtime().backdrop(&n.id)).flatten().map(|(c,r)| json!({"color":c,"radius":r/self.scale})),"actions":n.actions.iter().map(|a| json!({"label":a.label,"target":a.target})).collect::<Vec<_>>()})
+                "doneBar":n.done_button,"search":n.search,"inputKind":n.input_kind,"placeholder":n.placeholder,"keepsKeyboard":n.keeps_keyboard,"backdrop":(kind=="field").then(|| self.ui.runtime().backdrop(&n.id)).flatten().map(|(c,r)| json!({"color":c,"radius":r/self.scale})),"actions":n.actions.iter().map(|a| json!({"label":a.label,"target":a.target})).collect::<Vec<_>>()})
         }).collect::<Vec<_>>();
         // Scroll views for a platform scroll view to drive: the visible frame,
         // the content size and offset, in points.

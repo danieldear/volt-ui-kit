@@ -625,6 +625,39 @@ impl<C> Element<C> {
             })
         })
     }
+    /// Whether a tab view's bar is in this tree.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn has_tab_bar(&self) -> bool {
+        self.node.ext.tab_bar.is_some() || self.children.iter().any(|c| c.has_tab_bar())
+    }
+    /// Volt draws the bars (Android): keep them clear of the system's. The
+    /// navigation bar starts below the status bar; the tab bar ends above
+    /// the gesture handle, and steps aside while the keyboard is up.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn inset_drawn_bars(&mut self, [top, _, bottom, _]: [f32; 4], keyboard: bool) {
+        let n = &mut self.node;
+        if n.ext.navigation_bar.is_some() && top > 0. {
+            if let Some(h) = n.height.as_mut() {
+                *h += top;
+            }
+            let vertical = n.padding_vertical.unwrap_or(n.padding);
+            n.padding_top = Some(n.padding_top.unwrap_or(vertical) + top);
+        }
+        if n.ext.tab_bar.is_some() {
+            if keyboard {
+                n.ext.visible = Some(false.into());
+            } else if bottom > 0. {
+                if let Some(h) = n.height.as_mut() {
+                    *h += bottom;
+                }
+                let vertical = n.padding_vertical.unwrap_or(n.padding);
+                n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + bottom);
+            }
+        }
+        for child in &mut self.children {
+            child.inset_drawn_bars([top, 0., bottom, 0.], keyboard);
+        }
+    }
     /// Native controls are on: hide Volt's drawing of the parts the host
     /// draws itself.
     #[cfg(feature = "mobile")]

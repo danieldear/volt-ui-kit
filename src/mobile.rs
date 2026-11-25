@@ -292,8 +292,20 @@ impl<C: 'static> MobileView<C> {
         if self.safe_area != [0.; 4] {
             element.inset_overlays(self.safe_area);
         }
-        if self.bars_bottom > 0. {
-            element.inset_above_bars(self.bars_bottom);
+        // Room under a dock or message box for what covers the canvas: the
+        // host's bars and keyboard. Where Volt draws a tab bar (Android) it
+        // already clears the system bar, and hides while the keyboard is up.
+        let drawn_tabs = !self.native_navigation && element.has_tab_bar();
+        if !self.native_navigation {
+            element.inset_drawn_bars(self.safe_area, self.keyboard > 0.);
+        }
+        let bottom = if drawn_tabs {
+            self.keyboard
+        } else {
+            self.bars_bottom
+        };
+        if bottom > 0. {
+            element.inset_above_bars(bottom);
         }
         if self.keyboard > 0. {
             element.lift_sheets(self.keyboard);
