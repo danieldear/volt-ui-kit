@@ -487,6 +487,8 @@ pub use routing::{
 mod action_dock;
 mod composer;
 pub use composer::{composer, Composer};
+mod search;
+pub use search::{search_field, SearchField};
 mod prompts;
 pub use prompts::{action_sheet, alert_dialog, prompt_action, Prompt, PromptAction};
 mod list_row;
@@ -613,6 +615,17 @@ impl<C> Element<C> {
                 buttons: Vec::new(),
             })
         })
+    }
+    /// Native controls are on: hide Volt's drawing of the parts the host
+    /// draws itself.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn hide_native_parts(&mut self) {
+        if self.node.ext.native_hidden {
+            self.node.ext.visible = Some(false.into());
+        }
+        for child in &mut self.children {
+            child.hide_native_parts();
+        }
     }
     /// Hide Volt's navigation bars for a host that draws them natively. Their
     /// controls still run through `Runtime::activate_navigation`.
@@ -2102,6 +2115,7 @@ pub mod prelude {
     pub use super::{live_text, morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
+    pub use super::{search_field, SearchField};
     pub use super::{
         selectable_list, selectable_row, SelectableList, SelectableRow, SelectionAction,
         SelectionError, SelectionModel, SelectionModifiers, SelectionMove,

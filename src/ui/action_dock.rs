@@ -338,42 +338,25 @@ impl<C: 'static> From<ActionDock<C>> for Element<C> {
         }
         let searching = dock.search.as_ref().is_some_and(|s| s.open);
         let mut parts: Vec<Element<C>> = Vec::new();
-        let (search_field, search_button) = match dock.search {
+        let (open_search, search_button) = match dock.search {
             Some(s) if s.open => (Some(s), None),
             other => (None, other),
         };
-        if let Some(search) = search_field {
+        if let Some(search) = open_search {
             let (open, change) = (search.on_open.unwrap(), search.on_change.unwrap());
             let close: Press<C> =
                 Rc::new(RefCell::new(move |c: &mut C| (open.borrow_mut())(c, false)));
             parts.push(
-                hstack![
-                    icon(Icon::Search)
-                        .size(18.)
-                        .stroke(2.)
-                        .color(ColorToken::Muted),
-                    text_field(search.query)
-                        .key(format!("{key}-search-field"))
-                        .accessible_label(search.placeholder.clone())
-                        .placeholder(search.placeholder)
-                        .autofocus(true)
-                        // The keyboard's own key and Close finish a search.
-                        .hide_done_button()
-                        .on_change(move |c: &mut C, q| (change.borrow_mut())(c, q))
-                        .flex(1.)
-                        .height(BUTTON)
-                        .background("#00000000")
-                        .border_width(0.),
-                ]
+                // The platform's own search field where the host has one.
+                vstack![search_field(search.query)
+                    .key(format!("{key}-search-field"))
+                    .placeholder(search.placeholder)
+                    .autofocus(true)
+                    .height(BUTTON)
+                    .on_change(move |c: &mut C, q| (change.borrow_mut())(c, q))]
                 .key(format!("{key}-search"))
                 .flex(1.)
-                .height(BUTTON)
-                .padding(16., Edge::Left)
-                .gap(6., Axis::Horizontal)
-                .align(Align::Center)
-                .rounded(BUTTON / 2.)
-                .background(ColorToken::Base300)
-                .background_opacity(0.6)
+                .justify(Justify::Center)
                 .into(),
             );
             parts.push(round(

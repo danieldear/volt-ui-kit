@@ -316,6 +316,8 @@ private struct Node: Decodable {
     let actions: [NodeAction]?
     /// A text input wants the Done bar above the keyboard.
     let doneBar: Bool?
+    /// What an empty field says.
+    let placeholder: String?
     /// Pressing it while typing leaves the keyboard up.
     let keepsKeyboard: Bool?
     /// The colour behind a field and the corner radius of what paints it.
@@ -731,8 +733,13 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
                 // Next turn, if Rust still wants it and the field is still
                 // there: a tap that closes search also commits its text.
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.lastEditing == want, self.editingId != want,
-                          let node = self.nodes.first(where: { $0.id == want && $0.kind == "field" && !$0.readOnly })
+                    guard let self, self.lastEditing == want, self.editingId != want else { return }
+                    // UIKit's own search field takes the keyboard itself.
+                    if let search = self.controls[want]?.control as? UISearchTextField {
+                        if !search.isFirstResponder { search.becomeFirstResponder() }
+                        return
+                    }
+                    guard let node = self.nodes.first(where: { $0.id == want && $0.kind == "field" && !$0.readOnly })
                     else { return }
                     self.beginEditing(node)
                 }
@@ -751,12 +758,12 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         // A full-viewport leaf proxy here would occlude its real editable child
         // in accessibility hit-testing even though that child is visible.
         syncControls()
-        for node in nodes where node.kind == "switch" || node.kind == "slider" {
+        for node in nodes where node.kind == "switch" || node.kind == "slider" || node.kind == "search" {
             if let control = controls[node.id]?.control, !(controls[node.id]?.holder.isHidden ?? true) {
                 elements.append(control)
             }
         }
-        for node in nodes where !node.label.isEmpty && node.kind != "scroll" && node.kind != "switch" && node.kind != "slider" {
+        for node in nodes where !node.label.isEmpty && node.kind != "scroll" && node.kind != "switch" && node.kind != "slider" && node.kind != "search" {
             let rect = node.visibleRect.intersection(bounds)
             guard !rect.isNull, rect.width > 1, rect.height > 1 else { continue }
             if node.id == editingId { elements.append(editor); continue }
@@ -984,7 +991,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     }
     private func syncControls() {
         var seen = Set<String>()
-        for node in nodes where node.kind == "switch" || node.kind == "slider" {
+        for node in nodes where node.kind == "switch" || node.kind == "slider" || node.kind == "search" {
             seen.insert(node.id)
             let entry = controls[node.id] ?? makeControl(node)
             let visible = node.visibleRect
@@ -1010,6 +1017,15 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
                 toggle.frame = frame.offsetBy(dx: -holder.minX, dy: -holder.minY)
                 let on = node.checked ?? false
                 if toggle.isOn != on { toggle.setOn(on, animated: true) }
+            } else if let search = entry.control as? UISearchTextField {
+                // UIKit's own search field, centred in the space Volt gave it.
+                entry.holder.frame = visible
+                let rect = node.rect.offsetBy(dx: -visible.minX, dy: -visible.minY)
+                let height = min(rect.height, 44)
+                search.frame = CGRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+                search.placeholder = node.placeholder ?? node.label
+                // Rust's query, unless someone is typing in it now.
+                if !search.isFirstResponder, search.text != (node.value ?? "") { search.text = node.value ?? "" }
             } else if let slider = entry.control as? UISlider, let n = node.numeric, n.count == 4 {
                 entry.holder.frame = visible
                 let rect = node.rect.offsetBy(dx: -visible.minX, dy: -visible.minY)
@@ -1029,7 +1045,27 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         let holder = UIView()
         holder.clipsToBounds = true
         let control: UIControl
-        if node.kind == "switch" {
+        if node.kind == "search" {
+            let search = UISearchTextField()
+            search.returnKeyType = .search
+            search.autocorrectionType = .no
+            search.text = node.value ?? ""
+            search.addAction(UIAction { [weak self, weak search] _ in
+                guard let self, let search, search.markedTextRange == nil else { return }
+                self.send(["op": "text", "id": node.id, "text": search.text ?? ""])
+            }, for: .editingChanged)
+            search.addAction(UIAction { [weak self] _ in
+                self?.send(["op": "focus", "id": node.id])
+            }, for: .editingDidBegin)
+            // The Search key runs the search and puts the keyboard away.
+            search.addAction(UIAction { [weak self] _ in
+                self?.send(["op": "submit", "id": node.id])
+            }, for: .editingDidEndOnExit)
+            search.addAction(UIAction { [weak self] _ in
+                self?.send(["op": "blur"])
+            }, for: .editingDidEnd)
+            control = search
+        } else if node.kind == "switch" {
             let toggle = UISwitch()
             toggle.addAction(UIAction { [weak self] _ in self?.send(["op": "activate", "id": node.id]) }, for: .valueChanged)
             control = toggle

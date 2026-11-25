@@ -83,6 +83,10 @@ pub enum PlatformEvent {
     },
     /// Typing ended (Done, or the keyboard was put away): nothing is focused.
     Blur {},
+    /// The keyboard's Search (or return) key in field `id`.
+    Submit {
+        id: String,
+    },
     Text {
         id: String,
         text: String,

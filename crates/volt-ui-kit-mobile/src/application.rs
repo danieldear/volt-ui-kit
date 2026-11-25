@@ -204,6 +204,9 @@ impl<C: 'static> Application<C> {
             }
             PlatformEvent::Cancel {} => self.ui.cancel_touch(),
             PlatformEvent::Blur {} => self.ui.blur()?,
+            PlatformEvent::Submit { id } => {
+                self.ui.submit(&id)?;
+            }
             PlatformEvent::Menu { id } => {
                 if self.ui.show_menu(&id)? {
                     self.holds += 1;
@@ -320,10 +323,10 @@ impl<C: 'static> Application<C> {
             let visible=[left,top,((x+w).min(clip[0]+clip[2])-left).max(0.),((y+h).min(clip[1]+clip[3])-top).max(0.)];
             use volt_ui_kit::declarative::AccessRole;
             let multiline=n.role==AccessRole::MultilineTextInput;
-            let kind=match n.role {AccessRole::TextInput|AccessRole::MultilineTextInput=>"field",AccessRole::ScrollView=>"scroll",AccessRole::Switch=>"switch",AccessRole::Slider=>"slider",AccessRole::Button=>"button",_ if n.clickable=>"button",_=>"label"};
+            let kind=match n.role {AccessRole::TextInput if n.search && self.ui.runtime().native_controls()=>"search",AccessRole::TextInput|AccessRole::MultilineTextInput=>"field",AccessRole::ScrollView=>"scroll",AccessRole::Switch=>"switch",AccessRole::Slider=>"slider",AccessRole::Button=>"button",_ if n.clickable=>"button",_=>"label"};
             json!({"id":n.id,"label":n.label,"value":n.value,"enabled":n.enabled,"kind":kind,"checked":n.checked,"numeric":n.numeric,"multiline":multiline,
                 "password":n.password,"readOnly":n.read_only || n.password,"bounds":n.bounds.map(|v|v/self.scale),"visibleBounds":visible.map(|v|v/self.scale),
-                "doneBar":n.done_button,"keepsKeyboard":n.keeps_keyboard,"backdrop":(kind=="field").then(|| self.ui.runtime().backdrop(&n.id)).flatten().map(|(c,r)| json!({"color":c,"radius":r/self.scale})),"actions":n.actions.iter().map(|a| json!({"label":a.label,"target":a.target})).collect::<Vec<_>>()})
+                "doneBar":n.done_button,"placeholder":n.placeholder,"keepsKeyboard":n.keeps_keyboard,"backdrop":(kind=="field").then(|| self.ui.runtime().backdrop(&n.id)).flatten().map(|(c,r)| json!({"color":c,"radius":r/self.scale})),"actions":n.actions.iter().map(|a| json!({"label":a.label,"target":a.target})).collect::<Vec<_>>()})
         }).collect::<Vec<_>>();
         // Scroll views for a platform scroll view to drive: the visible frame,
         // the content size and offset, in points.
@@ -1662,6 +1665,75 @@ mod tests {
         assert_eq!(a.state().open, None);
         assert!(a.snapshot()["sideways"].as_array().unwrap().is_empty());
         assert_eq!(a.state().pressed, 1);
+    }
+    #[test]
+    fn a_search_field_is_the_hosts_own_on_ios() {
+        #[derive(Default)]
+        struct Find {
+            query: String,
+            searched: usize,
+        }
+        fn page(s: &Find) -> Element<Find> {
+            vstack![search_field(s.query.clone())
+                .key("find")
+                .placeholder("Search notes")
+                .on_change(|s: &mut Find, q| s.query = q)
+                .on_submit(|s: &mut Find| s.searched += 1)]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Find::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 2.,
+        })
+        .unwrap();
+        let node = |a: &Application<Find>| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"] == "find")
+                .cloned()
+                .unwrap()
+        };
+        // Volt draws it until the host says it has its own.
+        assert_eq!(node(&a)["kind"], "field");
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        let n = node(&a);
+        assert_eq!(
+            (n["kind"].as_str(), n["placeholder"].as_str()),
+            (Some("search"), Some("Search notes"))
+        );
+        a.handle(PlatformEvent::Text {
+            id: "find".into(),
+            text: "milk".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().query, "milk");
+        a.handle(PlatformEvent::Submit { id: "find".into() })
+            .unwrap();
+        assert_eq!(a.state().searched, 1);
+        // Volt's magnifier and clear button give way to the host's.
+        assert!(!a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .any(|b| b.id == "find-clear"));
     }
     #[test]
     fn alerts_and_action_sheets_reach_the_host_and_run_their_answers() {

@@ -291,6 +291,7 @@ mod tests {
         AccessNode {
             done_button: false,
             keeps_keyboard: false,
+            search: false,
             actions: Vec::new(),
             id: id.into(),
             parent,

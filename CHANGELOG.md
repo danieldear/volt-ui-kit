@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Mobile: `search_field`. With native controls the iOS host lays UIKit's
+  own search field over it (magnifier, clear button, Search key); Volt
+  draws nothing there (`EditorOptions::search`, snapshot kind `search`,
+  `native_hidden` parts, new `submit` event). Elsewhere Volt draws a search
+  pill. The action dock's search uses it.
 - Mobile: `alert_dialog` and `action_sheet` with `prompt_action`, for a
   question that needs an answer now. On iOS the host shows UIKit's own
   alert and action sheet (`Runtime::prompts`, a `prompt` in the snapshot;

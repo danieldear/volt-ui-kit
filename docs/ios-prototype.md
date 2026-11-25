@@ -288,6 +288,22 @@ vstack![
   the dock's search uses it too.
 - The gallery's **Chat** page streams a reply from another thread.
 
+## Search
+
+Use `search_field` for every search. On iOS it is UIKit's own search field;
+on Android Volt draws Material 3's search bar.
+
+```rust,ignore
+search_field(&app.query)
+    .key("notes-search")
+    .placeholder("Search notes")
+    .on_change(|a: &mut App, q| a.query = q)
+```
+
+- Filter as people type; `on_submit` runs on the keyboard's Search key.
+- Name what's searched in the placeholder ("Search notes").
+- The action dock's search and the gallery's Pantry use it.
+
 ## Alerts and action sheets
 
 Ask only when an action can't be undone or costs something; otherwise do it

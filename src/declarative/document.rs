@@ -438,6 +438,8 @@ pub(crate) struct EditorOptions {
     /// Phones: no Done button above the keyboard. Dragging the page's
     /// content puts the keyboard away instead.
     pub hide_done: bool,
+    /// A search field: a host may draw its own (iOS's search field).
+    pub search: bool,
     /// Keys the application handles instead of the editor.
     #[cfg(feature = "rust-ui")]
     pub keys: Vec<super::runtime::editing::EditKey>,

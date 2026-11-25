@@ -47,6 +47,8 @@ pub struct AccessNode {
     pub done_button: bool,
     /// Pressing it while typing leaves a phone's keyboard up.
     pub keeps_keyboard: bool,
+    /// A search field, which a host may draw itself.
+    pub search: bool,
     /// Actions besides activating it, such as a row's swipe actions.
     pub actions: Vec<AccessAction>,
     pub id: String,
@@ -220,6 +222,7 @@ impl Runtime {
             out.push(AccessNode {
                 done_button: editor.is_some_and(|e| !e.hide_done),
                 keeps_keyboard: b.keeps_keyboard,
+                search: editor.is_some_and(|e| e.search),
                 actions: b.access_actions.clone(),
                 id: b.id.clone(),
                 parent,

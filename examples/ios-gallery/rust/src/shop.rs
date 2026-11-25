@@ -526,24 +526,11 @@ pub fn home(app: &App) -> Container<App> {
         .gap(10., Axis::Horizontal)
         .align(Align::Center)
         .into(),
-        hstack![
-            icon(Icon::Search).size(18.).color(ColorToken::Muted),
-            text_field(&app.search)
-                .key("search")
-                .accessible_label("Search Pantry")
-                .placeholder("Search Pantry")
-                .font_size(17.)
-                .height(44.)
-                .background("#00000000")
-                .on_change(|a: &mut App, v| a.search = v)
-                .flex(1.),
-        ]
-        .padding(12., Edge::Left)
-        .gap(4., Axis::Horizontal)
-        .align(Align::Center)
-        .background(ColorToken::Base200)
-        .rounded(22.)
-        .into(),
+        search_field(&app.search)
+            .key("search")
+            .placeholder("Search Pantry")
+            .on_change(|a: &mut App, v| a.search = v)
+            .into(),
         hstack(chips)
             .key("chips")
             .gap(8., Axis::Horizontal)

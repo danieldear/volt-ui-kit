@@ -286,6 +286,9 @@ impl<C: 'static> MobileView<C> {
         if self.native_navigation {
             element.hide_navigation_bars();
         }
+        if self.runtime.native_controls() {
+            element.hide_native_parts();
+        }
         if self.safe_area != [0.; 4] {
             element.inset_overlays(self.safe_area);
         }
@@ -424,6 +427,26 @@ impl<C: 'static> MobileView<C> {
         self.runtime.pointer_leave();
         self.recompose()?;
         Ok(true)
+    }
+    /// The host's search key (or return) in field `id`: run its submit.
+    pub fn submit(&mut self, id: &str) -> Result<bool, String> {
+        if self.suspended {
+            return Ok(false);
+        }
+        self.runtime.accessibility_focus(id);
+        let outcome = self
+            .runtime
+            .editor_key(
+                crate::declarative::EditKey::Submit,
+                false,
+                &mut self.handlers,
+                &mut self.context,
+            )
+            .map_err(|e| e.to_string())?;
+        if outcome.activated {
+            self.recompose()?;
+        }
+        Ok(outcome.activated)
     }
     /// Open the long-press menu for `id` without a touch: a screen reader's
     /// "Show menu". True when one opened.

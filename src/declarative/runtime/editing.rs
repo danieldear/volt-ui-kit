@@ -1487,12 +1487,20 @@ impl Runtime {
         ui: &UiTheme,
         b: &LayoutBox,
     ) -> PaintBatch<P::Shape, P::Glyph> {
+        let options = b.editor.as_ref().unwrap();
+        // The host draws its own search field over this one.
+        if options.search && self.native_controls() {
+            return PaintBatch {
+                clip: b.clip,
+                shapes: Vec::new(),
+                glyphs: Vec::new(),
+            };
+        }
         let c = ui.colors();
         let r = b.bounds.bounds();
         let mut shapes = Vec::new();
         let mut glyphs = Vec::new();
         let focused = self.focused.as_deref() == Some(&b.id);
-        let options = b.editor.as_ref().unwrap();
         let disabled = !b.enabled;
         let alpha = if disabled { 0.45 } else { 1. };
         let tint = |mut color: [f32; 4]| {

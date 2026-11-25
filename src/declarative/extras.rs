@@ -268,6 +268,9 @@ pub(crate) struct NodeExtras {
     pub tab_bar: Option<Box<TabBar>>,
     /// This node is an alert or action sheet.
     pub prompt: Option<Box<Prompt>>,
+    /// Volt's drawing of a control the host draws natively (a search
+    /// field's magnifier and clear button): hidden when it does.
+    pub native_hidden: bool,
     /// Slides off the bottom while scroll view `id` scrolls toward its end,
     /// and back when it scrolls toward its start (an action dock).
     pub hides_with: Option<String>,
