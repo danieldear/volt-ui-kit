@@ -516,7 +516,8 @@ mod tests {
         assert_eq!(e.node.padding, 3.);
         assert_eq!(e.node.align, Align::Stretch);
         let [on, off] = [&e.children[0].node, &e.children[1].node];
-        assert_eq!(on.style.background.as_deref(), Some("@base-100"));
+        // White on light, the raised surface on dark.
+        assert_eq!(on.style.background.as_deref(), Some("@base-100|@base-300"));
         assert_eq!(on.ext.border_sides, None);
         assert_eq!(off.style.background.as_deref(), Some("@base-content/0"));
         assert!(
