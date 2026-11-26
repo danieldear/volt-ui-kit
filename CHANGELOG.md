@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `accessible_role(role)` on any container: one that acts as a button is
+  announced and activated as one by VoiceOver and TalkBack.
+- Contained tabs and segmented controls raise the selected option on the
+  raised surface in dark mode (white in light), as iOS does, instead of
+  sinking it into the darkest one.
 - `canvas_live(draw)`: a canvas drawn afresh every frame at paint time with
   its size and a clock, for living things such as an assistant's presence or
   a voice level. It keeps the frame loop running while it is on screen;

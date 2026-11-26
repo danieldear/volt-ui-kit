@@ -320,9 +320,10 @@ fn style_tab<C>(tab: Button<C>, variant: TabVariant, active: bool) -> Button<C> 
         (TabVariant::Line, false) => tab,
         // Chips share a stretched track equally; a natural-width track
         // (e.g. in a row) has no spare width, so they keep their size.
+        // Raised: white on light, the raised surface on dark (as iOS).
         (TabVariant::Contained, true) => tab
             .flex(1.)
-            .background(ColorToken::Base100)
+            .background("@base-100|@base-300")
             .shadow(Shadow::new().color("#0000001A").blur(4.).offset(0., 1.)),
         (TabVariant::Contained, false) => tab.flex(1.),
     }

@@ -1288,6 +1288,11 @@ macro_rules! modifiers {
             pub fn accessible_label(mut self, label: impl Into<String>) -> Self {
                 self.$($field)*.accessible_label = Some(label.into()); self
             }
+            /// What a screen reader calls it: a container that acts as a
+            /// button says Button, so it's announced and activated as one.
+            pub fn accessible_role(mut self, role: crate::declarative::AccessRole) -> Self {
+                self.$($field)*.access_role = Some(role); self
+            }
             pub fn width(mut self, value: f32) -> Self { self.$($field)*.width = Some(value); self }
             /// Logical size limits; they apply to fixed, flexible and natural sizes.
             pub fn min_width(mut self, value: f32) -> Self { self.$($field)*.ext.min[0] = Some(value); self }
