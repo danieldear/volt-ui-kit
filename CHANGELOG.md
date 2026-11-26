@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `canvas_live(draw)`: a canvas drawn afresh every frame at paint time with
+  its size and a clock, for living things such as an assistant's presence or
+  a voice level. It keeps the frame loop running while it is on screen;
+  reduced motion draws one still frame.
 - Steady 60 frames a second when scrolling on the CPU fallback (the iOS
   Simulator, Android emulators). A large repaint is drawn in horizontal bands
   on several threads, with the same pixels. A rounded card's clip is reused

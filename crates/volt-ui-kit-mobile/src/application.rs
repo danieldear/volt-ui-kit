@@ -2385,4 +2385,63 @@ mod tests {
         .unwrap();
         assert!(!a.state().shown);
     }
+
+    #[test]
+    fn a_live_canvas_keeps_frames_coming_until_motion_is_reduced() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static DRAWS: AtomicUsize = AtomicUsize::new(0);
+        fn page(_: &u8) -> Element<u8> {
+            canvas_live(|c, [w, h], t| {
+                DRAWS.fetch_add(1, Ordering::Relaxed);
+                assert!(w > 0. && h > 0. && t.is_finite());
+                c.fill(
+                    volt_ui_kit::graphics::VectorPath::circle(w / 2., h / 2., w / 4.),
+                    "#7DE3F4",
+                );
+            })
+            .key("core")
+            .width(120.)
+            .height(120.)
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            0u8,
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 700.,
+            scale: 1.,
+        })
+        .unwrap();
+        // Hosts with a frame loop turn reduced motion off.
+        a.handle(PlatformEvent::Appearance {
+            dark: false,
+            colors: None,
+            reduce_motion: Some(false),
+        })
+        .unwrap();
+        assert!(a.is_animating(), "a live canvas on screen wants frames");
+        let before = DRAWS.load(Ordering::Relaxed);
+        let theme = volt_ui_kit::UiTheme::light();
+        let mut painter = volt_ui_kit::rendering::RasterPainter::new(
+            volt_ui_kit::Viewport::new(390., 700., 1.).unwrap(),
+        );
+        let batches = a.mobile_view().runtime().paint_ui(&mut painter, &theme);
+        assert!(
+            DRAWS.load(Ordering::Relaxed) > before,
+            "drawn at paint time"
+        );
+        assert!(batches.iter().any(|b| !b.shapes.is_empty()));
+        a.handle(PlatformEvent::Appearance {
+            dark: false,
+            colors: None,
+            reduce_motion: Some(true),
+        })
+        .unwrap();
+        assert!(!a.is_animating(), "reduced motion holds it still");
+    }
 }

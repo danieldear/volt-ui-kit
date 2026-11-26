@@ -584,6 +584,8 @@ pub(crate) struct SurfaceContent {
     pub canvas: crate::graphics::Canvas,
     /// Optional frames played over `canvas` (which holds the final frame).
     pub frames: Option<crate::graphics::CanvasFrames>,
+    /// Drawn afresh each frame at paint time, over `canvas`.
+    pub live: Option<crate::graphics::CanvasLive>,
     pub clip: Option<crate::graphics::Clip>,
     pub scroll: Option<Scroll>,
     pub scrollbars: Scrollbars,

@@ -769,6 +769,23 @@ impl StrokeStyle {
 pub struct Canvas {
     pub paths: Vec<DrawPath>,
 }
+/// Draws a canvas afresh each frame at paint time (see `ui::canvas_live`):
+/// called with the canvas, its size in logical points and the seconds the
+/// runtime's clock has run. No recomposition or layout per frame.
+pub type LiveDraw = dyn Fn(&mut Canvas, [f32; 2], f32) + Send + Sync;
+/// A canvas drawn each frame while it is on screen.
+#[derive(Clone)]
+pub struct CanvasLive(pub std::sync::Arc<LiveDraw>);
+impl std::fmt::Debug for CanvasLive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CanvasLive")
+    }
+}
+impl PartialEq for CanvasLive {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 /// A short drawing sequence played at paint time (see `ui::canvas_frames`):
 /// no recomposition or layout per frame. It restarts only when `revision`
 /// changes for the same element id.

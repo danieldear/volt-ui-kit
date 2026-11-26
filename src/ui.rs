@@ -1494,6 +1494,18 @@ pub fn canvas_frames<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64) -> El
 pub fn canvas_frames_once<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64) -> Element<C> {
     frames_element(frames, frame_ms, revision, true)
 }
+/// A canvas drawn afresh every frame while it is on screen: `draw` gets the
+/// canvas, its size in logical points and a clock in seconds. For living
+/// things (Volt's Core, a voice level) that a precomputed sequence can't
+/// hold. Reduced motion draws one still frame. Keep `draw` cheap: it runs at
+/// the display's refresh rate.
+pub fn canvas_live<C>(
+    draw: impl Fn(&mut Canvas, [f32; 2], f32) + Send + Sync + 'static,
+) -> Element<C> {
+    let mut element = Element::new(Kind::Canvas);
+    element.node.surface.live = Some(crate::graphics::CanvasLive(std::sync::Arc::new(draw)));
+    element
+}
 fn frames_element<C>(frames: Vec<Canvas>, frame_ms: u32, revision: u64, once: bool) -> Element<C> {
     let mut element = Element::new(Kind::Canvas);
     element.node.surface.canvas = frames.last().cloned().unwrap_or_default();
@@ -2176,9 +2188,9 @@ pub mod prelude {
         timeline_chart, Candle, ValueRange,
     };
     pub use super::{
-        badge, button, button_bar, canvas, canvas_frames, canvas_frames_once, checkbox, column,
-        context_menu, data_item, dialog, divider, grid, hstack, lazy_list, loading,
-        mask_difference, mask_exclude, mask_intersection, mask_union, menu, menu_item,
+        badge, button, button_bar, canvas, canvas_frames, canvas_frames_once, canvas_live,
+        checkbox, column, context_menu, data_item, dialog, divider, grid, hstack, lazy_list,
+        loading, mask_difference, mask_exclude, mask_intersection, mask_union, menu, menu_item,
         menu_separator, menu_submenu, navigation, navigation_item, panel, popover, progress,
         progress_indeterminate, range_slider, responsive, row, segmented_control, select,
         select_item, separator, slider, spacer, speed_dial, spinner, split, stack, tab, tab_bar,

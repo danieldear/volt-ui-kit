@@ -387,6 +387,7 @@ pub struct LayoutBox {
     #[cfg(feature = "rust-ui")]
     pub(super) text_paint: Option<super::motion_text::TextPaint>,
     pub(crate) frames: Option<crate::graphics::CanvasFrames>,
+    pub(crate) live: Option<crate::graphics::CanvasLive>,
     pub scroll_max: [f32; 2],
     pub scroll_offset: [f32; 2],
     pub scroll: Option<super::Scroll>,
@@ -808,11 +809,20 @@ impl Runtime {
                 .iter()
                 .any(|b| b.effects.ambient.is_some() && self.motion_visible(b))
     }
+    /// A live canvas on screen keeps frames coming (never under reduced
+    /// motion, which draws it once, held still).
+    fn live_active(&self) -> bool {
+        !self.motion.borrow().reduced
+            && self
+                .boxes
+                .iter()
+                .any(|b| b.live.is_some() && self.motion_visible(b))
+    }
     pub fn has_animated_geometry(&self) -> bool {
         self.has_transforms && self.motion.borrow().geometry_active()
     }
     pub fn is_animating(&self) -> bool {
-        let active = self.motion.borrow().active() || self.ambient_active();
+        let active = self.motion.borrow().active() || self.ambient_active() || self.live_active();
         #[cfg(feature = "rust-ui")]
         let active = self.progress_active() || active;
         active
@@ -825,7 +835,7 @@ impl Runtime {
         if self.progress_active() {
             return Some(Duration::ZERO);
         }
-        if self.ambient_active() {
+        if self.ambient_active() || self.live_active() {
             return Some(Duration::ZERO);
         }
         self.motion.borrow().animation_wait()
@@ -3729,6 +3739,29 @@ impl Runtime {
             }
             boxes = Some(list);
         }
+        // Live canvases draw now's frame; reduced motion holds one moment.
+        if boxes
+            .as_deref()
+            .unwrap_or(&self.boxes)
+            .iter()
+            .any(|b| b.live.is_some())
+        {
+            let t = if motion.reduced {
+                40.
+            } else {
+                motion.now.as_secs_f32()
+            };
+            let mut list = boxes.take().unwrap_or_else(|| self.boxes.clone());
+            for b in &mut list {
+                if let Some(live) = &b.live {
+                    let [_, _, w, h] = b.bounds.bounds();
+                    let mut canvas = Canvas::default();
+                    (live.0)(&mut canvas, [w / self.scale, h / self.scale], t);
+                    b.canvas = Arc::new(canvas);
+                }
+            }
+            boxes = Some(list);
+        }
         if !motion.reduced
             && boxes
                 .as_deref()
@@ -6459,6 +6492,7 @@ fn place(
         #[cfg(feature = "rust-ui")]
         text_paint: None,
         frames: n.surface.frames.clone(),
+        live: n.surface.live.clone(),
         scroll_max: [0.; 2],
         scroll_offset: [0.; 2],
         scroll: n.surface.scroll,
