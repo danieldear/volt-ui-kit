@@ -213,18 +213,45 @@ fn navigation_bar<C: 'static>(
         back: None,
         buttons: Vec::new(),
     };
+    // Android draws Material's top app bar: an arrow for Back and the title
+    // beside it. Elsewhere, Back in words and the title centred.
+    let material = cfg!(target_os = "android");
     let mut leading: Vec<Element<C>> = Vec::new();
     if let Some(mut back) = back {
         let id = format!("{base}-back");
         bar.back = Some(id.clone());
-        leading.push(
-            button("Back")
+        if material {
+            let mut b = button("")
                 .key(id)
+                .accessible_label("Back")
                 .variant(ButtonVariant::Ghost)
-                .color(ColorToken::Primary)
-                .on_click(move |c: &mut C| back(c))
+                .width(48.)
+                .height(48.)
+                .rounded(Rounding::Full);
+            b = b.on_click(move |c: &mut C| back(c));
+            leading.push(
+                zstack![
+                    b,
+                    icon(Icon::ArrowLeft)
+                        .size(24.)
+                        .stroke(2.)
+                        .color(ColorToken::BaseContent)
+                ]
+                .width(48.)
+                .height(48.)
+                .flow(Flow::Center)
                 .into(),
-        );
+            );
+        } else {
+            leading.push(
+                button("Back")
+                    .key(id)
+                    .variant(ButtonVariant::Ghost)
+                    .color(ColorToken::Primary)
+                    .on_click(move |c: &mut C| back(c))
+                    .into(),
+            );
+        }
     }
     leading.push(spacer().into());
     let mut trailing: Vec<Element<C>> = vec![spacer().into()];
@@ -245,22 +272,67 @@ fn navigation_bar<C: 'static>(
     } else {
         title.clone()
     };
-    let mut rows: Vec<Element<C>> = vec![hstack![
-        hstack(leading).flex(1.).align(Align::Center),
-        text(center).key(format!("{base}-title")).font_weight(600),
-        hstack(trailing).flex(1.).align(Align::Center),
-    ]
-    .key(format!("{base}-bar-row"))
-    .height(44.)
-    .align(Align::Center)
-    .into()];
-    if large_title {
-        rows.push(
-            text(title)
-                .key(format!("{base}-large-title"))
-                .font_size(34.)
-                .font_weight(700)
+    // The title centred across the whole bar, clear of the buttons at
+    // either end: one line, ending in "…" if it must.
+    let row: Element<C> = if material {
+        leading.retain(|e| e.node.flex == 0.);
+        let mut parts = leading;
+        parts.push(
+            text(center)
+                .key(format!("{base}-title"))
+                .font_size(22.)
+                .truncate()
+                .flex(1.)
                 .into(),
+        );
+        parts.extend(trailing.into_iter().filter(|e| e.node.flex == 0.));
+        hstack(parts)
+            .key(format!("{base}-bar-row"))
+            .width_fraction(1.)
+            .height(64.)
+            .padding(4., Edge::Left)
+            .padding(8., Edge::Right)
+            .gap(4., Axis::Horizontal)
+            .align(Align::Center)
+            .into()
+    } else {
+        zstack![
+            hstack![
+                hstack(leading).align(Align::Center),
+                spacer(),
+                hstack(trailing).align(Align::Center),
+            ]
+            .width_fraction(1.)
+            .height(44.)
+            .padding(4., Edge::Horizontal)
+            .align(Align::Center),
+            hstack![text(center)
+                .key(format!("{base}-title"))
+                .font_size(17.)
+                .font_weight(600)
+                .truncate()]
+            .width_fraction(1.)
+            .height(44.)
+            .padding(88., Edge::Horizontal)
+            .justify(Justify::Center)
+            .align(Align::Center),
+        ]
+        .key(format!("{base}-bar-row"))
+        .width_fraction(1.)
+        .height(44.)
+        .into()
+    };
+    let mut rows: Vec<Element<C>> = vec![row];
+    if large_title {
+        // Level with the page's content edge.
+        rows.push(
+            hstack![text(title)
+                .key(format!("{base}-large-title"))
+                .font_size(if material { 28. } else { 34. })
+                .font_weight(if material { 400 } else { 700 })]
+            .padding(16., Edge::Horizontal)
+            .padding(4., Edge::Bottom)
+            .into(),
         );
     }
     let mut bar_element: Element<C> = vstack(rows).key(format!("{base}-bar")).into();

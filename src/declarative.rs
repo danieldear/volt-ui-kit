@@ -423,8 +423,8 @@ pub(crate) mod document;
 pub(crate) mod effects;
 pub(crate) mod extras;
 pub use extras::{
-    BorderStyle, Cursor, Gradient, GridColumns, Justify, NavigationBar, Sides, SplitHandle,
-    TextAlign,
+    BorderStyle, Cursor, Gradient, GridColumns, Justify, NavigationBar, Prompt, PromptButton,
+    Sides, SplitHandle, TabBar, TabBarItem, TextAlign,
 };
 mod responsive;
 pub use effects::{
@@ -438,8 +438,8 @@ mod motion_text;
 mod motion_timeline;
 mod runtime;
 pub use document::{
-    Align, Bindings, Document, DocumentError, EditorHighlights, Flow, Kind, Node, Rounding, Scroll,
-    Scrollbars, Tone, Value,
+    Align, Bindings, Document, DocumentError, EditorHighlights, Flow, InputKind, Kind, Node,
+    Rounding, Scroll, Scrollbars, Tone, Value,
 };
 pub use responsive::{responsive, Breakpoint, Direction, Responsive};
 pub use runtime::{
@@ -448,7 +448,9 @@ pub use runtime::{
 };
 
 #[cfg(feature = "rust-ui")]
-pub use runtime::accessibility::{AccessNode, AccessRole, AccessTableInfo, AccessValue};
+pub use runtime::accessibility::{
+    AccessAction, AccessNode, AccessRole, AccessTableInfo, AccessValue,
+};
 #[cfg(feature = "rust-ui")]
 pub(crate) use runtime::code_view::CodeViewProps;
 #[cfg(feature = "rust-ui")]

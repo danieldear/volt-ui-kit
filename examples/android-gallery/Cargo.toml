@@ -1,0 +1,16 @@
+[package]
+name = "volt-android-gallery"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The iOS gallery's pages and state, run on Android by the shared host.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+volt-ui-kit-mobile = { path = "../../crates/volt-ui-kit-mobile" }
+volt-ios-gallery = { path = "../ios-gallery/rust" }
+
+[profile.release]
+opt-level = 2

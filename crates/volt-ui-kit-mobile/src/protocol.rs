@@ -1,6 +1,6 @@
 use serde::Deserialize;
 /// Version checked by the native host before any pointer-bearing call.
-pub const HOST_ABI_VERSION: u32 = 1;
+pub const HOST_ABI_VERSION: u32 = 3;
 
 /// Colours the platform resolved for the current appearance and contrast
 /// setting, as sRGB RGBA from 0 to 1. On iOS these are UIKit's grouped
@@ -65,11 +65,26 @@ pub enum PlatformEvent {
         x: f32,
         y: f32,
     },
+    /// The finger rested in place: a long press.
+    Hold {
+        x: f32,
+        y: f32,
+    },
     Cancel {},
     Activate {
         id: String,
     },
+    /// A screen reader's "Show menu": open the long-press menu for `id`.
+    Menu {
+        id: String,
+    },
     Focus {
+        id: String,
+    },
+    /// Typing ended (Done, or the keyboard was put away): nothing is focused.
+    Blur {},
+    /// The keyboard's Search (or return) key in field `id`.
+    Submit {
         id: String,
     },
     Text {
@@ -128,7 +143,29 @@ pub enum PlatformEvent {
     Suspend {
         value: bool,
     },
+    /// VoiceOver or TalkBack turned on or off: timed messages wait for it.
+    ScreenReader {
+        on: bool,
+    },
     Draw {},
+    /// The screen's safe area in points, when the view runs under the
+    /// status bar and home indicator: overlays stay inside it.
+    SafeArea {
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+    },
+    /// How far the host's own bottom bars reach up the view, in points: the
+    /// tab bar and home indicator, or the keyboard when it is taller.
+    Bars {
+        bottom: f32,
+        /// The keyboard alone: sheets rise above it.
+        #[serde(default)]
+        keyboard: f32,
+    },
+    /// Changes sent through an `Updater` are waiting: apply them and draw.
+    Updates {},
     Back {},
 }
 impl PlatformEvent {
@@ -145,9 +182,10 @@ impl PlatformEvent {
                 height,
                 scale,
             } => [*width, *height, *scale].iter().all(|v| v.is_finite()),
-            Self::Begin { x, y } | Self::Move { x, y } | Self::End { x, y } => {
-                x.is_finite() && y.is_finite()
-            }
+            Self::Begin { x, y }
+            | Self::Move { x, y }
+            | Self::End { x, y }
+            | Self::Hold { x, y } => x.is_finite() && y.is_finite(),
             Self::Scroll { dy, .. } => dy.is_finite() && dy.abs() <= 16_384.,
             Self::Value { value, .. } => value.is_finite(),
             Self::ScrollInsets { top, bottom, .. } => [top, bottom]

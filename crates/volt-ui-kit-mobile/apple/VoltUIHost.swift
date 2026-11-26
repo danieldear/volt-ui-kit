@@ -11,7 +11,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
-        window.rootViewController = VoltNavigationController()
+        window.rootViewController = VoltRootController()
         // Debugging aid: VOLT_ANIMATION_SPEED=0.1 plays UIKit animations ten
         // times slower, to inspect transitions frame by frame.
         if let speed = ProcessInfo.processInfo.environment["VOLT_ANIMATION_SPEED"].flatMap(Float.init), speed > 0 {
@@ -20,8 +20,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.makeKeyAndVisible()
         self.window = window
     }
-    func sceneWillResignActive(_ scene: UIScene) { (window?.rootViewController as? VoltNavigationController)?.canvas.suspend(true) }
-    func sceneDidBecomeActive(_ scene: UIScene) { (window?.rootViewController as? VoltNavigationController)?.canvas.suspend(false) }
+    func sceneWillResignActive(_ scene: UIScene) { (window?.rootViewController as? VoltRootController)?.canvas.suspend(true) }
+    func sceneDidBecomeActive(_ scene: UIScene) { (window?.rootViewController as? VoltRootController)?.canvas.suspend(false) }
 }
 /// One page of a Volt navigation stack. The top page holds the live canvas;
 /// pages below keep a snapshot of how they looked, for back swipes.
@@ -65,8 +65,103 @@ final class VoltPageController: UIViewController {
 }
 /// UIKit's navigation controller around Volt's pages: the real bar, back
 /// button, swipe-back and push animations. Rust's history decides the pages.
-final class VoltNavigationController: UINavigationController, UINavigationControllerDelegate {
+/// The app's root. When Rust describes a tab view, UIKit's own tab bar (Liquid
+/// Glass on iOS 26) switches between sections, each with its own navigation
+/// stack, and the one Volt canvas moves to the section on screen. Without a
+/// tab view there's a single stack and no bar. Rust decides the selection:
+/// a tap asks Rust, and the bar follows what Rust then reports.
+final class VoltRootController: UITabBarController, UITabBarControllerDelegate {
     let canvas = VoltCanvas()
+    private var stacks: [VoltNavigationController] = []
+    private var tabIds: [String] = []
+    private var covered = false
+    init() {
+        super.init(nibName: nil, bundle: nil)
+        delegate = self
+        let first = VoltNavigationController(canvas: canvas)
+        stacks = [first]
+        setViewControllers(stacks, animated: false)
+        canvas.navigation = first
+        canvas.root = self
+        first.adopt(nil)
+        showTabBar(false)
+    }
+    required init?(coder: NSCoder) { fatalError("Use programmatic host") }
+    private func showTabBar(_ shown: Bool) {
+        if #available(iOS 18.0, *) {
+            if isTabBarHidden == shown { setTabBarHidden(!shown, animated: false) }
+        } else if tabBar.isHidden == shown {
+            tabBar.isHidden = !shown
+        }
+    }
+
+    /// Match UIKit's tabs to Rust's. `before` is how the canvas looked
+    /// before the event, kept by the section that is leaving.
+    fileprivate func sync(_ tabs: TabsInfo?, before: UIView?, accent: UIColor, modal: Bool) {
+        guard let tabs, !tabs.items.isEmpty else { showTabBar(false); return }
+        // A modal sheet or dialog covers the tab bar, as on iOS.
+        if modal != covered {
+            covered = modal
+            // Fade it rather than hide it: hiding the tab bar changes the
+            // page's layout, and the page behind a sheet must not move.
+            tabBar.isUserInteractionEnabled = !modal
+            UIView.animate(withDuration: 0.25) { self.tabBar.alpha = modal ? 0 : 1 }
+        }
+        if modal { return }
+        if tabBar.tintColor != accent { tabBar.tintColor = accent }
+        tabIds = tabs.items.map(\.id)
+        while stacks.count < tabs.items.count { stacks.append(VoltNavigationController(canvas: canvas)) }
+        for (stack, item) in zip(stacks, tabs.items) {
+            let bar = stack.tabBarItem!
+            if bar.title != item.label { bar.title = item.label }
+            let name = item.symbol ?? systemSymbol(item.icon)
+            if bar.accessibilityIdentifier != item.id || stack.symbol != name {
+                bar.image = UIImage(systemName: name) ?? UIImage(systemName: "circle.fill")
+                bar.accessibilityIdentifier = item.id
+                stack.symbol = name
+            }
+            if bar.badgeValue != item.badge { bar.badgeValue = item.badge }
+        }
+        let target = stacks[min(tabs.selected, stacks.count - 1)]
+        if canvas.navigation !== target {
+            canvas.navigation?.leave(before ?? canvas.snapshotView(afterScreenUpdates: false))
+            canvas.navigation = target
+            target.adopt(nil)
+        }
+        if stacks.count > tabs.items.count { stacks.removeLast(stacks.count - tabs.items.count) }
+        if viewControllers?.count != stacks.count || !zip(viewControllers ?? [], stacks).allSatisfy({ $0 === $1 }) {
+            setViewControllers(stacks, animated: false)
+        }
+        if selectedViewController !== target { selectedViewController = target }
+        showTabBar(true)
+    }
+    /// A tap on a tab: Rust selects it (or reselects the open one) and the
+    /// bar follows on the next snapshot.
+    func tabBarController(_ controller: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        if let i = stacks.firstIndex(where: { $0 === viewController }), i < tabIds.count {
+            canvas.navigate(tabIds[i])
+        }
+        return false
+    }
+}
+/// SF Symbols for Volt's icons, for tabs that don't name their own.
+private func systemSymbol(_ icon: String) -> String {
+    [
+        "Home": "house.fill", "Settings": "gearshape.fill", "User": "person.fill",
+        "Users": "person.2.fill", "Bell": "bell.fill", "Mail": "envelope.fill",
+        "Calendar": "calendar", "Clock": "clock.fill", "Star": "star.fill", "StarFilled": "star.fill",
+        "Heart": "heart.fill", "Bookmark": "bookmark.fill", "Inbox": "tray.fill",
+        "Folder": "folder.fill", "Search": "magnifyingglass", "Grid": "square.grid.2x2.fill",
+        "List": "list.bullet", "Globe": "globe", "Bolt": "bolt.fill", "Image": "photo.fill",
+        "File": "doc.fill", "FileText": "doc.text.fill", "Send": "paperplane.fill",
+        "Check": "checkmark.circle.fill", "Command": "command", "Play": "play.fill",
+        "Lock": "lock.fill", "Palette": "paintpalette.fill", "Sliders": "slider.horizontal.3",
+    ][icon] ?? "circle.fill"
+}
+final class VoltNavigationController: UINavigationController, UINavigationControllerDelegate {
+    unowned let canvas: VoltCanvas
+    /// The symbol on this section's tab.
+    fileprivate var symbol: String?
     /// The depth Rust last reported.
     private var depth = 0
     /// The stack's Back control; the same ID on every page.
@@ -85,14 +180,21 @@ final class VoltNavigationController: UINavigationController, UINavigationContro
         pages.last?.setContentScrollView(scroll, for: .top)
         pages.last?.setContentScrollView(scroll, for: .bottom)
     }
-    init() {
+    init(canvas: VoltCanvas) {
+        self.canvas = canvas
         let root = VoltPageController(depth: 0)
         super.init(rootViewController: root)
         delegate = self
         navigationBar.prefersLargeTitles = true
         setNavigationBarHidden(true, animated: false)
-        canvas.navigation = self
-        root.attach(canvas, fullBleed: fullBleed)
+    }
+    /// The canvas arrives: this section is on screen.
+    fileprivate func adopt(_: UIView?) {
+        pages.last?.attach(canvas, fullBleed: fullBleed)
+    }
+    /// The canvas leaves for another section; keep how this one looked.
+    fileprivate func leave(_ image: UIView?) {
+        pages.last?.keep(image, frame: canvas.frame)
     }
     required init?(coder: NSCoder) { fatalError("Use programmatic host") }
     private var pages: [VoltPageController] { viewControllers.compactMap { $0 as? VoltPageController } }
@@ -149,6 +251,19 @@ final class VoltNavigationController: UINavigationController, UINavigationContro
             })
         }
     }
+    private var covered = false
+    /// A modal is open over the page: the bar's controls dim and stop
+    /// taking taps until it closes.
+    fileprivate func cover(_ modal: Bool) {
+        guard modal != covered else { return }
+        covered = modal
+        navigationBar.isUserInteractionEnabled = !modal
+        navigationBar.tintAdjustmentMode = modal ? .dimmed : .automatic
+        // A modal covers the bar: it fades out rather than float above the
+        // scrim, and comes back when the modal closes.
+        UIView.animate(withDuration: 0.25) { self.navigationBar.alpha = modal ? 0 : 1 }
+        setBackGestures(!modal && (pages.last?.bar?.back != nil))
+    }
     private var backEnabled = true
     private var held = false
     private var heldContent = false
@@ -175,7 +290,7 @@ final class VoltNavigationController: UINavigationController, UINavigationContro
     }
     /// UIKit went back (back button or swipe): bring the canvas and Rust along.
     func navigationController(_ navigationController: UINavigationController, didShow viewController: UIViewController, animated: Bool) {
-        guard let shown = viewController as? VoltPageController, shown.depth < depth else { return }
+        guard canvas.navigation === self, let shown = viewController as? VoltPageController, shown.depth < depth else { return }
         shown.attach(canvas, fullBleed: fullBleed)
         let steps = depth - shown.depth
         depth = shown.depth
@@ -197,10 +312,34 @@ private struct Node: Decodable {
     let checked: Bool?
     /// A slider's value, minimum, maximum and step.
     let numeric: [CGFloat]?
+    /// Actions besides activating it (a row's swipe actions, its menu).
+    let actions: [NodeAction]?
+    /// A text input wants the Done bar above the keyboard.
+    let doneBar: Bool?
+    /// What an empty field says.
+    let placeholder: String?
+    /// What a field holds (email, url, one_time_code...), for its keyboard.
+    let inputKind: String?
+    /// Pressing it while typing leaves the keyboard up.
+    let keepsKeyboard: Bool?
+    /// The colour behind a field and the corner radius of what paints it.
+    let backdrop: Backdrop?
     var visibleRect: CGRect { visibleBounds.count == 4 && visibleBounds[2] > 0 && visibleBounds[3] > 0 ? CGRect(x:visibleBounds[0],y:visibleBounds[1],width:visibleBounds[2],height:visibleBounds[3]) : .null }
     var rect: CGRect { bounds.count == 4 ? CGRect(x: bounds[0], y: bounds[1], width: bounds[2], height: bounds[3]) : .zero }
 }
+private struct PromptInfo: Decodable {
+    struct Action: Decodable { let id: String; let label: String; let destructive: Bool; let cancel: Bool }
+    let id: String; let sheet: Bool; let title: String; let message: String; let actions: [Action]
+}
+private struct Backdrop: Decodable { let color: [CGFloat]; let radius: CGFloat }
+/// `target` is the control the action presses; none opens the node's menu.
+private struct NodeAction: Decodable { let label: String; let target: String? }
 fileprivate struct NavButton: Decodable, Equatable { let id: String; let label: String }
+fileprivate struct TabItemInfo: Decodable, Equatable {
+    let id: String; let label: String; let symbol: String?; let icon: String; let badge: String?
+}
+/// The outermost tab view Rust describes.
+fileprivate struct TabsInfo: Decodable, Equatable { let id: String; let selected: Int; let items: [TabItemInfo] }
 /// The outermost navigation bar Rust describes.
 fileprivate struct NavInfo: Decodable, Equatable {
     let id: String; let title: String; let largeTitle: Bool; let depth: Int
@@ -212,11 +351,34 @@ private struct ScrollInfo: Decodable {
     let insets: [CGFloat]?
     /// Pull to refresh: the container has `on_refresh`, and its work is under way.
     let refresh: Bool?; let refreshing: Bool?
+    /// Behind an open modal: it takes no touches.
+    let inert: Bool?
+    /// Inside something that drags, such as a sheet.
+    let inDraggable: Bool?
 }
 private struct Snapshot: Decodable {
     let nodes: [Node]; let dark: Bool; let frames: UInt64; let backend: String; let animating: Bool?
-    let scrollViews: [ScrollInfo]?; let navigation: NavInfo?
+    let scrollViews: [ScrollInfo]?; let navigation: NavInfo?; let tabs: TabsInfo?
+    /// A dialog or sheet is open: it covers the bars.
+    let modal: Bool?
+    /// Long presses that opened a menu, counted.
+    let holds: UInt64?
+    /// The field Rust focused for typing, such as a search field that opens
+    /// with the keyboard up.
+    let editing: String?
+    /// An alert or action sheet to show with UIKit's own.
+    let prompt: PromptInfo?
+    /// Areas a finger drags sideways (rows with swipe actions), in points.
+    let sideways: [[CGFloat]]?
     let background: [CGFloat]; let fieldBackground: [CGFloat]; let foreground: [CGFloat]; let accent: [CGFloat]
+}
+/// `top` laid over `bottom`, fully opaque.
+private func opaque(_ top: UIColor, over bottom: UIColor) -> UIColor {
+    var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+    var (r2, g2, b2, a2): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+    top.getRed(&r, green: &g, blue: &b, alpha: &a)
+    bottom.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+    return UIColor(red: r * a + r2 * (1 - a), green: g * a + g2 * (1 - a), blue: b * a + b2 * (1 - a), alpha: 1)
 }
 private func color(_ rgba:[CGFloat])->UIColor {
     guard rgba.count == 4 else {return .systemBackground}
@@ -240,13 +402,35 @@ private final class NativeScroll: UIScrollView {
     /// UIKit computed its own; UIKit's reports are the truth afterwards.
     var predicted = false
     weak var canvas: VoltCanvas?
+    /// Inside a sheet: a downward drag from its top moves the sheet.
+    var inDraggable = false
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         guard super.gestureRecognizerShouldBegin(g) else { return false }
         guard g === panGestureRecognizer, let canvas else { return true }
-        return canvas.shouldScroll(self, at: g.location(in: canvas), velocity: panGestureRecognizer.velocity(in: canvas))
+        // Where the finger went down: by the time a pan is recognised it has
+        // moved, and a drag that began on a sheet's header must stay the
+        // sheet's even once it crosses into the sheet's list.
+        let now = g.location(in: canvas), moved = panGestureRecognizer.translation(in: canvas)
+        let start = CGPoint(x: now.x - moved.x, y: now.y - moved.y)
+        let velocity = panGestureRecognizer.velocity(in: canvas)
+        if inDraggable, velocity.y > abs(velocity.x) {
+            // As in iOS sheets: at the top of the list (or with nothing to
+            // scroll), pulling down moves the sheet, not the list.
+            let top = -adjustedContentInset.top
+            let scrolls = contentSize.height > bounds.height - adjustedContentInset.top - adjustedContentInset.bottom + 0.5
+            if !scrolls || contentOffset.y <= top + 0.5 { return false }
+        }
+        return canvas.shouldScroll(self, at: start, velocity: velocity)
     }
 }
 /// Holds the canvas weakly so the display link never keeps it alive.
+/// Canvases by Rust view ID, for wakes that arrive after a view is gone.
+@MainActor private var wakeTargets: [UInt64: WeakCanvas] = [:]
+private struct WeakCanvas { weak var canvas: VoltCanvas? }
+/// Rust calls this on the main queue when an Updater sent state changes.
+private let wakeCanvas: volt_wake_fn = { handle in
+    MainActor.assumeIsolated { wakeTargets[handle]?.canvas?.applyUpdates() }
+}
 private final class FrameTarget: NSObject {
     weak var canvas: VoltCanvas?
     init(_ canvas: VoltCanvas) { self.canvas = canvas; super.init() }
@@ -274,14 +458,33 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var editingMultiline = false
     /// The native editor in use.
     private var editor: UIView { editingMultiline ? area : field }
+    /// The Done bars above the keyboard, which a chat's message box leaves out.
+    private let fieldBar = UIToolbar()
+    private let areaBar = UIToolbar()
+    /// The page colour, for laying a translucent field colour over.
+    private var pageBackground: UIColor = .systemBackground
+    /// `done()` is running: resigning the editor mustn't call it again.
+    private var ending = false
+    /// The field being typed in has no Done bar: dragging a list puts the
+    /// keyboard away instead.
+    private var dragDismisses = false
     /// How far the keyboard covers the canvas, in points.
     private var keyboardOverlap: CGFloat = 0
+    /// A sheet or dialog Volt draws is open.
+    private var modalOpen = false
+    private var sideways: [CGRect] = []
+    private var lastEditing: String?
     private var retryCount = 0
     private var suspended = false
     private var failed = false
     private var activeTouch: UITouch?
     private var touchStart = CGPoint.zero
     private var dragged = false
+    private var touchFieldId: String?
+    /// Fires when the finger rests: a long press opens a menu in Rust.
+    private var holdWork: DispatchWorkItem?
+    /// Rust's count of long presses that opened a menu; each one buzzes.
+    private var holds: UInt64 = 0
     private var touchButtonId: String?
     private var lastSize = CGSize.zero
     private var lastScale: CGFloat = 0
@@ -290,6 +493,8 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     private var displayLink: CADisplayLink?
     /// The navigation controller that shows this canvas's pages.
     weak var navigation: VoltNavigationController?
+    /// The root, for the tab bar.
+    weak var root: VoltRootController?
     private var scrollers: [String: NativeScroll] = [:]
     /// Scroll views of pages left behind, kept (with their offsets) so a page
     /// coming back gets the same one and UIKit's large title stays right.
@@ -311,8 +516,14 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             self.sendAppearance()
         }
         NotificationCenter.default.addObserver(self, selector: #selector(sendAppearance), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sendScreenReader), name: UIAccessibility.voiceOverStatusDidChangeNotification, object: nil)
         let link = CADisplayLink(target: FrameTarget(self), selector: #selector(FrameTarget.frame))
+        #if targetEnvironment(simulator)
+        // The Simulator draws on the CPU: an even 60 beats an uneven 120.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        #else
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        #endif
         link.isPaused = true
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -330,15 +541,13 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         field.autocorrectionType = .no
         field.returnKeyType = .done
         field.addTarget(self, action: #selector(edited), for: .editingChanged)
-        let toolbar = UIToolbar()
-        toolbar.sizeToFit()
-        toolbar.items = [UIBarButtonItem(systemItem: .flexibleSpace), UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
-        field.inputAccessoryView = toolbar
+        fieldBar.sizeToFit()
+        fieldBar.items = [UIBarButtonItem(systemItem: .flexibleSpace), UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
+        field.inputAccessoryView = fieldBar
         area.delegate = self
         area.font = .systemFont(ofSize: 17)
         area.textContainerInset = UIEdgeInsets(top: 10, left: 7, bottom: 10, right: 7)
         area.autocorrectionType = .no
-        let areaBar = UIToolbar()
         areaBar.sizeToFit()
         areaBar.items = [UIBarButtonItem(systemItem: .flexibleSpace), UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(done))]
         area.inputAccessoryView = areaBar
@@ -354,17 +563,25 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
               let screen = window?.screen else { return }
         let frame = convert(end, from: screen.coordinateSpace)
         keyboardOverlap = note.name == UIResponder.keyboardWillHideNotification ? 0 : max(0, bounds.maxY - frame.minY)
+        // Rust first: a field that rides on the keyboard (a dock's search, a
+        // sheet) moves above it, and then needs no scrolling into view.
+        sendBars()
         applyKeyboardInset()
     }
     private func applyKeyboardInset() {
         guard let s = contentScroll else { return }
-        let extra = max(0, keyboardOverlap - s.safeAreaInsets.bottom)
+        // Only what the keyboard covers: a transcript above a message box
+        // that rides the keyboard (Rust already moved it) needs nothing.
+        let covered = keyboardOverlap > 0 ? max(0, s.frame.maxY - (bounds.maxY - keyboardOverlap)) : 0
+        let extra = max(0, covered - s.safeAreaInsets.bottom)
         if s.contentInset.bottom != extra { s.contentInset.bottom = extra }
         revealEditor()
     }
     /// Scroll the page so the field being edited sits above the keyboard.
     private func revealEditor() {
-        guard let id = editingId, keyboardOverlap > 0, let s = contentScroll,
+        // A field in a sheet: the sheet rises above the keyboard itself, and
+        // the page behind it stays where it is.
+        guard !modalOpen, let id = editingId, keyboardOverlap > 0, let s = contentScroll,
               let node = nodes.first(where: { $0.id == id }) else { return }
         let top = s.frame.minY + s.adjustedContentInset.top + 8
         let bottom = bounds.height - keyboardOverlap - 16
@@ -377,8 +594,22 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         s.setContentOffset(CGPoint(x: s.contentOffset.x, y: y), animated: true)
     }
     required init?(coder: NSCoder) { fatalError("Use programmatic host") }
-    deinit { displayLink?.invalidate(); if handle != 0 { volt_destroy(handle) } }
+    deinit {
+        displayLink?.invalidate()
+        if handle != 0 {
+            let id = handle
+            MainActor.assumeIsolated { wakeTargets[id] = nil }
+            _ = volt_set_wake(id, nil)
+            volt_destroy(id)
+        }
+    }
+    /// State changes from other threads are waiting: apply them and draw.
+    fileprivate func applyUpdates() { send(["op": "updates"]) }
     /// The system appearance, its colours and the Reduce Motion setting.
+    /// VoiceOver on or off: messages that close themselves wait for it.
+    @objc private func sendScreenReader() {
+        send(["op": "screen_reader", "on": UIAccessibility.isVoiceOverRunning])
+    }
     @objc private func sendAppearance() {
         let t = traitCollection
         let colors: [String: [CGFloat]] = [
@@ -395,11 +626,34 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         ]
         send(["op": "appearance", "dark": t.userInterfaceStyle == .dark, "colors": colors,
               "reduce_motion": UIAccessibility.isReduceMotionEnabled])
+        sendScreenReader()
+        // UIKit cross-fades the screen while the appearance changes and keeps
+        // the old Metal frame through it: draw again once it settles.
+        for delay in [0.05, 0.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, !self.suspended else { return }
+                self.send(["op": "draw"])
+            }
+        }
     }
     /// One display-link frame; the link runs only while Rust reports motion.
     fileprivate func frame() {
         guard handle != 0, !failed, !suspended else { displayLink?.isPaused = true; return }
+        framePending = false
         send(["op": "draw"])
+    }
+    /// Events applied since the last draw wait for the next frame.
+    private var framePending = false
+    /// Apply an event that only moves things (a scroll, a moving finger)
+    /// and draw it on the next screen refresh: one draw per refresh, in step
+    /// with the display, however fast the events come.
+    private func apply(_ event: [String: Any]) {
+        precondition(Thread.isMainThread)
+        guard handle != 0, !failed, let data = try? JSONSerialization.data(withJSONObject: event) else { return }
+        let status = data.withUnsafeBytes { volt_apply(handle, $0.bindMemory(to: UInt8.self).baseAddress!, data.count) }
+        if status == 0 { showError(String(cString: volt_error())); return }
+        framePending = true
+        displayLink?.isPaused = false
     }
     private func initialize() {
         guard handle == 0, !failed, metalLayer.device != nil else { return }
@@ -417,6 +671,8 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             volt_create(Unmanaged.passUnretained(metalLayer).toOpaque(), bytes.bindMemory(to: UInt8.self).baseAddress!, data.count)
         }
         if handle == 0 { showError(String(cString: volt_error())); return }
+        wakeTargets[handle] = WeakCanvas(canvas: self)
+        _ = volt_set_wake(handle, wakeCanvas)
         send(["op": "host", "native_scrolling": true, "native_navigation": navigation != nil,
               "native_controls": true])
         sendAppearance()
@@ -424,17 +680,46 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0, window != nil, !failed else { return }
+        // The Simulator's Metal can't run Volt's GPU renderer, so it draws on
+        // the CPU: at 2x it keeps up with scrolling (a phone draws on the GPU
+        // at its full 3x).
+        #if targetEnvironment(simulator)
+        let scale = min(window?.screen.scale ?? 1, 2)
+        #else
         let scale = window?.screen.scale ?? 1
+        #endif
         contentScaleFactor = scale
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: (bounds.width * scale).rounded(), height: (bounds.height * scale).rounded())
+        updateTopFade()
         initialize()
         if lastSize != bounds.size || lastScale != scale {
             lastSize = bounds.size; lastScale = scale
             send(["op": "resize", "width": bounds.width, "height": bounds.height, "scale": scale])
         }
         positionEditor()
+        sendSafeArea()
+        sendBars()
     }
+    private var lastSafeArea: UIEdgeInsets?
+    /// The window's safe area: the canvas runs under the bars, but sheets and
+    /// dialogs Volt draws stay clear of the status bar and home indicator.
+    private func sendSafeArea() {
+        guard handle != 0, let insets = window?.safeAreaInsets, insets != lastSafeArea else { return }
+        lastSafeArea = insets
+        send(["op": "safe_area", "top": insets.top, "right": insets.right, "bottom": insets.bottom, "left": insets.left])
+    }
+    private var lastBars: [CGFloat]?
+    /// What covers the canvas from below: the tab bar and home indicator
+    /// (the canvas's own safe area), or the keyboard when that is taller.
+    /// Volt's action dock sits just above it.
+    private func sendBars() {
+        let bottom = max(safeAreaInsets.bottom, keyboardOverlap)
+        guard handle != 0, [bottom, keyboardOverlap] != lastBars else { return }
+        lastBars = [bottom, keyboardOverlap]
+        send(["op": "bars", "bottom": bottom, "keyboard": keyboardOverlap])
+    }
+    override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
     override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
     override func tintColorDidChange() { super.tintColorDidChange(); if handle != 0 { sendAppearance() } }
     func suspend(_ value: Bool) {
@@ -466,21 +751,61 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard let ptr = volt_snapshot(handle), let data = String(cString: ptr).data(using: .utf8),
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { showError("Invalid Rust UI snapshot"); return }
         nodes = snapshot.nodes
+        if let count = snapshot.holds, count != holds {
+            if count > holds { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+            holds = count
+        }
+        root?.sync(snapshot.tabs, before: before, accent: color(snapshot.accent), modal: snapshot.modal ?? false)
+        modalOpen = snapshot.modal ?? false
+        sideways = (snapshot.sideways ?? []).compactMap { r in
+            r.count == 4 ? CGRect(x: r[0], y: r[1], width: r[2], height: r[3]) : nil
+        }
+        // The field being typed in is gone (a dock's search closed): put the
+        // keyboard away rather than type into nothing.
+        if let id = editingId, !nodes.contains(where: { $0.id == id }) {
+            editingId = nil
+            editor.resignFirstResponder()
+            editor.removeFromSuperview()
+        }
+        // Rust asked for a field to be typed in: open the keyboard once, when
+        // the request changes, so dismissing the keyboard sticks.
+        if snapshot.editing != lastEditing {
+            lastEditing = snapshot.editing
+            if let want = snapshot.editing, want != editingId {
+                // Next turn, if Rust still wants it and the field is still
+                // there: a tap that closes search also commits its text.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.lastEditing == want, self.editingId != want else { return }
+                    // UIKit's own search field takes the keyboard itself.
+                    if let search = self.controls[want]?.control as? UISearchTextField {
+                        if !search.isFirstResponder { search.becomeFirstResponder() }
+                        return
+                    }
+                    guard let node = self.nodes.first(where: { $0.id == want && $0.kind == "field" && !$0.readOnly })
+                    else { return }
+                    self.beginEditing(node)
+                }
+            }
+        }
+        syncPrompt(snapshot.prompt)
+        navigation?.cover(modalOpen)
+        pageBackground = color(snapshot.background)
         navigation?.sync(snapshot.navigation, before: before, background: color(snapshot.background),
                          accent: color(snapshot.accent))
-        displayLink?.isPaused = !(snapshot.animating ?? false) || suspended
+        displayLink?.isPaused = (!(snapshot.animating ?? false) && !framePending) || suspended
         syncScrollViews(snapshot.scrollViews ?? [])
+        updateTopFade()
         var elements: [Any] = []
         // Scroll is handled by the container's accessibilityScroll override.
         // A full-viewport leaf proxy here would occlude its real editable child
         // in accessibility hit-testing even though that child is visible.
         syncControls()
-        for node in nodes where node.kind == "switch" || node.kind == "slider" {
+        for node in nodes where node.kind == "switch" || node.kind == "slider" || node.kind == "search" {
             if let control = controls[node.id]?.control, !(controls[node.id]?.holder.isHidden ?? true) {
                 elements.append(control)
             }
         }
-        for node in nodes where !node.label.isEmpty && node.kind != "scroll" && node.kind != "switch" && node.kind != "slider" {
+        for node in nodes where !node.label.isEmpty && node.kind != "scroll" && node.kind != "switch" && node.kind != "slider" && node.kind != "search" {
             let rect = node.visibleRect.intersection(bounds)
             guard !rect.isNull, rect.width > 1, rect.height > 1 else { continue }
             if node.id == editingId { elements.append(editor); continue }
@@ -493,6 +818,13 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             if !node.enabled { proxy.accessibilityTraits.insert(.notEnabled) }
             if node.kind == "button" || node.kind == "field" {
                 proxy.activate = { [weak self] in self?.activate(node) ?? false }
+            }
+            proxy.accessibilityCustomActions = (node.actions ?? []).map { action in
+                UIAccessibilityCustomAction(name: action.label) { [weak self] _ in
+                    guard let self else { return false }
+                    if let target = action.target { return self.send(["op": "activate", "id": target]) }
+                    return self.send(["op": "menu", "id": node.id])
+                }
             }
             elements.append(proxy)
         }
@@ -537,6 +869,10 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             seen.insert(info.id)
             let s = scrollers[info.id] ?? unpark(info.id) ?? makeScroller(info.id)
             s.axes = info.axes
+            // Behind a modal its pan (which the canvas carries) stays off.
+            let live = !(info.inert ?? false)
+            s.inDraggable = info.inDraggable ?? false
+            if s.panGestureRecognizer.isEnabled != live { s.panGestureRecognizer.isEnabled = live }
             let behavior: UIScrollView.ContentInsetAdjustmentBehavior = info.id == mainId ? .always : .never
             if s.contentInsetAdjustmentBehavior != behavior { s.contentInsetAdjustmentBehavior = behavior }
             let frame = CGRect(x: info.frame[0], y: info.frame[1], width: info.frame[2], height: info.frame[3])
@@ -594,6 +930,74 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         }
     }
     private weak var contentScroll: NativeScroll?
+    /// The alert or action sheet UIKit is showing for Rust, by its ID.
+    private var shownPrompt: (id: String, controller: UIAlertController)?
+    /// Show Rust's alert or action sheet with UIKit's own, and put it away
+    /// when Rust closes it. Every button runs Rust's, which closes it there.
+    private func syncPrompt(_ prompt: PromptInfo?) {
+        if let shown = shownPrompt, shown.id != prompt?.id {
+            if shown.controller.presentingViewController != nil { shown.controller.dismiss(animated: true) }
+            shownPrompt = nil
+        }
+        guard let prompt, shownPrompt == nil, !suspended else { return }
+        var top = window?.rootViewController
+        while let next = top?.presentedViewController { top = next }
+        guard let host = top else { return }
+        let alert = UIAlertController(title: prompt.title.isEmpty ? nil : prompt.title,
+                                      message: prompt.message.isEmpty ? nil : prompt.message,
+                                      preferredStyle: prompt.sheet ? .actionSheet : .alert)
+        for action in prompt.actions {
+            let style: UIAlertAction.Style = action.cancel ? .cancel : action.destructive ? .destructive : .default
+            alert.addAction(UIAlertAction(title: action.label, style: style) { [weak self] _ in
+                guard let self else { return }
+                self.shownPrompt = nil
+                self.send(["op": "navigation", "id": action.id])
+            })
+        }
+        // An action sheet grows from what opened it: where the finger was.
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = self
+            popover.sourceRect = CGRect(x: touchStart.x, y: touchStart.y, width: 1, height: 1)
+        }
+        shownPrompt = (prompt.id, alert)
+        host.present(alert, animated: true)
+    }
+    /// Content scrolled under the status and navigation bars fades into the
+    /// page, as it does in UIKit lists. UIKit's own edge effect can't fade
+    /// Volt's drawing (the scroll views it watches are empty stand-ins), so
+    /// the host lays this gradient over the canvas.
+    private let topFade: UIView = {
+        let v = UIView()
+        v.isUserInteractionEnabled = false
+        v.layer.addSublayer(CAGradientLayer())
+        return v
+    }()
+    private func updateTopFade() {
+        // Only where a main scroll view runs under the bars, and not while a
+        // sheet or alert covers the page.
+        guard let s = contentScroll, !modalOpen, s.adjustedContentInset.top > 1 else {
+            topFade.isHidden = true
+            return
+        }
+        // Only the status bar and the compact navigation bar: a large title
+        // stays clear. It shows as content scrolls under, not at rest.
+        let bars = (window?.safeAreaInsets.top ?? safeAreaInsets.top) + 54
+        let height = bars + 16
+        let scrolled = s.contentOffset.y + s.adjustedContentInset.top
+        if topFade.superview !== self { addSubview(topFade) }
+        // Under the native text editor, above the drawing.
+        if editingId != nil { insertSubview(topFade, belowSubview: editor) } else { bringSubviewToFront(topFade) }
+        topFade.isHidden = scrolled <= 0.5
+        topFade.alpha = min(1, max(0, scrolled / 24))
+        topFade.frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
+        guard let g = topFade.layer.sublayers?.first as? CAGradientLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        g.frame = topFade.bounds
+        g.colors = [pageBackground.withAlphaComponent(0.9), pageBackground.withAlphaComponent(0.6), pageBackground.withAlphaComponent(0)].map(\.cgColor)
+        g.locations = [0, NSNumber(value: Double((bars - 20) / height)), 1]
+        CATransaction.commit()
+    }
     /// Insets to give Rust once the current update finishes.
     private var pendingInsets: [(String, CGFloat, CGFloat)] = []
     /// Nested updates in progress; bounded so no feedback can recurse.
@@ -629,26 +1033,44 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     }
     private func syncControls() {
         var seen = Set<String>()
-        for node in nodes where node.kind == "switch" || node.kind == "slider" {
+        for node in nodes where node.kind == "switch" || node.kind == "slider" || node.kind == "search" {
             seen.insert(node.id)
             let entry = controls[node.id] ?? makeControl(node)
             let visible = node.visibleRect
             entry.holder.isHidden = visible.isNull
             guard !visible.isNull else { continue }
-            entry.holder.frame = visible
             entry.control.isEnabled = node.enabled
             entry.control.accessibilityIdentifier = node.id
             entry.control.accessibilityLabel = node.label
-            let rect = node.rect.offsetBy(dx: -visible.minX, dy: -visible.minY)
             if let toggle = entry.control as? UISwitch {
-                let size = toggle.intrinsicContentSize
-                // Without a visible label the switch fills its box from the
+                // The size UIKit draws it at: iOS 26's switch is wider than
+                // older ones and than its intrinsic size says.
+                toggle.sizeToFit()
+                let size = toggle.bounds.size
+                // Without a visible label the switch sits at its box's
                 // trailing edge, as in an iOS row.
-                let x = rect.width < size.width + 8 ? rect.maxX - size.width : rect.minX + 2
-                toggle.frame = CGRect(x: x, y: rect.midY - size.height / 2, width: size.width, height: size.height)
+                let box = node.rect
+                let x = box.width < size.width + 8 ? box.maxX - size.width : box.minX + 2
+                let frame = CGRect(x: x, y: box.midY - size.height / 2, width: size.width, height: size.height)
+                // A switch a little wider than its box still draws whole,
+                // rounded ends and all; only a scroll view's edge cuts it.
+                let holder = visible == box ? box.union(frame) : visible
+                entry.holder.frame = holder
+                toggle.frame = frame.offsetBy(dx: -holder.minX, dy: -holder.minY)
                 let on = node.checked ?? false
                 if toggle.isOn != on { toggle.setOn(on, animated: true) }
+            } else if let search = entry.control as? UISearchTextField {
+                // UIKit's own search field, centred in the space Volt gave it.
+                entry.holder.frame = visible
+                let rect = node.rect.offsetBy(dx: -visible.minX, dy: -visible.minY)
+                let height = min(rect.height, 44)
+                search.frame = CGRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+                search.placeholder = node.placeholder ?? node.label
+                // Rust's query, unless someone is typing in it now.
+                if !search.isFirstResponder, search.text != (node.value ?? "") { search.text = node.value ?? "" }
             } else if let slider = entry.control as? UISlider, let n = node.numeric, n.count == 4 {
+                entry.holder.frame = visible
+                let rect = node.rect.offsetBy(dx: -visible.minX, dy: -visible.minY)
                 let height = max(slider.intrinsicContentSize.height, 34)
                 slider.frame = CGRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
                 slider.minimumValue = Float(n[1])
@@ -665,7 +1087,27 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         let holder = UIView()
         holder.clipsToBounds = true
         let control: UIControl
-        if node.kind == "switch" {
+        if node.kind == "search" {
+            let search = UISearchTextField()
+            search.returnKeyType = .search
+            search.autocorrectionType = .no
+            search.text = node.value ?? ""
+            search.addAction(UIAction { [weak self, weak search] _ in
+                guard let self, let search, search.markedTextRange == nil else { return }
+                self.send(["op": "text", "id": node.id, "text": search.text ?? ""])
+            }, for: .editingChanged)
+            search.addAction(UIAction { [weak self] _ in
+                self?.send(["op": "focus", "id": node.id])
+            }, for: .editingDidBegin)
+            // The Search key runs the search and puts the keyboard away.
+            search.addAction(UIAction { [weak self] _ in
+                self?.send(["op": "submit", "id": node.id])
+            }, for: .editingDidEndOnExit)
+            search.addAction(UIAction { [weak self] _ in
+                self?.send(["op": "blur"])
+            }, for: .editingDidEnd)
+            control = search
+        } else if node.kind == "switch" {
             let toggle = UISwitch()
             toggle.addAction(UIAction { [weak self] _ in self?.send(["op": "activate", "id": node.id]) }, for: .valueChanged)
             control = toggle
@@ -744,13 +1186,16 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             return inner.frame.contains(p) && inner.axes[axis]
         }
     }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        if dragDismisses, editingId != nil, keyboardOverlap > 0 { done() }
+    }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         navigation?.holdContentBackGesture(false)
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !syncingScroll, let s = scrollView as? NativeScroll, s.window != nil, scrollers[s.nodeId] === s else { return }
         let o = rustOffset(s)
-        send(["op": "scroll_to", "id": s.nodeId, "x": o.x, "y": o.y])
+        apply(["op": "scroll_to", "id": s.nodeId, "x": o.x, "y": o.y])
     }
     private func showError(_ message: String) {
         failed = true
@@ -777,15 +1222,19 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         if editingId != node.id { done() }
         editingId = node.id
         editingMultiline = node.multiline ?? false
+        // A message box has no Done bar: dragging the conversation puts the
+        // keyboard away, as in Messages.
+        let bar = node.doneBar ?? true
+        field.inputAccessoryView = bar ? fieldBar : nil
+        area.inputAccessoryView = bar ? areaBar : nil
+        dragDismisses = !bar
         send(["op":"focus", "id":node.id])
         if editingMultiline {
             area.text = node.value ?? ""
             area.autocapitalizationType = .sentences
         } else {
             field.text = node.value ?? ""
-            field.isSecureTextEntry = node.password
-            field.autocapitalizationType = .none
-            field.keyboardType = .default
+            applyInputKind(node.inputKind ?? "text", password: node.password)
         }
         editor.accessibilityIdentifier = "editor-\(node.id)"
         editor.accessibilityLabel = node.label
@@ -796,29 +1245,77 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         // Already open: the keyboard sends no new frame for the next field.
         revealEditor()
     }
+    /// The keyboard, autofill and capitalisation for what the field holds.
+    private func applyInputKind(_ kind: String, password: Bool) {
+        var keyboard: UIKeyboardType = .default
+        var content: UITextContentType? = nil
+        var caps: UITextAutocapitalizationType = .sentences
+        var secure = password
+        var suggest = true
+        switch kind {
+        case "name": caps = .words; content = .name
+        case "email": keyboard = .emailAddress; caps = .none; content = .emailAddress; suggest = false
+        case "url": keyboard = .URL; caps = .none; content = .URL; suggest = false
+        case "number": keyboard = .numberPad; caps = .none
+        case "decimal": keyboard = .decimalPad; caps = .none
+        case "phone": keyboard = .phonePad; caps = .none; content = .telephoneNumber
+        case "password": secure = true; caps = .none; content = .password; suggest = false
+        case "one_time_code": keyboard = .numberPad; caps = .none; content = .oneTimeCode; suggest = false
+        case "secret": secure = true; caps = .none; suggest = false
+        default: break
+        }
+        if password { caps = .none; suggest = false; content = content ?? .password }
+        field.keyboardType = keyboard
+        field.textContentType = content
+        field.autocapitalizationType = caps
+        field.isSecureTextEntry = secure
+        field.autocorrectionType = suggest ? .default : .no
+        field.spellCheckingType = suggest ? .default : .no
+        // Clearing in one tap, as iOS fields do; not for secrets.
+        field.clearButtonMode = secure ? .never : .whileEditing
+    }
     private func positionEditor() {
         guard let id = editingId else { return }
         guard let node = nodes.first(where: { $0.id == id }) else { editingId = nil; editor.resignFirstResponder(); editor.removeFromSuperview(); return }
         editor.frame = node.rect.insetBy(dx:2,dy:2)
-        editor.layer.cornerRadius = 10
+        // Blend in with what's behind the field: a message box's pill, a
+        // dock's search capsule.
+        if let b = node.backdrop {
+            // Opaque, over the page: Volt's own drawing of the text must not
+            // show through a glassy pill.
+            editor.backgroundColor = opaque(color(b.color), over: pageBackground)
+            editor.layer.cornerRadius = min(max(0, b.radius - 2), editor.frame.height / 2)
+        } else {
+            editor.backgroundColor = editingMultiline ? area.backgroundColor : field.backgroundColor
+            editor.layer.cornerRadius = 10
+        }
         editor.clipsToBounds = true
     }
     @objc private func edited() {
         guard field.markedTextRange == nil, let id = editingId else { return }
         send(["op":"text", "id":id, "text":field.text ?? ""])
     }
+    /// The keyboard went away some other way (dragged down with the page):
+    /// commit the text, as Done does.
+    func textViewDidEndEditing(_ textView: UITextView) { if editingId != nil { done() } }
+    func textFieldDidEndEditing(_ textField: UITextField) { if editingId != nil { done() } }
     func textViewDidChange(_ textView: UITextView) {
         guard textView.markedTextRange == nil, let id = editingId else { return }
         send(["op":"text", "id":id, "text":textView.text ?? ""])
     }
     @objc private func done() {
-        guard let id = editingId else { return }
+        guard let id = editingId, !ending else { return }
+        ending = true
+        defer { ending = false }
         // Resigning commits an active IME composition before notifying Rust.
         editor.resignFirstResponder()
         let committed = editingMultiline ? area.text ?? "" : field.text ?? ""
         let closing = editor
         editingId = nil
         send(["op":"text", "id":id, "text":committed])
+        // Rust lets go of the field too, so nothing reopens the keyboard
+        // until someone taps a field again.
+        send(["op":"blur"])
         closing.removeFromSuperview()
         refreshIfMounted()
     }
@@ -835,23 +1332,47 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         guard !suspended, activeTouch == nil, let t = touches.first else { return }
         activeTouch = t; touchStart = t.location(in:self); dragged = false
         touchButtonId = nodes.last(where: { $0.kind == "button" && $0.enabled && $0.visibleRect.contains(touchStart) })?.id
-        // A sideways carousel under the finger scrolls instead of going back.
-        if scrollers.values.contains(where: { $0.axes[0] && !$0.axes[1] && $0.frame.contains(touchStart) }) {
+        // The field under the finger now: pressing it can open the keyboard
+        // and move the field (a message box rides up) before the finger lifts.
+        touchFieldId = nodes.last(where: { $0.kind == "field" && $0.enabled && !$0.readOnly && $0.visibleRect.contains(touchStart) })?.id
+        // A sideways carousel or a swipeable row under the finger moves
+        // instead of going back.
+        if scrollers.values.contains(where: { $0.axes[0] && !$0.axes[1] && $0.frame.contains(touchStart) })
+            || sideways.contains(where: { $0.contains(touchStart) }) {
             navigation?.holdContentBackGesture(true)
         }
         send(["op":"begin", "x":touchStart.x,"y":touchStart.y])
+        holdWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.hold(t) }
+        holdWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+    }
+    /// The finger stayed put: ask Rust for the menu under it. If one opens,
+    /// this touch is over; lifting the finger presses nothing.
+    private func hold(_ t: UITouch) {
+        holdWork = nil
+        guard activeTouch === t, !dragged, !suspended, editingId == nil else { return }
+        let before = holds
+        send(["op":"hold", "x":touchStart.x, "y":touchStart.y])
+        guard holds != before else { return }
+        activeTouch = nil
+        navigation?.holdContentBackGesture(false)
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let t = activeTouch, touches.contains(t) else { return }
         let p = t.location(in:self)
         dragged = dragged || hypot(p.x-touchStart.x,p.y-touchStart.y) >= 8
-        send(["op":"move", "x":p.x,"y":p.y])
+        if dragged { holdWork?.cancel(); holdWork = nil }
+        apply(["op":"move", "x":p.x,"y":p.y])
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        holdWork?.cancel(); holdWork = nil
         guard let t = activeTouch, touches.contains(t) else { return }
         let p = t.location(in:self)
         dragged = dragged || hypot(p.x-touchStart.x,p.y-touchStart.y) >= 8
-        let target = !dragged ? nodes.last(where: { $0.kind == "field" && $0.enabled && !$0.readOnly && $0.visibleRect.contains(p) }) : nil
+        let target = dragged ? nil
+            : touchFieldId.flatMap { id in nodes.first(where: { $0.id == id }) }
+                ?? nodes.last(where: { $0.kind == "field" && $0.enabled && !$0.readOnly && $0.visibleRect.contains(p) })
         activeTouch = nil
         navigation?.holdContentBackGesture(false)
         if editingId != nil, !dragged,
@@ -860,6 +1381,19 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
             // pointer capture. Treat commit + this same-control tap atomically;
             // never require a second tap on Cancel/Save while editing.
             send(["op":"cancel"])
+            if button.keepsKeyboard ?? false, let id = editingId {
+                // Send in a message box: commit, press, and keep typing in
+                // the same field, now holding whatever Rust left there.
+                let text = editingMultiline ? area.text ?? "" : field.text ?? ""
+                send(["op":"text", "id":id, "text":text])
+                send(["op":"activate", "id":button.id])
+                guard nodes.contains(where: { $0.id == id }) else { done(); return }
+                send(["op":"focus", "id":id])
+                let value = nodes.first(where: { $0.id == id })?.value ?? ""
+                if editingMultiline { area.text = value } else { field.text = value }
+                positionEditor()
+                return
+            }
             done()
             send(["op":"activate", "id":button.id])
             return
@@ -869,6 +1403,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         if let target { beginEditing(target) }
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        holdWork?.cancel(); holdWork = nil
         activeTouch = nil; send(["op":"cancel"])
         // A carousel that took the touch releases the hold when it stops dragging.
         if !scrollers.values.contains(where: { $0.isTracking }) { navigation?.holdContentBackGesture(false) }

@@ -56,6 +56,12 @@ impl<C> TextInput<C> {
         self.1.change = Some(Box::new(f));
         self
     }
+    /// On a phone, leave out the Done button above the keyboard: dragging
+    /// the page puts the keyboard away instead. For a chat's message box.
+    pub fn hide_done_button(mut self) -> Self {
+        self.0.node.editor.as_mut().unwrap().hide_done = true;
+        self
+    }
     pub fn on_submit(mut self, f: impl FnMut(&mut C) + 'static) -> Self {
         self.1.submit = Some(Box::new(f));
         self
@@ -169,6 +175,12 @@ impl<C> TextInput<C> {
             label: label.into(),
             click: Box::new(click),
         });
+        self
+    }
+    /// What the field holds, so a phone shows the right keyboard, autofill
+    /// and capitalisation: email, a URL, a one-time code, a password.
+    pub fn input_kind(mut self, kind: crate::declarative::InputKind) -> Self {
+        self.0.node.editor.as_mut().unwrap().kind = kind;
         self
     }
     pub fn password(mut self, value: bool) -> Self {

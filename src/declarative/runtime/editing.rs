@@ -601,6 +601,14 @@ impl Runtime {
                 .find(|b| b.id == id && b.enabled && b.editor.is_some() && self.scope_allows_id(id))
         })
     }
+    /// Focus stays, but its ring hides: it came from a touch, not a keyboard.
+    pub fn hide_focus_ring(&mut self) {
+        self.focus_visible = false;
+    }
+    /// Nothing has keyboard focus: a phone host put its keyboard away.
+    pub fn blur(&mut self) -> bool {
+        self.focused.take().is_some()
+    }
     pub fn editing_focus(&self) -> bool {
         self.editable_box().is_some()
     }
@@ -1445,16 +1453,29 @@ fn nearest(e: &EditorState, p: [f32; 2], height: f32) -> (usize, bool) {
 fn inner_geometry(b: &LayoutBox, scale: f32) -> [f32; 4] {
     let [x, y, w, h] = b.bounds.bounds();
     let line = editor_line_height(&b.text_style);
+    // Padding the field was given wins over the built-in insets, so text
+    // sits where a host's native editor puts it (a message box's pill).
+    let [pad_top, pad_right, _, pad_left] = b.style.layout.padding;
     let top = if b.editor.as_ref().is_some_and(|e| e.multiline) {
-        7. * scale
+        if pad_top > 0. {
+            pad_top
+        } else {
+            7. * scale
+        }
     } else {
         ((h - line) * 0.5).max(7. * scale).min((h * 0.5).max(0.))
     };
     let [lead, trail] = b.editor.as_ref().map_or([0.; 2], |e| e.inset);
+    let left = if pad_left > 0. { pad_left } else { 10. * scale };
+    let right = if pad_right > 0. {
+        pad_right
+    } else {
+        10. * scale
+    };
     [
-        x + (10. + lead) * scale,
+        x + left + lead * scale,
         y + top,
-        (w - (20. + lead + trail) * scale).max(0.),
+        (w - left - right - (lead + trail) * scale).max(0.),
         (h - 2. * top).max(0.),
     ]
 }
@@ -1470,12 +1491,20 @@ impl Runtime {
         ui: &UiTheme,
         b: &LayoutBox,
     ) -> PaintBatch<P::Shape, P::Glyph> {
+        let options = b.editor.as_ref().unwrap();
+        // The host draws its own search field over this one.
+        if options.search && self.native_controls() {
+            return PaintBatch {
+                clip: b.clip,
+                shapes: Vec::new(),
+                glyphs: Vec::new(),
+            };
+        }
         let c = ui.colors();
         let r = b.bounds.bounds();
         let mut shapes = Vec::new();
         let mut glyphs = Vec::new();
         let focused = self.focused.as_deref() == Some(&b.id);
-        let options = b.editor.as_ref().unwrap();
         let disabled = !b.enabled;
         let alpha = if disabled { 0.45 } else { 1. };
         let tint = |mut color: [f32; 4]| {

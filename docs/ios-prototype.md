@@ -144,6 +144,283 @@ volt_ui_kit_mobile::export_ios_app!(application);
   same scroll position.
 - On desktop, the web and Android, the same code draws the bar with Volt.
 
+## Tabs
+
+`tab_view` gives an app its top-level sections. On iOS the host shows the
+system tab bar (Liquid Glass on iOS 26) with SF Symbols and badges, and each
+tab keeps its own navigation stack; elsewhere Volt draws Material's flexible
+navigation bar.
+
+```rust,ignore
+tab_view(app.section, [
+    tab_destination(Section::Inbox, "Inbox", Icon::Inbox).symbol("tray.fill").badge("3"),
+    tab_destination(Section::Done, "Done", Icon::Check).symbol("checkmark.circle.fill"),
+], navigation_stack(&app.history, |page| pages(app, page)))
+.key("sections")
+.on_select(open_section)   // swap in that section's history
+.on_reselect(|a: &mut App, s| a.history.reset(s.root()))
+```
+
+- Labels are required, and three to five tabs read best. A tab with nothing
+  in it stays; its page says why.
+- Choosing the open tab again calls `on_reselect`: go back to the section's
+  first page, as both platforms do.
+- The gallery has three sections: Components, Shop (with the cart count as a
+  badge) and Work.
+
+## Sheets
+
+`bottom_sheet` rests at the heights you give it (`SheetDetent::Medium`,
+`Large`, or `Points`), with a grabber when there's more than one. Drag the
+grabber or header to change height or swipe down to close; tap the grabber
+to step through the heights. `cancel` and `done` put Cancel at the leading
+edge and Done at the trailing edge; `on_dismiss_attempt` lets an app ask
+before a swipe throws work away. While a sheet or dialog is open, the iOS
+host fades its tab bar and navigation bar, and the page behind
+takes no touches. With the keyboard up a sheet goes to full height and keeps
+its fields above the keyboard. The gallery's **Sheets** page shows all of it.
+
+## Action dock
+
+`action_dock` puts a page's actions at the bottom of the screen, where a
+thumb reaches, instead of in the top bar: one main action, up to two round
+ones, and More for the rest in a sheet. It floats just above the tab bar,
+home indicator or keyboard (the iOS host reports them with a `bars` event),
+moves away while the list it `follows` scrolls down, and comes back as soon
+as it scrolls up or reaches either end. That list gets room at its end so
+its last row clears the dock.
+
+```rust,ignore
+action_dock(notes_list.key("notes"))
+    .key("notes-dock")
+    .follows("notes")
+    .primary(dock_action("New note", Icon::Plus).on_press(|a: &mut App| a.add()))
+    .secondary(dock_action("Search", Icon::Search).on_press(|a: &mut App| a.search()))
+    .more([dock_action("Delete all", Icon::Trash).danger().on_press(|a: &mut App| a.clear())])
+    .more_open(app.more)
+    .on_more(|a: &mut App, open| a.more = open)
+```
+
+- Labels say what happens; the round actions show only their icon, so their
+  label is what VoiceOver reads.
+- Keep the top bar for the title and Back. `back(label, f)` adds a Back at
+  the dock's leading end for deep pages.
+- `search(dock_search(query, open))` adds a Search button that turns the
+  dock into a search field with the keyboard up; the dock rides on the
+  keyboard, and Close puts the actions back.
+- The gallery's **Action dock** page shows it.
+
+## Lists, swipe actions and Select mode
+
+`list_row` is a phone list row; put rows in a `list_section`. Swipe actions
+are shortcuts, never the only way to an action: offer the same actions in
+Select mode and the dock, and follow a delete with Undo.
+
+```rust,ignore
+list_row(&note.title)
+    .key(format!("note-{id}"))
+    .subtitle(&note.preview)
+    .value(&note.age)
+    .chevron(true)
+    .on_press(move |a: &mut App| a.open(id))
+    .trailing_actions([swipe_action("Delete", Icon::Trash)
+        .tone(SwipeTone::Danger)
+        .full_swipe()
+        .on_press(move |a: &mut App| a.delete_with_undo(id))])
+    .swipe_open(app.open_row(id))
+    .on_swipe_open(move |a: &mut App, side| a.set_open_row(id, side))
+    .selecting(app.selecting)
+    .selected(app.selected.contains(&id))
+    .on_toggle(move |a: &mut App| a.toggle(id))
+```
+
+A `full_swipe` action runs when the row is swiped well past its buttons. A
+destructive one (`SwipeTone::Danger`) also needs the finger to rest past
+that point for a quarter of a second before letting go; a quick flick only
+opens the row on its buttons, so nothing is deleted by accident.
+
+Touch and hold a row for its menu. Name the swipe actions there too, with
+anything else that applies; `SwipeTone::Danger` shows in red:
+
+```rust,ignore
+    .hold_actions([
+        swipe_action("Pin", Icon::Star).on_press(move |a: &mut App| a.pin(id)),
+        swipe_action("Delete", Icon::Trash)
+            .tone(SwipeTone::Danger)
+            .on_press(move |a: &mut App| a.delete_with_undo(id)),
+    ])
+    .menu_open(app.menu == Some(id))
+    .on_menu_open(move |a: &mut App, open| a.menu = open.then_some(id))
+```
+
+- `swipe_hint(true)` on the first row, the first time someone sees the
+  list, nudges it aside once to show it swipes. Turn it off after.
+- VoiceOver lists each swipe action and Show menu in the row's actions
+  rotor; nothing on a row needs a gesture.
+- Keep one row open: opening another, tapping, or acting closes it.
+- In Select mode the header says how many are selected and the dock shows
+  what applies to them; Done ends it.
+- The gallery's **Swipe and select** page shows it all.
+
+## Chat: composer and live text
+
+`composer` is a chat's message box: put it last on the page, under the
+transcript. The field grows as you type (up to `max_lines`), Send lights up
+only when there's something to send, and Stop takes its place while a reply
+comes in. It rides the keyboard, and there's no Done bar: Send leaves the
+keyboard up for the next message, and dragging the transcript puts it away.
+
+```rust,ignore
+vstack![
+    vstack(messages)
+        .flex(1.)
+        .scroll(Scroll::Vertical)
+        .anchor_end(true),
+    composer(&app.draft)
+        .key("chat-composer")
+        .on_change(|a: &mut App, text| a.draft = text)
+        .on_send(|a: &mut App| a.send())
+        .busy(app.replying)
+        .on_stop(|a: &mut App| a.stop()),
+]
+```
+
+- `live_text(&reply)` shows a reply that grows: give it the whole text so
+  far each time, and what's new eases in after what was there.
+- `anchor_end(true)` keeps the transcript at the newest message unless you
+  scroll up to read.
+- Jump to latest: `on_away_from_end` tells the app when the reader scrolls
+  up from the end and when they're back, and `jump_to_latest(transcript,
+  ..)` wraps the transcript with a round button at its foot while they're
+  away (Material's small floating action button on Android). Pressing it
+  bumps the transcript's `scroll_to_end` request, which goes back to the
+  newest message and follows it again.
+- For other fields, `hide_done_button()` drops the Done bar the same way;
+  the dock's search uses it too.
+- The gallery's **Chat** page streams a reply from another thread.
+
+## Flows, quick picks and freshness
+
+- `sheet_flow` runs a task in steps inside one sheet. The first step has
+  Cancel, later ones Back; the last step's button says what it does
+  ("Create"). Each `flow_step` sets the sheet's height and whether it's
+  ready to go on.
+- `quick_picks` puts the likely answers first ("Today", "Tomorrow") with the
+  full picker behind a last chip.
+- `freshness_line` says how fresh the page is under its title; it turns
+  amber when stale and says "Offline" plainly. A tap refreshes.
+- The gallery's **Flows** page shows all three.
+
+## Work cards and the activity pill
+
+`work_card` is one job. Its `WorkState` sets colour, icon and words
+together: Working (with progress if known), Waiting ("Needs you"), Failed,
+Done. Give it the one action that applies now: Allow, Try again, Open.
+While work runs in the background, `activity_pill` floats above the bottom
+bars ("Importing 3 of 5"); show it only while something runs. The gallery's
+Work tab shows all four states.
+
+## Undo bar
+
+After something is deleted, do it and offer Undo in a `snackbar` rather
+than asking first. Give it to the page's dock with `notice`, or layer it
+last in a `zstack!`. `close_after(seconds)` closes it by itself, counting
+only time it can be read: the clock stops while a finger is on the screen
+and while the app is in the background, and with VoiceOver or TalkBack on
+it stays until dismissed. A new message under the same key starts the time
+again.
+
+```rust,ignore
+action_dock(list)
+    .notice(
+        snackbar(format!("Deleted {title}."))
+            .key("undo")
+            .action("Undo", |a: &mut App| a.undo())
+            .open(app.can_undo())
+            .close_after(6.)
+            .on_close(|a: &mut App| a.forget_undo()),
+    )
+```
+
+## Fields and busy buttons
+
+Say what a field holds with `input_kind` and the phone does the rest: the
+email keyboard, a texted one-time code above the keyboard, the password
+manager for passwords, no suggestions for secrets such as API keys.
+`button(..).busy(true)` shows a spinner in place of the label while the
+work it started runs.
+
+## Search
+
+Use `search_field` for every search. On iOS it is UIKit's own search field;
+on Android Volt draws Material 3's search bar.
+
+```rust,ignore
+search_field(&app.query)
+    .key("notes-search")
+    .placeholder("Search notes")
+    .on_change(|a: &mut App, q| a.query = q)
+```
+
+- Filter as people type; `on_submit` runs on the keyboard's Search key.
+- Name what's searched in the placeholder ("Search notes").
+- The action dock's search and the gallery's Pantry use it.
+
+## Alerts and action sheets
+
+Ask only when an action can't be undone or costs something; otherwise do it
+and offer Undo. `alert_dialog` asks one question with at most two answers
+and Cancel; `action_sheet` offers choices. On iOS they are UIKit's own; on
+Android Volt draws Material 3's.
+
+```rust,ignore
+alert_dialog("Sign out of Volt?")
+    .key("sign-out")
+    .message("Drafts that haven't synced will be lost.")
+    .action(prompt_action("Sign out").destructive().on_press(|a: &mut App| a.sign_out()))
+    .cancel("Cancel")
+    .open(app.asking)
+    .on_close(|a: &mut App| a.asking = false)
+```
+
+- Name answers by what they do ("Sign out"), never "OK".
+- An action sheet always has Cancel; tapping outside it cancels too.
+- The gallery's **Alerts** page shows both.
+
+## Work off the UI thread
+
+Network requests, file sync and timers run on threads of your own. They send
+their results back with an `Updater`: each change runs on the UI thread, in
+the order sent, and the page is drawn again. Nothing touches your state from
+another thread.
+
+```rust,ignore
+use volt_ui_kit_mobile::{Application, HostContext, Updater};
+
+pub struct App { updates: Updater<App>, reply: Option<String> }
+
+fn ask(a: &mut App) {
+    let updates = a.updates.clone();
+    std::thread::spawn(move || {
+        let reply = fetch_reply();
+        updates.update(move |a: &mut App| a.reply = Some(reply));
+    });
+}
+pub fn application(host: HostContext) -> Result<Application<App>, String> {
+    Application::new_with_updater(host, |updates| App { updates, reply: None }, view)
+}
+```
+
+- `Application::new_with_updater` hands the state its `Updater` to keep;
+  `Application::updater()` returns another at any time. Clone it freely.
+- Changes sent close together share one wake and one draw.
+- `update` returns false, and drops the change, once the app has closed: a
+  long-running worker can stop then.
+- On iOS the host is woken on the main queue. The Android prototype applies
+  waiting changes with its next event.
+- The gallery's **Background work** page shows it: results arrive from a
+  worker thread one by one.
+
 ## Colours, type and motion
 
 - **Colours.** Without a theme, pages use iOS's own colours for the current

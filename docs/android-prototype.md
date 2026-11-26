@@ -83,6 +83,23 @@ Rust app -> Application + PlatformEvent -> MobileView -> existing Runtime
                                                                   drawing fallback
 ```
 
+## The component gallery on Android
+
+`examples/android-gallery` builds the iOS gallery's Rust pages into an APK
+with the same shared host, so the two platforms can be compared page by page:
+
+```sh
+cd examples/android-gallery/android
+./gradlew --offline assembleDebug   # after one online build has cached the plugins
+adb install -r build/outputs/apk/debug/VoltGallery-debug.apk
+adb shell am start -n dev.volt.gallery/dev.volt.host.VoltActivity
+```
+
+Volt-drawn parts follow Material 3 on Android and the iOS guidelines on
+iOS: the navigation bar is Material's top app bar (a Back icon button and a
+left-aligned title) instead of iOS's centred title; the snackbar sits on the
+inverse surface; chips are Material filter chips.
+
 ## Rendering and lifecycle boundaries
 
 - JNI entry points check the main Looper, validate handle IDs and bound events
@@ -93,13 +110,22 @@ Rust app -> Application + PlatformEvent -> MobileView -> existing Runtime
   Activity. Pause suppresses rendering/input; resume recreates the surface as
   needed. Orientation changes are handled without recreating the Activity.
   Process death resets session-only state; restoration is not implemented.
-- System/keyboard insets resize the Rust viewport, rather than covering the
-  editable form. The active single-line field uses native EditText and keeps
-  composition native until commit. Secure fields remain read-only, because
-  snapshots intentionally withhold their values. Multiline/complete IME support
-  is not claimed.
-- Rendering is event-driven, with bounded surface retries, no permanent timer
-  and no display loop. Android's redraw-needed callback supplies initial pixels.
+- The Activity draws edge to edge. Status, navigation and keyboard insets go
+  to Rust as the safe area and the bars, so Volt-drawn tab bars sit above the
+  gesture handle and lists scroll under it. The focused field is a native
+  EditText (multi-line for composers) that keeps composition native until
+  commit. Its keyboard, autofill hint and IME action follow the field's
+  `input_kind`, and the Search key sends `submit`. Secure fields remain
+  read-only, because snapshots intentionally withhold their values. Complete
+  IME support is not claimed.
+- Rendering is event-driven, with bounded surface retries and no permanent
+  timer. While something animates, a Choreographer callback draws once per
+  frame and stops when nothing moves. Background work wakes the screen
+  through `VoltActivity.wake`, posted to the main Looper, so a timer thread's
+  `Updater` redraws without a touch. Android's redraw-needed callback supplies
+  initial pixels. Animator scale 0 turns on reduced motion.
+- A press held for 450 ms sends `hold` (a row's menu) with a long-press
+  haptic. A row's swipe and menu actions are TalkBack custom actions.
 - Android SurfaceView can advertise only `Inherit` alpha. The native window is
   explicitly opaque, and the renderer selects an advertised alpha mode instead
   of assuming `Opaque` is supported. Desktop opaque mode remains preferred.
@@ -151,7 +177,7 @@ builds. See the [iOS guide](ios-prototype.md) for the other adapter.
 ## Still pending before Android support
 
 Physical-device Vulkan rendering and recovery, memory/energy/frame-time profiling;
-full IME/selection/dictation and accessibility/TalkBack acceptance; native
+full IME/selection/dictation, a real-device IME pass and TalkBack acceptance; native
 predictive Back, multi-touch/kinetic gestures; state restoration and mobile
 services; multi-ABI release bundles, signing and store acceptance; and broader
 SDK/device/16 KiB-page coverage. This first template/build helper does not make

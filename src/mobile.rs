@@ -35,6 +35,21 @@ pub struct MobileView<C: 'static> {
     clock: std::time::Instant,
     /// The host draws navigation bars; Volt's copies are hidden.
     native_navigation: bool,
+    /// Safe area insets the host reported, for overlays.
+    safe_area: [f32; 4],
+    /// Points the host's bottom bars cover: tab bar, home indicator, keyboard.
+    bars_bottom: f32,
+    /// Points the keyboard covers, on its own.
+    keyboard: f32,
+    /// Reporting scroll ends: the recompose it causes doesn't report again.
+    reporting_ends: bool,
+    /// How long each self-closing message has been on screen, unpaused.
+    /// With the stamp of the message being timed.
+    shown: std::collections::BTreeMap<String, (u64, std::time::Duration)>,
+    /// The clock when message timers last advanced.
+    timers_at: std::time::Duration,
+    /// A screen reader is on: timed messages stay until dismissed.
+    screen_reader: bool,
 }
 impl<C: 'static> MobileView<C> {
     pub fn new(context: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
@@ -72,9 +87,16 @@ impl<C: 'static> MobileView<C> {
             viewport,
             touch: None,
             suspended: false,
+            reporting_ends: false,
+            shown: Default::default(),
+            timers_at: std::time::Duration::ZERO,
+            screen_reader: false,
             host_font,
             clock: std::time::Instant::now(),
             native_navigation: false,
+            safe_area: [0.; 4],
+            bars_bottom: 0.,
+            keyboard: 0.,
         };
         // Hosts without a frame loop keep motion reduced so nothing stops halfway.
         value.runtime.set_reduced_motion(true);
@@ -106,6 +128,39 @@ impl<C: 'static> MobileView<C> {
     pub fn set_native_navigation(&mut self, native: bool) -> Result<(), String> {
         if self.native_navigation != native {
             self.native_navigation = native;
+            self.recompose()?;
+        }
+        Ok(())
+    }
+    /// The screen's safe area, [top, right, bottom, left] in logical points,
+    /// when the view runs under the status bar and home indicator. Sheets,
+    /// dialogs and menus stay inside it.
+    /// How far the host's own bars (tab bar, home indicator, keyboard) reach
+    /// up from the bottom, in points. An action dock sits just above them.
+    /// `keyboard` is the keyboard's part alone: sheets rise above it.
+    pub fn set_bars(&mut self, bottom: f32, keyboard: f32) -> Result<(), String> {
+        if ![bottom, keyboard]
+            .iter()
+            .all(|v| v.is_finite() && (0. ..=2048.).contains(v))
+        {
+            return Err("bottom bars must be 0 to 2048 points".into());
+        }
+        if self.bars_bottom != bottom || self.keyboard != keyboard {
+            self.bars_bottom = bottom;
+            self.keyboard = keyboard;
+            self.recompose()?;
+        }
+        Ok(())
+    }
+    pub fn set_safe_area(&mut self, insets: [f32; 4]) -> Result<(), String> {
+        if !insets
+            .iter()
+            .all(|v| v.is_finite() && (0. ..=512.).contains(v))
+        {
+            return Err("safe area insets must be 0 to 512 points".into());
+        }
+        if self.safe_area != insets {
+            self.safe_area = insets;
             self.recompose()?;
         }
         Ok(())
@@ -233,16 +288,119 @@ impl<C: 'static> MobileView<C> {
         }
         Ok(())
     }
+    /// VoiceOver or TalkBack is on: self-closing messages wait to be
+    /// dismissed, since nobody can say when the reader has finished them.
+    pub fn set_screen_reader(&mut self, on: bool) {
+        self.screen_reader = on;
+    }
+    /// Self-closing messages don't count time while a finger is on the
+    /// screen, the app is in the background or a screen reader is on.
+    fn timers_paused(&self) -> bool {
+        self.touch.is_some() || self.suspended || self.screen_reader
+    }
+    /// Advance self-closing messages by the time since the last call (paused
+    /// time doesn't count; call this before an event changes whether it's
+    /// paused) and close the ones that are due. Returns whether any closed.
+    pub fn run_timers(&mut self) -> Result<bool, String> {
+        let now = self.clock.elapsed();
+        let step = now.saturating_sub(self.timers_at);
+        self.timers_at = now;
+        let paused = self.timers_paused();
+        let live = self.runtime.close_timers();
+        self.shown
+            .retain(|id, _| live.iter().any(|(l, _, _)| l == id));
+        let mut due = Vec::new();
+        for (id, ms, stamp) in live {
+            // New ones, and new messages under the same key, start now.
+            let seen = self.shown.get(&id).is_some_and(|(s, _)| *s == stamp);
+            let (s, t) = self
+                .shown
+                .entry(id.clone())
+                .or_insert((stamp, std::time::Duration::ZERO));
+            if !seen {
+                *s = stamp;
+                *t = std::time::Duration::ZERO;
+            } else if !paused {
+                *t += step;
+            }
+            if *t >= std::time::Duration::from_millis(ms.into()) {
+                due.push(id);
+            }
+        }
+        let mut closed = false;
+        for id in due {
+            self.shown.remove(&id);
+            closed |= self.activate(&format!("{id}-close"))?;
+        }
+        Ok(closed)
+    }
+    /// How long until the next self-closing message is due, if one is
+    /// counting down: the host wakes then and calls `run_timers`.
+    pub fn next_timer(&self) -> Option<std::time::Duration> {
+        if self.timers_paused() {
+            return None;
+        }
+        self.runtime
+            .close_timers()
+            .into_iter()
+            .map(|(id, ms, stamp)| {
+                let shown = self
+                    .shown
+                    .get(&id)
+                    .filter(|(s, _)| *s == stamp)
+                    .map_or(std::time::Duration::ZERO, |(_, t)| *t);
+                std::time::Duration::from_millis(ms.into()).saturating_sub(shown)
+            })
+            .min()
+    }
     fn layout(&mut self) -> Result<(), String> {
         self.runtime
             .layout(self.viewport, &Bindings::default(), &mut self.painter)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // A transcript the reader scrolled away from (or back to) tells the
+        // app, which shows or hides its "Jump to latest".
+        if !self.reporting_ends {
+            let ran = self
+                .runtime
+                .dispatch_scroll_ends(&mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            if ran {
+                self.reporting_ends = true;
+                let done = self.recompose();
+                self.reporting_ends = false;
+                done?;
+            }
+        }
+        Ok(())
     }
     fn recompose(&mut self) -> Result<(), String> {
         let mut element = (self.view)(&self.context);
         if self.native_navigation {
             element.hide_navigation_bars();
+        }
+        if self.runtime.native_controls() {
+            element.hide_native_parts();
+        }
+        if self.safe_area != [0.; 4] {
+            element.inset_overlays(self.safe_area);
+        }
+        // Room under a dock or message box for what covers the canvas: the
+        // host's bars and keyboard. Where Volt draws a tab bar (Android) it
+        // already clears the system bar, and hides while the keyboard is up.
+        let drawn_tabs = !self.native_navigation && element.has_tab_bar();
+        if !self.native_navigation {
+            element.inset_drawn_bars(self.safe_area, self.keyboard > 0.);
+        }
+        let bottom = if drawn_tabs {
+            self.keyboard
+        } else {
+            self.bars_bottom
+        };
+        if bottom > 0. {
+            element.inset_above_bars(bottom);
+        }
+        if self.keyboard > 0. {
+            element.lift_sheets(self.keyboard);
         }
         let element = if let Some(family) = &self.host_font {
             element.host_font(family)
@@ -291,6 +449,20 @@ impl<C: 'static> MobileView<C> {
         let Some(t) = self.touch.as_mut() else {
             return Ok(());
         };
+        // A press on something draggable (a sheet, a row's swipe, a drawn
+        // slider) drags it; anywhere else, moving past the slop scrolls.
+        if self.runtime.pointer_dragging() {
+            t.last = point;
+            let p = point.map(|v| v * self.viewport.scale);
+            let outcome = self
+                .runtime
+                .pointer_move_outcome(p[0], p[1], &mut self.handlers, &mut self.context)
+                .map_err(|e| e.to_string())?;
+            if outcome.activated {
+                self.recompose()?;
+            }
+            return Ok(());
+        }
         if !t.scrolling && (point[0] - t.start[0]).hypot(point[1] - t.start[1]) >= 8. {
             t.scrolling = true;
             self.runtime.cancel_input();
@@ -323,7 +495,7 @@ impl<C: 'static> MobileView<C> {
         let Some(t) = self.touch.take() else {
             return Ok(());
         };
-        if !t.scrolling && !self.suspended {
+        if (!t.scrolling || self.runtime.pointer_dragging()) && !self.suspended {
             let p = self.point(point).ok_or("invalid touch")?;
             self.runtime.pointer_move(p[0], p[1]);
             let outcome = self
@@ -337,8 +509,69 @@ impl<C: 'static> MobileView<C> {
         self.runtime.pointer_leave();
         Ok(())
     }
+    /// The finger rested without moving: open the long-press menu under it,
+    /// if there is one (a [`context_menu`](crate::ui::context_menu) or a
+    /// row's hold actions). The touch ends here; true when a menu opened, so
+    /// the host can play its haptic.
+    pub fn hold(&mut self, point: [f32; 2]) -> Result<bool, String> {
+        self.tick();
+        if self.suspended || self.touch.as_ref().is_none_or(|t| t.scrolling) {
+            return Ok(false);
+        }
+        let p = self.point(point).ok_or("invalid touch")?;
+        let outcome = self
+            .runtime
+            .context_menu_at(p[0], p[1], &mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if !outcome.activated {
+            return Ok(false);
+        }
+        self.touch = None;
+        self.runtime.cancel_drag();
+        self.runtime.pointer_leave();
+        self.recompose()?;
+        Ok(true)
+    }
+    /// The host's search key (or return) in field `id`: run its submit.
+    pub fn submit(&mut self, id: &str) -> Result<bool, String> {
+        if self.suspended {
+            return Ok(false);
+        }
+        self.runtime.accessibility_focus(id);
+        let outcome = self
+            .runtime
+            .editor_key(
+                crate::declarative::EditKey::Submit,
+                false,
+                &mut self.handlers,
+                &mut self.context,
+            )
+            .map_err(|e| e.to_string())?;
+        if outcome.activated {
+            self.recompose()?;
+        }
+        Ok(outcome.activated)
+    }
+    /// Open the long-press menu for `id` without a touch: a screen reader's
+    /// "Show menu". True when one opened.
+    pub fn show_menu(&mut self, id: &str) -> Result<bool, String> {
+        if self.suspended {
+            return Ok(false);
+        }
+        self.cancel_touch();
+        self.runtime.accessibility_focus(id);
+        let outcome = self
+            .runtime
+            .context_menu_focused(&mut self.handlers, &mut self.context)
+            .map_err(|e| e.to_string())?;
+        if outcome.activated {
+            self.recompose()?;
+        }
+        Ok(outcome.activated)
+    }
     pub fn cancel_touch(&mut self) {
         self.touch = None;
+        self.runtime.cancel_drag();
         self.runtime.cancel_input();
         self.runtime.pointer_leave();
     }
@@ -355,6 +588,8 @@ impl<C: 'static> MobileView<C> {
             .runtime
             .accessibility_activate(id, &mut self.handlers, &mut self.context)
             .map_err(|e| e.to_string())?;
+        // A tap shows no keyboard focus ring on a phone.
+        self.runtime.hide_focus_ring();
         if o.activated {
             self.recompose()?;
         }
@@ -384,6 +619,14 @@ impl<C: 'static> MobileView<C> {
         self.runtime.accessibility_nodes()
     }
     /// Focus a mounted editable field before the platform shows its keyboard.
+    /// The host's keyboard went away: the field that had it loses focus, so
+    /// nothing asks for the keyboard again until someone taps a field.
+    pub fn blur(&mut self) -> Result<(), String> {
+        if self.runtime.blur() {
+            self.layout()?;
+        }
+        Ok(())
+    }
     pub fn focus_text(&mut self, id: &str) -> Result<bool, String> {
         if self.suspended
             || !self.runtime.accessibility_nodes().iter().any(|n| {

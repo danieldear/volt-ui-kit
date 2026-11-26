@@ -268,6 +268,19 @@ pub struct Node {
     #[serde(skip)]
     #[cfg(feature = "rust-ui")]
     pub(crate) access_expanded: Option<bool>,
+    /// Actions a screen reader offers on this node besides activating it.
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_actions: Vec<super::AccessAction>,
+    /// Left out of the accessibility tree with everything inside it.
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) access_hidden: bool,
+    /// Phones: pressing it while typing leaves the keyboard up (a message
+    /// box's Send).
+    #[serde(skip)]
+    #[cfg(feature = "rust-ui")]
+    pub(crate) keeps_keyboard: bool,
     #[serde(skip)]
     #[cfg(feature = "rust-ui")]
     pub(crate) access_level: Option<usize>,
@@ -422,6 +435,13 @@ pub(crate) struct EditorOptions {
     pub autofocus: bool,
     /// Multiline only: Tab indents instead of moving focus.
     pub tab_indents: bool,
+    /// Phones: no Done button above the keyboard. Dragging the page's
+    /// content puts the keyboard away instead.
+    pub hide_done: bool,
+    /// A search field: a host may draw its own (iOS's search field).
+    pub search: bool,
+    /// What's typed, so a phone shows the right keyboard and suggestions.
+    pub kind: InputKind,
     /// Keys the application handles instead of the editor.
     #[cfg(feature = "rust-ui")]
     pub keys: Vec<super::runtime::editing::EditKey>,
@@ -432,6 +452,46 @@ pub(crate) struct EditorOptions {
     pub scroll_to: Option<(usize, u32)>,
     /// Text colours by byte range, e.g. syntax highlighting.
     pub highlights: Option<std::sync::Arc<EditorHighlights>>,
+}
+/// What a field holds: a phone picks its keyboard, autofill and
+/// capitalisation from it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputKind {
+    /// Words and sentences.
+    #[default]
+    Text,
+    /// A name: each word capitalised, names suggested.
+    Name,
+    Email,
+    Url,
+    /// Digits only.
+    Number,
+    /// Numbers with a decimal point.
+    Decimal,
+    Phone,
+    /// A new or saved password: the password manager offers one.
+    Password,
+    /// A code sent by text message: offered above the keyboard.
+    OneTimeCode,
+    /// An API key or other secret that isn't a password: no suggestions.
+    Secret,
+}
+impl InputKind {
+    /// The name hosts read.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InputKind::Text => "text",
+            InputKind::Name => "name",
+            InputKind::Email => "email",
+            InputKind::Url => "url",
+            InputKind::Number => "number",
+            InputKind::Decimal => "decimal",
+            InputKind::Phone => "phone",
+            InputKind::Password => "password",
+            InputKind::OneTimeCode => "one_time_code",
+            InputKind::Secret => "secret",
+        }
+    }
 }
 /// Coloured byte ranges for an editor: sorted, non-overlapping ranges that
 /// each name a colour in `palette` (theme tokens or hex).
@@ -606,6 +666,12 @@ impl Node {
             access_selected: None,
             #[cfg(feature = "rust-ui")]
             access_expanded: None,
+            #[cfg(feature = "rust-ui")]
+            access_actions: Vec::new(),
+            #[cfg(feature = "rust-ui")]
+            access_hidden: false,
+            #[cfg(feature = "rust-ui")]
+            keeps_keyboard: false,
             #[cfg(feature = "rust-ui")]
             access_level: None,
             #[cfg(feature = "rust-ui")]
@@ -893,6 +959,7 @@ impl Document {
                 (&n.on_context, EventKind::ContextRequested),
                 (&n.on_files_dropped, EventKind::FilesDropped),
                 (&n.ext.on_refresh, EventKind::Activate),
+                (&n.ext.on_end_away, EventKind::ToggleChanged),
             ] {
                 if let Some(name) = name {
                     handlers
@@ -1216,7 +1283,9 @@ fn check_node(
         return Err(error(path, "node count or depth limit exceeded"));
     }
     if !valid_name(&n.id) || !ids.insert(n.id.clone()) {
-        return Err(error(path, "invalid or duplicate id"));
+        // Name the id: a path alone is hard to map back to the view code.
+        let id: String = n.id.chars().take(64).collect();
+        return Err(error(path, &format!("invalid or duplicate id {id:?}")));
     }
     for (name, value, positive) in [
         ("width", n.width, false),

@@ -1,5 +1,10 @@
-use crate::{protocol::SystemColors, PlatformEvent};
+use crate::{
+    protocol::SystemColors,
+    updates::{Inbox, Updater},
+    PlatformEvent,
+};
 use serde_json::{json, Value};
+use std::sync::Arc;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use volt_ui_kit::rendering::{PresentStatus, SurfaceRenderer};
 use volt_ui_kit::{mobile::MobileView, ui::Element, Palette, ThemeMode, UiTheme};
@@ -24,6 +29,12 @@ pub struct Application<C: 'static> {
     allow_software: bool,
     scale: f32,
     back: Option<BackNavigation<C>>,
+    inbox: Arc<Inbox<C>>,
+    /// Long presses that opened a menu: the host plays a haptic each time
+    /// this goes up.
+    holds: u64,
+    /// When a sleeping thread will wake the host for a message timer.
+    timer_due: Option<std::time::Instant>,
 }
 fn fallback_theme(mode: ThemeMode) -> UiTheme {
     UiTheme::from_palette(if mode == ThemeMode::Dark {
@@ -58,7 +69,29 @@ pub fn system_palette(c: &SystemColors, mode: ThemeMode) -> Palette {
 }
 impl<C: 'static> Application<C> {
     pub fn new(host: HostContext, state: C, view: fn(&C) -> Element<C>) -> Result<Self, String> {
+        Self::with_inbox(host, state, view, Inbox::new())
+    }
+    /// Like [`Application::new`], for state that does work off the UI thread:
+    /// `state` receives the app's [`Updater`] to keep and hand to that work.
+    pub fn new_with_updater(
+        host: HostContext,
+        state: impl FnOnce(Updater<C>) -> C,
+        view: fn(&C) -> Element<C>,
+    ) -> Result<Self, String> {
+        let inbox = Inbox::new();
+        let state = state(inbox.updater());
+        Self::with_inbox(host, state, view, inbox)
+    }
+    fn with_inbox(
+        host: HostContext,
+        state: C,
+        view: fn(&C) -> Element<C>,
+        inbox: Arc<Inbox<C>>,
+    ) -> Result<Self, String> {
         Ok(Self {
+            holds: 0,
+            timer_due: None,
+            inbox,
             ui: MobileView::new_with_font(state, view, host.font_family)?,
             mode: ThemeMode::Light,
             theme: None,
@@ -116,6 +149,35 @@ impl<C: 'static> Application<C> {
         self.back = Some((can_go_back, action));
         self
     }
+    /// Sends state changes from other threads; see [`Updater`].
+    pub fn updater(&self) -> Updater<C> {
+        self.inbox.updater()
+    }
+    /// Whether changes from an [`Updater`] are waiting for the next event.
+    pub fn has_updates(&self) -> bool {
+        self.inbox.has_changes()
+    }
+    /// The host's way to be woken, from any thread, when changes arrive.
+    #[cfg_attr(not(any(target_os = "ios", target_os = "android")), allow(dead_code))]
+    pub(crate) fn set_wake(&self, wake: Option<crate::updates::Wake>) {
+        self.inbox.set_wake(wake);
+    }
+    /// Run queued changes in order, then lay the page out again once.
+    fn apply_updates(&mut self) -> Result<(), String> {
+        let changes = self.inbox.take();
+        if changes.is_empty() {
+            return Ok(());
+        }
+        self.ui.update(|state| {
+            for change in changes {
+                change(state);
+            }
+        })
+    }
+    /// Change the app's state from the UI thread and lay the page out again.
+    pub fn update(&mut self, change: impl FnOnce(&mut C)) {
+        let _ = self.ui.update(change);
+    }
     pub fn state(&self) -> &C {
         self.ui.context()
     }
@@ -123,6 +185,40 @@ impl<C: 'static> Application<C> {
         &self.ui
     }
     pub fn handle(&mut self, event: PlatformEvent) -> Result<(), String> {
+        // Changes from other threads land before the event, so a tap acts on
+        // the page as it now reads.
+        self.apply_updates()?;
+        // Time up to now counts (or not) by the state before the event.
+        self.ui.run_timers()?;
+        self.handle_event(event)?;
+        self.ui.run_timers()?;
+        self.schedule_timer();
+        Ok(())
+    }
+    /// Wake the host when the next self-closing message is due: a thread
+    /// sleeps until then and sends an empty change, whose `Updates` event
+    /// runs the timers. One sleeper per deadline.
+    fn schedule_timer(&mut self) {
+        let Some(wait) = self.ui.next_timer() else {
+            return;
+        };
+        let due = std::time::Instant::now() + wait;
+        if self
+            .timer_due
+            .is_some_and(|at| at <= due && at > std::time::Instant::now())
+        {
+            return;
+        }
+        self.timer_due = Some(due);
+        let updates = self.updater();
+        // A few milliseconds late, so the message is surely due on waking.
+        let wait = wait + std::time::Duration::from_millis(5);
+        std::thread::spawn(move || {
+            std::thread::sleep(wait);
+            updates.update(|_| {});
+        });
+    }
+    fn handle_event(&mut self, event: PlatformEvent) -> Result<(), String> {
         match event {
             PlatformEvent::Resize {
                 width,
@@ -135,7 +231,21 @@ impl<C: 'static> Application<C> {
             PlatformEvent::Begin { x, y } => self.ui.touch_begin([x, y])?,
             PlatformEvent::Move { x, y } => self.ui.touch_move([x, y])?,
             PlatformEvent::End { x, y } => self.ui.touch_end([x, y])?,
+            PlatformEvent::Hold { x, y } => {
+                if self.ui.hold([x, y])? {
+                    self.holds += 1;
+                }
+            }
             PlatformEvent::Cancel {} => self.ui.cancel_touch(),
+            PlatformEvent::Blur {} => self.ui.blur()?,
+            PlatformEvent::Submit { id } => {
+                self.ui.submit(&id)?;
+            }
+            PlatformEvent::Menu { id } => {
+                if self.ui.show_menu(&id)? {
+                    self.holds += 1;
+                }
+            }
             PlatformEvent::Activate { id } => {
                 self.ui.activate(&id)?;
             }
@@ -208,6 +318,7 @@ impl<C: 'static> Application<C> {
                 self.suspended = value;
                 self.ui.set_suspended(value);
             }
+            PlatformEvent::ScreenReader { on } => self.ui.set_screen_reader(on),
             PlatformEvent::Back {} => {
                 if let Some((can, action)) = self.back {
                     if !self.suspended && can(self.ui.context()) {
@@ -215,7 +326,16 @@ impl<C: 'static> Application<C> {
                     }
                 }
             }
-            PlatformEvent::Draw {} => {}
+            PlatformEvent::SafeArea {
+                top,
+                right,
+                bottom,
+                left,
+            } => {
+                self.ui.set_safe_area([top, right, bottom, left])?;
+            }
+            PlatformEvent::Bars { bottom, keyboard } => self.ui.set_bars(bottom, keyboard)?,
+            PlatformEvent::Draw {} | PlatformEvent::Updates {} => {}
         }
         Ok(())
     }
@@ -238,9 +358,10 @@ impl<C: 'static> Application<C> {
             let visible=[left,top,((x+w).min(clip[0]+clip[2])-left).max(0.),((y+h).min(clip[1]+clip[3])-top).max(0.)];
             use volt_ui_kit::declarative::AccessRole;
             let multiline=n.role==AccessRole::MultilineTextInput;
-            let kind=match n.role {AccessRole::TextInput|AccessRole::MultilineTextInput=>"field",AccessRole::ScrollView=>"scroll",AccessRole::Switch=>"switch",AccessRole::Slider=>"slider",AccessRole::Button=>"button",_ if n.clickable=>"button",_=>"label"};
+            let kind=match n.role {AccessRole::TextInput if n.search && self.ui.runtime().native_controls()=>"search",AccessRole::TextInput|AccessRole::MultilineTextInput=>"field",AccessRole::ScrollView=>"scroll",AccessRole::Switch=>"switch",AccessRole::Slider=>"slider",AccessRole::Button=>"button",_ if n.clickable=>"button",_=>"label"};
             json!({"id":n.id,"label":n.label,"value":n.value,"enabled":n.enabled,"kind":kind,"checked":n.checked,"numeric":n.numeric,"multiline":multiline,
-                "password":n.password,"readOnly":n.read_only || n.password,"bounds":n.bounds.map(|v|v/self.scale),"visibleBounds":visible.map(|v|v/self.scale)})
+                "password":n.password,"readOnly":n.read_only || n.password,"bounds":n.bounds.map(|v|v/self.scale),"visibleBounds":visible.map(|v|v/self.scale),
+                "doneBar":n.done_button,"search":n.search,"inputKind":n.input_kind,"placeholder":n.placeholder,"keepsKeyboard":n.keeps_keyboard,"backdrop":(kind=="field").then(|| self.ui.runtime().backdrop(&n.id)).flatten().map(|(c,r)| json!({"color":c,"radius":r/self.scale})),"actions":n.actions.iter().map(|a| json!({"label":a.label,"target":a.target})).collect::<Vec<_>>()})
         }).collect::<Vec<_>>();
         // Scroll views for a platform scroll view to drive: the visible frame,
         // the content size and offset, in points.
@@ -272,7 +393,8 @@ impl<C: 'static> Application<C> {
                 Some(
                     json!({"id": b.id, "frame": frame, "content": content, "insets": [it, ib],
                     "offset": b.scroll_offset, "axes": axes, "refresh": refresh.is_some(),
-                    "refreshing": refresh.unwrap_or(false)}),
+                    "refreshing": refresh.unwrap_or(false), "inert": !self.ui.runtime().accepts_input(&b.id),
+                    "inDraggable": self.ui.runtime().in_draggable(&b.id)}),
                 )
             })
             .collect::<Vec<_>>();
@@ -281,13 +403,47 @@ impl<C: 'static> Application<C> {
             json!({"id": id, "title": bar.title, "largeTitle": bar.large_title, "depth": bar.depth,
                 "back": bar.back, "buttons": bar.buttons.iter().map(|(id, label)| json!({"id": id, "label": label})).collect::<Vec<_>>()})
         });
+        // The outermost tab view, for a host that draws its own tab bar.
+        let tabs = self.ui.runtime().tab_bars().into_iter().next().map(|(id, bar)| {
+            json!({"id": id, "selected": bar.selected, "items": bar.items.iter().map(|item| json!({
+                "id": item.id, "label": item.label, "symbol": item.symbol, "icon": item.icon, "badge": item.badge,
+            })).collect::<Vec<_>>()})
+        });
+        // The open alert or action sheet, for a host that shows its own.
+        let prompt = self
+            .ui
+            .runtime()
+            .prompts()
+            .into_iter()
+            .next()
+            .map(|(id, p)| {
+                json!({"id": id, "sheet": p.sheet, "title": p.title, "message": p.message,
+                "actions": p.actions.iter().map(|a| json!({"id": a.id, "label": a.label,
+                    "destructive": a.destructive, "cancel": a.cancel})).collect::<Vec<_>>()})
+            });
         let theme = self.current_theme();
-        json!({"navigation": navigation, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
+        // The field that wants the keyboard: hosts open it when this changes.
+        let runtime = self.ui.runtime();
+        let editing = runtime.focused().filter(|_| runtime.editing_focus());
+        // Where a finger drags sideways (rows with swipe actions): the host
+        // keeps its own sideways gestures, such as swipe back, off them.
+        let sideways: Vec<[f32; 4]> = runtime
+            .sideways_drags()
+            .into_iter()
+            .map(|r| r.map(|v| v / self.scale))
+            .collect();
+        json!({"holds": self.holds, "prompt": prompt, "navigation": navigation, "tabs": tabs, "modal": self.ui.runtime().modal_open(), "editing": editing, "sideways": sideways, "scrollViews": scroll_views, "canGoBack":self.back.is_some_and(|(can,_)|can(self.ui.context())),"animating":self.is_animating(),"nodes":nodes,"dark":self.mode==ThemeMode::Dark,"background":theme.palette.base[0],
             "fieldBackground":theme.palette.base[1],"foreground":theme.palette.content,"accent":theme.palette.primary})
+    }
+}
+impl<C: 'static> Drop for Application<C> {
+    fn drop(&mut self) {
+        self.inbox.close();
     }
 }
 #[cfg(any(target_os = "ios", target_os = "android"))]
 pub(crate) trait HostedApplication {
+    fn set_wake(&self, wake: Option<crate::updates::Wake>);
     fn handle(&mut self, event: PlatformEvent) -> Result<(), String>;
     fn draw(&mut self, renderer: &mut SurfaceRenderer) -> Result<PresentStatus, String>;
     fn snapshot(&self) -> Value;
@@ -296,6 +452,9 @@ pub(crate) trait HostedApplication {
 }
 #[cfg(any(target_os = "ios", target_os = "android"))]
 impl<C: 'static> HostedApplication for Application<C> {
+    fn set_wake(&self, wake: Option<crate::updates::Wake>) {
+        Application::set_wake(self, wake)
+    }
     fn handle(&mut self, e: PlatformEvent) -> Result<(), String> {
         self.handle(e)
     }
@@ -829,5 +988,1401 @@ mod tests {
         a.handle(PlatformEvent::Back {}).unwrap();
         assert_eq!(a.state().clicks, 0);
         assert_eq!(a.snapshot()["canGoBack"], false);
+    }
+    #[test]
+    fn changes_from_other_threads_apply_in_order_before_the_next_event() {
+        let mut a = app();
+        let updates = a.updater();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..3 {
+                assert!(updates.update(|s: &mut State| s.clicks += 10));
+            }
+            updates.update(|s: &mut State| s.name = format!("after {}", s.clicks));
+        });
+        worker.join().unwrap();
+        assert!(a.has_updates());
+        assert_eq!(a.state().clicks, 0, "nothing runs off the UI thread");
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert!(!a.has_updates());
+        assert_eq!(a.state().clicks, 30);
+        assert_eq!(a.state().name, "after 30");
+        // The page was laid out again with the new state.
+        assert!(a.snapshot()["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["label"] == "Count 30"));
+        // A tap acts on the page as it now reads.
+        a.updater().update(|s: &mut State| s.clicks = 100);
+        a.handle(PlatformEvent::Activate { id: "count".into() })
+            .unwrap();
+        assert_eq!(a.state().clicks, 101);
+    }
+    #[test]
+    fn one_wake_per_batch_and_a_late_wake_still_delivers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut a = app();
+        let updates = a.updater();
+        updates.update(|s: &mut State| s.clicks += 1);
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        // Changes queued before the host was ready wake it when it installs.
+        a.set_wake(Some(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        })));
+        assert_eq!(wakes.load(Ordering::SeqCst), 1);
+        updates.update(|s: &mut State| s.clicks += 1);
+        updates.update(|s: &mut State| s.clicks += 1);
+        assert_eq!(
+            wakes.load(Ordering::SeqCst),
+            1,
+            "joins the outstanding wake"
+        );
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert_eq!(a.state().clicks, 3);
+        updates.update(|s: &mut State| s.clicks += 1);
+        assert_eq!(wakes.load(Ordering::SeqCst), 2, "a new batch wakes again");
+    }
+    #[test]
+    fn state_can_keep_its_updater_and_changes_stop_after_close() {
+        struct Live {
+            updates: Updater<Live>,
+            text: String,
+        }
+        fn page(s: &Live) -> Element<Live> {
+            text(&s.text).key("text").into()
+        }
+        let mut a = Application::new_with_updater(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            |updates| Live {
+                updates,
+                text: "waiting".into(),
+            },
+            page,
+        )
+        .unwrap();
+        let updates = a.state().updates.clone();
+        std::thread::spawn(move || updates.update(|s: &mut Live| s.text = "loaded".into()))
+            .join()
+            .unwrap();
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert_eq!(a.state().text, "loaded");
+        let kept = a.updater();
+        assert!(kept.is_open());
+        drop(a);
+        assert!(!kept.is_open());
+        assert!(!kept.update(|s: &mut Live| s.text = "lost".into()));
+    }
+    #[test]
+    fn the_updates_event_is_part_of_the_wire_protocol() {
+        assert!(matches!(
+            PlatformEvent::decode(br#"{"op":"updates"}"#).unwrap(),
+            PlatformEvent::Updates {}
+        ));
+        assert!(PlatformEvent::decode(br#"{"op":"updates","extra":1}"#).is_err());
+    }
+    #[test]
+    fn a_tab_view_is_described_for_a_native_tab_bar_and_runs_its_tabs() {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Section {
+            Inbox,
+            Done,
+        }
+        struct Tabs {
+            tab: Section,
+            again: usize,
+        }
+        fn page(s: &Tabs) -> Element<Tabs> {
+            tab_view(
+                s.tab,
+                [
+                    tab_destination(Section::Inbox, "Inbox", Icon::Inbox)
+                        .symbol("tray.fill")
+                        .badge("3"),
+                    tab_destination(Section::Done, "Done", Icon::Check).dot(),
+                ],
+                text(if s.tab == Section::Inbox {
+                    "Inbox page"
+                } else {
+                    "Done page"
+                })
+                .key("body"),
+            )
+            .key("tabs")
+            .on_select(|s: &mut Tabs, t| s.tab = t)
+            .on_reselect(|s: &mut Tabs, _| s.again += 1)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Tabs {
+                tab: Section::Inbox,
+                again: 0,
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 3.,
+        })
+        .unwrap();
+        let tabs = &a.snapshot()["tabs"];
+        assert_eq!(tabs["selected"], 0);
+        assert_eq!(tabs["items"][0]["symbol"], "tray.fill");
+        assert_eq!(tabs["items"][0]["badge"], "3");
+        assert_eq!(tabs["items"][1]["badge"], "");
+        assert_eq!(tabs["items"][1]["label"], "Done");
+        // Drawn by Volt until the host says it draws its own bar.
+        let drawn = |a: &Application<Tabs>| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["id"] == "tabs-tab-1")
+        };
+        assert!(drawn(&a));
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        assert!(!drawn(&a), "the native tab bar replaces Volt's");
+        a.handle(PlatformEvent::Navigation {
+            id: "tabs-tab-1".into(),
+        })
+        .unwrap();
+        assert!(a.state().tab == Section::Done);
+        assert_eq!(a.snapshot()["tabs"]["selected"], 1);
+        a.handle(PlatformEvent::Navigation {
+            id: "tabs-tab-1".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            a.state().again,
+            1,
+            "choosing the open tab again reselects it"
+        );
+    }
+    #[test]
+    fn the_action_dock_moves_away_while_scrolling_down_and_runs_its_actions() {
+        #[derive(Default)]
+        struct Dock {
+            added: usize,
+            more: bool,
+            sorted: usize,
+        }
+        fn page(s: &Dock) -> Element<Dock> {
+            let rows: Vec<Element<Dock>> = (0..40)
+                .map(|i| {
+                    text(format!("Row {i}"))
+                        .key(format!("row-{i}"))
+                        .height(44.)
+                        .into()
+                })
+                .collect();
+            action_dock(vstack(rows).key("list").flex(1.).scroll(Scroll::Auto))
+                .key("dock")
+                .follows("list")
+                .primary(dock_action("Add", Icon::Plus).on_press(|s: &mut Dock| s.added += 1))
+                .more([dock_action("Sort", Icon::Calendar).on_press(|s: &mut Dock| s.sorted += 1)])
+                .more_open(s.more)
+                .on_more(|s: &mut Dock, open| s.more = open)
+                .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Dock::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let top = |a: &Application<Dock>, id: &str| {
+            a.mobile_view()
+                .runtime()
+                .boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .map(|b| b.bounds.bounds()[1])
+                .unwrap()
+        };
+        let to = |a: &mut Application<Dock>, y: f32| {
+            a.handle(PlatformEvent::ScrollTo {
+                id: "list".into(),
+                x: 0.,
+                y,
+            })
+            .unwrap();
+        };
+        // 60-point bar, 12 points above the bottom.
+        let shown = top(&a, "dock-bar");
+        assert!((shown - (800. - 12. - 60.)).abs() < 0.5, "{shown}");
+        // The list keeps room at its end so its last row clears the dock.
+        let max = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "list")
+            .unwrap()
+            .scroll_max[1];
+        assert!((max - (40. * 44. - 800. + 84.)).abs() < 0.5, "{max}");
+        // A small move down does nothing; a longer run slides it away.
+        to(&mut a, 10.);
+        to(&mut a, 20.);
+        assert_eq!(top(&a, "dock-bar"), shown);
+        to(&mut a, 60.);
+        to(&mut a, 200.);
+        assert!(a.mobile_view().runtime().scroll_hidden("list"));
+        assert!(top(&a, "dock-bar") >= 800., "slid below the screen");
+        // Scrolling back up a little brings it back.
+        to(&mut a, 185.);
+        assert!(!a.mobile_view().runtime().scroll_hidden("list"));
+        assert_eq!(top(&a, "dock-bar"), shown);
+        // Hidden again, then the end of the list shows it.
+        to(&mut a, 400.);
+        assert!(a.mobile_view().runtime().scroll_hidden("list"));
+        to(&mut a, max);
+        assert!(!a.mobile_view().runtime().scroll_hidden("list"));
+        // The host's tab bar and home indicator lift it.
+        a.handle(PlatformEvent::Bars {
+            bottom: 83.,
+            keyboard: 0.,
+        })
+        .unwrap();
+        assert!((top(&a, "dock-bar") - (shown - 83.)).abs() < 0.5);
+        // The main action runs on a tap.
+        let y = top(&a, "dock-primary") + 10.;
+        a.handle(PlatformEvent::Begin { x: 195., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 195., y }).unwrap();
+        assert_eq!(a.state().added, 1);
+        // More lists the rest in a sheet; choosing one closes it, then runs it.
+        let y = top(&a, "dock-more") + 10.;
+        a.handle(PlatformEvent::Begin { x: 360., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 360., y }).unwrap();
+        assert!(a.state().more);
+        let y = top(&a, "dock-more-0") + 10.;
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!((a.state().more, a.state().sorted), (false, 1));
+    }
+    #[test]
+    fn sheets_and_dock_search_rise_above_the_keyboard() {
+        #[derive(Default)]
+        struct Page {
+            sheet: bool,
+            name: String,
+            searching: bool,
+            query: String,
+        }
+        fn page(s: &Page) -> Element<Page> {
+            let rows: Vec<Element<Page>> = (0..30)
+                .map(|i| {
+                    text(format!("Row {i}"))
+                        .key(format!("row-{i}"))
+                        .height(44.)
+                        .into()
+                })
+                .collect();
+            zstack![
+                action_dock(vstack(rows).key("list").flex(1.).scroll(Scroll::Auto))
+                    .key("dock")
+                    .follows("list")
+                    .search(
+                        dock_search(&s.query, s.searching)
+                            .on_change(|s: &mut Page, q| s.query = q)
+                            .on_open(|s: &mut Page, open| s.searching = open),
+                    ),
+                bottom_sheet(
+                    text_field(&s.name)
+                        .key("name")
+                        .on_change(|s: &mut Page, v| s.name = v),
+                )
+                .key("sheet")
+                .title("New list")
+                .open(s.sheet)
+                .on_dismiss(|s: &mut Page| s.sheet = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Page::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 402.,
+            height: 874.,
+            scale: 1.,
+        })
+        .unwrap();
+        let bounds = |a: &Application<Page>, id: &str| {
+            a.mobile_view()
+                .runtime()
+                .boxes()
+                .iter()
+                .find(|b| b.id == id)
+                .map(|b| b.bounds.bounds())
+        };
+        let keyboard = |a: &mut Application<Page>, height: f32| {
+            a.handle(PlatformEvent::Bars {
+                bottom: height.max(34.),
+                keyboard: height,
+            })
+            .unwrap();
+        };
+        // Search: the Search button turns the dock into a field that asks
+        // for the keyboard, and the dock rides on top of it.
+        assert!(bounds(&a, "dock-search-field").is_none());
+        a.handle(PlatformEvent::Activate {
+            id: "dock-search-open".into(),
+        })
+        .unwrap();
+        assert!(a.state().searching);
+        assert_eq!(a.snapshot()["editing"], "dock-search-field");
+        keyboard(&mut a, 336.);
+        let field = bounds(&a, "dock-search-field").unwrap();
+        assert!(field[1] + field[3] <= 874. - 336., "{field:?}");
+        assert!(!a.mobile_view().runtime().scroll_hidden("list"));
+        a.handle(PlatformEvent::Text {
+            id: "dock-search-field".into(),
+            text: "Row 2".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().query, "Row 2");
+        a.handle(PlatformEvent::Activate {
+            id: "dock-search-close".into(),
+        })
+        .unwrap();
+        assert!(!a.state().searching);
+        assert!(bounds(&a, "dock-primary").is_none() && bounds(&a, "dock-search-open").is_some());
+        // A sheet's field stays above the keyboard.
+        keyboard(&mut a, 0.);
+        a.update(|s| s.sheet = true);
+        let resting = bounds(&a, "name").unwrap();
+        keyboard(&mut a, 336.);
+        let lifted = bounds(&a, "name").unwrap();
+        assert!(
+            lifted[1] + lifted[3] <= 874. - 336.,
+            "{resting:?} {lifted:?}"
+        );
+        keyboard(&mut a, 0.);
+        assert_eq!(bounds(&a, "name").unwrap(), resting);
+    }
+    #[test]
+    fn a_dropped_sheet_settles_where_it_belongs() {
+        #[derive(Default)]
+        struct Sheet {
+            open: bool,
+            height: usize,
+        }
+        fn page(s: &Sheet) -> Element<Sheet> {
+            zstack![
+                text("Page").key("page"),
+                bottom_sheet(text("Body").key("body"))
+                    .key("sheet")
+                    .title("New idea")
+                    .detents([SheetDetent::Medium, SheetDetent::Large])
+                    .detent(s.height)
+                    .on_detent(|s: &mut Sheet, i| s.height = i)
+                    .open(s.open)
+                    .on_dismiss(|s: &mut Sheet| s.open = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Sheet {
+                open: true,
+                height: 1,
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let top = |a: &Application<Sheet>| {
+            a.mobile_view()
+                .runtime()
+                .boxes()
+                .iter()
+                .find(|b| b.id == "sheet-content")
+                .unwrap()
+                .bounds
+                .bounds()[1]
+        };
+        let settle = |a: &mut Application<Sheet>| {
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+                a.handle(PlatformEvent::Draw {}).unwrap();
+            }
+        };
+        let drag = |a: &mut Application<Sheet>, from: f32, dy: f32| {
+            a.handle(PlatformEvent::Begin { x: 195., y: from }).unwrap();
+            for i in 1..=6 {
+                a.handle(PlatformEvent::Move {
+                    x: 195.,
+                    y: from + dy * i as f32 / 6.,
+                })
+                .unwrap();
+            }
+            a.handle(PlatformEvent::End {
+                x: 195.,
+                y: from + dy,
+            })
+            .unwrap();
+        };
+        settle(&mut a);
+        let large = top(&a);
+        // A short drag down springs back to full height.
+        drag(&mut a, large + 30., 50.);
+        assert_eq!(a.state().height, 1);
+        settle(&mut a);
+        assert_eq!(
+            a.mobile_view().runtime().drag_offset("sheet-content"),
+            [0., 0.]
+        );
+        assert_eq!(top(&a), large);
+        // A long one steps to half height, and nothing is left over.
+        drag(&mut a, large + 30., 190.);
+        assert_eq!(a.state().height, 0);
+        settle(&mut a);
+        assert_eq!(
+            a.mobile_view().runtime().drag_offset("sheet-content"),
+            [0., 0.]
+        );
+        assert!(top(&a) > large + 100.);
+        // The platform taking the touch mid-drag (a scroll view's pan): the
+        // sheet goes back to its place rather than staying under the finger.
+        let resting = top(&a);
+        a.handle(PlatformEvent::Begin {
+            x: 195.,
+            y: resting + 30.,
+        })
+        .unwrap();
+        for i in 1..=4 {
+            a.handle(PlatformEvent::Move {
+                x: 195.,
+                y: resting + 30. + 15. * i as f32,
+            })
+            .unwrap();
+        }
+        assert!(a.mobile_view().runtime().drag_offset("sheet-content")[1] > 0.);
+        a.handle(PlatformEvent::Cancel {}).unwrap();
+        settle(&mut a);
+        assert_eq!(
+            a.mobile_view().runtime().drag_offset("sheet-content"),
+            [0., 0.]
+        );
+        assert!(a.state().open);
+    }
+    #[test]
+    fn a_drag_from_a_full_height_sheets_header_steps_it_down() {
+        #[derive(Default)]
+        struct Sheet {
+            open: bool,
+            height: usize,
+            name: String,
+        }
+        fn page(s: &Sheet) -> Element<Sheet> {
+            zstack![
+                text("Page").key("page"),
+                bottom_sheet(vstack![
+                    text("Name"),
+                    text_field(&s.name)
+                        .key("name")
+                        .on_change(|s: &mut Sheet, v| s.name = v)
+                ])
+                .key("sheet")
+                .title("New list")
+                .detents([SheetDetent::Medium, SheetDetent::Large])
+                .detent(s.height)
+                .on_detent(|s: &mut Sheet, i| s.height = i)
+                .cancel("Cancel", |s: &mut Sheet| s.open = false)
+                .done("Create", |s: &mut Sheet| s.open = false)
+                .open(s.open)
+                .on_dismiss(|s: &mut Sheet| s.open = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Sheet {
+                open: true,
+                height: 1,
+                ..Default::default()
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 402.,
+            height: 874.,
+            scale: 3.,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::SafeArea {
+            top: 62.,
+            right: 0.,
+            bottom: 34.,
+            left: 0.,
+        })
+        .unwrap();
+        let ys = [160f32, 210., 270., 330., 350.];
+        a.handle(PlatformEvent::Begin { x: 200., y: ys[0] })
+            .unwrap();
+        for y in &ys[1..] {
+            a.handle(PlatformEvent::Move { x: 200., y: *y }).unwrap();
+        }
+        a.handle(PlatformEvent::End { x: 200., y: 350. }).unwrap();
+        assert_eq!(
+            a.state().height,
+            0,
+            "a 190-point drag on the header steps down"
+        );
+    }
+    #[test]
+    fn rows_swipe_open_run_actions_and_select() {
+        #[derive(Default)]
+        struct List {
+            open: Option<SwipeSide>,
+            pinned: usize,
+            deleted: usize,
+            pressed: usize,
+            selecting: bool,
+            selected: bool,
+        }
+        fn page(s: &List) -> Element<List> {
+            vstack![list_section(
+                "Notes",
+                [list_row("Groceries")
+                    .key("row")
+                    .subtitle("Oat milk")
+                    .on_press(|s: &mut List| s.pressed += 1)
+                    .leading_actions([
+                        swipe_action("Pin", Icon::Star).on_press(|s: &mut List| s.pinned += 1)
+                    ])
+                    .trailing_actions([swipe_action("Delete", Icon::Trash)
+                        .tone(SwipeTone::Danger)
+                        .full_swipe()
+                        .on_press(|s: &mut List| s.deleted += 1)])
+                    .swipe_open(s.open)
+                    .on_swipe_open(|s: &mut List, side| s.open = side)
+                    .selecting(s.selecting)
+                    .selected(s.selected)
+                    .on_toggle(|s: &mut List| s.selected = !s.selected)
+                    .into()],
+                "",
+            )]
+            .padding(16., Edge::All)
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            List::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let row = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "row")
+            .unwrap()
+            .bounds
+            .bounds();
+        let y = row[1] + row[3] / 2.;
+        let swipe = |a: &mut Application<List>, from: f32, dx: f32| {
+            a.handle(PlatformEvent::Begin { x: from, y }).unwrap();
+            for i in 1..=5 {
+                a.handle(PlatformEvent::Move {
+                    x: from + dx * i as f32 / 5.,
+                    y,
+                })
+                .unwrap();
+            }
+            a.handle(PlatformEvent::End { x: from + dx, y }).unwrap();
+        };
+        // The row is a sideways drag: hosts keep swipe back off it.
+        let sideways = a.snapshot()["sideways"].as_array().unwrap().len();
+        assert_eq!(sideways, 1);
+        // A short swipe left springs back; a longer one opens the trailing actions.
+        swipe(&mut a, 300., -20.);
+        assert_eq!(a.state().open, None);
+        swipe(&mut a, 300., -70.);
+        assert_eq!(a.state().open, Some(SwipeSide::Trailing));
+        // A tap on the open row closes it rather than opening the note.
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!((a.state().open, a.state().pressed), (None, 0));
+        // Swipe right opens Pin; its button runs it and closes the row.
+        swipe(&mut a, 60., 90.);
+        assert_eq!(a.state().open, Some(SwipeSide::Leading));
+        a.handle(PlatformEvent::Activate {
+            id: "row-action-leading-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().pinned, a.state().open), (1, None));
+        // A quick long flick left can't delete: Delete is destructive, so
+        // the row only opens on its buttons.
+        swipe(&mut a, 350., -300.);
+        assert_eq!(
+            (a.state().deleted, a.state().open),
+            (0, Some(SwipeSide::Trailing))
+        );
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!(a.state().open, None);
+        // Resting past the line a moment before letting go deletes.
+        a.handle(PlatformEvent::Begin { x: 350., y }).unwrap();
+        for i in 1..=5 {
+            a.handle(PlatformEvent::Move {
+                x: 350. - 60. * i as f32,
+                y,
+            })
+            .unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        a.handle(PlatformEvent::End { x: 50., y }).unwrap();
+        assert_eq!((a.state().deleted, a.state().open), (1, None));
+        // A plain tap opens the note.
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert_eq!(a.state().pressed, 1);
+        // Select mode: taps toggle, swipes do nothing, no sideways area.
+        a.update(|s| s.selecting = true);
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert!(a.state().selected);
+        swipe(&mut a, 300., -90.);
+        assert_eq!(a.state().open, None);
+        assert!(a.snapshot()["sideways"].as_array().unwrap().is_empty());
+        assert_eq!(a.state().pressed, 1);
+    }
+    #[test]
+    fn a_search_field_is_the_hosts_own_on_ios() {
+        #[derive(Default)]
+        struct Find {
+            query: String,
+            searched: usize,
+        }
+        fn page(s: &Find) -> Element<Find> {
+            vstack![search_field(s.query.clone())
+                .key("find")
+                .placeholder("Search notes")
+                .on_change(|s: &mut Find, q| s.query = q)
+                .on_submit(|s: &mut Find| s.searched += 1)]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Find::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 2.,
+        })
+        .unwrap();
+        let node = |a: &Application<Find>| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"] == "find")
+                .cloned()
+                .unwrap()
+        };
+        // Volt draws it until the host says it has its own.
+        assert_eq!(node(&a)["kind"], "field");
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        let n = node(&a);
+        assert_eq!(
+            (n["kind"].as_str(), n["placeholder"].as_str()),
+            (Some("search"), Some("Search notes"))
+        );
+        a.handle(PlatformEvent::Text {
+            id: "find".into(),
+            text: "milk".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().query, "milk");
+        a.handle(PlatformEvent::Submit { id: "find".into() })
+            .unwrap();
+        assert_eq!(a.state().searched, 1);
+        // Volt's magnifier and clear button give way to the host's.
+        assert!(!a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .any(|b| b.id == "find-clear"));
+    }
+    #[test]
+    fn alerts_and_action_sheets_reach_the_host_and_run_their_answers() {
+        #[derive(Default)]
+        struct Ask {
+            alert: bool,
+            sheet: bool,
+            deleted: usize,
+            shared: usize,
+        }
+        fn page(s: &Ask) -> Element<Ask> {
+            zstack![
+                text("Page").key("page"),
+                alert_dialog("Delete 3 notes?")
+                    .key("alert")
+                    .message("They can't be brought back.")
+                    .action(
+                        prompt_action("Delete")
+                            .destructive()
+                            .on_press(|s: &mut Ask| s.deleted += 1)
+                    )
+                    .cancel("Cancel")
+                    .open(s.alert)
+                    .on_close(|s: &mut Ask| s.alert = false),
+                action_sheet("")
+                    .key("sheet")
+                    .action(prompt_action("Share").on_press(|s: &mut Ask| s.shared += 1))
+                    .open(s.sheet)
+                    .on_close(|s: &mut Ask| s.sheet = false),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Ask::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 2.,
+        })
+        .unwrap();
+        assert!(a.snapshot()["prompt"].is_null());
+        // Volt draws it: its buttons work like any other.
+        a.update(|s| s.alert = true);
+        let prompt = a.snapshot()["prompt"].clone();
+        assert_eq!(prompt["sheet"], false);
+        assert_eq!(prompt["title"], "Delete 3 notes?");
+        let actions = prompt["actions"].as_array().unwrap();
+        assert_eq!(
+            (
+                actions[0]["destructive"].as_bool(),
+                actions[1]["cancel"].as_bool()
+            ),
+            (Some(true), Some(true))
+        );
+        a.handle(PlatformEvent::Activate {
+            id: "alert-action-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().alert, a.state().deleted), (false, 1));
+        // On iOS the host shows UIKit's and runs the answer by its ID.
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.update(|s| s.sheet = true);
+        let prompt = a.snapshot()["prompt"].clone();
+        assert_eq!(prompt["sheet"], true);
+        // A sheet always has a Cancel.
+        assert_eq!(prompt["actions"][1]["label"], "Cancel");
+        a.handle(PlatformEvent::Navigation {
+            id: "sheet-action-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().sheet, a.state().shared), (false, 1));
+        a.update(|s| s.alert = true);
+        a.handle(PlatformEvent::Navigation {
+            id: "alert-cancel".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().alert, a.state().deleted), (false, 1));
+        assert!(a.snapshot()["prompt"].is_null());
+    }
+    #[test]
+    fn a_composer_tells_the_host_how_to_type_in_it() {
+        #[derive(Default)]
+        struct Chat {
+            draft: String,
+            sent: usize,
+        }
+        fn page(s: &Chat) -> Element<Chat> {
+            vstack![
+                spacer(),
+                composer(s.draft.clone())
+                    .key("c")
+                    .on_change(|s: &mut Chat, t| s.draft = t)
+                    .on_send(|s: &mut Chat| {
+                        s.sent += 1;
+                        s.draft.clear();
+                    }),
+            ]
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Chat::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 2.,
+        })
+        .unwrap();
+        let node = |a: &Application<Chat>, id: &str| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"] == id)
+                .cloned()
+                .unwrap()
+        };
+        // No Done bar; the editor matches the pill behind the field.
+        let field = node(&a, "c-field");
+        assert_eq!(field["doneBar"], false);
+        assert_eq!(field["backdrop"]["radius"], 22.);
+        // Send keeps the keyboard up, and is off until there's text.
+        let send = node(&a, "c-send");
+        assert_eq!(
+            (send["keepsKeyboard"].as_bool(), send["enabled"].as_bool()),
+            (Some(true), Some(false))
+        );
+        a.handle(PlatformEvent::Focus {
+            id: "c-field".into(),
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Text {
+            id: "c-field".into(),
+            text: "Hello".into(),
+        })
+        .unwrap();
+        assert_eq!(a.snapshot()["editing"], "c-field");
+        a.handle(PlatformEvent::Activate {
+            id: "c-send".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().sent, a.state().draft.as_str()), (1, ""));
+        // The keyboard went away: Rust lets go of the field.
+        a.handle(PlatformEvent::Focus {
+            id: "c-field".into(),
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Blur {}).unwrap();
+        assert!(a.snapshot()["editing"].is_null());
+    }
+    #[test]
+    fn a_long_press_opens_the_row_menu_and_runs_its_action() {
+        #[derive(Default)]
+        struct List {
+            menu: bool,
+            deleted: usize,
+            pressed: usize,
+            flagged: usize,
+            open: Option<SwipeSide>,
+        }
+        fn page(s: &List) -> Element<List> {
+            vstack![list_section(
+                "Notes",
+                [list_row("Groceries")
+                    .key("row")
+                    .on_press(|s: &mut List| s.pressed += 1)
+                    .trailing_actions([
+                        swipe_action("Flag", Icon::Bell).on_press(|s: &mut List| s.flagged += 1)
+                    ])
+                    .swipe_open(s.open)
+                    .on_swipe_open(|s: &mut List, side| s.open = side)
+                    .hold_actions([swipe_action("Delete", Icon::Trash)
+                        .tone(SwipeTone::Danger)
+                        .on_press(|s: &mut List| s.deleted += 1)])
+                    .menu_open(s.menu)
+                    .on_menu_open(|s: &mut List, open| s.menu = open)
+                    .into()],
+                "",
+            )]
+            .padding(16., Edge::All)
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            List::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let row = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "row")
+            .unwrap()
+            .bounds
+            .bounds();
+        let y = row[1] + row[3] / 2.;
+        // A hold with no menu under it does nothing and keeps the touch.
+        a.handle(PlatformEvent::Begin { x: 100., y: 700. }).unwrap();
+        a.handle(PlatformEvent::Hold { x: 100., y: 700. }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y: 700. }).unwrap();
+        assert_eq!(a.snapshot()["holds"], 0);
+        // On the row it opens the menu, and lifting the finger doesn't press it.
+        a.handle(PlatformEvent::Begin { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::Hold { x: 100., y }).unwrap();
+        a.handle(PlatformEvent::End { x: 100., y }).unwrap();
+        assert!(a.state().menu);
+        assert_eq!(
+            (a.state().pressed, a.snapshot()["holds"].as_u64()),
+            (0, Some(1))
+        );
+        // The menu sits under the row, and its action closes it first.
+        let item = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "row-menu-0")
+            .unwrap()
+            .bounds
+            .bounds();
+        assert!(item[1] >= row[1] + row[3]);
+        a.handle(PlatformEvent::Activate {
+            id: "row-menu-0".into(),
+        })
+        .unwrap();
+        assert_eq!((a.state().menu, a.state().deleted), (false, 1));
+        // Away from the menu, a tap closes it without pressing the row.
+        a.update(|s| s.menu = true);
+        a.handle(PlatformEvent::Begin { x: 200., y: 700. }).unwrap();
+        a.handle(PlatformEvent::End { x: 200., y: 700. }).unwrap();
+        assert_eq!((a.state().menu, a.state().pressed), (false, 0));
+        // A screen reader gets the same actions by name, and doesn't see the
+        // buttons behind the closed row.
+        let snapshot = a.snapshot();
+        let nodes = snapshot["nodes"].as_array().unwrap();
+        let row = nodes.iter().find(|n| n["id"] == "row-content").unwrap();
+        let names: Vec<_> = row["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Flag", "Show menu"]);
+        assert!(!nodes.iter().any(|n| n["id"] == "row-action-trailing-0"));
+        a.handle(PlatformEvent::Activate {
+            id: "row-action-trailing-0".into(),
+        })
+        .unwrap();
+        assert_eq!(a.state().flagged, 1);
+        a.handle(PlatformEvent::Menu {
+            id: "row-content".into(),
+        })
+        .unwrap();
+        assert!(a.state().menu);
+    }
+    #[test]
+    fn a_sheet_follows_a_drag_then_closes_steps_or_stays() {
+        #[derive(Default)]
+        struct Sheet {
+            open: bool,
+            height: usize,
+            closed: usize,
+            asked: usize,
+            guard: bool,
+        }
+        fn page(s: &Sheet) -> Element<Sheet> {
+            let sheet = bottom_sheet(text("Body").key("body"))
+                .key("sheet")
+                .title("New idea")
+                .detents([SheetDetent::Medium, SheetDetent::Large])
+                .detent(s.height)
+                .on_detent(|s: &mut Sheet, i| s.height = i)
+                .open(s.open)
+                .on_dismiss(|s: &mut Sheet| {
+                    s.open = false;
+                    s.closed += 1
+                });
+            let sheet = if s.guard {
+                sheet.on_dismiss_attempt(|s: &mut Sheet| s.asked += 1)
+            } else {
+                sheet
+            };
+            zstack![text("Page").key("page"), sheet].flex(1.).into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Sheet {
+                open: true,
+                ..Sheet::default()
+            },
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 800.,
+            scale: 1.,
+        })
+        .unwrap();
+        let drag = |a: &mut Application<Sheet>, dy: f32| {
+            for e in [
+                // The header of a sheet at medium height (its top is at 428).
+                PlatformEvent::Begin { x: 195., y: 470. },
+                PlatformEvent::Move {
+                    x: 195.,
+                    y: 470. + dy / 2.,
+                },
+                PlatformEvent::Move {
+                    x: 195.,
+                    y: 470. + dy,
+                },
+                PlatformEvent::End {
+                    x: 195.,
+                    y: 470. + dy,
+                },
+            ] {
+                a.handle(e).unwrap();
+            }
+        };
+        // A short drag springs back and changes nothing.
+        drag(&mut a, 30.);
+        assert!(a.state().open && a.state().height == 0);
+        // Up a long way: the larger height.
+        drag(&mut a, -160.);
+        assert_eq!(a.state().height, 1);
+        // Down from the larger height: back to medium, still open.
+        a.handle(PlatformEvent::Begin { x: 195., y: 90. }).unwrap();
+        a.handle(PlatformEvent::Move { x: 195., y: 290. }).unwrap();
+        a.handle(PlatformEvent::End { x: 195., y: 290. }).unwrap();
+        assert_eq!(a.state().height, 0);
+        assert!(a.state().open);
+        // Down from the smallest height closes it, unless that loses work.
+        a.update(|s| s.guard = true);
+        drag(&mut a, 200.);
+        assert_eq!((a.state().asked, a.state().closed), (1, 0));
+        assert!(a.state().open, "the app decides after asking");
+        a.update(|s| s.guard = false);
+        drag(&mut a, 200.);
+        assert_eq!(a.state().closed, 1);
+        assert!(!a.state().open);
+        // A phone-sized swipe up from the grabber, in many small moves, with
+        // the iOS host's scrolling and bars.
+        a.update(|s| s.open = true);
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 402.,
+            height: 874.,
+            scale: 3.,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Begin { x: 201., y: 485. }).unwrap();
+        for i in 1..=12 {
+            let y = 485. - 235. * i as f32 / 12.;
+            a.handle(PlatformEvent::Move { x: 201., y }).unwrap();
+        }
+        a.handle(PlatformEvent::End { x: 201., y: 250. }).unwrap();
+        assert!(a.state().open, "a swipe up never closes the sheet");
+        assert_eq!(a.state().height, 1, "a swipe up makes it taller");
+        a.update(|s| s.height = 0);
+        // The grabber steps through the heights for people who can't drag.
+        a.update(|s| s.open = true);
+        a.handle(PlatformEvent::Begin { x: 201., y: 475. }).unwrap();
+        a.handle(PlatformEvent::End { x: 201., y: 475. }).unwrap();
+        assert_eq!(a.state().height, 1, "a tap on the grabber");
+    }
+
+    #[test]
+    fn a_transcript_says_when_the_reader_leaves_the_end_and_jumps_back() {
+        #[derive(Default)]
+        struct Chat {
+            away: bool,
+            jumps: u32,
+        }
+        fn page(s: &Chat) -> Element<Chat> {
+            let rows: Vec<Element<Chat>> = (0..40)
+                .map(|i| {
+                    text(format!("Message {i}"))
+                        .key(format!("m-{i}"))
+                        .height(44.)
+                        .into()
+                })
+                .collect();
+            let transcript = vstack(rows)
+                .key("transcript")
+                .scroll(Scroll::Vertical)
+                .anchor_end(true)
+                .on_away_from_end(|s: &mut Chat, away| s.away = away)
+                .scroll_to_end(s.jumps);
+            vstack![
+                jump_to_latest(transcript, "jump", s.away, |s: &mut Chat| s.jumps += 1).flex(1.),
+                text("Composer").key("composer").height(60.),
+            ]
+            .key("page")
+            .flex(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Chat::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Host {
+            native_scrolling: true,
+            native_navigation: true,
+            native_controls: true,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 600.,
+            scale: 1.,
+        })
+        .unwrap();
+        let offset =
+            |a: &Application<Chat>| a.mobile_view().runtime().scroll_offset("transcript")[1];
+        let has_jump = |a: &Application<Chat>| {
+            a.snapshot()["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["id"] == "jump")
+        };
+        // It opens at the latest, with no button.
+        let end = offset(&a);
+        assert!(end > 1000.);
+        assert!(!a.mobile_view().context().away && !has_jump(&a));
+        // Scrolled up: the app hears it and shows the button.
+        a.handle(PlatformEvent::ScrollTo {
+            id: "transcript".into(),
+            x: 0.,
+            y: 200.,
+        })
+        .unwrap();
+        assert!(a.mobile_view().context().away && has_jump(&a));
+        // The button floats: what's under the transcript keeps its height.
+        let composer = a
+            .mobile_view()
+            .runtime()
+            .boxes()
+            .iter()
+            .find(|b| b.id == "composer")
+            .map(|b| b.bounds.bounds()[3])
+            .unwrap();
+        assert_eq!(composer, 60.);
+        // A small drift near the end isn't away.
+        a.handle(PlatformEvent::ScrollTo {
+            id: "transcript".into(),
+            x: 0.,
+            y: end - 10.,
+        })
+        .unwrap();
+        assert!(!a.mobile_view().context().away);
+        a.handle(PlatformEvent::ScrollTo {
+            id: "transcript".into(),
+            x: 0.,
+            y: 0.,
+        })
+        .unwrap();
+        assert!(has_jump(&a));
+        // The button goes back to the end, and hides.
+        a.handle(PlatformEvent::Activate { id: "jump".into() })
+            .unwrap();
+        assert_eq!(a.mobile_view().context().jumps, 1);
+        assert!((offset(&a) - end).abs() < 1.);
+        assert!(!a.mobile_view().context().away && !has_jump(&a));
+        // Where Volt scrolls (Android), a drag does the same.
+        a.handle(PlatformEvent::Host {
+            native_scrolling: false,
+            native_navigation: false,
+            native_controls: false,
+        })
+        .unwrap();
+        a.handle(PlatformEvent::Begin { x: 200., y: 100. }).unwrap();
+        a.handle(PlatformEvent::Move { x: 200., y: 300. }).unwrap();
+        a.handle(PlatformEvent::Move { x: 200., y: 500. }).unwrap();
+        a.handle(PlatformEvent::End { x: 200., y: 500. }).unwrap();
+        assert!(offset(&a) < end - 100., "dragged up: {}", offset(&a));
+        assert!(a.mobile_view().context().away && has_jump(&a));
+    }
+
+    #[test]
+    fn a_snackbar_closes_on_time_but_waits_for_fingers_and_screen_readers() {
+        #[derive(Default)]
+        struct Page {
+            shown: bool,
+        }
+        fn page(s: &Page) -> Element<Page> {
+            zstack![
+                vstack![button("Delete")
+                    .key("delete")
+                    .on_click(|s: &mut Page| s.shown = true)]
+                .key("content")
+                .width_fraction(1.)
+                .height_fraction(1.),
+                snackbar("Deleted a note.")
+                    .key("undo")
+                    .open(s.shown)
+                    .close_after(0.3)
+                    .on_close(|s: &mut Page| s.shown = false),
+            ]
+            .key("page")
+            .width_fraction(1.)
+            .height_fraction(1.)
+            .into()
+        }
+        let mut a = Application::new(
+            HostContext {
+                font_family: "serif".into(),
+            },
+            Page::default(),
+            page,
+        )
+        .unwrap();
+        a.handle(PlatformEvent::Resize {
+            width: 390.,
+            height: 700.,
+            scale: 1.,
+        })
+        .unwrap();
+        let wait = |ms: u64| std::thread::sleep(std::time::Duration::from_millis(ms));
+        let show = |a: &mut Application<Page>| {
+            a.handle(PlatformEvent::Activate {
+                id: "delete".into(),
+            })
+            .unwrap();
+            assert!(a.state().shown);
+        };
+        // It closes by itself; the host is woken when it's due.
+        show(&mut a);
+        wait(400);
+        assert!(a.has_updates(), "a timer thread woke the host");
+        a.handle(PlatformEvent::Updates {}).unwrap();
+        assert!(!a.state().shown);
+        // A finger on the screen stops the time.
+        show(&mut a);
+        a.handle(PlatformEvent::Begin { x: 200., y: 300. }).unwrap();
+        wait(400);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(a.state().shown, "still showing under the finger");
+        a.handle(PlatformEvent::Cancel {}).unwrap();
+        wait(150);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(a.state().shown, "the paused time didn't count");
+        wait(250);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(!a.state().shown);
+        // With a screen reader on, it stays until dismissed.
+        a.handle(PlatformEvent::ScreenReader { on: true }).unwrap();
+        show(&mut a);
+        wait(400);
+        a.handle(PlatformEvent::Draw {}).unwrap();
+        assert!(a.state().shown);
+        a.handle(PlatformEvent::Activate {
+            id: "undo-close".into(),
+        })
+        .unwrap();
+        assert!(!a.state().shown);
     }
 }

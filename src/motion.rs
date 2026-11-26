@@ -498,6 +498,7 @@ impl DragGesture {
 pub struct DragMotion {
     pub(crate) inertia: Inertia,
     pub(crate) momentum: bool,
+    pub(crate) spring_back: bool,
 }
 impl Default for DragMotion {
     fn default() -> Self {
@@ -509,7 +510,16 @@ impl DragMotion {
         Self {
             inertia: Inertia::new(),
             momentum: true,
+            spring_back: false,
         }
+    }
+    /// On release, spring back to where it started instead of staying or
+    /// coasting: for things that follow a finger and then settle in a place
+    /// the app decides, such as a sheet between its heights or a row's swipe.
+    /// The release's distance and speed come with the pointer's Release.
+    pub fn spring_back(mut self, value: bool) -> Self {
+        self.spring_back = value;
+        self
     }
     pub fn bounds(mut self, min: [f32; 2], max: [f32; 2]) -> Self {
         self.inertia = self.inertia.bounds(min, max);
@@ -529,6 +539,11 @@ impl DragMotion {
     pub(crate) fn valid(self) -> bool {
         self.inertia.release([0.; 2], [0.; 2]).is_ok()
     }
+    /// It can move sideways: a platform's own sideways gestures (iOS's
+    /// swipe back) should leave touches on it alone.
+    pub(crate) fn moves_sideways(self) -> bool {
+        self.inertia.min[0] < self.inertia.max[0]
+    }
 }
 
 /// Decorative text presentation. Semantic/copy text always remains the full value.
@@ -544,6 +559,7 @@ pub(crate) enum TextEffectKind {
     Morph,
     Rolling,
     Shimmer,
+    Stream,
 }
 impl TextEffect {
     fn new(kind: TextEffectKind) -> Self {
@@ -564,6 +580,12 @@ impl TextEffect {
     }
     pub fn rolling() -> Self {
         Self::new(TextEffectKind::Rolling)
+    }
+    /// Text that arrives in pieces, as a model's reply does: what's added
+    /// eases in from where the reveal had got to, at a reading pace that
+    /// speeds up to keep up. Replacing the text shows it at once.
+    pub fn stream() -> Self {
+        Self::new(TextEffectKind::Stream)
     }
     pub fn shimmer() -> Self {
         Self {

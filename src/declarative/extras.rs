@@ -215,15 +215,89 @@ pub struct NavigationBar {
     pub buttons: Vec<(String, String)>,
 }
 
+/// A tab view's bar, for a host that draws its own (iOS's tab bar).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabBar {
+    pub items: Vec<TabBarItem>,
+    /// Index of the selected item.
+    pub selected: usize,
+}
+/// One destination in a [`TabBar`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabBarItem {
+    /// The control the host activates when the tab is chosen.
+    pub id: String,
+    pub label: String,
+    /// The platform's own symbol name (an SF Symbol on iOS), if given.
+    pub symbol: Option<String>,
+    /// The Volt icon's name, for a host to map when there's no symbol.
+    pub icon: String,
+    /// Text for a badge; an empty string is a dot.
+    pub badge: Option<String>,
+}
+
+/// An alert or action sheet, for a host that shows its own (iOS's
+/// `UIAlertController`). IDs name the buttons Volt draws otherwise;
+/// `Runtime::activate_navigation` runs them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prompt {
+    /// An action sheet rises from the bottom; an alert sits in the middle.
+    pub sheet: bool,
+    pub title: String,
+    pub message: String,
+    pub actions: Vec<PromptButton>,
+}
+/// One button of a [`Prompt`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PromptButton {
+    pub id: String,
+    pub label: String,
+    /// Removes or loses something: shown in red.
+    pub destructive: bool,
+    /// Closes without doing anything: the bold button, or the separate one
+    /// at the bottom of a sheet.
+    pub cancel: bool,
+}
+
 /// Rust-only extensions carried by every node. Defaults change nothing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct NodeExtras {
     /// This node is a navigation stack's bar.
     pub navigation_bar: Option<Box<NavigationBar>>,
+    /// This node is a tab view's bar.
+    pub tab_bar: Option<Box<TabBar>>,
+    /// This node is an alert or action sheet.
+    pub prompt: Option<Box<Prompt>>,
+    /// Volt's drawing of a control the host draws natively (a search
+    /// field's magnifier and clear button): hidden when it does.
+    pub native_hidden: bool,
+    /// Slides off the bottom while scroll view `id` scrolls toward its end,
+    /// and back when it scrolls toward its start (an action dock).
+    pub hides_with: Option<String>,
+    /// Takes the host's bottom bars (tab bar, home indicator, keyboard) as
+    /// extra bottom padding, so it sits just above them.
+    pub above_bars: bool,
+    /// A bottom sheet's card: with the keyboard up it takes the full height,
+    /// its surface running behind the keyboard and its content above it.
+    pub keyboard_room: bool,
     /// A scroll container's pull-to-refresh handler (`on_refresh`).
     pub on_refresh: Option<String>,
     /// Its work is under way: hosts keep their refresh spinner showing.
     pub refreshing: bool,
+    /// An end-anchored scroll view's handler (`on_away_from_end`): true when
+    /// the reader scrolls away from the end, false back at it.
+    pub on_end_away: Option<String>,
+    /// Paint this box only while the sibling with this ID is moved off its
+    /// place (dragged, animating or transformed): what a sliding row
+    /// reveals is invisible, and skipped, while the row covers it.
+    pub paint_when_moved: Option<String>,
+    /// A message that closes itself after this many milliseconds on screen
+    /// (`snackbar(..).close_after`), by running its `{id}-close` control,
+    /// with a stamp of what it says: a new message restarts the time.
+    pub close_after_ms: Option<(u32, u64)>,
+    /// A change brings an end-anchored scroll view back to its end
+    /// (`scroll_to_end`); a first 0 does nothing.
+    pub scroll_end_request: u32,
     /// Text inside can be selected and copied (inherited; `Some(false)`
     /// opts a subtree out).
     pub selectable: Option<bool>,

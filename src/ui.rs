@@ -484,10 +484,37 @@ pub use routing::{
     link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError, NavigationHistory,
     NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
 };
+mod action_dock;
+mod composer;
+pub use composer::{composer, Composer};
+mod flows;
+pub use flows::{
+    ago, flow_step, freshness_line, quick_picks, sheet_flow, FlowStep, FreshnessLine, QuickPicks,
+    SheetFlow,
+};
+mod jump;
+pub use jump::jump_to_latest;
+mod work;
+pub use work::{activity_pill, work_card, ActivityPill, WorkCard, WorkState};
+mod snackbar;
+pub use snackbar::{snackbar, Snackbar};
+mod search;
+pub use search::{search_field, SearchField};
+mod prompts;
+pub use prompts::{action_sheet, alert_dialog, prompt_action, Prompt, PromptAction};
+mod list_row;
+pub use list_row::{
+    list_row, list_section, swipe_action, ListRow, SwipeAction, SwipeSide, SwipeTone,
+};
 mod popovers;
 mod progress;
+mod sheet;
 mod speed_dial;
+mod tab_view;
+pub use action_dock::{action_dock, dock_action, dock_search, ActionDock, DockAction, DockSearch};
+pub use sheet::{bottom_sheet, BottomSheet, SheetDetent};
 pub use speed_dial::{speed_dial, SpeedDial};
+pub use tab_view::{tab_destination, tab_view, TabDestination, TabView};
 mod split;
 mod split_view;
 pub mod tokens;
@@ -547,6 +574,8 @@ pub struct Element<C> {
     escape: Option<Click<C>>,
     /// Scroll containers: pulled past the top and let go.
     refresh: Option<Click<C>>,
+    /// End-anchored scroll containers: left (true) or back at (false) the end.
+    end_away: Option<Change<C>>,
     validation_error: Option<String>,
     input_activation: Option<ClickWith<C>>,
     input_key: Option<InputKeyCallback<C>>,
@@ -600,15 +629,121 @@ impl<C> Element<C> {
             })
         })
     }
+    /// Whether a tab view's bar is in this tree.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn has_tab_bar(&self) -> bool {
+        self.node.ext.tab_bar.is_some() || self.children.iter().any(|c| c.has_tab_bar())
+    }
+    /// Volt draws the bars (Android): keep them clear of the system's. The
+    /// navigation bar starts below the status bar; the tab bar ends above
+    /// the gesture handle, and steps aside while the keyboard is up.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn inset_drawn_bars(&mut self, [top, _, bottom, _]: [f32; 4], keyboard: bool) {
+        let n = &mut self.node;
+        if n.ext.navigation_bar.is_some() && top > 0. {
+            if let Some(h) = n.height.as_mut() {
+                *h += top;
+            }
+            let vertical = n.padding_vertical.unwrap_or(n.padding);
+            n.padding_top = Some(n.padding_top.unwrap_or(vertical) + top);
+        }
+        if n.ext.tab_bar.is_some() {
+            if keyboard {
+                n.ext.visible = Some(false.into());
+            } else if bottom > 0. {
+                if let Some(h) = n.height.as_mut() {
+                    *h += bottom;
+                }
+                let vertical = n.padding_vertical.unwrap_or(n.padding);
+                n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + bottom);
+            }
+        }
+        for child in &mut self.children {
+            child.inset_drawn_bars([top, 0., bottom, 0.], keyboard);
+        }
+    }
+    /// Native controls are on: hide Volt's drawing of the parts the host
+    /// draws itself.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn hide_native_parts(&mut self) {
+        if self.node.ext.native_hidden {
+            self.node.ext.visible = Some(false.into());
+        }
+        for child in &mut self.children {
+            child.hide_native_parts();
+        }
+    }
     /// Hide Volt's navigation bars for a host that draws them natively. Their
     /// controls still run through `Runtime::activate_navigation`.
     #[cfg(feature = "mobile")]
     pub(crate) fn hide_navigation_bars(&mut self) {
-        if self.node.ext.navigation_bar.is_some() {
+        if self.node.ext.navigation_bar.is_some() || self.node.ext.tab_bar.is_some() {
+            self.node.ext.visible = Some(false.into());
+        }
+        // The host shows its own alert: Volt's copy draws nothing and takes
+        // no input, but its buttons stay for the host to run.
+        if self.node.ext.prompt.is_some() {
+            self.node.overlay = None;
             self.node.ext.visible = Some(false.into());
         }
         for child in &mut self.children {
             child.hide_navigation_bars();
+        }
+    }
+    /// Keep overlays (sheets, dialogs, menus) inside the screen's safe area,
+    /// [top, right, bottom, left] in logical points, when the page itself
+    /// runs under the status bar and home indicator.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn inset_overlays(&mut self, [top, right, bottom, left]: [f32; 4]) {
+        if self.node.overlay.is_some() {
+            let n = &mut self.node;
+            let base = n.padding;
+            let vertical = n.padding_vertical.unwrap_or(base);
+            let horizontal = n.padding_horizontal.unwrap_or(base);
+            n.padding_top = Some(n.padding_top.unwrap_or(vertical) + top);
+            // A bottom sheet meets the bottom edge; dialogs and menus don't.
+            if n.flow != Some(Flow::Bottom) {
+                n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + bottom);
+            }
+            n.padding_left = Some(n.padding_left.unwrap_or(horizontal) + left);
+            n.padding_right = Some(n.padding_right.unwrap_or(horizontal) + right);
+        }
+        for child in &mut self.children {
+            child.inset_overlays([top, right, bottom, left]);
+        }
+    }
+    /// Give nodes that sit above the host's bottom bars that much more
+    /// height (a spacer) or bottom padding.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn inset_above_bars(&mut self, bottom: f32) {
+        if self.node.ext.above_bars {
+            // A fixed-height spacer grows; anything else gains padding.
+            let n = &mut self.node;
+            if let Some(h) = n.height.as_mut() {
+                *h += bottom;
+            } else {
+                let vertical = n.padding_vertical.unwrap_or(n.padding);
+                n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + bottom);
+            }
+        }
+        for child in &mut self.children {
+            child.inset_above_bars(bottom);
+        }
+    }
+    /// Bottom sheets make room for the keyboard: as on iOS, a sheet goes to
+    /// its full height while you type, and keeps its content above the
+    /// keyboard with its surface running on behind it.
+    #[cfg(feature = "mobile")]
+    pub(crate) fn lift_sheets(&mut self, keyboard: f32) {
+        if self.node.ext.keyboard_room {
+            let n = &mut self.node;
+            n.height = None;
+            n.ext.fraction[1] = Some(1.);
+            let vertical = n.padding_vertical.unwrap_or(n.padding);
+            n.padding_bottom = Some(n.padding_bottom.unwrap_or(vertical) + keyboard);
+        }
+        for child in &mut self.children {
+            child.lift_sheets(keyboard);
         }
     }
     #[cfg(feature = "mobile")]
@@ -638,6 +773,7 @@ impl<C> Element<C> {
             focus_within: None,
             escape: None,
             refresh: None,
+            end_away: None,
             validation_error: None,
             input_activation: None,
             input_key: None,
@@ -758,6 +894,7 @@ impl<C: 'static> Element<C> {
             focus_within: self.focus_within.map(|f| lift1(f, a)),
             escape: self.escape.map(|f| lift0(f, a)),
             refresh: self.refresh.map(|f| lift0(f, a)),
+            end_away: self.end_away.map(|f| lift1(f, a)),
             validation_error: self.validation_error,
             input_activation: self.input_activation.map(|f| lift2(f, a)),
             input_key: self.input_key.map(|f| lift1(f, a)),
@@ -812,6 +949,7 @@ impl<C: 'static> Element<C> {
                 focus_within,
                 escape,
                 refresh,
+                end_away,
                 validation_error,
                 input_activation,
                 input_key,
@@ -907,6 +1045,13 @@ impl<C: 'static> Element<C> {
                     .on_activate(&name, f)
                     .map_err(|e| DocumentError(e.to_string()))?;
                 node.ext.on_refresh = Some(name);
+            }
+            if let Some(f) = end_away {
+                let name = format!("rust-end-away-{}", *count);
+                handlers
+                    .on_toggle_changed(&name, f)
+                    .map_err(|e| DocumentError(e.to_string()))?;
+                node.ext.on_end_away = Some(name);
             }
             if let Some(f) = input_activation {
                 let name = format!("rust-input-{}", *count);
@@ -1466,6 +1611,39 @@ impl<C> Button<C> {
         self.0.node.enabled = value;
         self
     }
+    /// While work it started runs: a spinner in place of the label, the
+    /// button's size unchanged, and no second press. Call it last.
+    pub fn busy(mut self, busy: bool) -> Container<C> {
+        let key = self.0.node.id.clone();
+        let (width, height) = (self.0.node.width, self.0.node.height);
+        let flex = self.0.node.flex;
+        let ink: ColorToken = if self.0.node.primary {
+            ColorToken::PrimaryContent
+        } else {
+            ColorToken::Primary
+        };
+        if busy {
+            // The label keeps its room but isn't drawn.
+            self.0.node.style.color = Some("#00000000".into());
+            self.0.node.enabled = false;
+        }
+        let mut layers: Vec<Element<C>> = vec![self.0];
+        if busy {
+            layers.push(spinner().accent_color(ink).into());
+        }
+        let mut c = zstack(layers).flow(Flow::Center).align(Align::Stretch);
+        if !key.is_empty() {
+            c = c.key(format!("{key}-busy"));
+        }
+        if let Some(w) = width {
+            c = c.width(w);
+        }
+        if let Some(h) = height {
+            c = c.height(h);
+        }
+        c.0.node.flex = flex;
+        c
+    }
     /// Apply a themed emphasis preset (see [`ButtonVariant`]).
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         let style = &mut self.0.node.style;
@@ -1844,6 +2022,19 @@ macro_rules! container_modifiers {
                 self.0.node.surface.anchor_end = value;
                 self
             }
+            /// With `anchor_end`: called with true when the reader scrolls up
+            /// away from the end, and false when they're back at it. Show a
+            /// "Jump to latest" button while it's true.
+            pub fn on_away_from_end(mut self, f: impl FnMut(&mut C, bool) + 'static) -> Self {
+                self.0.end_away = Some(Box::new(f));
+                self
+            }
+            /// With `anchor_end`: go back to the end, and follow it again,
+            /// whenever `request` changes (an initial 0 does nothing).
+            pub fn scroll_to_end(mut self, request: u32) -> Self {
+                self.0.node.ext.scroll_end_request = request;
+                self
+            }
             /// Hide/show position indicators without changing overflow or input.
             pub fn scrollbars(mut self, policy: Scrollbars) -> Self {
                 self.0.node.surface.scrollbars = policy;
@@ -1967,8 +2158,9 @@ macro_rules! tabs { ($($item:expr),* $(,)?) => { $crate::ui::tabs(vec![$($item),
 pub use crate::{button_bar, tab_bar, tabs, toolbar};
 /// Import component functions, types and layout macros together.
 mod text_motion;
-pub use text_motion::{morphing_text, rolling_number, shimmer_text, typing_text};
+pub use text_motion::{live_text, morphing_text, rolling_number, shimmer_text, typing_text};
 pub mod prelude {
+    pub use super::jump_to_latest;
     pub use super::{
         accordion, alert, avatar, avatar_group, bar_chart, bottom_sheet, breadcrumb, carousel,
         collapsible, command, command_palette, drawer, empty_state, fab, gauge, hover_card,
@@ -1976,6 +2168,9 @@ pub mod prelude {
         steps, timeline, toaster, CommandPaletteState, DrawerSide, Presence, Severity,
         TimelineItem, Toast, ToastPosition,
     };
+    pub use super::{action_dock, dock_action, dock_search, ActionDock, DockAction, DockSearch};
+    pub use super::{action_sheet, alert_dialog, prompt_action, Prompt, PromptAction};
+    pub use super::{activity_pill, work_card, ActivityPill, WorkCard, WorkState};
     pub use super::{
         area_chart, candlestick_chart, donut_chart, line_plot, range_chart, stacked_bar_chart,
         timeline_chart, Candle, ValueRange,
@@ -2011,24 +2206,37 @@ pub mod prelude {
         color_picker, combobox, drop_zone, form_field, number_input, otp_input, radio_group,
         rating, tag_input, ComboboxState, Hsl, Hsva, TagInputState,
     };
+    pub use super::{composer, Composer};
+    pub use super::{
+        flow_step, freshness_line, quick_picks, sheet_flow, FlowStep, FreshnessLine, QuickPicks,
+        SheetFlow,
+    };
     pub use super::{icicle_chart, treemap_chart, HierarchyChart, HierarchyNode};
     pub use super::{icon, svg_icon, Icon, IconElement, IconSet, SvgIcon};
     pub use super::{
         link, navigation_link, navigation_stack, ExternalUrl, Link, NavigationError,
         NavigationHistory, NavigationLink, NavigationSnapshot, NavigationStack, UrlError,
     };
-    pub use super::{morphing_text, rolling_number, shimmer_text, typing_text};
+    pub use super::{
+        list_row, list_section, swipe_action, ListRow, SwipeAction, SwipeSide, SwipeTone,
+    };
+    pub use super::{live_text, morphing_text, rolling_number, shimmer_text, typing_text};
     pub use super::{navigation_split_view, NavigationSplitView, SidebarPlace};
     pub use super::{rich_text, span, Span};
+    pub use super::{search_field, SearchField};
     pub use super::{
         selectable_list, selectable_row, SelectableList, SelectableRow, SelectionAction,
         SelectionError, SelectionModel, SelectionModifiers, SelectionMove,
     };
+    pub use super::{snackbar, Snackbar};
     pub use super::{sunburst_chart, SunburstChart};
+    pub use super::{tab_destination, tab_view, TabDestination, TabView};
+    pub use super::{BottomSheet, SheetDetent};
     pub use super::{
         InputKey, InputKeyEvent, InputModifiers, InputSource, KeyPress, Pointer, PointerActivation,
         PointerPhase, PressedKey,
     };
+    pub use crate::declarative::InputKind;
     pub use crate::motion::{
         Affine2D, DragGesture, DragMotion, Inertia, InertiaPlayer, MotionPose, TextEffect,
         Timeline, TimelinePlayback, TimelinePlayer, Transform2D,
@@ -2043,13 +2251,6 @@ pub fn fab<C>(symbol: impl Into<String>) -> Button<C> {
         .rounded(Rounding::Full)
         .font_size(24.)
         .variant(ButtonVariant::Primary)
-}
-/// A bottom-attached modal drawer. Dismissal, focus trapping and Escape are shared.
-pub fn bottom_sheet<C>(content: impl Into<Element<C>>) -> Drawer<C> {
-    drawer(content)
-        .side(DrawerSide::Bottom)
-        .size(320.)
-        .corner_radius(20.)
 }
 
 /// Alpha union: paint mask coverage together in an isolated group.

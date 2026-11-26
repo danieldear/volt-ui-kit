@@ -112,6 +112,9 @@ required-features = ["native"]
 name = "rust_counter"
 required-features = ["native"]
 [[example]]
+name = "mobile_parts"
+required-features = ["native"]
+[[example]]
 name = "rust_settings"
 required-features = ["native"]
 [[example]]

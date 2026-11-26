@@ -75,6 +75,18 @@ impl GeometryMotion {
             .retain(|id, t| next.contains_key(id) && t.wait(now).is_some() && !reduced);
         self.previous = next;
     }
+    /// Start a track that began at `now` from `offset` (physical) further
+    /// along. Returns false when no such track exists.
+    pub fn carry(&mut self, id: &str, offset: [f32; 2], now: Duration) -> bool {
+        match self.tracks.get_mut(id) {
+            Some(track) if track.start == now => {
+                track.from[0] += offset[0];
+                track.from[1] += offset[1];
+                true
+            }
+            _ => false,
+        }
+    }
     /// Scroll is direct manipulation, not a new layout transition. Move both
     /// endpoints of existing tracks with the content so they do not chase the wheel.
     pub fn translate(&mut self, boxes: &[LayoutBox], delta: [f32; 2]) {

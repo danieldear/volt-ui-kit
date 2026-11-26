@@ -2,6 +2,175 @@
 
 ## Unreleased
 
+- Steady 60 frames a second when scrolling on the CPU fallback (the iOS
+  Simulator, Android emulators). A large repaint is drawn in horizontal bands
+  on several threads, with the same pixels. A rounded card's clip is reused
+  while drawing goes in and out of its rows, and rows wholly inside it skip
+  the mask. A list row's swipe buttons are painted only while the row slides
+  (`NodeExtras::paint_when_moved`). On iOS, scrolling and finger moves are
+  applied at once and drawn once per screen refresh from the display link
+  (new `volt_apply`, host ABI 3); the Simulator runs that link at 60 Hz. The
+  Swipe and select page's scroll frame went from about 25 ms to 8.
+- Smoother motion where Volt draws on the CPU (the iOS Simulator and Android
+  emulators, whose GPUs can't run the Vello renderer). Each frame repaints
+  and uploads only the region that changed, so a swiping row costs about
+  7 ms a frame instead of 47. The iOS Simulator draws at 2x, so a full-screen
+  scroll costs about 9 ms instead of 20. Phones keep drawing on the GPU at
+  full resolution.
+- Mobile: `snackbar(..).close_after(seconds)` closes the bar by itself and
+  pauses while a finger is on the screen and while the app is in the
+  background; with VoiceOver or TalkBack on it stays until dismissed. A new
+  message restarts the time. Hosts send `screen_reader` when it changes.
+- Rows: a destructive full swipe (`SwipeTone::Danger`) runs only after the
+  finger rests past the line for a quarter of a second; a quick flick opens
+  the row on its buttons instead.
+- Chat: `on_away_from_end` on an end-anchored scroll view says when the
+  reader scrolls up from the newest message and when they're back;
+  `scroll_to_end(request)` goes back to it. `jump_to_latest` wraps a
+  transcript with the round button that does it, shown only while the
+  reader is away (Material's small floating action button on Android).
+- Android host parity with iOS: edge to edge with the system bars and
+  keyboard sent as insets; a frame loop while animating; a wake from
+  background threads (`VoltActivity.wake`), so timers redraw without a touch;
+  hold for a row's menu with a haptic; multi-line composers that keep the
+  keyboard on Send; keyboards and autofill by `input_kind`; field backdrops;
+  TalkBack custom actions; reduced motion from the animator scale.
+- Android: Volt-drawn tab bars and docks sit above the gesture handle, and the
+  navigation bar is Material 3's top app bar (a Back icon button, a
+  left-aligned title) where iOS keeps its centred title.
+- `examples/android-gallery`: the iOS gallery's pages as an Android APK on the
+  same shared host.
+- `list_row(..).trailing(el)` puts a control (a switch) at a row's end;
+  `.checked(bool)` shows the trailing checkmark iOS settings lists use for
+  one choice among several.
+- `TextInput::input_kind(InputKind::..)`: Name, Email, Url, Number, Decimal,
+  Phone, Password, OneTimeCode, Secret. The iOS host picks the keyboard,
+  autofill (a texted code is offered above the keyboard), capitalisation
+  and suggestions from it, and fields get a clear button while typing.
+- `Button::busy(bool)`: a spinner in place of the label at the same size,
+  and no second press.
+- Mobile: `sheet_flow` with `flow_step`, a task in steps inside one sheet:
+  Cancel or Back, Next or the finishing word, step dots, and a height per
+  step. `quick_picks`, chips for the likely answers in front of a full
+  picker (Material's filter chip on Android). `freshness_line`, "Updated 2
+  min ago", amber when stale, "Offline" said plainly, tap to refresh; `ago`
+  formats ages.
+- Phones: a tap no longer leaves a keyboard focus ring on the control
+  (`Runtime::hide_focus_ring`).
+- Mobile: `work_card` shows a job as working (with progress), waiting for
+  you, failed or done: colour, icon and words agree, with the one action
+  that applies. `activity_pill` floats above the bottom bars while
+  background work runs; `ActionDock::activity` puts it above a dock.
+- Mobile: `snackbar`, a message with one action (Undo) at the foot of the
+  screen. On Android it's Material 3's snackbar; on iOS a floating capsule
+  above the bottom bars. `ActionDock::notice` puts it just above a dock and
+  keeps the dock up while it shows.
+- iOS: the page redraws after a switch between light and dark, instead of
+  keeping the old colours until the next touch.
+- Mobile: `search_field`. With native controls the iOS host lays UIKit's
+  own search field over it (magnifier, clear button, Search key); Volt
+  draws nothing there (`EditorOptions::search`, snapshot kind `search`,
+  `native_hidden` parts, new `submit` event). Elsewhere Volt draws a search
+  pill. The action dock's search uses it.
+- Mobile: `alert_dialog` and `action_sheet` with `prompt_action`, for a
+  question that needs an answer now. On iOS the host shows UIKit's own
+  alert and action sheet (`Runtime::prompts`, a `prompt` in the snapshot;
+  the buttons run through the `navigation` event), and the sheet grows from
+  where it was opened. Elsewhere Volt draws Material 3's dialog and modal
+  bottom sheet.
+- Mobile: `composer` for chats. A message box that grows as you type, with
+  Send (lit only when there's text), Stop while a reply comes in, and an
+  optional Add button; it rides the keyboard. `live_text` and
+  `TextEffect::stream()` show text that arrives in pieces: what's new eases
+  in after what was there. New `Icon::Stop`.
+- Phones: `TextInput::hide_done_button` leaves out the Done bar above the
+  keyboard; dragging a list puts the keyboard away instead. Controls the
+  composer marks `keeps_keyboard` run without closing the keyboard. The host
+  sends a new `blur` event when typing ends, so nothing reopens the keyboard.
+- Native editors match what's behind a field: snapshots give each field's
+  `backdrop` colour and corner radius (`Runtime::backdrop`), which fixes the
+  darker box inside the dock's search pill. The page's scroll view only gets
+  room for the part of the keyboard that covers it.
+- Mobile: a long press opens a row's menu. `list_row(..).hold_actions([..])`
+  with `menu_open` and `on_menu_open` shows a card of named actions under
+  the row, or above it near the bottom. Hosts send a new `hold` event when a
+  finger rests 0.45 s; `MobileView::hold` opens any context menu under it
+  (desktop `context_menu`s too) and ends the touch. Snapshots count `holds`,
+  and the iOS host plays a haptic for each.
+- `list_row(..).swipe_hint(true)` nudges a row aside once, showing its swipe
+  actions are there.
+- Screen readers get a row's swipe actions and its menu as named actions
+  (VoiceOver's actions rotor): `AccessNode::actions` lists `AccessAction`s,
+  the iOS host makes them custom actions, and the new `menu` event opens a
+  node's long-press menu. Swipe buttons behind a closed row are left out of
+  the accessibility tree.
+- Popups placed by an anchor stay inside their layer's padding; on a phone a
+  menu keeps clear of the tab bar and keyboard. Long presses and right
+  clicks see through the empty part of a pass-through layer, such as the
+  space around a floating dock.
+- Mobile: `list_row` and `list_section` for phone lists: a title with
+  optional subtitle, leading icon or avatar, trailing value and chevron, on
+  one rounded surface with inset hairlines. `swipe_action`s on either side
+  open with a swipe (one row open at a time, app-controlled with
+  `swipe_open`); a long swipe runs a side's outermost `full_swipe` action.
+  `selecting`, `selected` and `on_toggle` give Select mode with checkmark
+  circles. Snapshots report `sideways` areas, where the iOS host keeps its
+  swipe-back gesture off so rows can swipe right.
+- An element with both a tap handler and `drag_motion` now does both: a
+  press that doesn't move is a tap; moving past 6 points makes it a drag.
+- `DockAction::show_label` shows a dock action's label beside the main
+  action, for words an icon can't say (Done, Select all).
+- Mobile: `action_dock` and `dock_action` put a page's actions in a dock
+  above the tab bar: one main action, up to two round ones, and More for
+  the rest in a sheet. With `follows(scroll_key)` it slides away while that
+  scroll view scrolls toward its end and returns when it scrolls back or
+  reaches either end; the scroll view gets room at its end for it. The iOS
+  host reports its bottom bars and keyboard with a new `bars` event so the
+  dock sits just above them. `Runtime::scroll_hidden` says whether a
+  scroll view's followers are slid away.
+- A duplicate or invalid id error now names the id.
+- Mobile: `dock_search` gives an action dock a Search button that turns the
+  dock into a search field with the keyboard up, riding on top of it; Close
+  puts the actions back. Snapshots report the field Rust focused for typing
+  (`editing`), and the iOS host opens the keyboard for it.
+- Bottom sheets: the page behind no longer jumps when one opens (the iOS
+  host fades its tab bar instead of hiding it); a sheet dropped between
+  heights moves on from where it was let go, and one swiped away leaves from
+  there; a drag the platform takes over springs back instead of staying
+  under the finger; on a dark theme a sheet uses the raised surface; with
+  the keyboard up a sheet goes to full height and keeps its fields above
+  the keyboard (`bars` now carries `keyboard`).
+- iOS host: a drag that starts on a sheet's header stays the sheet's when
+  it crosses into the sheet's list, and at the top of that list pulling
+  down moves the sheet (snapshots mark such scroll views `inDraggable`).
+  Switches draw whole at iOS 26's width, rounded ends included.
+- Mobile: `tab_view` and `tab_destination` for an app's top-level sections.
+  The iOS host shows UIKit's tab bar (Liquid Glass on iOS 26, SF Symbols,
+  badges) with a navigation stack per tab; elsewhere Volt draws Material 3's
+  flexible navigation bar, with a pill that slides to the chosen tab.
+  Snapshots report `tabs`; tabs run with `activate_navigation`.
+- `bottom_sheet` is redesigned: resting heights (`SheetDetent`), a grabber,
+  drag to resize or close, Cancel and Done placed as on iOS,
+  `on_dismiss_attempt` for unsaved work, only the top corners rounded, no
+  border, at most 640 points wide. It returns `BottomSheet` instead of
+  `Drawer`; `size` and `corner_radius` still work.
+- Mobile: touches drag elements with `drag_motion`, `on_drag` or
+  `on_pointer` instead of always scrolling. `DragMotion::spring_back` springs
+  a dragged element home on release, and `Pointer::velocity` gives the
+  release speed.
+- Mobile: the host reports the screen's safe area (`safe_area` event);
+  overlays stay inside it. Snapshots report `modal` and scroll views behind a
+  modal as `inert`; the iOS host hides its tab bar, fades its navigation bar
+  and turns off scrolling behind sheets and dialogs.
+- Single-side borders on rounded boxes follow the corners instead of cutting
+  straight across them.
+- Mobile: background work can update the page. `Updater<C>`, from
+  `Application::new_with_updater` or `Application::updater()`, sends changes
+  to app state from any thread; they run in order on the UI thread and the
+  page is drawn again. iOS hosts are woken on the main queue through the new
+  `volt_set_wake` entry point and answer with an `updates` platform event. The
+  host ABI is now version 2: rebuild against matching host sources. The iPhone
+  gallery has a **Background work** page.
 - Pull to refresh: `.on_refresh(f)` on a scroll container runs `f` when the
   content is pulled down past its top and let go, and `.refreshing(bool)` keeps
   the host's spinner showing while the work is under way. iOS uses the system's

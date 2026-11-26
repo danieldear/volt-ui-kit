@@ -450,9 +450,6 @@ fn render_frame(
     }
     Ok(())
 }
-fn straight_rgba(pixmap: &tiny_skia::Pixmap) -> Vec<u8> {
-    unpremultiply(pixmap.data()).into_owned()
-}
 /// The pipeline that copies Vello's straight-alpha output to the surface,
 /// encoded for the surface's alpha mode.
 fn present_pipeline(
@@ -926,7 +923,9 @@ impl GpuPresenter {
         {
             return Err("window dimensions exceed GPU texture limits".into());
         }
-        if self.texture.is_none() || self.config.width != w || self.config.height != h {
+        let fresh_texture =
+            self.texture.is_none() || self.config.width != w || self.config.height != h;
+        if fresh_texture {
             self.config.width = w;
             self.config.height = h;
             self.configure_surface()?;
@@ -967,22 +966,53 @@ impl GpuPresenter {
                 if let Some(reason) = self.encoder.stats().over_budget {
                     report_fallback_once(reason);
                 }
-                let pixmap = painter.rasterize(batches, background)?;
-                self.queue.write_texture(
-                    texture.as_image_copy(),
-                    &straight_rgba(&pixmap),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(w * 4),
-                        rows_per_image: Some(h),
-                    },
-                    wgpu::Extent3d {
-                        width: w,
-                        height: h,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                w as usize * h as usize * 4
+                // Repaint and upload only what changed since the last frame:
+                // a row sliding under the finger is a strip, not the screen.
+                // The texture keeps the rest. A new texture needs it all.
+                // On every core: a full-screen repaint (a scroll) is a
+                // phone-sized frame of CPU work each refresh.
+                let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(6));
+                let (pixmap, damage) =
+                    painter.rasterize_incremental_parallel(batches, background, threads)?;
+                let region = match damage {
+                    _ if fresh_texture => Some([0, 0, w, h]),
+                    super::raster::Damage::None => None,
+                    super::raster::Damage::Rect(r) => Some(r),
+                    super::raster::Damage::Full => Some([0, 0, w, h]),
+                };
+                match region.filter(|[x0, y0, x1, y1]| x1 > x0 && y1 > y0) {
+                    None => 0,
+                    Some([x0, y0, x1, y1]) => {
+                        let (rw, rh) = (x1 - x0, y1 - y0);
+                        let stride = w as usize * 4;
+                        let mut bytes = Vec::with_capacity(rw as usize * rh as usize * 4);
+                        for row in y0..y1 {
+                            let start = row as usize * stride + x0 as usize * 4;
+                            bytes.extend_from_slice(&pixmap.data()[start..start + rw as usize * 4]);
+                        }
+                        let bytes = unpremultiply(&bytes);
+                        self.queue.write_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d { x: x0, y: y0, z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &bytes,
+                            wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(rw * 4),
+                                rows_per_image: Some(rh),
+                            },
+                            wgpu::Extent3d {
+                                width: rw,
+                                height: rh,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                        bytes.len()
+                    }
+                }
             }
             Some(renderer) => {
                 render_frame(
