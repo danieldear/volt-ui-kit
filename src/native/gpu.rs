@@ -969,7 +969,11 @@ impl GpuPresenter {
                 // Repaint and upload only what changed since the last frame:
                 // a row sliding under the finger is a strip, not the screen.
                 // The texture keeps the rest. A new texture needs it all.
-                let (pixmap, damage) = painter.rasterize_incremental(batches, background)?;
+                // On every core: a full-screen repaint (a scroll) is a
+                // phone-sized frame of CPU work each refresh.
+                let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(6));
+                let (pixmap, damage) =
+                    painter.rasterize_incremental_parallel(batches, background, threads)?;
                 let region = match damage {
                     _ if fresh_texture => Some([0, 0, w, h]),
                     super::raster::Damage::None => None,

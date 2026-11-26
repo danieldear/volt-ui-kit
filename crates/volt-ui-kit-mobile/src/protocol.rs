@@ -1,6 +1,6 @@
 use serde::Deserialize;
 /// Version checked by the native host before any pointer-bearing call.
-pub const HOST_ABI_VERSION: u32 = 2;
+pub const HOST_ABI_VERSION: u32 = 3;
 
 /// Colours the platform resolved for the current appearance and contrast
 /// setting, as sRGB RGBA from 0 to 1. On iOS these are UIKit's grouped

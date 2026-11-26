@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Steady 60 frames a second when scrolling on the CPU fallback (the iOS
+  Simulator, Android emulators). A large repaint is drawn in horizontal bands
+  on several threads, with the same pixels. A rounded card's clip is reused
+  while drawing goes in and out of its rows, and rows wholly inside it skip
+  the mask. A list row's swipe buttons are painted only while the row slides
+  (`NodeExtras::paint_when_moved`). On iOS, scrolling and finger moves are
+  applied at once and drawn once per screen refresh from the display link
+  (new `volt_apply`, host ABI 3); the Simulator runs that link at 60 Hz. The
+  Swipe and select page's scroll frame went from about 25 ms to 8.
 - Smoother motion where Volt draws on the CPU (the iOS Simulator and Android
   emulators, whose GPUs can't run the Vello renderer). Each frame repaints
   and uploads only the region that changed, so a swiping row costs about

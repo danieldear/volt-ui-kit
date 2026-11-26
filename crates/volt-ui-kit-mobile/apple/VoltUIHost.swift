@@ -518,7 +518,12 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         NotificationCenter.default.addObserver(self, selector: #selector(sendAppearance), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(sendScreenReader), name: UIAccessibility.voiceOverStatusDidChangeNotification, object: nil)
         let link = CADisplayLink(target: FrameTarget(self), selector: #selector(FrameTarget.frame))
+        #if targetEnvironment(simulator)
+        // The Simulator draws on the CPU: an even 60 beats an uneven 120.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        #else
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        #endif
         link.isPaused = true
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -634,7 +639,21 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     /// One display-link frame; the link runs only while Rust reports motion.
     fileprivate func frame() {
         guard handle != 0, !failed, !suspended else { displayLink?.isPaused = true; return }
+        framePending = false
         send(["op": "draw"])
+    }
+    /// Events applied since the last draw wait for the next frame.
+    private var framePending = false
+    /// Apply an event that only moves things (a scroll, a moving finger)
+    /// and draw it on the next screen refresh: one draw per refresh, in step
+    /// with the display, however fast the events come.
+    private func apply(_ event: [String: Any]) {
+        precondition(Thread.isMainThread)
+        guard handle != 0, !failed, let data = try? JSONSerialization.data(withJSONObject: event) else { return }
+        let status = data.withUnsafeBytes { volt_apply(handle, $0.bindMemory(to: UInt8.self).baseAddress!, data.count) }
+        if status == 0 { showError(String(cString: volt_error())); return }
+        framePending = true
+        displayLink?.isPaused = false
     }
     private func initialize() {
         guard handle == 0, !failed, metalLayer.device != nil else { return }
@@ -773,7 +792,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         pageBackground = color(snapshot.background)
         navigation?.sync(snapshot.navigation, before: before, background: color(snapshot.background),
                          accent: color(snapshot.accent))
-        displayLink?.isPaused = !(snapshot.animating ?? false) || suspended
+        displayLink?.isPaused = (!(snapshot.animating ?? false) && !framePending) || suspended
         syncScrollViews(snapshot.scrollViews ?? [])
         updateTopFade()
         var elements: [Any] = []
@@ -1176,7 +1195,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !syncingScroll, let s = scrollView as? NativeScroll, s.window != nil, scrollers[s.nodeId] === s else { return }
         let o = rustOffset(s)
-        send(["op": "scroll_to", "id": s.nodeId, "x": o.x, "y": o.y])
+        apply(["op": "scroll_to", "id": s.nodeId, "x": o.x, "y": o.y])
     }
     private func showError(_ message: String) {
         failed = true
@@ -1344,7 +1363,7 @@ final class VoltCanvas: UIView, UITextFieldDelegate, UITextViewDelegate, UIScrol
         let p = t.location(in:self)
         dragged = dragged || hypot(p.x-touchStart.x,p.y-touchStart.y) >= 8
         if dragged { holdWork?.cancel(); holdWork = nil }
-        send(["op":"move", "x":p.x,"y":p.y])
+        apply(["op":"move", "x":p.x,"y":p.y])
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         holdWork?.cancel(); holdWork = nil

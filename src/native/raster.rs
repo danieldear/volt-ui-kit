@@ -247,6 +247,43 @@ struct ClipMask {
     y: i32,
     mask: Mask,
     used: u64,
+    /// Per mask row, the run `[start, end)` of fully covered pixels (empty
+    /// when none): inside it the clip changes nothing.
+    solid: Vec<(u32, u32)>,
+}
+impl ClipMask {
+    fn new(x: i32, y: i32, mask: Mask, used: u64) -> Self {
+        let w = mask.width() as usize;
+        let solid = mask
+            .data()
+            .chunks(w.max(1))
+            .map(|row| match row.iter().position(|c| *c == 255) {
+                Some(start) => {
+                    let len = row[start..].iter().take_while(|c| **c == 255).count();
+                    (start as u32, (start + len) as u32)
+                }
+                None => (0, 0),
+            })
+            .collect();
+        Self {
+            x,
+            y,
+            mask,
+            used,
+            solid,
+        }
+    }
+    /// Whether every pixel of `[l, t, r, b]` is fully inside the clip.
+    fn covers(&self, [l, t, r, b]: [usize; 4]) -> bool {
+        (t..b).all(|y| {
+            let ly = y as i64 - i64::from(self.y);
+            let Some(&(s, e)) = usize::try_from(ly).ok().and_then(|ly| self.solid.get(ly)) else {
+                return false;
+            };
+            let (lx0, lx1) = (l as i64 - i64::from(self.x), r as i64 - i64::from(self.x));
+            lx0 >= i64::from(s) && lx1 <= i64::from(e)
+        })
+    }
 }
 struct EffectMask {
     width: u32,
@@ -464,6 +501,9 @@ pub struct RasterPainter {
     clip_masks: BTreeMap<Vec<u32>, ClipMask>,
     clip_bytes: usize,
     pub clip_cache_misses: u64,
+    /// The cached clips the curve mask was last built from, for its active
+    /// region: switching back to the same clip reuses the mask.
+    curve_keys: Vec<Vec<u32>>,
     effect_masks: BTreeMap<EffectKey, EffectMask>,
     effect_bytes: usize,
     effect_tint_bytes: usize,
@@ -476,6 +516,9 @@ pub struct RasterPainter {
     raster_origin: [i32; 2],
     /// The previous incremental frame, diffed against the next one.
     last: Option<LastFrame>,
+    /// Painters that draw bands of a large repaint on other threads, each
+    /// with the buffer it drew into last (reused for its next band).
+    helpers: Vec<(RasterPainter, Option<Pixmap>)>,
     scaled_images: BTreeMap<(usize, u32, u32), ScaledImage>,
     scaled_bytes: usize,
 }
@@ -936,6 +979,7 @@ impl RasterPainter {
             clip_masks: BTreeMap::new(),
             clip_bytes: 0,
             clip_cache_misses: 0,
+            curve_keys: Vec::new(),
             effect_masks: BTreeMap::new(),
             effect_bytes: 0,
             effect_tint_bytes: 0,
@@ -945,6 +989,7 @@ impl RasterPainter {
             damage: None,
             raster_origin: [0; 2],
             last: None,
+            helpers: Vec::new(),
             scaled_images: BTreeMap::new(),
             scaled_bytes: 0,
             clock: 0,
@@ -1226,9 +1271,6 @@ impl RasterPainter {
         if curved.is_empty() {
             return Ok(true);
         }
-        if let Some(old) = curve_active.take() {
-            fill_mask_px(curve_mask, old, 0);
-        }
         let mut keys: Vec<Vec<u32>> = Vec::new();
         let mut uncached: Vec<ClipMask> = Vec::new();
         for clip in curved {
@@ -1274,12 +1316,7 @@ impl RasterPainter {
                     Transform::from_translate(-x as f32, -y as f32),
                 );
                 self.clip_cache_misses += 1;
-                let entry = ClipMask {
-                    x,
-                    y,
-                    mask: local,
-                    used: self.clock,
-                };
+                let entry = ClipMask::new(x, y, local, self.clock);
                 if bytes <= 8 * 1024 * 1024 {
                     self.clip_bytes += bytes;
                     self.clip_masks.insert(key.clone(), entry);
@@ -1298,8 +1335,41 @@ impl RasterPainter {
             region[3] = region[3].min((bounds[1] + bounds[3]).max(0) as usize);
         }
         if region[0] >= region[2] || region[1] >= region[3] {
+            if let Some(old) = curve_active.take() {
+                fill_mask_px(curve_mask, old, 0);
+            }
             return Ok(false);
         }
+        // Wholly inside every curved clip (a row in the middle of a rounded
+        // card): the rectangle alone clips it, and drawing skips the mask.
+        if keys
+            .iter()
+            .filter_map(|k| self.clip_masks.get(k))
+            .chain(&uncached)
+            .all(|local| local.covers(region))
+        {
+            if *rect_active != Some(region) {
+                if let Some(old) = rect_active.take() {
+                    fill_mask_px(rect_mask, old, 0);
+                }
+                fill_mask_px(rect_mask, region, 255);
+                *rect_active = Some(region);
+            }
+            return Ok(true);
+        }
+        // The same clip as the mask already holds (drawing came back to a
+        // rounded card after one of its rows): reuse it.
+        if *curve_active == Some(region) && uncached.is_empty() && keys == self.curve_keys {
+            return Ok(false);
+        }
+        if let Some(old) = curve_active.take() {
+            fill_mask_px(curve_mask, old, 0);
+        }
+        self.curve_keys = if uncached.is_empty() {
+            keys.clone()
+        } else {
+            Vec::new()
+        };
         fill_mask_px(curve_mask, region, 255);
         *curve_active = Some(region);
         for key in &keys {
@@ -1814,6 +1884,97 @@ impl RasterPainter {
                 background,
             });
         }
+        Ok((&self.last.as_ref().expect("frame stored").pixmap, damage))
+    }
+    /// [`rasterize_incremental`](Self::rasterize_incremental), with a large
+    /// repaint split into horizontal bands drawn on up to `threads` threads:
+    /// for software drawing that must keep up with scrolling on a phone-sized
+    /// frame. The pixels are the same as drawing it on one thread.
+    pub fn rasterize_incremental_parallel(
+        &mut self,
+        batches: &[PaintBatch<Shape, Glyph>],
+        background: [f32; 4],
+        threads: usize,
+    ) -> Result<(&Pixmap, Damage), String> {
+        let (w, h) = (self.viewport.width as u32, self.viewport.height as u32);
+        let damage = match &self.last {
+            Some(last)
+                if last.background == background
+                    && last.pixmap.width() == w
+                    && last.pixmap.height() == h =>
+            {
+                frame_damage(&last.batches, batches, w, h)
+            }
+            _ => Damage::Full,
+        };
+        let region = match damage {
+            Damage::None => [0; 4],
+            Damage::Rect(r) => r,
+            Damage::Full => [0, 0, w, h],
+        };
+        let rows = region[3].saturating_sub(region[1]);
+        let area = u64::from(region[2].saturating_sub(region[0])) * u64::from(rows);
+        // Small repaints aren't worth the threads.
+        let bands = threads.min(rows as usize / 64).max(1);
+        if damage == Damage::None || bands < 2 || area < 200_000 {
+            return self.rasterize_incremental(batches, background);
+        }
+        let mut base = match (damage, self.last.take()) {
+            (Damage::Rect(_), Some(last)) => last.pixmap,
+            _ => Pixmap::new(w, h).ok_or("invalid framebuffer")?,
+        };
+        while self.helpers.len() < bands {
+            self.helpers.push((RasterPainter::new(self.viewport), None));
+        }
+        let viewport = self.viewport;
+        let step = rows.div_ceil(bands as u32);
+        let results: Vec<Result<[u32; 4], String>> = std::thread::scope(|scope| {
+            let work: Vec<_> = self
+                .helpers
+                .iter_mut()
+                .take(bands)
+                .enumerate()
+                .map(|(i, (painter, scratch))| {
+                    let top = region[1] + step * i as u32;
+                    let band = [region[0], top, region[2], (top + step).min(region[3])];
+                    scope.spawn(move || {
+                        painter.set_viewport(viewport);
+                        let buffer = match scratch.take() {
+                            Some(p) if p.width() == w && p.height() == h => p,
+                            _ => Pixmap::new(w, h).ok_or("invalid framebuffer")?,
+                        };
+                        let [x0, y0, x1, y1] = band.map(|v| v as usize);
+                        *scratch = Some(painter.rasterize_into(
+                            batches,
+                            background,
+                            Some((buffer, [x0, y0, x1, y1])),
+                        )?);
+                        Ok(band)
+                    })
+                })
+                .collect();
+            work.into_iter()
+                .map(|t| {
+                    t.join()
+                        .unwrap_or_else(|_| Err("raster band panicked".into()))
+                })
+                .collect()
+        });
+        let stride = w as usize * 4;
+        for (result, (_, scratch)) in results.into_iter().zip(&self.helpers) {
+            let [x0, y0, x1, y1] = result?;
+            let source = scratch.as_ref().ok_or("raster band missing")?.data();
+            let target = base.data_mut();
+            for y in y0 as usize..y1 as usize {
+                let span = y * stride + x0 as usize * 4..y * stride + x1 as usize * 4;
+                target[span.clone()].copy_from_slice(&source[span]);
+            }
+        }
+        self.last = Some(LastFrame {
+            batches: batches.to_vec(),
+            pixmap: base,
+            background,
+        });
         Ok((&self.last.as_ref().expect("frame stored").pixmap, damage))
     }
     fn rasterize_into(
@@ -3457,15 +3618,31 @@ fn apply_clip_mask(mask: &mut Mask, local: &ClipMask, [l, t, r, b]: [usize; 4]) 
             continue;
         }
         let source = &local.mask.data()[ly as usize * lw..(ly as usize + 1) * lw];
-        for (i, dest) in row.iter_mut().enumerate() {
-            let lx = (l + i) as i32 - local.x;
-            let coverage = if lx >= 0 && (lx as usize) < lw {
-                source[lx as usize]
-            } else {
-                0
-            };
-            if coverage != 255 {
-                *dest = ((u16::from(*dest) * u16::from(coverage) + 127) / 255) as u8;
+        // Only the row's edges need work: its fully covered run is skipped.
+        // Positions here are relative to the row slice (pixel `l`).
+        let (solid_start, solid_end) = local.solid[ly as usize];
+        let n = row.len() as i64;
+        let to_row = |lx: i64| (lx + i64::from(local.x) - l as i64).clamp(0, n) as usize;
+        let (solid_a, solid_b) = if solid_end > solid_start {
+            (to_row(i64::from(solid_start)), to_row(i64::from(solid_end)))
+        } else {
+            (row.len(), row.len())
+        };
+        // The mask's own extent in the row; outside it nothing is covered.
+        let (inside_a, inside_b) = (to_row(0), to_row(lw as i64));
+        row[..inside_a].fill(0);
+        row[inside_b..].fill(0);
+        for span in [
+            inside_a..solid_a.min(inside_b),
+            solid_b.max(inside_a)..inside_b,
+        ] {
+            for i in span {
+                let lx = (l + i) as i64 - i64::from(local.x);
+                let coverage = source[lx as usize];
+                if coverage != 255 {
+                    let dest = &mut row[i];
+                    *dest = ((u16::from(*dest) * u16::from(coverage) + 127) / 255) as u8;
+                }
             }
         }
     }
@@ -5420,6 +5597,53 @@ mod damage_regression_tests {
     }
 }
 #[cfg(test)]
+mod parallel_raster_tests {
+    use super::*;
+    use crate::Rect;
+    #[test]
+    fn banded_frames_match_one_thread_full_and_partial() {
+        let vp = Viewport::new(400., 900., 1.).unwrap();
+        // Strokes across band edges, a curve and two clips.
+        let frame = |shift: f32, c: [f32; 4]| -> Vec<PaintBatch<Shape, Glyph>> {
+            let path = crate::graphics::VectorPath::new()
+                .move_to(20., 40. + shift)
+                .line_to(380., 850.)
+                .line_to(30., 880.);
+            vec![
+                PaintBatch {
+                    clip: Rect::new(0., 0., 400., 900.).unwrap(),
+                    shapes: (0..30)
+                        .map(|i| {
+                            let y = i as f32 * 29. + shift;
+                            Shape::Line([10., y], [390., y + 40.], 9., c)
+                        })
+                        .chain([Shape::Path(path, c, None)])
+                        .collect(),
+                    glyphs: vec![],
+                },
+                PaintBatch {
+                    clip: Rect::new(50., 300., 300., 400.).unwrap(),
+                    shapes: vec![Shape::Line([0., 250.], [400., 750.], 30., [0., 0., 1., 1.])],
+                    glyphs: vec![],
+                },
+            ]
+        };
+        let bg = [1., 1., 1., 1.];
+        let mut serial = RasterPainter::new(vp);
+        let mut banded = RasterPainter::new(vp);
+        for (shift, c) in [
+            (0., [1., 0., 0., 1.]),
+            (3., [0., 0.6, 0., 1.]),
+            (3., [0., 0.6, 0., 0.5]),
+        ] {
+            let f = frame(shift, c);
+            let one = serial.rasterize(&f, bg).unwrap();
+            let (many, damage) = banded.rasterize_incremental_parallel(&f, bg, 4).unwrap();
+            assert!(many.data() == one.data(), "same pixels after {damage:?}");
+        }
+    }
+}
+#[cfg(test)]
 mod emoji_tests {
     use super::*;
 
@@ -5469,3 +5693,8 @@ mod emoji_tests {
 
 #[path = "raster_transform.rs"]
 mod transform;
+#[cfg(test)]
+const _: fn() = || {
+    fn send<T: Send>() {}
+    send::<RasterPainter>();
+};

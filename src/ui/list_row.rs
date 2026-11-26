@@ -706,6 +706,8 @@ impl<C: 'static> From<ListRow<C>> for Element<C> {
             // Behind a closed row the buttons are out of sight; screen
             // readers reach them through the row's actions instead.
             under.0.node.access_hidden = open.is_none();
+            // Painted only while the row slides: closed, it covers them.
+            under.0.node.ext.paint_when_moved = Some(format!("{key}-content"));
             layers.push(under.into());
         }
         layers.push(content.into());

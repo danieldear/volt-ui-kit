@@ -452,6 +452,8 @@ pub(crate) struct BoxExtras {
     pub label_inset: Option<f32>,
     /// See `NodeExtras::hides_with`.
     pub hides_with: Option<String>,
+    /// See `NodeExtras::paint_when_moved`.
+    pub paint_when_moved: Option<String>,
     /// This box is its parent's mask; `masked`: this box has a mask child.
     pub mask: Option<MaskMode>,
     pub masked: bool,
@@ -3817,6 +3819,26 @@ impl Runtime {
         while source_index < boxes.len() {
             let source = &boxes[source_index];
             source_index += 1;
+            // Covered by a sibling that hasn't moved: skip it and its subtree.
+            if let Some(sibling) = source.ext.paint_when_moved.as_deref() {
+                let moved = boxes.iter().find(|b| b.id == sibling).is_none_or(|b| {
+                    let target = visual_target(b, self.state_for_box(b), ui, self.scale).transform;
+                    let pose = motion.input_transform(&b.id, target);
+                    let off = |v: [f32; 2]| v.iter().any(|v| v.abs() > 0.01);
+                    off(pose.translation)
+                        || off(motion.gesture_offset(&b.id))
+                        || off(motion.timeline_pose(&b.id).translation)
+                });
+                if !moved {
+                    while boxes
+                        .get(source_index)
+                        .is_some_and(|b| b.depth > source.depth)
+                    {
+                        source_index += 1;
+                    }
+                    continue;
+                }
+            }
             let mut themed = source.clone();
             themed.style.resolve_colors(ui);
             let original = &themed;
@@ -6465,6 +6487,7 @@ fn place(
             pulse: None,
             label_inset: n.ext.label_inset,
             hides_with: n.ext.hides_with.clone(),
+            paint_when_moved: n.ext.paint_when_moved.clone(),
             mask: n.ext.mask,
             masked: n.children.iter().any(|c| c.ext.mask.is_some()),
             reveal_handle: n.ext.reveal_handle,

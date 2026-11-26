@@ -237,6 +237,30 @@ pub unsafe extern "C" fn volt_event(id: u64, bytes: *const u8, len: usize) -> i3
         })
     })
 }
+/// Apply an event without drawing; the host draws on its next frame.
+///
+/// # Safety
+/// `bytes` is readable for `len` bytes during this call; UIKit uses Data.
+#[no_mangle]
+pub unsafe extern "C" fn volt_apply(id: u64, bytes: *const u8, len: usize) -> i32 {
+    guard(|| {
+        main_thread()?;
+        if bytes.is_null() || len > 65536 {
+            return Err("Invalid platform event size".into());
+        }
+        // SAFETY: foreign caller retains the immutable buffer throughout call.
+        let v = PlatformEvent::decode(unsafe { std::slice::from_raw_parts(bytes, len) })?;
+        HOSTS.with(|r| {
+            r.borrow_mut()
+                .hosts
+                .get_mut(&id)
+                .ok_or("Unknown iOS view")?
+                .ui
+                .handle(v)?;
+            Ok(1)
+        })
+    })
+}
 /// Returned UTF-8 buffer is borrowed until the next snapshot or destroy call.
 #[no_mangle]
 pub extern "C" fn volt_snapshot(id: u64) -> *const c_char {
